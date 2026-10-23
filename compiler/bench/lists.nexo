@@ -1,0 +1,6 @@
+var xs = []
+for i in 1..200_000:
+    xs.add(i * 2)
+evens = xs |> where it % 4 == 0 |> map it + 1 |> sum
+print(evens)
+print(len([x for x in xs if x % 3 == 0]))

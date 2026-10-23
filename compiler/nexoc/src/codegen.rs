@@ -110,6 +110,9 @@ pub struct Gen<'a> {
     span_ids: HashMap<(u32, u32, u32), u32>,
     frame_fns: HashMap<FrameId, (String, String)>,
     fs: Vec<FnState>,
+    /// functions defined exactly once (called directly, without binding
+    /// their arguments at run time)
+    known_fns: HashMap<BindingId, &'a FnDef>,
 }
 
 fn op_code(op: &str) -> u32 {
@@ -244,7 +247,30 @@ impl<'a> Gen<'a> {
             span_ids: HashMap::new(),
             frame_fns: HashMap::new(),
             fs: Vec::new(),
+            known_fns: HashMap::new(),
         }
+    }
+
+    fn find_known_fns(&mut self, program: &'a Program) {
+        let mut defs: HashMap<BindingId, usize> = HashMap::new();
+        let mut fns: HashMap<BindingId, &'a FnDef> = HashMap::new();
+        let res = self.res;
+        crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
+            StmtKind::Fn(f) => {
+                if let Some(b) = res.decl.get(&Node::Stmt(s.id)) {
+                    *defs.entry(*b).or_default() += 1;
+                    fns.insert(*b, f);
+                }
+            }
+            StmtKind::Assign { .. } | StmtKind::VarDecl { .. } => {
+                if let Some(a) = res.assigns.get(&s.id) {
+                    *defs.entry(a.target).or_default() += 1;
+                }
+            }
+            _ => {}
+        });
+        fns.retain(|b, f| defs.get(b) == Some(&1) && f.annotations.is_empty());
+        self.known_fns = fns;
     }
 
     fn next(&mut self) -> usize {
@@ -1065,6 +1091,7 @@ impl<'a> Gen<'a> {
     // ------------------------------------------------------------ module
 
     pub fn program(mut self, program: &'a Program) -> GResult<String> {
+        self.find_known_fns(program);
         let mut st = self.new_fn_state(GLOBAL_FRAME);
         st.unwind = vec!["UNHANDLED".into()];
         self.fs.push(st);
@@ -1443,7 +1470,6 @@ impl<'a> Gen<'a> {
 
     fn assign(&mut self, s: &'a Stmt, target: &'a Expr, op: &str, value: &'a Expr, ty: Option<&TypeExpr>) -> GResult<()> {
         let aug = op != "=";
-        let opc = op_code(&op[..1]);
         match &target.kind {
             ExprKind::Name(name) => {
                 let a = self.res.assigns[&s.id].clone();
@@ -1469,11 +1495,7 @@ impl<'a> Gen<'a> {
                 let mut v = self.expr(value, typed_var)?;
                 if aug {
                     let cur = self.name_read(target, name)?;
-                    let ta = self.tb(&cur);
-                    let tv = self.tb(&v);
-                    let sp = self.span_id(s.span.to(value.span));
-                    v = self.call_v("nx_binop", &format!("i32 {opc}, {ta}, {tv}, i32 {sp}"));
-                    self.check();
+                    v = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
                 }
                 let v = self.bind(v, value);
                 let done = self.label();
@@ -1517,11 +1539,7 @@ impl<'a> Gen<'a> {
                     let nsp = self.span_id(*name_span);
                     let cur = self.call_v("nx_attr", &format!("{to}, {n}, i32 {nsp}"));
                     self.check();
-                    let ta = self.tb(&cur);
-                    let tv = self.tb(&v);
-                    let sp = self.span_id(s.span.to(value.span));
-                    v = self.call_v("nx_binop", &format!("i32 {opc}, {ta}, {tv}, i32 {sp}"));
-                    self.check();
+                    v = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
                 }
                 let to = self.tb(&o);
                 let tv = self.tb(&v);
@@ -1541,11 +1559,7 @@ impl<'a> Gen<'a> {
                     let ti = self.tb(&i);
                     let cur = self.call_v("nx_index", &format!("{to}, {ti}, i32 {sp}"));
                     self.check();
-                    let ta = self.tb(&cur);
-                    let tv = self.tb(&v);
-                    let bsp = self.span_id(s.span.to(value.span));
-                    v = self.call_v("nx_binop", &format!("i32 {opc}, {ta}, {tv}, i32 {bsp}"));
-                    self.check();
+                    v = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
                 }
                 let to = self.tb(&o);
                 let ti = self.tb(&i);
@@ -2204,6 +2218,111 @@ impl<'a> Gen<'a> {
     }
 
     fn binop(&mut self, op: &str, l: &Val, r: &Val, span: Span) -> GResult<Val> {
+        // ints are computed inline; anything else (or an overflow) goes to
+        // the runtime, which applies the rules of section 17
+        let fast = matches!(op, "+" | "-" | "*" | "//" | "%");
+        if !fast || matches!(l, Val::Lit(t, _) if *t != T_INT) || matches!(r, Val::Lit(t, _) if *t != T_INT) {
+            return self.binop_slow(op, l, r, span);
+        }
+        let slot = self.alloca("%V");
+        let slow = self.label();
+        let done = self.label();
+        let both = self.both_tag(l, r, T_INT);
+        let fast_l = self.label();
+        self.cond_br(&both, &fast_l, &slow);
+        self.place(&fast_l);
+        let a = self.bits_of(l);
+        let b = self.bits_of(r);
+        let res = match op {
+            "+" | "-" | "*" => {
+                let f = match op {
+                    "+" => "sadd",
+                    "-" => "ssub",
+                    _ => "smul",
+                };
+                let pair = self.reg();
+                self.emit(&format!("{pair} = call {{ i64, i1 }} @llvm.{f}.with.overflow.i64(i64 {a}, i64 {b})"));
+                let ovf = self.reg();
+                self.emit(&format!("{ovf} = extractvalue {{ i64, i1 }} {pair}, 1"));
+                let ok = self.label();
+                self.cond_br(&ovf, &slow, &ok);
+                self.place(&ok);
+                let v = self.reg();
+                self.emit(&format!("{v} = extractvalue {{ i64, i1 }} {pair}, 0"));
+                v
+            }
+            _ => {
+                // b == 0 and MIN // -1 are left to the runtime
+                let zero = self.reg();
+                self.emit(&format!("{zero} = icmp eq i64 {b}, 0"));
+                let m1 = self.reg();
+                self.emit(&format!("{m1} = icmp eq i64 {b}, -1"));
+                let min = self.reg();
+                self.emit(&format!("{min} = icmp eq i64 {a}, -9223372036854775808"));
+                let both_bad = self.reg();
+                self.emit(&format!("{both_bad} = and i1 {m1}, {min}"));
+                let bad = self.reg();
+                self.emit(&format!("{bad} = or i1 {zero}, {both_bad}"));
+                let ok = self.label();
+                self.cond_br(&bad, &slow, &ok);
+                self.place(&ok);
+                let q = self.reg();
+                self.emit(&format!("{q} = sdiv i64 {a}, {b}"));
+                let rem = self.reg();
+                self.emit(&format!("{rem} = srem i64 {a}, {b}"));
+                // floor division: adjust when the remainder and the divisor
+                // have different signs
+                let nz = self.reg();
+                self.emit(&format!("{nz} = icmp ne i64 {rem}, 0"));
+                let x = self.reg();
+                self.emit(&format!("{x} = xor i64 {rem}, {b}"));
+                let neg = self.reg();
+                self.emit(&format!("{neg} = icmp slt i64 {x}, 0"));
+                let adj = self.reg();
+                self.emit(&format!("{adj} = and i1 {nz}, {neg}"));
+                if op == "//" {
+                    let q1 = self.reg();
+                    self.emit(&format!("{q1} = sub i64 {q}, 1"));
+                    let v = self.reg();
+                    self.emit(&format!("{v} = select i1 {adj}, i64 {q1}, i64 {q}"));
+                    v
+                } else {
+                    let r1 = self.reg();
+                    self.emit(&format!("{r1} = add i64 {rem}, {b}"));
+                    let v = self.reg();
+                    self.emit(&format!("{v} = select i1 {adj}, i64 {r1}, i64 {rem}"));
+                    v
+                }
+            }
+        };
+        let v = self.reg();
+        self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
+        self.emit(&format!("store %V {v}, ptr {slot}"));
+        self.br(&done);
+        self.place(&slow);
+        let sv = self.binop_slow(op, l, r, span)?;
+        self.store(&slot, &sv);
+        self.br(&done);
+        self.place(&done);
+        Ok(self.load(&slot))
+    }
+
+    /// Both values have this tag (an i1).
+    fn both_tag(&mut self, l: &Val, r: &Val, tag: u64) -> String {
+        let cl = match l {
+            Val::Lit(t, _) => (if *t == tag { "true" } else { "false" }).to_string(),
+            _ => self.is_tag(l, tag),
+        };
+        let cr = match r {
+            Val::Lit(t, _) => (if *t == tag { "true" } else { "false" }).to_string(),
+            _ => self.is_tag(r, tag),
+        };
+        let c = self.reg();
+        self.emit(&format!("{c} = and i1 {cl}, {cr}"));
+        c
+    }
+
+    fn binop_slow(&mut self, op: &str, l: &Val, r: &Val, span: Span) -> GResult<Val> {
         let tl = self.tb(l);
         let tr = self.tb(r);
         let sp = self.span_id(span);
@@ -2213,12 +2332,35 @@ impl<'a> Gen<'a> {
     }
 
     fn eq(&mut self, l: &Val, r: &Val, span: Span) -> String {
+        // two ints (or two bools) are equal when their bits are
+        let slot = self.alloca("i1");
+        let slow = self.label();
+        let fast = self.label();
+        let done = self.label();
+        let ti = self.both_tag(l, r, T_INT);
+        let tb_ = self.both_tag(l, r, T_BOOL);
+        let simple = self.reg();
+        self.emit(&format!("{simple} = or i1 {ti}, {tb_}"));
+        self.cond_br(&simple, &fast, &slow);
+        self.place(&fast);
+        let a = self.bits_of(l);
+        let b = self.bits_of(r);
+        let c = self.reg();
+        self.emit(&format!("{c} = icmp eq i64 {a}, {b}"));
+        self.emit(&format!("store i1 {c}, ptr {slot}"));
+        self.br(&done);
+        self.place(&slow);
         let tl = self.tb(l);
         let tr = self.tb(r);
         let sp = self.span_id(span);
-        let c = self.call_flag("nx_eq", &format!("{tl}, {tr}, i32 {sp}"));
+        let c2 = self.call_flag("nx_eq", &format!("{tl}, {tr}, i32 {sp}"));
         self.check();
-        c
+        self.emit(&format!("store i1 {c2}, ptr {slot}"));
+        self.br(&done);
+        self.place(&done);
+        let r = self.reg();
+        self.emit(&format!("{r} = load i1, ptr {slot}"));
+        r
     }
 
     /// One comparison of a chain (an i1).
@@ -2241,18 +2383,37 @@ impl<'a> Gen<'a> {
                 c
             }
             _ => {
-                let code = match op {
-                    "<" => 0,
-                    ">" => 1,
-                    "<=" => 2,
-                    _ => 3,
+                let (code, pred) = match op {
+                    "<" => (0, "slt"),
+                    ">" => (1, "sgt"),
+                    "<=" => (2, "sle"),
+                    _ => (3, "sge"),
                 };
+                let slot = self.alloca("i1");
+                let slow = self.label();
+                let fast = self.label();
+                let done = self.label();
+                let ti = self.both_tag(l, r, T_INT);
+                self.cond_br(&ti, &fast, &slow);
+                self.place(&fast);
+                let a = self.bits_of(l);
+                let b = self.bits_of(r);
+                let c = self.reg();
+                self.emit(&format!("{c} = icmp {pred} i64 {a}, {b}"));
+                self.emit(&format!("store i1 {c}, ptr {slot}"));
+                self.br(&done);
+                self.place(&slow);
                 let tl = self.tb(l);
                 let tr = self.tb(r);
                 let sp = self.span_id(span);
-                let c = self.call_flag("nx_order", &format!("i32 {code}, {tl}, {tr}, i32 {sp}"));
+                let c2 = self.call_flag("nx_order", &format!("i32 {code}, {tl}, {tr}, i32 {sp}"));
                 self.check();
-                c
+                self.emit(&format!("store i1 {c2}, ptr {slot}"));
+                self.br(&done);
+                self.place(&done);
+                let r = self.reg();
+                self.emit(&format!("{r} = load i1, ptr {slot}"));
+                r
             }
         })
     }
@@ -2370,6 +2531,9 @@ impl<'a> Gen<'a> {
             Method(Val, String, Span),
             Value(Val),
         }
+        if let Some(v) = self.direct_call(func, args, &first, span)? {
+            return Ok(v);
+        }
         let target = match &func.kind {
             ExprKind::Name(n) => match self.res.names.get(&func.id) {
                 Some(NameRes::Builtin(b)) if DIRECT_BUILTINS.contains(&b.as_str()) || matches!(b.as_str(), "decimal" | "float" | "int" | "str") => {
@@ -2422,6 +2586,98 @@ impl<'a> Gen<'a> {
         };
         self.check();
         Ok(r)
+    }
+
+    /// A call to a function defined once, with its arguments bound when
+    /// compiling: the LLVM function is called directly.
+    fn direct_call(&mut self, func: &'a Expr, args: &'a [Arg], first: &Option<Val>, span: Span) -> GResult<Option<Val>> {
+        let ExprKind::Name(name) = &func.kind else { return Ok(None) };
+        let Some(NameRes::Bindings { cands, row: None, .. }) = self.res.names.get(&func.id) else { return Ok(None) };
+        if cands.len() != 1 {
+            return Ok(None);
+        }
+        let b = cands[0];
+        let Some(f) = self.known_fns.get(&b).copied() else { return Ok(None) };
+        // bind the arguments to the parameters now
+        let n = f.params.len();
+        let mut slots: Vec<Option<usize>> = vec![None; n];
+        let offset = usize::from(first.is_some());
+        let positional = args.iter().filter(|a| a.name.is_none()).count() + offset;
+        if positional > n {
+            return Ok(None);
+        }
+        let mut pi = offset;
+        for (ai, a) in args.iter().enumerate() {
+            match &a.name {
+                None => {
+                    slots[pi] = Some(ai);
+                    pi += 1;
+                }
+                Some(nm) => match f.params.iter().position(|p| &p.name == nm) {
+                    Some(i) if slots[i].is_none() && i >= offset => slots[i] = Some(ai),
+                    _ => return Ok(None),
+                },
+            }
+        }
+        for (i, p) in f.params.iter().enumerate() {
+            let optional = p.default.is_some() || p.ty.as_ref().is_some_and(|t| t.optional());
+            if i >= offset && slots[i].is_none() && !optional {
+                return Ok(None);
+            }
+        }
+        // the function must have been defined when the call runs (D29)
+        let fv = self.load_binding(b);
+        let fslot = self.temp(&fv);
+        let t = self.tag_of(&fv);
+        let undef = self.reg();
+        self.emit(&format!("{undef} = icmp eq i64 {t}, {T_UNDEF}"));
+        let bad = self.label();
+        let ok = self.label();
+        self.cond_br(&undef, &bad, &ok);
+        self.place(&bad);
+        let sugg = match self.res.names.get(&func.id) {
+            Some(NameRes::Bindings { suggestion, .. }) => suggestion.clone(),
+            _ => None,
+        };
+        self.name_error(name, sugg.as_deref(), func.span);
+        self.place(&ok);
+        let mut vals: Vec<Val> = vec![lit(T_MISSING, "0"); n];
+        if let Some(fst) = first {
+            vals[0] = fst.clone();
+        }
+        // arguments are evaluated in the order they are written
+        let mut evaluated: Vec<(usize, Val)> = Vec::new();
+        for (ai, a) in args.iter().enumerate() {
+            let mut v = self.expr(&a.value, true)?;
+            if may_be_lazy(&a.value) {
+                let tb = self.tb(&v);
+                v = self.call_v("nx_force", &tb);
+                self.check();
+            }
+            evaluated.push((ai, v));
+        }
+        for (i, s) in slots.iter().enumerate() {
+            if let Some(ai) = s {
+                vals[i] = evaluated.iter().find(|(x, _)| x == ai).unwrap().1.clone();
+            }
+        }
+        let frame = self.res.frame_of[&Node::Fn(f.id)];
+        let (fname, _) = self.frame_fn(frame, FrameSrc::Fn(f))?;
+        let clo = if self.res.frames[frame].free.is_empty() {
+            "null".to_string()
+        } else {
+            let fv = self.load(&fslot);
+            let tb = self.tb(&fv);
+            let p = self.reg();
+            self.emit(&format!("{p} = call ptr @nx_func_ptr({tb})"));
+            p
+        };
+        let arr = self.values_array(&vals);
+        let sp = self.span_id(span);
+        let r = self.reg();
+        self.emit(&format!("{r} = call %V {fname}(ptr {clo}, ptr {arr}, i32 {sp})"));
+        self.check();
+        Ok(Some(Val::Reg(r)))
     }
 
     fn step_closure(&mut self, node: Node, e: &'a Expr) -> GResult<Val> {
@@ -2598,6 +2854,9 @@ impl<'a> Gen<'a> {
 pub const RUNTIME_DECLS: &str = r#"@nx_failing = external global i8
 @nx_deadline_active = external global i8
 @nx_depth = external global i64
+declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
+declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
+declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
 declare void @nx_too_deep()
 declare void @nx_init(ptr, i64, ptr, i64, ptr, i64, i32)
@@ -2633,6 +2892,8 @@ declare i8 @nx_in(i64, i64, i64, i64, i32)
 declare i8 @nx_is(i64, i64, i64, i64, i32)
 declare %V @nx_interp(ptr, i64)
 declare %V @nx_bind(i64, i64)
+declare %V @nx_force(i64, i64)
+declare ptr @nx_func_ptr(i64, i64)
 declare %V @nx_plain(i64, i64)
 declare %V @nx_conform(i64, i64, ptr, i64, ptr, i64, i32)
 declare %V @nx_conform_return(i64, i64, ptr, i64, ptr, i64, i32)

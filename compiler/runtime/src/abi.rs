@@ -317,6 +317,21 @@ pub extern "C" fn nx_bind(t: u64, b: u64) -> V {
     ret(pipe::bind(v(t, b)))
 }
 
+/// Read a lazy value (an argument of a direct call); keep float literals.
+#[no_mangle]
+pub extern "C" fn nx_force(t: u64, b: u64) -> V {
+    ret(pipe::force(v(t, b)))
+}
+
+/// The closure behind a function value (for direct calls).
+#[no_mangle]
+pub extern "C" fn nx_func_ptr(t: u64, b: u64) -> *const Func {
+    match v(t, b).get() {
+        Some(Obj::Func(f)) => f as *const Func,
+        _ => std::ptr::null(),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn nx_plain(t: u64, b: u64) -> V {
     v(t, b).plain()
