@@ -1,0 +1,9 @@
+[package]
+name = "nexo-diag"
+description = "Nexo error messages: the section 14 renderer and the es/en catalog"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "nexo_diag"
