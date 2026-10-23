@@ -162,9 +162,8 @@ shadowed: section 2 uses `list` as a variable.
 
 **D27. What immutable means.** `x = 1` makes the name immutable, not the
 value: the `transfer` example in "Goals and guarantees" changes
-`source.balance` through an immutable parameter. Records and collections
-are shared by reference in phase 0; the memory model of section 7
-(copy-on-write) belongs to phase 2.
+`source.balance` through an immutable parameter. Records are shared by
+reference; collections are values from phase 2 on (D78).
 
 **D28. Conditions must be bool.** `if 1:` is an error. There is no
 "truthiness" (rule 3: understandable without experience).
@@ -444,3 +443,22 @@ that holds it: a cycle that is never freed. A call of a function defined
 once to its own name uses the function itself instead. Two nested
 functions that call each other still form a cycle and are freed only when
 the program ends.
+
+**D78. Collections are values; records are shared.** Section 7 says
+collections are "borrowed by default" and copied when "modified after
+being shared", and that small `type` values "are copied". Copying is only
+invisible for values nobody changes, and the `transfer` example (Goals and
+guarantees) changes the records it receives, and rule 4 speaks of
+reference cycles between `type` values. So: lists, maps and sets behave as
+values. `b = a`, passing `a` to a function, storing it in a field or a
+list, all give a value that changing `b` does not affect; the copy is made
+only when one of them is changed while the other still holds it. Records
+are shared: `q = p; q.x = 2` changes `p` (D27); a list of records copied
+on write still holds the same records. Texts never change. A collection
+is changed through a place: a variable, a field, an element
+(`xs.add(x)`, `m[k] = v`, `order.items.add(x)`, `grid[0][1] = 5`); the
+change goes to that place only. A loop over a collection sees the value it
+started with, even if the body changes the variable. `xs.add(xs)` adds the
+list as it was. Changing something that is not a place (`f().add(1)`)
+changes a copy nobody sees. Phase 0 keeps the same rules by counting the
+places that hold a collection (one, or more than one).

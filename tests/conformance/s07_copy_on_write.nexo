@@ -1,0 +1,41 @@
+# Section 7, rule 2: collections are values; a change to a shared one copies it
+a = [1, 2]
+b = a
+b.add(3)
+print(a, b)
+m = {"x": 1}
+n = m
+n["y"] = 2
+print(m, n)
+fn grow(xs):
+    xs.add(99)
+    return xs
+c = grow(a)
+print(a, c)
+type Box:
+    items: list[int] = []
+bx = Box()
+bx.items.add(1)
+alias = bx.items
+alias.add(2)
+print(bx.items, alias)
+grid = [[0, 0], [0, 0]]
+row = grid[0]
+grid[0][1] = 5
+print(grid, row)
+var xs = [1, 2, 3]
+for x in xs:
+    xs.add(x * 10)
+print(xs)
+s = set(1)
+t = s
+t.add(2)
+print(s, t)
+nested = {"k": [1]}
+nested["k"].add(2)
+print(nested)
+xs.add(xs)
+print(xs)
+r = bx
+r.items.add(7)
+print(bx.items)

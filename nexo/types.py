@@ -118,11 +118,34 @@ class Quantity:
 
 # ----------------------------------------------------------- collections
 
+class NList(list):
+    """A list (section 7, rule 2): a value that is copied when it is
+    changed while another place holds it. `owners` counts the places that
+    hold it: 0 (a new value), 1, or 2 meaning two or more."""
+
+    __slots__ = ("owners",)
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.owners = 0
+
+
+class NMap(dict):
+    """A map; copied on write like NList."""
+
+    __slots__ = ("owners",)
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.owners = 0
+
+
 class NexoSet:
-    """An insertion-ordered set."""
+    """An insertion-ordered set; copied on write like NList."""
 
     def __init__(self, items=()):
         self.items: dict = {}
+        self.owners = 0
         for item in items:
             self.items[item] = True
 
@@ -140,6 +163,58 @@ class NexoSet:
 
     def add(self, item):
         self.items[item] = True
+
+
+def share(value: Any) -> Any:
+    """A collection stored in one more place (a variable, a field, an
+    element, a parameter...). Plain Python lists and maps come from the
+    library; they become Nexo values here."""
+    t = type(value)
+    if t is list:
+        value = NList(value)
+    elif t is dict:
+        value = NMap(value)
+    elif t is not NList and t is not NMap and t is not NexoSet:
+        return value
+    if value.owners < 2:
+        value.owners += 1
+    return value
+
+
+def copy_collection(value: Any) -> Any:
+    """A copy that shares the elements (which are then held twice)."""
+    if isinstance(value, NexoSet):
+        out = NexoSet()
+        out.items = dict(value.items)
+    elif isinstance(value, dict):
+        out = NMap(value)
+        for v in out.values():
+            if is_collection(v):
+                mark_shared(v)
+    else:
+        out = NList(value)
+        for v in out:
+            if is_collection(v):
+                mark_shared(v)
+    out.owners = 1
+    return out
+
+
+def is_collection(value: Any) -> bool:
+    return isinstance(value, (list, dict, NexoSet))
+
+
+def mark_shared(value: Any) -> None:
+    if type(value) in (NList, NMap, NexoSet):
+        value.owners = 2
+
+
+def unique(value: Any) -> Any:
+    """The collection to change in a place: a copy if another place holds it."""
+    t = type(value)
+    if t is list or t is dict or ((t is NList or t is NMap or t is NexoSet) and value.owners >= 2):
+        return copy_collection(value)
+    return value
 
 
 @dataclass

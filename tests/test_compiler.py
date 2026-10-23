@@ -1,6 +1,7 @@
 """Phase 1: the conformance suite and the examples, compiled to native
 code by the Rust compiler (compiler/). Skipped when cargo or clang are not
 installed."""
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -24,7 +25,9 @@ def nexo():
 
 
 def run(cmd, cwd, stdin=b""):
-    return subprocess.run(cmd, cwd=cwd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+    # a program that does not free every value says so on stderr (D76)
+    env = dict(os.environ, NEXO_LEAKCHECK="1")
+    return subprocess.run(cmd, cwd=cwd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120, env=env)
 
 
 @pytest.mark.parametrize("source", sorted(CONFORMANCE.rglob("*.nexo")), ids=lambda p: str(p.relative_to(CONFORMANCE)))

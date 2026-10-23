@@ -20,8 +20,9 @@ from .errors import NexoError, Span, suggest
 from .parser import parse, source_text
 from .types import (
     AliasType, Builtin, BuiltinType, Currency, EnumType, ErrorKind, ErrorValue, Function,
-    INT_MIN, Lazy, LambdaFn, LitFloat, Money, NexoFailure, NexoSet, Quantity, Range, Record,
-    RecordType, Symbol, TraitType, Variant, VariantValue, check_int, failure, hashable, plain,
+    INT_MIN, Lazy, LambdaFn, LitFloat, Money, NexoFailure, NexoSet, NList, NMap, Quantity, Range, Record,
+    RecordType, Symbol, TraitType, Variant, VariantValue, check_int, copy_collection, failure, hashable,
+    is_collection, plain, share, unique,
     repr_value, show, to_decimal, type_name,
 )
 
@@ -98,7 +99,7 @@ class RowEnv(Env):
     def __init__(self, parent: Env, item: Any):
         super().__init__(parent)
         self.item = item
-        self.vars["it"] = Binding(item, False)
+        self.vars["it"] = Binding(share(item), False)
 
     def lookup(self, name: str) -> Any:
         if name != "it":
@@ -185,7 +186,7 @@ class Interpreter:
             if s.op == "=":
                 value = self.eval(s.value, env)
                 if s.type is not None:
-                    value = self.bind_value(self.conform(value, s.type, env, name, s.value.span))
+                    value = self.store_value(self.conform(value, s.type, env, name, s.value.span))
                     self.declare(env, name, value, target.span, s.type)
                 else:
                     self.assign_name(env, name, value, target.span, s.value.span)
@@ -194,7 +195,11 @@ class Interpreter:
             value = self.binop(s.op[0], current, self.eval(s.value, env), s.span.to(s.value.span), s.value.span)
             self.assign_name(env, name, value, target.span, s.value.span)
             return
-        obj = self.eval(target.obj, env)
+        if isinstance(target, A.Index):
+            # a change through a place (copy-on-write)
+            obj = self.place_parts(target.obj, env)
+        else:
+            obj = self.eval(target.obj, env)
         if isinstance(target, A.Attr):
             value = self.eval(s.value, env)
             if s.op != "=":
@@ -204,10 +209,11 @@ class Interpreter:
             return
         index = self.eval(target.index, env)
         value = self.eval(s.value, env)
+        container = self.place_resolve(obj)
         if s.op != "=":
-            value = self.binop(s.op[0], self.get_index(obj, index, target.span), value,
+            value = self.binop(s.op[0], self.get_index(container, index, target.span), value,
                                s.span.to(s.value.span), s.value.span)
-        self.set_index(obj, index, value, target.span)
+        self.set_index(container, index, value, target.span)
 
     def declare(self, env: Env, name: str, value: Any, span: Span, type_=None) -> None:
         target = env.target()
@@ -226,25 +232,25 @@ class Interpreter:
                     raise NexoError("immutable", span, name=name)
                 if b.type is not None:
                     value = self.conform(value, b.type, b.type_env, name, value_span)
-                b.value = self.bind_value(value)
+                b.value = self.store_value(value)
                 return
             if e.is_fn:
                 crossed_fn = True
             e = e.parent
-        env.define(name, self.bind_value(value))
+        env.define(name, self.store_value(value))
 
     def exec_VarDecl(self, s: A.VarDecl, env: Env) -> None:
         value = self.eval(s.value, env)
         if s.type is not None:
             value = self.conform(value, s.type, env, s.name, s.value.span)
-        value = self.bind_value(value)
+        value = self.store_value(value)
         target = env.target()
         if s.name in target.vars:
             raise NexoError("already_declared", s.name_span, name=s.name)
         target.define(s.name, value, True, s.type, env)
 
     def exec_Return(self, s: A.Return, env: Env) -> None:
-        value = None if s.value is None else self.bind_value(self.eval(s.value, env))
+        value = None if s.value is None else self.store_value(self.eval(s.value, env))
         raise ReturnSignal(value)
 
     def exec_FnDef(self, s: A.FnDef, env: Env) -> None:
@@ -300,7 +306,7 @@ class Interpreter:
     def exec_For(self, s: A.For, env: Env) -> None:
         for item in self.iterate(self.eval(s.iterable, env), s.iterable.span):
             loop_env = Env(env)
-            loop_env.vars[s.var] = Binding(plain(item), False)
+            loop_env.vars[s.var] = Binding(self.store_value(item), False)
             self.exec_block(s.body, loop_env)
 
     def exec_While(self, s: A.While, env: Env) -> None:
@@ -324,7 +330,7 @@ class Interpreter:
                     continue
                 arm_env = Env(env, transparent=True)
                 for k, v in bindings.items():
-                    arm_env.vars[k] = Binding(v, False)
+                    arm_env.vars[k] = Binding(share(v), False)
                 if arm.guard is not None and not self.truth(self.eval(arm.guard, arm_env), arm.guard.span, "if"):
                     continue
                 self.exec_block(arm.body, arm_env)
@@ -466,13 +472,13 @@ class Interpreter:
 
     def exec_Emit(self, s: A.Emit, env: Env) -> None:
         name = getattr(s.call.func, "name", "")
-        args = [self.bind_value(self.eval(a.value, env)) for a in s.call.args]
+        args = [self.store_value(self.eval(a.value, env)) for a in s.call.args]
         for params, body, henv in self.handlers.get(name, []):
             if len(params) != len(args):
                 raise NexoError("arg_too_many", s.call.span, fn=name, n=len(params), m=len(args))
             local = Env(henv, is_fn=True)
             for p, v in zip(params, args):
-                local.vars[p] = Binding(v, False)
+                local.vars[p] = Binding(share(v), False)
             try:
                 self.exec_block(body, local)
             except ReturnSignal:
@@ -521,22 +527,22 @@ class Interpreter:
         return NexoError("name_not_found", span, name=name)
 
     def eval_ListLit(self, e: A.ListLit, env: Env) -> list:
-        return [self.bind_value(self.eval(i, env)) for i in e.items]
+        return NList(self.store_value(self.eval(i, env)) for i in e.items)
 
     def eval_MapLit(self, e: A.MapLit, env: Env) -> dict:
-        out = {}
+        out = NMap()
         for k, v in e.pairs:
-            out[hashable(self.eval(k, env), k.span)] = self.bind_value(self.eval(v, env))
+            out[hashable(self.eval(k, env), k.span)] = self.store_value(self.eval(v, env))
         return out
 
     def eval_Comprehension(self, e: A.Comprehension, env: Env) -> list:
-        out = []
+        out = NList()
         for item in self.iterate(self.eval(e.iterable, env), e.iterable.span):
             inner = Env(env)
-            inner.vars[e.var] = Binding(plain(item), False)
+            inner.vars[e.var] = Binding(self.store_value(item), False)
             if e.condition is not None and not self.truth(self.eval(e.condition, inner), e.condition.span, "if"):
                 continue
-            out.append(self.bind_value(self.eval(e.element, inner)))
+            out.append(self.store_value(self.eval(e.element, inner)))
         return out
 
     def eval_Attr(self, e: A.Attr, env: Env) -> Any:
@@ -554,9 +560,88 @@ class Interpreter:
             values = self.old_stack[-1]
             if id(e) in values:
                 return values[id(e)]
+        if isinstance(e.func, A.Attr) and e.func.name == "add" and isinstance(e.func.obj, (A.Name, A.Attr, A.Index)):
+            # `place.add(x)` changes the collection in its place
+            parts = self.place_parts(e.func.obj, env)
+            args = self.eval_args(e.args, env)
+            obj = self.place_resolve(parts)
+            func = self.get_attr(obj, "add", e.func.name_span)
+            return self.call_at(func, args, e)
         func = self.eval(e.func, env)
         args = self.eval_args(e.args, env)
         return self.call_at(func, args, e)
+
+    # ------------------------------------------------------------ places
+    # A collection changed through a place (`xs[i] = v`, `order.items.add(x)`)
+    # is made unique first: if another place holds it, the place gets a copy
+    # (section 7, rule 2). The parts of the place are evaluated before the
+    # rest of the statement, then each step is made unique.
+
+    def place_parts(self, e: A.Expr, env: Env) -> tuple:
+        if isinstance(e, A.Name):
+            b = env.find(e.name)
+            if b is not None and env.lookup(e.name) is b.value:
+                return ("var", b)
+            return ("value", self.eval(e, env))
+        if isinstance(e, A.Attr):
+            return ("field", self.eval(e.obj, env), e.name, e.name_span)
+        if isinstance(e, A.Index):
+            return ("index", self.place_parts(e.obj, env), self.eval(e.index, env), e.span)
+        if isinstance(e, A.Propagate):
+            return self.place_parts(e.expr, env)
+        return ("value", self.eval(e, env))
+
+    def place_resolve(self, parts: tuple) -> Any:
+        kind = parts[0]
+        if kind == "var":
+            b = parts[1]
+            u = unique(b.value)
+            if u is not b.value:
+                b.value = u
+            return u
+        if kind == "field":
+            _, obj, name, span = parts
+            if isinstance(obj, Record) and name in obj.fields and not self.is_weak_field(obj, name):
+                self.check_write(obj, span)
+                u = unique(obj.fields[name])
+                if u is not obj.fields[name]:
+                    obj.fields[name] = u
+                return u
+            return self.temp_copy(self.get_attr(obj, name, span))
+        if kind == "index":
+            _, inner, index, span = parts
+            container = self.place_resolve(inner)
+            if isinstance(container, Lazy):
+                container = self.bind_value(container)
+            if isinstance(container, dict):
+                key = hashable(index, span)
+                if key in container:
+                    u = unique(container[key])
+                    if u is not container[key]:
+                        container[key] = u
+                    return u
+                return None
+            if isinstance(container, list):
+                if not isinstance(index, int) or isinstance(index, bool):
+                    raise NexoError("bad_index", span, vtype=type_name(container), itype=type_name(index))
+                if not 0 <= index < len(container):
+                    raise failure("OutOfRange", span, index=index, size=len(container))
+                u = unique(container[index])
+                if u is not container[index]:
+                    container[index] = u
+                return u
+            return self.temp_copy(self.get_index(container, index, span))
+        return self.temp_copy(parts[1])
+
+    def is_weak_field(self, obj: Record, name: str) -> bool:
+        return False
+
+    def check_write(self, record: Record, span: Span) -> None:
+        pass
+
+    def temp_copy(self, value: Any) -> Any:
+        """A value that is not in a place: a change to it is seen by nobody."""
+        return copy_collection(value) if is_collection(value) else value
 
     def eval_args(self, args: list[A.Arg], env: Env) -> list[tuple[str | None, Any]]:
         out = []
@@ -645,7 +730,7 @@ class Interpreter:
         results = []
         for item in self.iterate(self.eval(e.iterable, env), e.iterable.span):
             task_env = Env(env)
-            task_env.vars[e.var] = Binding(plain(item), False)
+            task_env.vars[e.var] = Binding(self.store_value(item), False)
             try:
                 self.exec_block(e.body, task_env)
                 results.append(None)
@@ -681,7 +766,7 @@ class Interpreter:
         if kind == "map":
             def mapper():
                 for item in self.iterate(source, span):
-                    yield self.bind_value(self.apply_expr(step.expr, item, env))
+                    yield self.store_value(self.apply_expr(step.expr, item, env))
             return Lazy(mapper)
         if kind == "pick":
             names = []
@@ -775,8 +860,8 @@ class Interpreter:
             env = Env(func.env, is_fn=True)
             params = [func.node.param]
             bound = self.bind_args("lambda", params, args, node)
-            env.vars[func.node.param] = Binding(self.bind_value(bound[func.node.param]), False)
-            return self.bind_value(self.eval(func.node.body, env))
+            env.vars[func.node.param] = Binding(self.store_value(bound[func.node.param]), False)
+            return self.store_value(self.eval(func.node.body, env))
         if isinstance(func, RecordType):
             return self.construct(func, args, node)
         if isinstance(func, Variant) and func.params:
@@ -833,7 +918,7 @@ class Interpreter:
                 value = None
             if p.type is not None:
                 value = self.conform(value, p.type, fn.env, p.name, node.span)
-            env.vars[p.name] = Binding(self.bind_value(value), False)
+            env.vars[p.name] = Binding(self.store_value(value), False)
         ensures, olds = self.contracts_of(decl)
         old_values = {}
         for call_node in olds:
@@ -920,7 +1005,7 @@ class Interpreter:
                 value = self.eval(f.default, rtype.env)
             else:
                 value = None
-            values[f.name] = self.bind_value(self.conform(value, f.type, rtype.env, f.name, node.span))
+            values[f.name] = self.store_value(self.conform(value, f.type, rtype.env, f.name, node.span))
         return Record(rtype, values)
 
     def construct_variant(self, variant: Variant, args: list, node: A.Node) -> VariantValue:
@@ -932,7 +1017,7 @@ class Interpreter:
             value = bound[p.name]
             if p.type is not None:
                 value = self.conform(value, p.type, self.globals, p.name, node.span)
-            values[p.name] = self.bind_value(value)
+            values[p.name] = self.store_value(value)
         return VariantValue(variant, values)
 
     # ------------------------------------------------------- attributes
@@ -982,7 +1067,7 @@ class Interpreter:
             field = next((f for f in obj.type.fields if f.name == name), None)
             if field is None:
                 raise self.member_error(obj, name, span, list(obj.fields))
-            obj.fields[name] = self.bind_value(self.conform(value, field.type, obj.type.env, name, value_span))
+            obj.fields[name] = self.store_value(self.conform(value, field.type, obj.type.env, name, value_span))
             return
         if obj is None:
             raise NexoError("none_member", span, name=name)
@@ -1004,7 +1089,9 @@ class Interpreter:
         raise NexoError("not_indexable", span, vtype=type_name(obj))
 
     def set_index(self, obj: Any, index: Any, value: Any, span: Span) -> None:
-        value = self.bind_value(value)
+        value = self.store_value(value)
+        if value is obj:
+            value = copy_collection(value)
         if isinstance(obj, dict):
             obj[hashable(index, span)] = value
             return
@@ -1018,17 +1105,29 @@ class Interpreter:
         raise NexoError("not_indexable", span, vtype=type_name(obj))
 
     # ------------------------------------------------------------ values
+    def store_value(self, value: Any) -> Any:
+        """A value that is stored in a place (section 7, rule 2): a
+        collection gets one more owner, so changing it copies it."""
+        return share(self.bind_value(value))
+
     def bind_value(self, value: Any) -> Any:
-        """A value that is stored somewhere: lazy pipelines are read and
-        float literals become ordinary floats."""
+        """A value that is read whole: lazy pipelines are read and float
+        literals become ordinary floats."""
         if isinstance(value, Lazy):
-            return [plain(v) for v in value]
+            return NList(plain(v) for v in value)
         if isinstance(value, Grouped):
             raise NexoError("pipe_group_next", None)
         return plain(value)
 
     def iterate(self, value: Any, span: Span):
-        if isinstance(value, (list, Lazy, NexoSet, Range)):
+        if isinstance(value, (list, NexoSet)):
+            # the loop holds the collection: changing it copies it, and
+            # the loop sees the value it started with
+            if type(value) is list:
+                return iter(list(value))
+            share(value)
+            return iter(value) if isinstance(value, list) else iter(list(value))
+        if isinstance(value, (Lazy, Range)):
             return iter(value)
         if isinstance(value, dict):
             return iter(list(value))

@@ -115,7 +115,8 @@ if diff_file.exists():
 
 
 def run(cmd, cwd, stdin):
-    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8")
+    # compiled programs report the values they did not free (D76)
+    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8", NEXO_LEAKCHECK="1")
     try:
         p = subprocess.run(cmd, cwd=cwd, input=stdin.encode(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=60, env=env)

@@ -15,7 +15,7 @@ from ..errors import NexoError
 from ..lexer import CURRENCIES
 from ..types import (
     ERROR_KINDS, Builtin, BuiltinType, Currency, ErrorKind, ErrorValue, Lazy, LitFloat, Money,
-    NexoFailure, NexoSet, Quantity, Range, RecordType, Symbol, failure, hashable, plain, show,
+    NexoFailure, NexoSet, Quantity, Range, RecordType, Symbol, copy_collection, failure, hashable, plain, show,
     to_decimal, type_name,
 )
 
@@ -284,7 +284,9 @@ def m_add(call, obj, item):
     if isinstance(obj, NexoSet):
         obj.add(hashable(item, call.span))
     else:
-        obj.append(call.interp.bind_value(item))
+        value = call.interp.store_value(item)
+        # a list stored in itself is stored as it was before
+        obj.append(copy_collection(value) if value is obj else value)
     return None
 
 
