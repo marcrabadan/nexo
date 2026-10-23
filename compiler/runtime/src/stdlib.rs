@@ -12,7 +12,7 @@ use crate::dec::{exact_from_f64, Dec, Rounding};
 use crate::fmt::{format_float, show, type_name};
 use crate::num::{currency_places, money_of, to_decimal};
 use crate::pipe::{bind, collect_vec, lazy, total};
-use crate::state::{diag, failure, raise_error, raise_value, st, write_out, R};
+use crate::state::{diag, failure, raise_error, raise_value, registry, write_out, R};
 use crate::types::{is_value, TypeRef};
 use crate::value::*;
 
@@ -217,7 +217,7 @@ fn str_arg(fname: &str, v: V, span: u32) -> R<&'static str> {
 }
 
 /// Call builtin `id` with arguments checked against its signature.
-pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V> {
+pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let sig = &SIGS[id.0 as usize];
     let a = check_args(sig, args, names, span)?;
     match id {
@@ -227,14 +227,14 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
                 if i > 0 {
                     text.push(' ');
                 }
-                text.push_str(&show(bind(*v)?));
+                text.push_str(&show(bind(*v)?.v()));
             }
             match a.get(1) {
                 Some(end) => text.push_str(&show(end)),
                 None => text.push('\n'),
             }
             write_out(&text);
-            Ok(NONE)
+            Ok(Val::none())
         }
         B_INPUT => {
             if let Some(prompt) = a.get(0) {
@@ -246,10 +246,11 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
             while line.ends_with('\n') || line.ends_with('\r') {
                 line.pop();
             }
-            Ok(V::str(line))
+            Ok(Val::str(line))
         }
         B_LEN => {
-            let v = bind(a.get(0).unwrap())?;
+            let owned = bind(a.get(0).unwrap())?;
+            let v = owned.v();
             let n = match v.get() {
                 Some(Obj::Str(s)) => str_len(s),
                 Some(Obj::List(items)) => items.borrow().len(),
@@ -258,7 +259,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
                 Some(Obj::Range(x, y)) => (y - x + 1).max(0) as usize,
                 _ => return Err(expects("len", "str, list, map, set", v, span)),
             };
-            Ok(V::int(n as i64))
+            Ok(Val::int(n as i64))
         }
         B_RANGE => {
             let start = a.get(0).unwrap();
@@ -283,7 +284,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
                     if (st_ > 0 && cur < e) || (st_ < 0 && cur > e) {
                         let v = cur;
                         cur = cur.saturating_add(st_);
-                        Some(Ok(V::int(v)))
+                        Some(Ok(Val::int(v)))
                     } else {
                         None
                     }
@@ -311,29 +312,29 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_FAIL => {
             let m = a.get(0).unwrap();
             if let Some(Obj::Error(_)) = m.get() {
-                return Err(raise_value(m));
+                return Err(raise_value(Val::from(m)));
             }
-            let text = show(bind(m)?);
-            Err(raise_error("Error", text, NONE, span))
+            let text = show(bind(m)?.v());
+            Err(raise_error("Error", text, Val::none(), span))
         }
         B_VALIDATE => validate(a.get(0).unwrap(), a.get(1).unwrap(), a.get(2), span),
         B_DECIMAL => conv_decimal(a.get(0).unwrap(), span),
         B_FLOAT => conv_float(a.get(0).unwrap(), span),
         B_INT => conv_int(a.get(0).unwrap(), span),
-        B_STR => Ok(V::str(show(bind(a.get(0).unwrap())?))),
+        B_STR => Ok(Val::str(show(bind(a.get(0).unwrap())?.v()))),
         B_READ => {
             let path = str_arg("read", a.get(0).unwrap(), span)?;
             let text = data::read_text(path, span)?;
             if path.to_lowercase().ends_with(".csv") {
                 return Ok(data::parse_csv(&text));
             }
-            Ok(V::str(text))
+            Ok(Val::str(text))
         }
         B_WRITE => {
             let path = str_arg("write", a.get(0).unwrap(), span)?;
-            let content = show(bind(a.get(1).unwrap())?);
+            let content = show(bind(a.get(1).unwrap())?.v());
             data::write_text(path, &content, span)?;
-            Ok(NONE)
+            Ok(Val::none())
         }
         B_READ_LINES => {
             let path = str_arg("read_lines", a.get(0).unwrap(), span)?;
@@ -342,8 +343,8 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_SAVE => {
             let value = bind(a.get(0).unwrap())?;
             let path = str_arg("save", a.get(1).unwrap(), span)?;
-            data::save(value, path, span)?;
-            Ok(NONE)
+            data::save(value.v(), path, span)?;
+            Ok(Val::none())
         }
         B_JSON_PARSE => {
             let text = a.get(0).unwrap();
@@ -359,7 +360,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
     }
 }
 
-fn round(value: V, digits: V, mode: Option<V>, span: u32) -> R<V> {
+fn round(value: V, digits: V, mode: Option<V>, span: u32) -> R<Val> {
     let rounding = match mode.map(|m| m.get()) {
         None => Rounding::HalfEven,
         Some(Some(Obj::Symbol("half_even"))) => Rounding::HalfEven,
@@ -371,11 +372,11 @@ fn round(value: V, digits: V, mode: Option<V>, span: u32) -> R<V> {
     };
     match value.tag {
         T_BOOL => Err(expects("round", "int, float, decimal, money", value, span)),
-        T_INT => Ok(value),
+        T_INT => Ok(Val::simple(value)),
         T_FLOAT | T_LITFLOAT => {
             let f = value.as_float().unwrap();
             if !f.is_finite() {
-                return Ok(V::float(f));
+                return Ok(Val::float(f));
             }
             let d = if rounding == Rounding::HalfUp {
                 Dec::parse(&format_float(f)).unwrap()
@@ -383,8 +384,8 @@ fn round(value: V, digits: V, mode: Option<V>, span: u32) -> R<V> {
                 exact_from_f64(f).unwrap()
             };
             match d.quantize(-n, rounding) {
-                Some(q) => Ok(V::float(q.to_f64())),
-                None => Ok(V::float(f)),
+                Some(q) => Ok(Val::float(q.to_f64())),
+                None => Ok(Val::float(f)),
             }
         }
         _ => match value.get() {
@@ -402,7 +403,7 @@ fn round(value: V, digits: V, mode: Option<V>, span: u32) -> R<V> {
 }
 
 /// Split money without losing cents: the remainder goes to the first parts.
-fn split(amount: V, parts: V, span: u32) -> R<V> {
+fn split(amount: V, parts: V, span: u32) -> R<Val> {
     let Some(Obj::Money(d, cur)) = amount.get() else {
         return Err(expects("split", "money", amount, span));
     };
@@ -429,7 +430,7 @@ fn split(amount: V, parts: V, span: u32) -> R<V> {
     Ok(list(out))
 }
 
-fn conv_decimal(v: V, span: u32) -> R<V> {
+fn conv_decimal(v: V, span: u32) -> R<Val> {
     if let Some(Obj::Money(d, _)) = v.get() {
         return Ok(decimal(d.clone()));
     }
@@ -442,26 +443,26 @@ fn conv_decimal(v: V, span: u32) -> R<V> {
     }
 }
 
-fn conv_float(v: V, span: u32) -> R<V> {
+fn conv_float(v: V, span: u32) -> R<Val> {
     if v.as_str().is_some() {
         return Err(bad_arg("float", msg("detail.use_validate", &[("type", "float".into())]), span));
     }
     match v.tag {
-        T_INT => Ok(V::float(v.bits as i64 as f64)),
-        T_FLOAT | T_LITFLOAT => Ok(v.plain()),
+        T_INT => Ok(Val::float(v.bits as i64 as f64)),
+        T_FLOAT | T_LITFLOAT => Ok(Val::simple(v.plain())),
         _ => match v.get() {
-            Some(Obj::Decimal(d)) | Some(Obj::Money(d, _)) => Ok(V::float(d.to_f64())),
+            Some(Obj::Decimal(d)) | Some(Obj::Money(d, _)) => Ok(Val::float(d.to_f64())),
             _ => Err(expects("float", "int, decimal", v, span)),
         },
     }
 }
 
-fn conv_int(v: V, span: u32) -> R<V> {
+fn conv_int(v: V, span: u32) -> R<Val> {
     if v.as_str().is_some() {
         return Err(bad_arg("int", msg("detail.use_validate", &[("type", "int".into())]), span));
     }
     match v.tag {
-        T_INT => Ok(v),
+        T_INT => Ok(Val::simple(v)),
         T_FLOAT | T_LITFLOAT => {
             let f = v.as_float().unwrap();
             if !f.is_finite() {
@@ -471,10 +472,10 @@ fn conv_int(v: V, span: u32) -> R<V> {
             if t < -9.223372036854776e18 || t >= 9.223372036854776e18 {
                 return Err(failure("Overflow", span, &[]));
             }
-            Ok(V::int(t as i64))
+            Ok(Val::int(t as i64))
         }
         _ => match v.get() {
-            Some(Obj::Decimal(d)) => d.to_i64().map(V::int).ok_or_else(|| failure("Overflow", span, &[])),
+            Some(Obj::Decimal(d)) => d.to_i64().map(Val::int).ok_or_else(|| failure("Overflow", span, &[])),
             _ => Err(expects("int", "float, decimal", v, span)),
         },
     }
@@ -514,8 +515,9 @@ pub fn is_float_text(t: &str, allow_plus: bool) -> bool {
 
 /// `validate(value, as: type, range: a..b)?` turns external text into a
 /// checked value (section 9).
-fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<V> {
-    let value = bind(value)?;
+fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
+    let owned = bind(value)?;
+    let value = owned.v();
     let tname = match target.get() {
         Some(Obj::Type(t)) => crate::fmt::type_ref_name(t),
         Some(Obj::Variant(v)) => v.name.clone(),
@@ -527,7 +529,7 @@ fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<V> {
     let invalid = || {
         failure("InvalidValue", span, &[("detail", msg("detail.not_a", &[("value", show(value)), ("type", tname.clone())]))])
     };
-    let mut result = value;
+    let mut result = owned.clone();
     match (target.get(), value.as_str()) {
         (Some(Obj::Type(TypeRef::Builtin(b))), Some(text)) => {
             let text = text.trim();
@@ -537,7 +539,7 @@ fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<V> {
                         return Err(invalid());
                     }
                     match text.parse::<i64>() {
-                        Ok(i) => V::int(i),
+                        Ok(i) => Val::int(i),
                         Err(_) => return Err(failure("Overflow", span, &[])),
                     }
                 }
@@ -545,7 +547,7 @@ fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<V> {
                     if !is_float_text(text, true) {
                         return Err(invalid());
                     }
-                    V::float(text.parse::<f64>().unwrap_or(f64::NAN))
+                    Val::float(text.parse::<f64>().unwrap_or(f64::NAN))
                 }
                 "decimal" => {
                     if !is_float_text(text, true) {
@@ -554,11 +556,11 @@ fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<V> {
                     decimal(Dec::parse(text).unwrap())
                 }
                 "bool" => match text {
-                    "true" => V::bool(true),
-                    "false" => V::bool(false),
+                    "true" => Val::bool(true),
+                    "false" => Val::bool(false),
                     _ => return Err(invalid()),
                 },
-                "str" => value,
+                "str" => owned.clone(),
                 _ => return Err(invalid()),
             };
         }
@@ -573,8 +575,8 @@ fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<V> {
         let Some(Obj::Range(lo, hi)) = r.get() else {
             return Err(expects("validate", "range", r, span));
         };
-        if !crate::coll::in_range(result, *lo, *hi) {
-            let detail = msg("detail.out_of_range", &[("value", show(result)), ("range", format!("{lo}..{hi}"))]);
+        if !crate::coll::in_range(result.v(), *lo, *hi) {
+            let detail = msg("detail.out_of_range", &[("value", show(result.v())), ("range", format!("{lo}..{hi}"))]);
             return Err(failure("InvalidValue", span, &[("detail", detail)]));
         }
     }
@@ -589,6 +591,7 @@ fn table(v: V) -> Option<(&'static str, &'static [&'static str])> {
         Obj::Set(_) => ("set", &["add", "count"]),
         Obj::Map(_) => ("map", &["keys", "values", "count"]),
         Obj::Str(_) => ("str", &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with"]),
+        Obj::Channel(_) => ("channel", &["send", "receive", "close"]),
         _ => return None,
     })
 }
@@ -604,16 +607,18 @@ fn missing(vtype: &str, name: &str, candidates: &[&str], span: u32) -> crate::st
 }
 
 /// Members of builtin values: `list.sum`, `text.upper`, `json.parse`...
-pub fn member(obj: V, name: &str, span: u32) -> R<V> {
+pub fn member(obj: V, name: &str, span: u32) -> R<Val> {
     if let Some(Obj::Namespace(ns)) = obj.get() {
         return match (*ns, name) {
-            ("json", "parse") => Ok(V::obj(Obj::Builtin(B_JSON_PARSE))),
-            ("csv", "parse") => Ok(V::obj(Obj::Builtin(B_CSV_PARSE))),
+            ("json", "parse") => Ok(Val::new(Obj::Builtin(B_JSON_PARSE))),
+            ("csv", "parse") => Ok(Val::new(Obj::Builtin(B_CSV_PARSE))),
             _ => Err(missing(ns, name, &["parse"], span)),
         };
     }
     match table(obj) {
-        Some((_, names)) if names.contains(&name) => Ok(V::obj(Obj::BuiltinMethod(obj, crate::num::intern(name)))),
+        Some((_, names)) if names.contains(&name) => {
+            Ok(Val::new(Obj::BuiltinMethod(Val::from(obj), crate::num::intern(name))))
+        }
         Some((_, names)) => Err(missing(&type_name(obj), name, names, span)),
         None => Err(missing(&type_name(obj), name, &[], span)),
     }
@@ -638,7 +643,10 @@ fn arity(name: &str, args: &[V], names: &[Option<&str>], n: usize, span: u32) ->
     Ok(())
 }
 
-pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>], span: u32) -> R<V> {
+pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    if let Some(Obj::Channel(c)) = obj.get() {
+        return crate::sync::call_method(c, obj, name, args, names, span);
+    }
     let max = match name {
         "add" | "starts_with" | "ends_with" | "split" => 1,
         "replace" => 2,
@@ -659,29 +667,36 @@ pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>
             let items = collect_vec(obj, span)?;
             total(&items, span)
         }
-        (Obj::List(_) | Obj::Lazy(_) | Obj::Set(_), "count") => Ok(V::int(collect_vec(obj, span)?.len() as i64)),
-        (Obj::Map(m), "count") => Ok(V::int(m.borrow().entries.len() as i64)),
+        (Obj::List(_) | Obj::Lazy(_) | Obj::Set(_), "count") => Ok(Val::int(collect_vec(obj, span)?.len() as i64)),
+        (Obj::Map(m), "count") => Ok(Val::int(m.borrow().entries.len() as i64)),
         (Obj::Lazy(_), "add") => Err(expects("add", "list", obj, span)),
+        // the compiled code makes the collection unique before changing it
+        // through its place; a value seen by other owners (a temporary
+        // copy) is not changed
         (Obj::List(items), "add") => {
-            let v = bind(args[0])?;
-            items.borrow_mut().push(v);
-            Ok(NONE)
+            let v = crate::coll::stored_in(obj, bind(args[0])?);
+            if owners(obj) <= 1 {
+                items.borrow_mut().push(v);
+            }
+            Ok(Val::none())
         }
         (Obj::Set(s), "add") => {
             let k = hashable(args[0], span)?;
-            s.borrow_mut().insert(k, args[0]);
-            Ok(NONE)
+            if owners(obj) <= 1 {
+                s.borrow_mut().insert(k, Val::from(args[0]));
+            }
+            Ok(Val::none())
         }
-        (Obj::Map(m), "keys") => Ok(list(m.borrow().entries.iter().map(|(k, _)| *k).collect())),
-        (Obj::Map(m), "values") => Ok(list(m.borrow().entries.iter().map(|(_, v)| *v).collect())),
-        (Obj::Str(s), "upper") => Ok(V::str(s.to_uppercase())),
-        (Obj::Str(s), "lower") => Ok(V::str(s.to_lowercase())),
-        (Obj::Str(s), "trim") => Ok(V::str(s.trim())),
+        (Obj::Map(m), "keys") => Ok(list(m.borrow().entries.iter().map(|(k, _)| k.clone()).collect())),
+        (Obj::Map(m), "values") => Ok(list(m.borrow().entries.iter().map(|(_, v)| v.clone()).collect())),
+        (Obj::Str(s), "upper") => Ok(Val::str(s.to_uppercase())),
+        (Obj::Str(s), "lower") => Ok(Val::str(s.to_lowercase())),
+        (Obj::Str(s), "trim") => Ok(Val::str(s.trim())),
         (Obj::Str(s), "split") => {
-            let parts: Vec<V> = match args.first() {
-                None => s.split_whitespace().map(V::str).collect(),
+            let parts: Vec<Val> = match args.first() {
+                None => s.split_whitespace().map(Val::str).collect(),
                 Some(sep) => match sep.as_str() {
-                    Some(sep) if !sep.is_empty() => s.split(sep).map(V::str).collect(),
+                    Some(sep) if !sep.is_empty() => s.split(sep).map(Val::str).collect(),
                     _ => return Err(expects("split", "str", *sep, span)),
                 },
             };
@@ -690,16 +705,16 @@ pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>
         (Obj::Str(s), "replace") => {
             let a = str_arg("replace", args[0], span)?;
             let b = str_arg("replace", args[1], span)?;
-            Ok(V::str(s.replace(a, b)))
+            Ok(Val::str(s.replace(a, b)))
         }
-        (Obj::Str(s), "starts_with") => Ok(V::bool(s.starts_with(str_arg("starts_with", args[0], span)?))),
-        (Obj::Str(s), "ends_with") => Ok(V::bool(s.ends_with(str_arg("ends_with", args[0], span)?))),
+        (Obj::Str(s), "starts_with") => Ok(Val::bool(s.starts_with(str_arg("starts_with", args[0], span)?))),
+        (Obj::Str(s), "ends_with") => Ok(Val::bool(s.ends_with(str_arg("ends_with", args[0], span)?))),
         _ => Err(missing(&type_name(obj), name, &[], span)),
     }
 }
 
 /// Builtin names (types, error kinds, currencies, constants) as values.
-pub fn named_value(name: &str) -> Option<V> {
+pub fn named_value(name: &str) -> Option<Val> {
     let v = match name {
         "int" | "float" | "decimal" | "money" | "str" | "bool" | "list" | "map" => {
             Obj::Type(TypeRef::Builtin(crate::num::intern(name)))
@@ -710,15 +725,16 @@ pub fn named_value(name: &str) -> Option<V> {
         _ if crate::num::is_currency(name) => Obj::Currency(crate::num::intern(name)),
         _ => return None,
     };
-    Some(V::obj(v))
+    Some(Val::new(v))
 }
 
 pub fn emit(name: &str, args: &[V], span: u32) -> R<()> {
-    let handlers = st().handlers.get(name).cloned().unwrap_or_default();
-    let mut bound = Vec::with_capacity(args.len());
+    let handlers = registry().read().unwrap().handlers.get(name).cloned().unwrap_or_default();
+    let mut owned = Vec::with_capacity(args.len());
     for a in args {
-        bound.push(bind(*a)?);
+        owned.push(bind(*a)?);
     }
+    let bound = raw_all(&owned);
     for h in handlers {
         let Some(Obj::Func(f)) = h.get() else { continue };
         let n = f.info.params().len();
@@ -731,11 +747,11 @@ pub fn emit(name: &str, args: &[V], span: u32) -> R<()> {
                 span,
             ));
         }
-        call_value(h, &bound, span)?;
+        call_value(h.v(), &bound, span)?;
     }
     Ok(())
 }
 
 pub fn on(name: &str, handler: V) {
-    st().handlers.entry(name.to_string()).or_default().push(handler);
+    registry().write().unwrap().handlers.entry(name.to_string()).or_default().push(Val::from(handler));
 }

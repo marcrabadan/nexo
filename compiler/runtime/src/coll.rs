@@ -1,8 +1,6 @@
 //! Collections: map keys and set elements (D35), indexing (D64),
 //! membership (`in`) and iteration.
 
-use std::cell::RefCell;
-
 use nexo_diag::Diagnostic;
 
 use crate::dec::exact_from_f64;
@@ -55,10 +53,10 @@ pub fn hashable(v: V, span: u32) -> R<Key> {
 
 impl NMap {
     pub fn get(&self, k: &Key) -> Option<V> {
-        self.index.get(k).map(|i| self.entries[*i].1)
+        self.index.get(k).map(|i| self.entries[*i].1.v())
     }
 
-    pub fn insert(&mut self, key: Key, kv: V, value: V) {
+    pub fn insert(&mut self, key: Key, kv: Val, value: Val) {
         match self.index.get(&key) {
             Some(i) => self.entries[*i].1 = value,
             None => {
@@ -70,7 +68,7 @@ impl NMap {
 }
 
 impl NSet {
-    pub fn insert(&mut self, key: Key, v: V) {
+    pub fn insert(&mut self, key: Key, v: Val) {
         if !self.index.contains_key(&key) {
             self.index.insert(key, self.items.len());
             self.items.push(v.plain());
@@ -78,26 +76,26 @@ impl NSet {
     }
 }
 
-pub fn new_map() -> V {
-    V::obj(Obj::Map(RefCell::new(NMap::default())))
+pub fn new_map() -> Val {
+    Val::new(Obj::Map(Mut::new(NMap::default())))
 }
 
-pub fn new_set(items: &[V], span: u32) -> R<V> {
+pub fn new_set(items: &[V], span: u32) -> R<Val> {
     let mut s = NSet::default();
     for i in items {
         let k = hashable(*i, span)?;
-        s.insert(k, *i);
+        s.insert(k, Val::from(*i));
     }
-    Ok(V::obj(Obj::Set(RefCell::new(s))))
+    Ok(Val::new(Obj::Set(Mut::new(s))))
 }
 
-pub fn map_from(pairs: Vec<(V, V)>) -> V {
+pub fn map_from(pairs: Vec<(Val, Val)>) -> Val {
     let mut m = NMap::default();
     for (k, v) in pairs {
-        let key = key_of(k).expect("simple key");
+        let key = key_of(k.v()).expect("simple key");
         m.insert(key, k, v);
     }
-    V::obj(Obj::Map(RefCell::new(m)))
+    Val::new(Obj::Map(Mut::new(m)))
 }
 
 pub fn str_len(s: &str) -> usize {
@@ -106,12 +104,13 @@ pub fn str_len(s: &str) -> usize {
 
 /// `x[i]`: lists and texts by position (from 0), maps by key (a missing
 /// key gives none).
-pub fn get_index(obj: V, index: V, span: u32) -> R<V> {
-    let obj = crate::pipe::force(obj)?;
+pub fn get_index(obj: V, index: V, span: u32) -> R<Val> {
+    let forced = crate::pipe::force(obj)?;
+    let obj = forced.v();
     match obj.get() {
         Some(Obj::Map(m)) => {
             let k = hashable(index, span)?;
-            Ok(m.borrow().get(&k).unwrap_or(NONE))
+            Ok(Val::from(m.borrow().get(&k).unwrap_or(NONE)))
         }
         Some(Obj::List(items)) => {
             let Some(i) = index.as_int() else {
@@ -121,7 +120,7 @@ pub fn get_index(obj: V, index: V, span: u32) -> R<V> {
             if i < 0 || i as usize >= items.len() {
                 return Err(out_of_range(i, items.len(), span));
             }
-            Ok(items[i as usize])
+            Ok(items[i as usize].clone())
         }
         Some(Obj::Str(s)) => {
             let Some(i) = index.as_int() else {
@@ -131,7 +130,7 @@ pub fn get_index(obj: V, index: V, span: u32) -> R<V> {
             if i < 0 || i as usize >= n {
                 return Err(out_of_range(i, n, span));
             }
-            Ok(V::str(s.chars().nth(i as usize).unwrap().to_string()))
+            Ok(Val::str(s.chars().nth(i as usize).unwrap().to_string()))
         }
         _ if obj.is_none() => Err(diag(Diagnostic::new_spanless("none_member").arg("name", "[]"), span)),
         _ => Err(diag(Diagnostic::new_spanless("not_indexable").arg("vtype", type_name(obj)), span)),
@@ -146,12 +145,24 @@ fn out_of_range(i: i64, size: usize, span: u32) -> crate::state::Fail {
     failure("OutOfRange", span, &[("index", i.to_string()), ("size", size.to_string())])
 }
 
+/// A value to store in `container`: the container itself is stored as a
+/// copy of what it is now (`xs.add(xs)`), so it never contains itself.
+pub fn stored_in(container: V, value: Val) -> Val {
+    if value.tag == T_OBJ && value.bits == container.bits {
+        if let Some(c) = crate::cow::shallow_copy(value.v()) {
+            return c;
+        }
+    }
+    value
+}
+
+/// `obj[index] = value`. The caller made `obj` unique (copy-on-write).
 pub fn set_index(obj: V, index: V, value: V, span: u32) -> R<()> {
-    let value = crate::pipe::bind(value)?;
+    let value = stored_in(obj, crate::pipe::bind(value)?);
     match obj.get() {
         Some(Obj::Map(m)) => {
             let k = hashable(index, span)?;
-            m.borrow_mut().insert(k, index, value);
+            m.borrow_mut().insert(k, Val::from(index), value);
             Ok(())
         }
         Some(Obj::List(items)) => {
@@ -161,7 +172,7 @@ pub fn set_index(obj: V, index: V, value: V, span: u32) -> R<()> {
                     span,
                 ));
             };
-            let mut items = items.borrow_mut();
+            let items = items.borrow_mut();
             if i < 0 || i as usize >= items.len() {
                 return Err(out_of_range(i, items.len(), span));
             }
@@ -169,6 +180,46 @@ pub fn set_index(obj: V, index: V, value: V, span: u32) -> R<()> {
             Ok(())
         }
         _ => Err(diag(Diagnostic::new_spanless("not_indexable").arg("vtype", type_name(obj)), span)),
+    }
+}
+
+/// Pointer to the element `container[index]` for a change through it
+/// (`xs[0].add(1)`, `m[k][i] = v`): the container is made unique first,
+/// then the element. None when the element is not stored in a container
+/// (a missing map key, a character of a text): `scratch` then holds it.
+pub fn element_slot(container: V, index: V, scratch: &mut Val, span: u32) -> R<Option<*mut V>> {
+    match container.get() {
+        Some(Obj::Map(m)) => {
+            let k = hashable(index, span)?;
+            let m = m.borrow_mut();
+            match m.index.get(&k) {
+                Some(i) => {
+                    let slot = &mut m.entries[*i].1;
+                    crate::cow::make_unique_val(slot);
+                    Ok(Some(slot as *mut Val as *mut V))
+                }
+                None => {
+                    *scratch = Val::none();
+                    Ok(None)
+                }
+            }
+        }
+        Some(Obj::List(items)) => {
+            let Some(i) = index.as_int() else {
+                return Err(bad_index(container, index, span));
+            };
+            let items = items.borrow_mut();
+            if i < 0 || i as usize >= items.len() {
+                return Err(out_of_range(i, items.len(), span));
+            }
+            let slot = &mut items[i as usize];
+            crate::cow::make_unique_val(slot);
+            Ok(Some(slot as *mut Val as *mut V))
+        }
+        _ => {
+            *scratch = get_index(container, index, span)?;
+            Ok(None)
+        }
     }
 }
 
@@ -189,7 +240,7 @@ pub fn contains(container: V, item: V, span: u32) -> R<bool> {
         Some(Obj::List(_) | Obj::Lazy(_)) => {
             let mut it = crate::pipe::iterate(container, span)?;
             while let Some(x) = it.next() {
-                if equals(item, x?, span)? {
+                if equals(item, x?.v(), span)? {
                     return Ok(true);
                 }
             }
@@ -207,29 +258,29 @@ pub fn in_range(item: V, a: i64, b: i64) -> bool {
 }
 
 /// Make a deep copy (for `old()`): collections and records are copied.
-pub fn deep_copy(v: V) -> V {
+pub fn deep_copy(v: V) -> Val {
     match v.get() {
-        Some(Obj::List(items)) => list(items.borrow().iter().map(|x| deep_copy(*x)).collect()),
+        Some(Obj::List(items)) => list(items.borrow().iter().map(|x| deep_copy(x.v())).collect()),
         Some(Obj::Map(m)) => {
             let m = m.borrow();
             let mut out = NMap::default();
             for (k, val) in &m.entries {
-                out.insert(key_of(*k).unwrap(), *k, deep_copy(*val));
+                out.insert(key_of(k.v()).unwrap(), k.clone(), deep_copy(val.v()));
             }
-            V::obj(Obj::Map(RefCell::new(out)))
+            Val::new(Obj::Map(Mut::new(out)))
         }
-        Some(Obj::Set(s)) => {
-            let s = s.borrow();
-            V::obj(Obj::Set(RefCell::new(NSet { items: s.items.clone(), index: s.index.clone() })))
-        }
-        Some(Obj::Record(r)) => V::obj(Obj::Record(Record {
+        Some(Obj::Set(s)) => Val::new(Obj::Set(Mut::new(s.borrow().clone()))),
+        Some(Obj::Record(r)) => Val::new(Obj::Record(Record {
             ty: r.ty,
-            fields: RefCell::new(r.fields.borrow().iter().map(|x| deep_copy(*x)).collect()),
+            fields: Mut::new(
+                r.fields.borrow().iter().map(|x| if x.tag == T_WEAK { x.clone() } else { deep_copy(x.v()) }).collect(),
+            ),
+            birth: crate::state::stamp(),
         })),
-        Some(Obj::VariantValue(vv)) => V::obj(Obj::VariantValue(VariantValue {
+        Some(Obj::VariantValue(vv)) => Val::new(Obj::VariantValue(VariantValue {
             variant: vv.variant,
-            fields: vv.fields.iter().map(|x| deep_copy(*x)).collect(),
+            fields: vv.fields.iter().map(|x| deep_copy(x.v())).collect(),
         })),
-        _ => v,
+        _ => Val::from(v),
     }
 }

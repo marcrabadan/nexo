@@ -396,7 +396,8 @@ to the nearest `try`. `nexo file.nexo` builds with `-O1` and runs;
 `nexo build --release` uses `-O2`.
 
 **D70. Memory in phase 1.** Heap values are never freed. The memory model
-of section 7 (ownership, copy-on-write, reference counting) is phase 2.
+of section 7 (ownership, copy-on-write, reference counting) is phase 2
+(D76).
 
 **D71. Module features are compile errors.** `use`, module blocks,
 annotations, type settings, `when`, `every` and `lifecycle` (D65) cannot be
@@ -420,3 +421,26 @@ found them when the line ran).
 **D75. Language of messages.** `--lang` is fixed when the program is
 compiled: a native program reports its errors in the language it was
 compiled with.
+
+## Phase 2: memory and concurrency (section 25)
+
+**D76. Reference counting everywhere.** Section 7 allows reference counting
+"wherever the compiler cannot prove a single owner". Phase 2 counts the
+references of every heap value (texts, collections, records, functions,
+captured variables) and frees a value when its last owner lets it go; the
+count is atomic so values can be read by several tasks at once (D80). Each
+function owns the values of its variables and releases them when it ends,
+also when it ends with an error. Proving single owners (rule 3) is an
+optimisation left for later; it does not change what a program does.
+Constants of the program (literal texts and units, types, variants) are
+never freed. `NEXO_LEAKCHECK=1` makes a compiled program release
+everything at the end and report the values that were not freed; the
+conformance suite, the examples and the differential programs run with it
+and must leave nothing ("no leaks in the test suite", section 25).
+
+**D77. A function that calls itself does not capture itself.** A nested
+function that calls itself by name would hold a reference to the cell
+that holds it: a cycle that is never freed. A call of a function defined
+once to its own name uses the function itself instead. Two nested
+functions that call each other still form a cycle and are freed only when
+the program ends.

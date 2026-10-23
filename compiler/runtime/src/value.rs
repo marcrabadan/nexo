@@ -1,13 +1,21 @@
-//! Runtime values.
+//! Runtime values and the memory model of section 7.
 //!
 //! A value is two machine words, `{tag, bits}`, passed in registers by the
 //! compiled code. Small values (none, bool, int, float) live in the words;
-//! everything else is a pointer to a heap object. Phase 1 never frees heap
-//! objects: the memory model of section 7 (ownership, copy-on-write and
-//! reference counting) is phase 2.
+//! everything else is a pointer to a heap object with a reference count
+//! (rule 4). Counts are atomic, so values can travel between the tasks of
+//! a `parallel` block. Collections are values: they are copied only when
+//! they are changed while shared (rule 2, copy-on-write, see `cow.rs`).
+//!
+//! `V` is a borrowed value (Copy); `Val` owns one reference and releases it
+//! when dropped. Containers hold `Val`s. The compiled code follows the same
+//! convention: runtime functions borrow their arguments and return owned
+//! values.
 
-use std::cell::RefCell;
+use std::cell::{Cell as StdCell, RefCell, UnsafeCell};
 use std::collections::HashMap;
+use std::mem::ManuallyDrop;
+use std::sync::atomic::{fence, AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 use crate::dec::Dec;
 use crate::types::{EnumType, RecordType, TraitType, TypeRef, VariantInfo};
@@ -24,6 +32,9 @@ pub const T_LITFLOAT: u64 = 5;
 pub const T_UNDEF: u64 = 6;
 /// An argument that was not passed (its default is evaluated by the callee).
 pub const T_MISSING: u64 = 7;
+/// A `weak` field of a record: a reference that does not keep its target
+/// alive. It never leaves the runtime (reading the field upgrades it).
+pub const T_WEAK: u64 = 8;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -50,6 +61,274 @@ pub const NONE: V = V { tag: T_NONE, bits: 0 };
 pub const UNDEF: V = V { tag: T_UNDEF, bits: 0 };
 pub const MISSING: V = V { tag: T_MISSING, bits: 0 };
 
+// ------------------------------------------------------------ heap objects
+
+/// Every heap object starts with its counts. `rc` counts owners; `weak`
+/// counts weak references plus one held by all the owners together (as
+/// Rust's `Arc`): the object is destroyed when `rc` reaches 0 and its
+/// memory is returned when `weak` does.
+#[repr(C)]
+pub struct Heap {
+    pub rc: AtomicU64,
+    pub weak: AtomicU64,
+    pub obj: ManuallyDrop<Obj>,
+}
+
+/// Objects created once for the whole program (constants of the compiled
+/// code, types, variants) are never freed.
+pub const IMMORTAL: u64 = 1 << 62;
+
+static LEAKCHECK: AtomicBool = AtomicBool::new(false);
+static LIVE: AtomicI64 = AtomicI64::new(0);
+
+/// Count live objects (NEXO_LEAKCHECK=1): at the end of the program every
+/// object must have been freed.
+pub fn enable_leakcheck() {
+    LEAKCHECK.store(true, Ordering::Relaxed);
+}
+
+pub fn leakcheck_enabled() -> bool {
+    LEAKCHECK.load(Ordering::Relaxed)
+}
+
+pub fn live_objects() -> i64 {
+    LIVE.load(Ordering::SeqCst)
+}
+
+fn count(delta: i64) {
+    if LEAKCHECK.load(Ordering::Relaxed) {
+        LIVE.fetch_add(delta, Ordering::Relaxed);
+    }
+}
+
+fn alloc(o: Obj, rc: u64) -> *mut Heap {
+    Box::into_raw(Box::new(Heap { rc: AtomicU64::new(rc), weak: AtomicU64::new(1), obj: ManuallyDrop::new(o) }))
+}
+
+#[inline]
+fn heap(v: V) -> &'static Heap {
+    unsafe { &*(v.bits as *const Heap) }
+}
+
+/// Take one more reference.
+#[inline]
+pub fn retain(v: V) {
+    match v.tag {
+        T_OBJ => {
+            heap(v).rc.fetch_add(1, Ordering::Relaxed);
+        }
+        T_WEAK => {
+            heap(v).weak.fetch_add(1, Ordering::Relaxed);
+        }
+        _ => {}
+    }
+}
+
+/// Give a reference back; the last one destroys the object.
+#[inline]
+pub fn release(v: V) {
+    match v.tag {
+        T_OBJ => {
+            if heap(v).rc.fetch_sub(1, Ordering::Release) == 1 {
+                fence(Ordering::Acquire);
+                destroy_later(v.bits as *mut Heap);
+            }
+        }
+        T_WEAK => release_weak(v.bits as *mut Heap),
+        _ => {}
+    }
+}
+
+fn release_weak(h: *mut Heap) {
+    if unsafe { &*h }.weak.fetch_sub(1, Ordering::Release) == 1 {
+        fence(Ordering::Acquire);
+        unsafe { drop(Box::from_raw(h)) };
+    }
+}
+
+thread_local! {
+    static FREEING: StdCell<bool> = const { StdCell::new(false) };
+    static PENDING: RefCell<Vec<*mut Heap>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Destroy an object whose count reached 0. Its contents are released
+/// with a work list rather than recursively, so a long chain of records
+/// does not exhaust the stack.
+pub fn destroy_later(h: *mut Heap) {
+    if FREEING.with(|f| f.get()) {
+        PENDING.with(|p| p.borrow_mut().push(h));
+        return;
+    }
+    FREEING.with(|f| f.set(true));
+    destroy(h);
+    while let Some(next) = PENDING.with(|p| p.borrow_mut().pop()) {
+        destroy(next);
+    }
+    FREEING.with(|f| f.set(false));
+}
+
+fn destroy(h: *mut Heap) {
+    count(-1);
+    unsafe { ManuallyDrop::drop(&mut (*h).obj) };
+    release_weak(h);
+}
+
+/// A weak reference to a record (the value of a `weak` field).
+pub fn downgrade(v: V) -> V {
+    if v.tag != T_OBJ {
+        return v;
+    }
+    heap(v).weak.fetch_add(1, Ordering::Relaxed);
+    V { tag: T_WEAK, bits: v.bits }
+}
+
+/// The target of a weak reference, or none when it was freed.
+pub fn upgrade(w: V) -> Val {
+    if w.tag != T_WEAK {
+        return Val::from(w);
+    }
+    let rc = &heap(w).rc;
+    let mut n = rc.load(Ordering::Relaxed);
+    loop {
+        if n == 0 {
+            return Val::none();
+        }
+        match rc.compare_exchange_weak(n, n + 1, Ordering::Acquire, Ordering::Relaxed) {
+            Ok(_) => return Val(V { tag: T_OBJ, bits: w.bits }),
+            Err(x) => n = x,
+        }
+    }
+}
+
+/// Number of owners of a heap value (1: nobody else can see it).
+#[inline]
+pub fn owners(v: V) -> u64 {
+    if v.tag == T_OBJ {
+        heap(v).rc.load(Ordering::Acquire)
+    } else {
+        0
+    }
+}
+
+/// Never free this object (a constant of the program).
+pub fn make_immortal(v: V) {
+    if v.tag == T_OBJ && heap(v).rc.load(Ordering::Relaxed) < IMMORTAL {
+        heap(v).rc.store(IMMORTAL, Ordering::Relaxed);
+        count(-1);
+    }
+}
+
+// ------------------------------------------------------------- owned values
+
+/// An owned reference to a value.
+#[repr(transparent)]
+#[derive(Debug)]
+pub struct Val(V);
+
+unsafe impl Send for Val {}
+unsafe impl Sync for Val {}
+
+impl Val {
+    pub fn new(o: Obj) -> Val {
+        count(1);
+        Val(V { tag: T_OBJ, bits: alloc(o, 1) as u64 })
+    }
+
+    /// An object that is never freed.
+    pub fn immortal(o: Obj) -> Val {
+        Val(V { tag: T_OBJ, bits: alloc(o, IMMORTAL) as u64 })
+    }
+
+    /// Own a value that is already owned (no new reference).
+    ///
+    /// # Safety
+    /// The caller gives its reference away.
+    pub unsafe fn adopt(v: V) -> Val {
+        Val(v)
+    }
+
+    /// A new reference to a borrowed value.
+    pub fn from(v: V) -> Val {
+        retain(v);
+        Val(v)
+    }
+
+    #[inline]
+    pub fn v(&self) -> V {
+        self.0
+    }
+
+    /// Give the reference to the caller (the compiled code).
+    pub fn into_raw(self) -> V {
+        let v = self.0;
+        std::mem::forget(self);
+        v
+    }
+
+    pub const fn simple(v: V) -> Val {
+        Val(v)
+    }
+
+    pub const fn none() -> Val {
+        Val(NONE)
+    }
+
+    pub fn int(i: i64) -> Val {
+        Val(V::int(i))
+    }
+
+    pub fn float(f: f64) -> Val {
+        Val(V::float(f))
+    }
+
+    pub fn bool(b: bool) -> Val {
+        Val(V::bool(b))
+    }
+
+    pub fn str(s: impl Into<String>) -> Val {
+        Val::new(Obj::Str(s.into()))
+    }
+
+    /// Drop the literal tag: the value is now an ordinary float.
+    pub fn plain(self) -> Val {
+        if self.0.tag == T_LITFLOAT {
+            Val(V::float(self.0.litfloat().value))
+        } else {
+            self
+        }
+    }
+}
+
+impl Clone for Val {
+    fn clone(&self) -> Val {
+        Val::from(self.0)
+    }
+}
+
+impl Drop for Val {
+    #[inline]
+    fn drop(&mut self) {
+        release(self.0);
+    }
+}
+
+impl std::ops::Deref for Val {
+    type Target = V;
+    fn deref(&self) -> &V {
+        &self.0
+    }
+}
+
+/// Own every value of a slice.
+pub fn own_all(vs: &[V]) -> Vec<Val> {
+    vs.iter().map(|v| Val::from(*v)).collect()
+}
+
+/// Borrow every value of a slice.
+pub fn raw_all(vs: &[Val]) -> Vec<V> {
+    vs.iter().map(|v| v.v()).collect()
+}
+
 impl V {
     pub fn int(i: i64) -> V {
         V { tag: T_INT, bits: i as u64 }
@@ -61,19 +340,6 @@ impl V {
 
     pub fn bool(b: bool) -> V {
         V { tag: T_BOOL, bits: b as u64 }
-    }
-
-    pub fn obj(o: Obj) -> V {
-        let p: &'static Obj = Box::leak(Box::new(o));
-        V { tag: T_OBJ, bits: p as *const Obj as u64 }
-    }
-
-    pub fn from_static(o: &'static Obj) -> V {
-        V { tag: T_OBJ, bits: o as *const Obj as u64 }
-    }
-
-    pub fn str(s: impl Into<String>) -> V {
-        V::obj(Obj::Str(s.into()))
     }
 
     pub fn is_none(self) -> bool {
@@ -102,7 +368,7 @@ impl V {
 
     pub fn get(self) -> Option<&'static Obj> {
         if self.tag == T_OBJ {
-            Some(unsafe { &*(self.bits as *const Obj) })
+            Some(&heap(self).obj)
         } else {
             None
         }
@@ -129,16 +395,79 @@ impl V {
     }
 }
 
+/// Interior mutability without run-time checks. A value is only changed
+/// when its owner holds the only reference (copy-on-write) or, for
+/// records, by the task that created it (see `cow::check_write`), so no
+/// two threads touch the same contents at once.
+pub struct Mut<T>(UnsafeCell<T>);
+
+unsafe impl<T> Sync for Mut<T> {}
+unsafe impl<T> Send for Mut<T> {}
+
+impl<T> Mut<T> {
+    pub fn new(t: T) -> Mut<T> {
+        Mut(UnsafeCell::new(t))
+    }
+
+    #[inline]
+    pub fn borrow(&self) -> &T {
+        unsafe { &*self.0.get() }
+    }
+
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    pub fn borrow_mut(&self) -> &mut T {
+        unsafe { &mut *self.0.get() }
+    }
+}
+
+impl<T: Default> Default for Mut<T> {
+    fn default() -> Mut<T> {
+        Mut::new(T::default())
+    }
+}
+
 /// A builtin function of the standard library (see stdlib.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuiltinId(pub u32);
 
 /// A captured variable: a heap cell shared by a function and its closures.
-pub type Cell = *mut V;
+/// The compiled code reads and writes `value` through the cell pointer.
+#[repr(C)]
+pub struct CellBox {
+    pub value: V,
+    pub rc: AtomicU64,
+}
 
-/// Signature of compiled functions: the closure and the arguments in
-/// parameter order (MISSING where a default applies), plus the call span.
-pub type Code = unsafe extern "C" fn(*const Func, *const V, u32) -> V;
+pub type Cell = *mut CellBox;
+
+pub fn new_cell() -> Cell {
+    count(1);
+    Box::into_raw(Box::new(CellBox { value: UNDEF, rc: AtomicU64::new(1) }))
+}
+
+pub fn retain_cell(c: Cell) {
+    if !c.is_null() {
+        unsafe { &*c }.rc.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+pub fn release_cell(c: Cell) {
+    if c.is_null() {
+        return;
+    }
+    if unsafe { &*c }.rc.fetch_sub(1, Ordering::Release) == 1 {
+        fence(Ordering::Acquire);
+        count(-1);
+        let b = unsafe { Box::from_raw(c) };
+        release(b.value);
+    }
+}
+
+/// Signature of compiled functions: the thread's state, the closure and
+/// the arguments in parameter order (MISSING where a default applies),
+/// plus the call span. Arguments are borrowed; the result is owned.
+pub type Code = unsafe extern "C" fn(*mut crate::state::Tls, *const Func, *const V, u32) -> V;
 
 #[repr(C)]
 pub struct NameRef {
@@ -171,6 +500,8 @@ pub struct FnInfo {
     pub params: *const ParamInfo,
 }
 
+unsafe impl Sync for FnInfo {}
+
 impl FnInfo {
     pub fn name(&self) -> &'static str {
         self.name.get().unwrap_or("lambda")
@@ -185,7 +516,7 @@ impl FnInfo {
 }
 
 /// A function value: compiled code, its description and the cells of the
-/// variables it captured.
+/// variables it captured. The compiled code reads `env` at offset 16.
 #[repr(C)]
 pub struct Func {
     pub code: Code,
@@ -194,10 +525,22 @@ pub struct Func {
     pub nenv: u64,
 }
 
+impl Drop for Func {
+    fn drop(&mut self) {
+        if self.nenv == 0 {
+            return;
+        }
+        let env = unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.env as *mut Cell, self.nenv as usize)) };
+        for c in env.iter() {
+            release_cell(*c);
+        }
+    }
+}
+
 pub struct ErrorValue {
     pub kind: String,
     pub message: String,
-    pub cause: V,
+    pub cause: Val,
     pub line: Option<u32>,
     pub span: Option<u32>,
     /// catalog key of the fix sentence
@@ -205,16 +548,16 @@ pub struct ErrorValue {
 }
 
 /// An insertion-ordered map. Keys are simple values (D35).
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct NMap {
-    pub entries: Vec<(V, V)>,
+    pub entries: Vec<(Val, Val)>,
     pub index: HashMap<Key, usize>,
 }
 
 /// An insertion-ordered set.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct NSet {
-    pub items: Vec<V>,
+    pub items: Vec<Val>,
     pub index: HashMap<Key, usize>,
 }
 
@@ -235,12 +578,14 @@ pub enum Key {
 
 pub struct Record {
     pub ty: &'static RecordType,
-    pub fields: RefCell<Vec<V>>,
+    pub fields: Mut<Vec<Val>>,
+    /// the task that created it may change it (see `cow::check_write`)
+    pub birth: u64,
 }
 
 pub struct VariantValue {
     pub variant: &'static VariantInfo,
-    pub fields: Vec<V>,
+    pub fields: Vec<Val>,
 }
 
 pub enum Obj {
@@ -249,9 +594,9 @@ pub enum Obj {
     Money(Dec, &'static str),
     /// a number with a unit: 30s, 5 km, 512 MB, 10%
     Quantity(Dec, &'static str),
-    List(RefCell<Vec<V>>),
-    Map(RefCell<NMap>),
-    Set(RefCell<NSet>),
+    List(Mut<Vec<Val>>),
+    Map(Mut<NMap>),
+    Set(Mut<NSet>),
     /// inclusive range
     Range(i64, i64),
     /// a lazy sequence: a pipeline or read_lines (section 6, rule 4)
@@ -266,8 +611,8 @@ pub enum Obj {
     Error(ErrorValue),
     Func(Func),
     /// a method bound to its receiver, or a builtin method of a value
-    Bound(V, V),
-    BuiltinMethod(V, &'static str),
+    Bound(Val, Val),
+    BuiltinMethod(Val, &'static str),
     Builtin(BuiltinId),
     Type(TypeRef),
     Currency(&'static str),
@@ -275,14 +620,18 @@ pub enum Obj {
     Symbol(&'static str),
     /// json, csv
     Namespace(&'static str),
+    /// a channel of `nexo.sync`
+    Channel(crate::sync::Channel),
+    /// `channel[T]`: makes channels
+    ChannelType,
 }
 
-pub fn list(items: Vec<V>) -> V {
-    V::obj(Obj::List(RefCell::new(items)))
+pub fn list(items: Vec<Val>) -> Val {
+    Val::new(Obj::List(Mut::new(items)))
 }
 
-pub fn decimal(d: Dec) -> V {
-    V::obj(Obj::Decimal(d))
+pub fn decimal(d: Dec) -> Val {
+    Val::new(Obj::Decimal(d))
 }
 
 pub fn record_type_name(r: &RecordType) -> &str {

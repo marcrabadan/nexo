@@ -158,6 +158,9 @@ pub struct Resolution {
     pub type_ids: HashMap<u32, u32>,
     pub types: HashMap<usize, TypeRes>,
     pub next_type_id: u32,
+    /// calls of a function to itself by name: they use the function's own
+    /// closure, so it does not capture itself (a reference cycle)
+    pub self_calls: std::collections::HashSet<u32>,
 }
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
@@ -201,6 +204,11 @@ type RResult<T> = Result<T, Diagnostic>;
 
 struct Resolver {
     r: Resolution,
+    /// the function being resolved and the binding of its name
+    self_fn: Vec<(FrameId, Option<BindingId>)>,
+    self_fn_binding: Option<BindingId>,
+    /// calls to the function's own name: (call expr, scope, binding)
+    pending_self: Vec<(u32, ScopeId, BindingId)>,
 }
 
 impl Resolution {
@@ -234,13 +242,18 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             type_ids: HashMap::new(),
             types: HashMap::new(),
             next_type_id: 1,
+            self_calls: std::collections::HashSet::new(),
         },
+        self_fn: Vec::new(),
+        self_fn_binding: None,
+        pending_self: Vec::new(),
     };
     let root = res.new_scope(None, SKind::Normal, GLOBAL_FRAME, true);
     res.r.frames.push(Frame { parent: None, kind: FrameKind::Global, root, free: Vec::new(), params: Vec::new() });
     res.assign_type_ids(&program.body);
     res.declare_block(root, &program.body);
     res.block(root, &program.body)?;
+    res.finish_self_calls(program);
     Ok(res.r)
 }
 
@@ -475,6 +488,63 @@ impl Resolver {
         AssignRes { cands, target }
     }
 
+    /// `f(...)` inside `fn f`, when the name is the function itself: no
+    /// capture yet (decided in finish_self_calls).
+    fn self_call(&mut self, scope: ScopeId, func: &Expr) -> bool {
+        let ExprKind::Name(n) = &func.kind else { return false };
+        let Some((frame, Some(own))) = self.self_fn.last().copied() else { return false };
+        if self.r.scopes[scope].frame != frame {
+            return false;
+        }
+        let mut s = Some(scope);
+        let mut found = None;
+        while let Some(id) = s {
+            if let Some(b) = self.lookup_local(id, n) {
+                found = Some(b);
+                break;
+            }
+            if self.r.scopes[id].kind == SKind::Row {
+                return false;
+            }
+            s = self.r.scopes[id].parent;
+        }
+        if found != Some(own) || self.r.is_static(own) {
+            return false;
+        }
+        let visible = self.visible(scope);
+        let suggestion = suggest(n, visible.iter().map(|s| s.as_str()));
+        self.r.names.insert(func.id, NameRes::Bindings { cands: vec![own], row: None, builtin: false, suggestion });
+        self.pending_self.push((func.id, scope, own));
+        true
+    }
+
+    /// A function defined once calls itself through its own closure; any
+    /// other name use is an ordinary capture.
+    fn finish_self_calls(&mut self, program: &Program) {
+        let mut defs: HashMap<BindingId, usize> = HashMap::new();
+        let r = &self.r;
+        crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
+            StmtKind::Fn(_) => {
+                if let Some(b) = r.decl.get(&Node::Stmt(s.id)) {
+                    *defs.entry(*b).or_default() += 1;
+                }
+            }
+            StmtKind::Assign { .. } | StmtKind::VarDecl { .. } => {
+                if let Some(a) = r.assigns.get(&s.id) {
+                    *defs.entry(a.target).or_default() += 1;
+                }
+            }
+            _ => {}
+        });
+        for (id, scope, b) in std::mem::take(&mut self.pending_self) {
+            if defs.get(&b) == Some(&1) {
+                self.r.self_calls.insert(id);
+            } else {
+                self.note_use(scope, b);
+            }
+        }
+    }
+
     // ------------------------------------------------------------ walking
 
     fn block(&mut self, scope: ScopeId, body: &[Stmt]) -> RResult<()> {
@@ -493,7 +563,15 @@ impl Resolver {
     }
 
     fn function(&mut self, scope: ScopeId, f: &FnDef, kind: FrameKind) -> RResult<()> {
+        let own = self.self_fn_binding.take();
         let (frame, root) = self.new_frame(scope, kind, Node::Fn(f.id));
+        self.self_fn.push((frame, own));
+        let r = self.function_body(scope, root, frame, f);
+        self.self_fn.pop();
+        r
+    }
+
+    fn function_body(&mut self, scope: ScopeId, root: ScopeId, frame: FrameId, f: &FnDef) -> RResult<()> {
         for p in &f.params {
             let b = self.declare(root, &p.name, BKind::Const, None, Origin::Param);
             self.r.frames[frame].params.push(b);
@@ -555,7 +633,11 @@ impl Resolver {
                 }
                 Ok(())
             }
-            StmtKind::Fn(f) => self.function(scope, f, FrameKind::Function),
+            StmtKind::Fn(f) => {
+                let b = self.r.decl.get(&Node::Stmt(s.id)).copied();
+                self.self_fn_binding = b;
+                self.function(scope, f, FrameKind::Function)
+            }
             StmtKind::Type(t) => {
                 if let Some(tr) = &t.trait_name {
                     let res = self.lookup(scope, tr);
@@ -826,7 +908,7 @@ impl Resolver {
             }
             ExprKind::Call { func, args } => {
                 // old(...) inside ensure is not a name (D53)
-                if !matches!(&func.kind, ExprKind::Name(n) if n == "old") {
+                if !matches!(&func.kind, ExprKind::Name(n) if n == "old") && !self.self_call(scope, func) {
                     self.expr(scope, func)?;
                 }
                 for a in args {

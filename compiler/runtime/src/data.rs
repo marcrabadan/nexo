@@ -25,7 +25,7 @@ use crate::value::*;
 
 fn os_failure(path: &str, e: &std::io::Error, span: u32) -> crate::state::Fail {
     let reason = os_reason(e);
-    let cause = V::str(reason.clone());
+    let cause = Val::str(reason.clone());
     if e.kind() == std::io::ErrorKind::NotFound {
         let message = msg("err.NotFound", &[("path", path.to_string())]);
         return raise_error("NotFound", message, cause, span);
@@ -69,7 +69,7 @@ pub fn write_text(path: &str, text: &str, span: u32) -> R<()> {
 }
 
 /// The lines of a file, read lazily one by one.
-pub fn read_lines(path: &str, span: u32) -> R<V> {
+pub fn read_lines(path: &str, span: u32) -> R<Val> {
     if let Err(e) = std::fs::File::open(path) {
         return Err(os_failure(path, &e, span));
     }
@@ -87,7 +87,7 @@ pub fn read_lines(path: &str, span: u32) -> R<V> {
                         buf.pop();
                     }
                     match String::from_utf8(buf) {
-                        Ok(s) => Some(Ok(V::str(s))),
+                        Ok(s) => Some(Ok(Val::str(s))),
                         Err(_) => Some(Err(failure(
                             "InvalidData",
                             span,
@@ -110,7 +110,7 @@ pub fn save(value: V, path: &str, span: u32) -> R<()> {
     } else if lower.ends_with(".json") {
         to_json(value, 0) + "\n"
     } else if let Some(Obj::List(items)) = value.get() {
-        items.borrow().iter().map(|v| show(*v) + "\n").collect()
+        items.borrow().iter().map(|v| show(v.v()) + "\n").collect()
     } else {
         show(value)
     };
@@ -201,7 +201,7 @@ fn column_kind(cells: &[&str]) -> ColKind {
     ColKind::Str
 }
 
-pub fn parse_csv(text: &str) -> V {
+pub fn parse_csv(text: &str) -> Val {
     let rows = csv_rows(text);
     if rows.is_empty() {
         return list(Vec::new());
@@ -220,15 +220,15 @@ pub fn parse_csv(text: &str) -> V {
         for (i, name) in header.iter().enumerate() {
             let cell = raw.get(i).map(|s| s.as_str()).unwrap_or("");
             let v = if cell.is_empty() {
-                NONE
+                Val::none()
             } else {
                 match kinds[i] {
-                    ColKind::Int => V::int(cell.parse().unwrap()),
-                    ColKind::Float => V::float(cell.parse().unwrap()),
-                    ColKind::Str => V::str(cell),
+                    ColKind::Int => Val::int(cell.parse().unwrap()),
+                    ColKind::Float => Val::float(cell.parse().unwrap()),
+                    ColKind::Str => Val::str(cell),
                 }
             };
-            pairs.push((V::str(name.as_str()), v));
+            pairs.push((Val::str(name.as_str()), v));
         }
         table.push(map_from(pairs));
     }
@@ -254,13 +254,13 @@ fn to_csv(value: V, span: u32) -> R<String> {
         return Err(diag(nexo_diag::Diagnostic::new_spanless("csv_value").arg("vtype", type_name(value)), span));
     };
     let mut columns: Vec<String> = Vec::new();
-    let mut rows: Vec<Vec<(String, V)>> = Vec::new();
+    let mut rows: Vec<Vec<(String, Val)>> = Vec::new();
     for item in items.borrow().iter() {
-        let row: Vec<(String, V)> = match item.get() {
-            Some(Obj::Record(r)) => r.ty.fields.iter().map(|f| f.name.clone()).zip(r.fields.borrow().iter().copied()).collect(),
-            Some(Obj::Map(m)) => m.borrow().entries.iter().map(|(k, v)| (show(*k), *v)).collect(),
+        let row: Vec<(String, Val)> = match item.get() {
+            Some(Obj::Record(r)) => r.ty.fields.iter().map(|f| f.name.clone()).zip(r.fields.borrow().iter().map(|x| if x.tag == T_WEAK { Val::none() } else { x.clone() })).collect(),
+            Some(Obj::Map(m)) => m.borrow().entries.iter().map(|(k, v)| (show(k.v()), v.clone())).collect(),
             _ => {
-                return Err(diag(nexo_diag::Diagnostic::new_spanless("csv_value").arg("vtype", type_name(*item)), span))
+                return Err(diag(nexo_diag::Diagnostic::new_spanless("csv_value").arg("vtype", type_name(item.v())), span))
             }
         };
         for (k, _) in &row {
@@ -275,7 +275,7 @@ fn to_csv(value: V, span: u32) -> R<String> {
         let cells: Vec<String> = columns
             .iter()
             .map(|c| match row.iter().rev().find(|(k, _)| k == c) {
-                Some((_, v)) if !v.is_none() => show(*v),
+                Some((_, v)) if !v.is_none() => show(v.v()),
                 _ => String::new(),
             })
             .collect();
@@ -542,16 +542,16 @@ fn parse_json(text: &str) -> Result<Json, (usize, usize)> {
     })
 }
 
-fn from_json(j: Json, span: u32) -> R<V> {
+fn from_json(j: Json, span: u32) -> R<Val> {
     Ok(match j {
-        Json::Null => NONE,
-        Json::Bool(b) => V::bool(b),
+        Json::Null => Val::none(),
+        Json::Bool(b) => Val::bool(b),
         Json::Int(i) => match i.to_i64() {
-            Some(i) => V::int(i),
+            Some(i) => Val::int(i),
             None => return Err(failure("Overflow", span, &[])),
         },
-        Json::Float(f) => V::float(f),
-        Json::Str(s) => V::str(s),
+        Json::Float(f) => Val::float(f),
+        Json::Str(s) => Val::str(s),
         Json::List(items) => {
             let mut out = Vec::with_capacity(items.len());
             for i in items {
@@ -562,7 +562,7 @@ fn from_json(j: Json, span: u32) -> R<V> {
         Json::Obj(pairs) => {
             let mut out = Vec::with_capacity(pairs.len());
             for (k, v) in pairs {
-                out.push((V::str(k), from_json(v, span)?));
+                out.push((Val::str(k), from_json(v, span)?));
             }
             map_from(out)
         }
@@ -597,7 +597,7 @@ fn field_target(t: &'static TypeDesc) -> Option<Target> {
 }
 
 /// Build a value of type `t` from JSON data (D47).
-fn as_type(value: V, t: Target, span: u32) -> R<V> {
+fn as_type(value: V, t: Target, span: u32) -> R<Val> {
     match t {
         Target::Record(rt) => {
             let Some(Obj::Map(m)) = value.get() else {
@@ -609,51 +609,51 @@ fn as_type(value: V, t: Target, span: u32) -> R<V> {
                 let raw = m.borrow().get(&Key::Str(f.name.clone()));
                 let present = m.borrow().index.contains_key(&Key::Str(f.name.clone()));
                 if present {
-                    let mut raw = raw.unwrap();
+                    let mut raw = Val::from(raw.unwrap());
                     if !raw.is_none() {
                         if let Some(inner) = field_target(ty) {
-                            raw = as_type(raw, inner, span)?;
+                            raw = as_type(raw.v(), inner, span)?;
                         }
                     }
-                    match conform(raw, ty, &f.name, span) {
-                        Ok(v) => fields.push(v),
+                    match conform(raw.v(), ty, &f.name, span) {
+                        Ok(v) => fields.push(crate::call::field_value(f, v)),
                         Err(_) => {
                             crate::state::clear();
                             return Err(invalid(
                                 span,
                                 "detail.field_type",
-                                &[("field", f.name.clone()), ("type", ty.display().to_string()), ("vtype", type_name(raw))],
+                                &[("field", f.name.clone()), ("type", ty.display().to_string()), ("vtype", type_name(raw.v()))],
                             ));
                         }
                     }
                 } else if f.default.tag != T_UNDEF {
-                    fields.push(crate::pipe::bind(call_value(f.default, &[], span)?)?);
+                    fields.push(crate::pipe::bind(call_value(f.default.v(), &[], span)?.v())?);
                 } else if f.optional {
-                    fields.push(NONE);
+                    fields.push(Val::none());
                 } else {
                     return Err(invalid(span, "detail.missing_field", &[("field", f.name.clone()), ("type", rt.name.clone())]));
                 }
             }
-            Ok(V::obj(Obj::Record(Record { ty: rt, fields: std::cell::RefCell::new(fields) })))
+            Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(fields), birth: crate::state::stamp() })))
         }
         Target::List(param) => {
             let Some(Obj::List(items)) = value.get() else {
                 return Err(invalid(span, "detail.expected", &[("type", "list".into()), ("vtype", type_name(value))]));
             };
-            let Some(inner) = param.and_then(field_target) else { return Ok(value) };
-            let items: Vec<V> = items.borrow().clone();
+            let Some(inner) = param.and_then(field_target) else { return Ok(Val::from(value)) };
+            let items: Vec<Val> = items.borrow().clone();
             let mut out = Vec::with_capacity(items.len());
             for v in items {
-                out.push(as_type(v, inner, span)?);
+                out.push(as_type(v.v(), inner, span)?);
             }
             Ok(list(out))
         }
         Target::Builtin(name) => {
             if name == "any" {
-                return Ok(value);
+                return Ok(Val::from(value));
             }
             if name == "float" && value.tag == T_INT {
-                return Ok(V::float(value.bits as i64 as f64));
+                return Ok(Val::float(value.bits as i64 as f64));
             }
             if name == "decimal" && (value.tag == T_INT || value.tag == T_FLOAT) {
                 let text = if value.tag == T_INT { (value.bits as i64).to_string() } else { format_float(f64::from_bits(value.bits)) };
@@ -662,20 +662,21 @@ fn as_type(value: V, t: Target, span: u32) -> R<V> {
             if !builtin_is(value, name) {
                 return Err(invalid(span, "detail.expected", &[("type", name.to_string()), ("vtype", type_name(value))]));
             }
-            Ok(value)
+            Ok(Val::from(value))
         }
     }
 }
 
-pub fn json_parse(text: &str, as_: Option<V>, span: u32) -> R<V> {
+pub fn json_parse(text: &str, as_: Option<V>, span: u32) -> R<Val> {
     let j = match parse_json(text) {
         Ok(j) => j,
         Err((line, col)) => {
             return Err(invalid(span, "detail.json", &[("line", line.to_string()), ("col", col.to_string())]))
         }
     };
-    let value = from_json(j, span)?;
-    let Some(t) = as_.filter(|t| !t.is_none()) else { return Ok(value) };
+    let owned = from_json(j, span)?;
+    let value = owned.v();
+    let Some(t) = as_.filter(|t| !t.is_none()) else { return Ok(owned) };
     match t.get() {
         Some(Obj::Type(TypeRef::Record(rt))) => as_type(value, Target::Record(rt), span),
         Some(Obj::Type(TypeRef::Builtin(b))) => as_type(value, Target::Builtin(b), span),
@@ -687,9 +688,9 @@ pub fn json_parse(text: &str, as_: Option<V>, span: u32) -> R<V> {
                     &[("type", crate::fmt::type_ref_name(tr)), ("vtype", type_name(value))],
                 ));
             }
-            Ok(value)
+            Ok(owned)
         }
-        _ => Ok(value),
+        _ => Ok(owned),
     }
 }
 
@@ -718,14 +719,16 @@ pub fn json_string(s: &str) -> String {
 pub fn to_json(v: V, level: usize) -> String {
     let pad = "  ".repeat(level + 1);
     let close = "  ".repeat(level);
-    let pairs: Option<Vec<(String, V)>> = match v.get() {
-        Some(Obj::Record(r)) => Some(r.ty.fields.iter().map(|f| f.name.clone()).zip(r.fields.borrow().iter().copied()).collect()),
+    let pairs: Option<Vec<(String, Val)>> = match v.get() {
+        Some(Obj::Record(r)) => {
+            Some(r.ty.fields.iter().map(|f| f.name.clone()).zip(r.fields.borrow().iter().map(|x| if x.tag == T_WEAK { Val::none() } else { x.clone() })).collect())
+        }
         Some(Obj::VariantValue(vv)) => {
-            let mut p = vec![("variant".to_string(), V::str(vv.variant.name.clone()))];
-            p.extend(vv.variant.params.iter().map(|f| f.name.clone()).zip(vv.fields.iter().copied()));
+            let mut p = vec![("variant".to_string(), Val::str(vv.variant.name.clone()))];
+            p.extend(vv.variant.params.iter().map(|f| f.name.clone()).zip(vv.fields.iter().cloned()));
             Some(p)
         }
-        Some(Obj::Map(m)) => Some(m.borrow().entries.iter().map(|(k, v)| (show(*k), *v)).collect()),
+        Some(Obj::Map(m)) => Some(m.borrow().entries.iter().map(|(k, v)| (show(k.v()), v.clone())).collect()),
         _ => None,
     };
     if let Some(pairs) = pairs {
@@ -733,7 +736,7 @@ pub fn to_json(v: V, level: usize) -> String {
             return "{}".into();
         }
         let items: Vec<String> =
-            pairs.iter().map(|(k, x)| format!("{pad}{}: {}", json_string(k), to_json(*x, level + 1))).collect();
+            pairs.iter().map(|(k, x)| format!("{pad}{}: {}", json_string(k), to_json(x.v(), level + 1))).collect();
         return format!("{{\n{}\n{close}}}", items.join(",\n"));
     }
     if let Some(Obj::List(items)) = v.get() {
@@ -741,7 +744,7 @@ pub fn to_json(v: V, level: usize) -> String {
         if items.is_empty() {
             return "[]".into();
         }
-        let parts: Vec<String> = items.iter().map(|x| format!("{pad}{}", to_json(*x, level + 1))).collect();
+        let parts: Vec<String> = items.iter().map(|x| format!("{pad}{}", to_json(x.v(), level + 1))).collect();
         return format!("[\n{}\n{close}]", parts.join(",\n"));
     }
     match v.tag {

@@ -5,12 +5,15 @@
 pub mod abi;
 pub mod call;
 pub mod coll;
+pub mod cow;
 pub mod data;
 pub mod dec;
 pub mod fmt;
 pub mod num;
+pub mod par;
 pub mod pipe;
 pub mod state;
 pub mod stdlib;
+pub mod sync;
 pub mod types;
 pub mod value;

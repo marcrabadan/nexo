@@ -37,7 +37,7 @@ fn to_ir(source: &str, name: &str, test_mode: bool) -> Result<String, CompileErr
     let res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
     let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
-    let opts = codegen::Options { file: name.to_string(), lang, test_mode };
+    let opts = codegen::Options { file: name.to_string(), lang, test_mode, trust_ensure: false };
     codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)
 }
 

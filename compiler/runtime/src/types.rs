@@ -4,15 +4,15 @@
 //! where a float or decimal is declared, and a float literal becomes an
 //! exact decimal where a decimal is expected (section 17, rule 1).
 
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 use nexo_diag::Diagnostic;
 
 use crate::dec::Dec;
 use crate::fmt::{repr, type_name};
 use crate::num::{equals, to_decimal};
-use crate::state::{diag, st, R};
+use crate::state::{diag, registry, R};
 use crate::value::*;
 
 #[derive(Clone, Copy)]
@@ -30,17 +30,21 @@ pub struct FieldInfo {
     /// None for an untyped variant parameter
     pub ty: Option<&'static TypeDesc>,
     pub optional: bool,
+    /// a `weak` field (section 7, rule 4)
+    pub weak: bool,
     /// a function without parameters that computes the default, or UNDEF
-    pub default: V,
+    pub default: Val,
 }
 
 pub struct RecordType {
     pub id: u32,
     pub name: String,
     pub fields: Vec<FieldInfo>,
-    pub methods: RefCell<Vec<(String, V)>>,
-    pub traits: RefCell<Vec<&'static TraitType>>,
+    pub methods: Mut<Vec<(String, Val)>>,
+    pub traits: Mut<Vec<&'static TraitType>>,
 }
+
+unsafe impl Sync for VariantInfo {}
 
 pub struct VariantInfo {
     pub id: u32,
@@ -61,8 +65,8 @@ pub struct EnumType {
     pub id: u32,
     pub name: String,
     pub variants: Vec<&'static VariantInfo>,
-    pub methods: RefCell<Vec<(String, V)>>,
-    pub traits: RefCell<Vec<&'static TraitType>>,
+    pub methods: Mut<Vec<(String, Val)>>,
+    pub traits: Mut<Vec<&'static TraitType>>,
 }
 
 pub struct AliasType {
@@ -219,44 +223,71 @@ impl<'a> Reader<'a> {
     }
 
     fn lit(&mut self) -> V {
-        match self.byte() {
-            b's' => V::str(self.sized()),
-            b'i' => V::int(self.until(b';').parse().unwrap()),
-            b'f' => V::float(self.until(b';').parse().unwrap()),
-            b'b' => V::bool(self.byte() == b'1'),
-            b'z' => NONE,
+        let v = match self.byte() {
+            b's' => Val::str(self.sized()),
+            b'i' => Val::int(self.until(b';').parse().unwrap()),
+            b'f' => Val::float(self.until(b';').parse().unwrap()),
+            b'b' => Val::bool(self.byte() == b'1'),
+            b'z' => Val::none(),
             b'q' => {
                 let text = self.sized().to_string();
                 let unit = self.sized().to_string();
                 crate::num::unit_literal(&text, &unit)
             }
             other => panic!("bad literal {}", other as char),
-        }
+        };
+        // the literals of a declared type live as long as the program
+        make_immortal(v.v());
+        v.into_raw()
     }
 }
 
-thread_local! {
-    static DESCS: RefCell<HashMap<usize, &'static TypeDesc>> = RefCell::new(HashMap::new());
-}
+static DESCS: Mutex<Option<HashMap<usize, &'static TypeDesc>>> = Mutex::new(None);
 
 /// Decode (once) the type descriptor at `ptr`.
 pub fn desc(ptr: *const u8, len: usize) -> &'static TypeDesc {
     let key = ptr as usize;
-    if let Some(d) = DESCS.with(|m| m.borrow().get(&key).copied()) {
+    let mut descs = DESCS.lock().unwrap();
+    let map = descs.get_or_insert_with(HashMap::new);
+    if let Some(d) = map.get(&key) {
         return d;
     }
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
     let d: &'static TypeDesc = Box::leak(Box::new(Reader { s: bytes, i: 0 }.desc()));
-    DESCS.with(|m| m.borrow_mut().insert(key, d));
+    map.insert(key, d);
     d
 }
 
+unsafe impl Sync for TypeDesc {}
+unsafe impl Send for TypeDesc {}
+
 pub fn lookup(id: u32) -> Option<TypeRef> {
-    st().types.get(&id).copied()
+    registry().read().unwrap().types.get(&id).copied()
 }
 
 pub fn register(id: u32, t: TypeRef) {
-    st().types.insert(id, t);
+    let mut r = registry().write().unwrap();
+    r.types.insert(id, t);
+    r.all_types.push(t);
+}
+
+/// End of the program: methods and field defaults hold closures; give
+/// them back (to check that nothing else is left).
+pub fn release_all() {
+    let all: Vec<TypeRef> = std::mem::take(&mut registry().write().unwrap().all_types);
+    for t in all {
+        match t {
+            TypeRef::Record(r) => {
+                r.methods.borrow_mut().clear();
+                let fields = &r.fields as *const Vec<FieldInfo> as *mut Vec<FieldInfo>;
+                for f in unsafe { (*fields).iter_mut() } {
+                    f.default = Val::simple(UNDEF);
+                }
+            }
+            TypeRef::Enum(e) => e.methods.borrow_mut().clear(),
+            _ => {}
+        }
+    }
 }
 
 // ------------------------------------------------------------ conformance
@@ -274,17 +305,18 @@ fn union_values(options: &[V]) -> String {
 
 /// Check `value` against a declared type and apply the conversions of
 /// section 17. Returns the value to store.
-pub fn conform(value: V, t: &'static TypeDesc, name: &str, span: u32) -> R<V> {
-    let value = if value.tag == T_OBJ && matches!(value.get(), Some(Obj::Lazy(_))) {
+pub fn conform(value: V, t: &'static TypeDesc, name: &str, span: u32) -> R<Val> {
+    let owned = if value.tag == T_OBJ && matches!(value.get(), Some(Obj::Lazy(_))) {
         crate::pipe::collect(value)?
     } else {
-        value
+        Val::from(value)
     };
+    let value = owned.v();
     if let TypeDesc::Union { options, display } = t {
         let plain = value.plain();
         for o in options {
             if same_kind(*o, plain) && equals(*o, plain, span)? {
-                return Ok(plain);
+                return Ok(owned.plain());
             }
         }
         return Err(diag(
@@ -300,7 +332,7 @@ pub fn conform(value: V, t: &'static TypeDesc, name: &str, span: u32) -> R<V> {
     }
     if value.is_none() {
         if t.optional() {
-            return Ok(NONE);
+            return Ok(Val::none());
         }
         return Err(diag(
             Diagnostic::new_spanless("none_not_allowed").arg("name", name).arg("type", t.display()),
@@ -371,21 +403,21 @@ fn fits_or_none(v: V, t: &'static TypeDesc, span: u32) -> R<bool> {
 }
 
 /// Some(converted value) when `v` fits the type.
-pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<V>> {
+pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<Val>> {
     match t {
         TypeDesc::Named { name, params, .. } => {
             let name = name.as_str();
             match name {
-                "any" => Ok(Some(v.plain())),
-                "int" => Ok((v.tag == T_INT).then_some(v)),
+                "any" => Ok(Some(Val::from(v.plain()))),
+                "int" => Ok((v.tag == T_INT).then_some(Val::simple(v))),
                 "float" => Ok(match v.tag {
-                    T_FLOAT | T_LITFLOAT => Some(v.plain()),
-                    T_INT => Some(V::float(v.bits as i64 as f64)),
+                    T_FLOAT | T_LITFLOAT => Some(Val::simple(v.plain())),
+                    T_INT => Some(Val::float(v.bits as i64 as f64)),
                     _ => None,
                 }),
                 "decimal" => Ok(match v.tag {
                     T_LITFLOAT | T_INT => Some(decimal(to_decimal(v).unwrap())),
-                    T_OBJ if matches!(v.get(), Some(Obj::Decimal(_))) => Some(v),
+                    T_OBJ if matches!(v.get(), Some(Obj::Decimal(_))) => Some(Val::from(v)),
                     _ => None,
                 }),
                 "str" | "bool" | "money" | "map" | "set" => {
@@ -394,9 +426,9 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<V>> {
                     }
                     if name == "map" && params.len() == 2 {
                         if let Some(Obj::Map(m)) = v.get() {
-                            let entries: Vec<(V, V)> = m.borrow().entries.clone();
+                            let entries: Vec<(Val, Val)> = m.borrow().entries.clone();
                             for (k, val) in entries {
-                                if !fits_or_none(k, params[0], span)? || !fits_or_none(val, params[1], span)? {
+                                if !fits_or_none(k.v(), params[0], span)? || !fits_or_none(val.v(), params[1], span)? {
                                     return Ok(None);
                                 }
                             }
@@ -404,41 +436,49 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<V>> {
                     }
                     if name == "set" && !params.is_empty() {
                         if let Some(Obj::Set(s)) = v.get() {
-                            let items: Vec<V> = s.borrow().items.clone();
+                            let items: Vec<Val> = s.borrow().items.clone();
                             for item in items {
-                                if !fits_or_none(item, params[0], span)? {
+                                if !fits_or_none(item.v(), params[0], span)? {
                                     return Ok(None);
                                 }
                             }
                         }
                     }
-                    Ok(Some(v))
+                    Ok(Some(Val::from(v)))
                 }
                 "list" => {
-                    let v = if matches!(v.get(), Some(Obj::Lazy(_))) { crate::pipe::collect(v)? } else { v };
-                    let Some(Obj::List(items)) = v.get() else { return Ok(None) };
+                    let owned = if matches!(v.get(), Some(Obj::Lazy(_))) { crate::pipe::collect(v)? } else { Val::from(v) };
+                    let Some(Obj::List(items)) = owned.get() else { return Ok(None) };
                     if params.is_empty() {
-                        return Ok(Some(v));
+                        return Ok(Some(owned));
                     }
                     let p = params[0];
-                    let items: Vec<V> = items.borrow().clone();
+                    let items: Vec<Val> = items.borrow().clone();
+                    // a list whose elements need no conversion is kept as is
+                    let mut changed = false;
                     let mut out = Vec::with_capacity(items.len());
                     for item in items {
                         if item.is_none() {
                             if !p.optional() {
                                 return Ok(None);
                             }
-                            out.push(NONE);
+                            out.push(Val::none());
                             continue;
                         }
                         if let TypeDesc::Union { .. } = p {
                             out.push(item);
                             continue;
                         }
-                        match fits(item, p, span)? {
-                            Some(c) => out.push(c),
+                        match fits(item.v(), p, span)? {
+                            Some(c) => {
+                                changed |= !c.same(item.v());
+                                out.push(c)
+                            }
                             None => return Ok(None),
                         }
+                    }
+                    if !changed {
+                        return Ok(Some(owned));
                     }
                     Ok(Some(list(out)))
                 }
@@ -461,9 +501,9 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<V>> {
                 }
                 return fits(v, a.target, span);
             }
-            Ok(is_type(v, kind, span)?.then_some(v))
+            Ok(is_type(v, kind, span)?.then(|| Val::from(v)))
         }
-        TypeDesc::Error { kind, .. } => Ok(is_error_kind(v, kind).then_some(v)),
+        TypeDesc::Error { kind, .. } => Ok(is_error_kind(v, kind).then(|| Val::from(v))),
         TypeDesc::Union { .. } => match conform(v, t, "x", span) {
             Ok(c) => Ok(Some(c)),
             Err(_) => {
