@@ -92,3 +92,276 @@ of being silently ignored, which would change behaviour. Inline field
 annotations (`@private`, `@unique`) are parsed and ignored, since they do
 not change how core code runs.
 
+## Errors (section 3)
+
+**D17. Ignoring an error at the top level.** Rule 2 says ignoring a possible
+error is a compile error, but section 6 calls `read(...)` at the top level
+with neither `?` nor `try`, and rule 6 describes "a program that ends with
+an unhandled error". Resolution: inside a function (or lambda), a call
+that can fail must be followed by `?` or be inside a `try`; otherwise it is
+a compile error. At the top level of the program and inside `test` blocks
+there is no caller, so an unhandled error ends the program (or the test)
+in plain language with exit code 1. `?` at the top level is an error
+(rule 3).
+
+**D18. Which calls can fail.** The checker runs before the program and
+knows: user functions (a function can fail when its return type ends in
+`!` or its body has `fail(...)` or `?` outside a `try`), methods (by name,
+across all types), and the standard library calls `read`, `write`,
+`read_lines`, `save`, `validate`, `json.parse` and `csv.parse`. A call
+through a variable or a lambda is not known statically and is not
+checked.
+
+**D19. Errors at runtime.** Error values travel to the nearest `try`; they
+are never stored as `T!` values, because the checker forbids every way to
+hold one. `?` therefore does nothing at runtime: it only marks, for the
+checker, that the error is passed on.
+
+**D20. What `try` catches.** `try` handles every error value: those made
+with `fail()` and the system ones (`NotFound`, `IOError`, `InvalidData`,
+`Overflow`, `DivisionByZero`, `OutOfRange`, `ContractBroken`, `Timeout`,
+`InvalidValue`). Mistakes that a compiler would reject (unknown names,
+wrong types, changing an immutable value, mixing float and decimal...) are
+diagnostics: they stop the program and cannot be caught, like compile
+errors.
+
+**D21. Error values.** An error has `message`, `cause`, `line` (rule 5) and
+`kind`. `fail("...")` makes an error of kind `Error`; `else e is Error`
+matches any error; `fail(e)` passes an existing error on. Messages of
+system errors are written in the language selected for the run.
+
+**D22. Division by zero.** The spec does not say. `/`, `//` and `%` by zero
+raise a `DivisionByZero` error for int, float and decimal alike, instead of
+producing `inf` for floats, so the rule is the same for all numbers.
+
+**D23. `??` and `?` are checked statically.** `??` applied directly to a
+call that can fail, `?` applied to something that is not a call, and `?`
+on a function that cannot fail are compile errors, following "missing
+values and errors never mix".
+
+**D24. Where unhandled errors point.** The snippet shows the line where the
+error was created (the `fail(...)` call or the failing `read(...)`), since
+rule 5 says errors carry their line.
+
+## Variables and scopes
+
+**D25. Scopes.** The spec does not define them. Functions and each
+iteration of a loop (`for`, `while`, `repeat`, comprehensions, `parallel
+for`) have their own scope. `if`, `try`, `match` and `parallel:` blocks do
+not: a name first assigned inside them is visible afterwards, which the
+section 3 example (`data` assigned in `try` and `else`) and the section 5
+example (`sales` assigned inside `parallel:`) need. Only pattern variables
+of a `match` arm and the `e` of `else e` are local to their block.
+
+**D26. Assignment.** `x = value` changes a `var` wherever it was declared,
+including from inside a function. Assigning to an immutable name declared
+in the same function (or at the top level, from the top level) is an
+error. Assigning inside a function to an immutable name of an outer scope
+creates a new local name instead. Builtin names (`list`, `print`...) can be
+shadowed: section 2 uses `list` as a variable.
+
+**D27. What immutable means.** `x = 1` makes the name immutable, not the
+value: the `transfer` example in "Goals and guarantees" changes
+`source.balance` through an immutable parameter. Records and collections
+are shared by reference in phase 0; the memory model of section 7
+(copy-on-write) belongs to phase 2.
+
+**D28. Conditions must be bool.** `if 1:` is an error. There is no
+"truthiness" (rule 3: understandable without experience).
+
+**D29. Functions are not hoisted.** A function exists from the line where it
+is defined. Calls resolve names when they run, so functions can still call
+each other recursively.
+
+## Types
+
+**D30. Printing.** The spec only shows a few printed values. Texts print
+without quotes, but inside collections they are quoted; lists `[1, 2]`, maps
+`{"a": 1}`, sets `set("a", "b")` (the way they are built), ranges `1..10`,
+records `User(name: "Ana", age: 30, email: none)` (the way they are
+built), variants `Click(x: 1, y: 2)` and `Quit`, `true`, `false`, `none`.
+Floats use the shortest exact form (`0.30000000000000004`, `4.0`).
+
+**D31. Records and variants are built with named or positional
+arguments**, like functions. An optional field (`email: str?`) with no
+default is `none`. Variants are bare names (`Click(...)`, `Quit`), as in
+section 2; there is no `Event.Click`.
+
+**D32. Patterns.** A bare name in a pattern matches a variant (or a type) of
+that name if one exists, and otherwise binds a new name. Arms are tried in
+order; if no arm matches, it is an error at runtime (phase 0 has no
+exhaustiveness check).
+
+**D33. Types are checked at runtime.** Phase 0 has no static type checker:
+declared types of variables, parameters, fields and return values are
+checked when a value is stored or returned. An int is accepted where a
+float or a decimal is declared (it converts exactly).
+
+**D34. Equality.** Values of different types are not equal (`1 == true` is
+false), except int and float, which compare by value. Comparing a float
+with a decimal is an error (section 17, rule 2).
+
+**D35. Map keys and set elements** must be texts, numbers, bools, money,
+quantities, `none` or variants without data, since records and
+collections are mutable.
+
+**D36. Lambdas have one parameter** (`lambda = IDENT "->" expr`), and there
+is no `break` or `continue`: none of these appear in the specification.
+
+## Numbers (section 17)
+
+**D37. Money precision.** An amount of money always has the currency's
+minor units (2 decimals; 0 for JPY and CLP). Every result is rounded half
+to even (rule 5), so `120.00 EUR * 21%` is `25.20 EUR`. Money can be
+multiplied or divided by int, decimal or a percentage; by a float it is an
+error (rule 2). Money divided by money in the same currency is a decimal.
+
+**D38. Percentages.** `21%` is a quantity that multiplies as 0.21: exactly
+with int, decimal and money (`200 * 10%` is the decimal `20`), and as a
+float with a float.
+
+**D39. Units.** Quantities of the same dimension can be added, subtracted
+and compared; the result uses the smaller unit (`30s + 1m` is `90s`).
+Mixing dimensions is an error.
+
+**D40. Rounding.** `round(x)` keeps the type (`round(2.5)` is `2.0`). On a
+float it works on the binary value, so `round(2.675, 2)` is `2.67`; use
+`decimal` for exact rounding. `mode: half_up` uses the builtin names
+`half_up` and `half_even`.
+
+**D41. Conversions.** `decimal(x)`, `float(x)`, `int(x)` (truncates toward
+zero) and `str(x)` convert between values. They do not parse text: section
+9 says external text goes through `validate(x, as: int)?`, which phase 0
+implements for int, float, decimal, bool, str and record types, with an
+optional `range:`.
+
+**D42. Names the examples assume.** Section 2 uses `PI` without defining
+it, so it is a builtin constant. Currency codes (`USD`, `EUR`...) are
+builtin names so that `convert(x, to: USD, rate: ...)` works. `close()`,
+`log.error`, `Config` and `http` are not standard library in the spec; the
+conformance tests define the first three and leave out `http`.
+
+## Data and pipelines (section 6)
+
+**D43. `read`.** Section 3 reads a JSON file as text and then parses it,
+while section 6 sends a data file straight into a pipeline. `read` returns
+a table for `.csv` files and text for anything else. The `sales.parquet`
+example uses `sales.csv` instead, because Parquet is outside phase 0.
+
+**D44. Tables.** A table is a list of rows; a row is a map from column name
+to value, read with `row["amount"]` (one way: no `row.amount`). Inside a
+pipeline step, a bare name is first a column of the current row (or a
+field of the current record), then a variable; `it` is the current
+element.
+
+**D45. CSV values.** A column whose non-empty cells are all integers is
+int; if they are all numbers, float; otherwise text. Empty cells are
+`none`.
+
+**D46. `save`.** `save(path)` writes CSV for `.csv`, JSON for `.json`, and
+text otherwise (one line per element of a list). In JSON, decimals keep
+all their digits and money is written as text (`"19.99 EUR"`).
+
+**D47. `json.parse(text, as: T)`** builds records recursively, applies field
+defaults, and reports a missing field or a wrong type as an `InvalidData`
+error.
+
+**D48. Grouping.** After `group by expr`, the key column is named after the
+expression (`region`), and the aggregate column after its argument
+(`sum amount` gives `amount`, `count` gives `count`).
+
+**D49. Empty and plain aggregates.** `sum` of nothing is `0`; `avg` of
+nothing is `none`; `avg` of integers is a float, like `/`.
+
+**D50. Laziness.** Steps run only when the result is stored, passed to a
+function, iterated, printed, or reaches a final step (`each`, `save`,
+`count`, `sum`, `avg`). A pipeline statement with no final step does
+nothing (rule 4). `read_lines` reads the file line by line, so `take 100`
+stops reading early.
+
+**D51. Functions in steps.** In `map` and `each`, a step that evaluates to a
+function is called with the element (`each print`, `map double`).
+
+## Concurrency (section 5)
+
+**D52. `parallel` runs sequentially in phase 0**, as the prompt allows,
+keeping the same observable semantics: `parallel for` returns the results
+in input order, and the first failing task stops the remaining ones and
+its error propagates. `max:` is validated (an int of at least 1) but has
+no effect. Inside a `parallel for` body, `return` gives the value of that
+task.
+
+## Contracts and tests
+
+**D53. Contracts.** `expect` is checked where it is written (at the start
+of the function, by convention). `ensure` is checked every time the
+function returns. Each `old(expr)` is evaluated when the function is
+entered, after its parameters are bound, and deep-copied. A broken
+contract is a `ContractBroken` error whose message lists the names, fields
+and `old()` values involved. The spec gives no name for the return value
+inside `ensure`, so phase 0 has none.
+
+**D54. `nexo test`.** It runs the file's top level first (so definitions and
+constants exist), then each `test` block in its own scope, and prints ✓ or
+✗ per test plus a summary; any failure gives exit code 1. With a directory
+(or nothing, meaning `.`) it runs every `.nexo` file below it. `nexo
+file.nexo` skips `test` blocks. `fake` (section 14) is not included: it
+only exists to replace `ask` and external services, which are outside
+phase 0.
+
+## Tooling (section 14)
+
+**D55. Language of messages.** Section 16 says messages use the system
+language; the prompt fixes Spanish by default and English with `--lang
+en`, and the prompt wins.
+
+**D56. Format details.** The snippet is the source line without its leading
+indentation; the carets cover the whole expression involved (cut at the
+end of the line); the "what" and "how to fix it" sentences go on one line,
+as in the section 14 example. Unhandled errors read "Unhandled error
+(Kind): message. How to fix it."
+
+**D57. REPL.** `nexo` with no arguments reads one statement per line; a line
+ending in `:` continues until an empty line. A non-`none` expression value
+is printed as it would appear in a collection.
+
+**D58. `try within`.** Phase 0 checks the time limit between statements of
+the `try` body and raises a `Timeout` error once it has passed; it cannot
+interrupt a single long call.
+
+## Standard library (section 15)
+
+**D59. Minimal methods.** The spec only shows `prices.sum()` and
+`orders.count()`. Phase 0 adds the smallest set needed to write real
+programs: lists `sum count add`, sets `add count`, maps `keys values
+count`, text `upper lower trim split replace starts_with ends_with`.
+Collections are also changed with `m[key] = value` and `xs[i] = value`
+(the `target` rule allows it).
+
+**D60. `range` and `..`.** `1..10` is inclusive (section 2). The prompt asks
+for `range` as well; it counts like most languages: `range(3)` is
+`[0, 1, 2]`, `range(a, b, step)` stops before `b`.
+
+**D61. `set(...)`** takes its elements as arguments, as in section 2
+(`set("new", "sale")`).
+
+**D62. `input(prompt)`** shows the prompt, returns the line without its
+newline, and returns `""` at the end of the input.
+
+**D63. `print`** separates its arguments with a space and accepts `end:`
+(section 8 uses `print(chunk, end: "")`).
+
+**D64. Indexes start at 0.** A list or text index outside the bounds
+(negative ones included) is an `OutOfRange` error; a missing map key gives
+`none`, so `rates[country] ?? world_rate` (section 10) works.
+
+## Outside phase 0
+
+**D65. Unavailable features fail loudly.** `use`, module blocks (`ai:`,
+`infra`...), annotations, `key = value` settings inside a type, `when`,
+`every` and `lifecycle` are parsed and then reported as "not available in
+phase 0" instead of being silently ignored.
+
+**D66. `on` and `emit`.** They are core reserved words with a clear
+meaning (section 4), so phase 0 implements them: `emit` calls each `on`
+handler at once, in the order they were declared.
