@@ -47,7 +47,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 Conformance pairs: `tests/conformance/NAME.nexo` runs from the directory
 `tests/conformance/` and its stdout (plus the rendered error, if the program
 fails) must equal `NAME.expected` exactly. Messages in `.expected` files are
-in Spanish (the default) unless the file starts with `# lang: en`.
+in Spanish (the default); a `NAME.args` file holds extra CLI arguments
+placed before the file name, such as `--lang en` (see `tests/conformance/en/`)
+or `test`.
 
 ## Scope (phase 0)
 
