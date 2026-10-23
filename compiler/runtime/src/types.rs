@@ -311,6 +311,17 @@ fn union_values(options: &[V]) -> String {
 /// Check `value` against a declared type and apply the conversions of
 /// section 17. Returns the value to store.
 pub fn conform(value: V, t: &'static TypeDesc, name: &str, span: u32) -> R<Val> {
+    if let TypeDesc::Named { name: tn, params, .. } = t {
+        let same = match value.tag {
+            T_INT => tn == "int",
+            T_BOOL => tn == "bool",
+            T_FLOAT => tn == "float",
+            _ => false,
+        };
+        if same && params.is_empty() {
+            return Ok(Val::simple(value));
+        }
+    }
     let owned = if value.tag == T_OBJ && matches!(value.get(), Some(Obj::Lazy(_))) {
         crate::pipe::collect(value)?
     } else {

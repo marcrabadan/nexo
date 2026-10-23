@@ -94,6 +94,9 @@ pub fn call_value(f: V, args: &[V], span: u32) -> R<Val> {
 pub fn call(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     match f.get() {
         Some(Obj::Func(func)) => {
+            if plain_args(func.info.params().len(), args, names) {
+                return invoke(func, args, span);
+            }
             let bound = bind_args(func.info.name(), &fn_params(func.info), args, names, span)?;
             // lazy values are read; float literals stay literals until the
             // callee checks them against the parameter types
@@ -124,6 +127,14 @@ fn not_callable(f: V, span: u32) -> crate::state::Fail {
     diag(Diagnostic::new_spanless("not_callable").arg("vtype", type_name(f)), span)
 }
 
+/// Every parameter gets a positional argument that needs nothing done to
+/// it: the arguments can be passed as they are.
+fn plain_args(params: usize, args: &[V], names: &[Option<&str>]) -> bool {
+    args.len() == params
+        && names.iter().all(|n| n.is_none())
+        && args.iter().all(|a| a.tag != T_OBJ || !matches!(a.get(), Some(Obj::Lazy(_))))
+}
+
 /// Arguments read (lazy pipelines become lists); MISSING stays.
 fn force_all(bound: &[V]) -> R<Vec<Val>> {
     let mut out = Vec::with_capacity(bound.len());
@@ -138,6 +149,15 @@ pub fn call_method_value(receiver: V, method: V, args: &[V], names: &[Option<&st
     let Some(Obj::Func(func)) = method.get() else {
         return call(method, args, names, span);
     };
+    let infos = func.info.params();
+    if infos.first().is_some_and(|p| p.name.get() == Some("self")) && plain_args(infos.len() - 1, args, names) {
+        if args.len() < 8 {
+            let mut all = [NONE; 8];
+            all[0] = receiver;
+            all[1..=args.len()].copy_from_slice(args);
+            return invoke(func, &all[..=args.len()], span);
+        }
+    }
     let params = fn_params(func.info);
     let takes_self = params.first().is_some_and(|(n, _)| *n == "self");
     let rest = if takes_self { &params[1..] } else { &params[..] };
@@ -152,6 +172,18 @@ pub fn call_method_value(receiver: V, method: V, args: &[V], names: &[Option<&st
 /// Build a record: missing fields take their default, or none when the
 /// field is optional (D31).
 pub fn construct(rt: &'static crate::types::RecordType, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    if plain_args(rt.fields.len(), args, names) {
+        let mut values = Vec::with_capacity(args.len());
+        for (f, v) in rt.fields.iter().zip(args) {
+            let v = conform(*v, f.ty.expect("record fields are typed"), &f.name, span)?;
+            values.push(field_value(f, bind(v.v())?));
+        }
+        return Ok(Val::new(Obj::Record(Record {
+            ty: rt,
+            fields: Mut::new(values),
+            birth: std::cell::Cell::new(crate::state::stamp()),
+        })));
+    }
     let params: Vec<(&str, bool)> =
         rt.fields.iter().map(|f| (f.name.as_str(), f.default.tag != T_UNDEF || f.optional)).collect();
     let bound = bind_args(&rt.name, &params, args, names, span)?;

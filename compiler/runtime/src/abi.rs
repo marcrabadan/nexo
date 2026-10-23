@@ -50,11 +50,15 @@ unsafe fn values(ptr: *const V, n: u64) -> &'static [V] {
     std::slice::from_raw_parts(ptr, n as usize)
 }
 
-unsafe fn names(ptr: *const NameRef, n: u64) -> Vec<Option<&'static str>> {
+unsafe fn names(ptr: *const NameRef, n: u64) -> std::borrow::Cow<'static, [Option<&'static str>]> {
+    static POSITIONAL: [Option<&str>; 16] = [None; 16];
     if ptr.is_null() || n == 0 {
-        return vec![None; n as usize];
+        if n <= 16 {
+            return std::borrow::Cow::Borrowed(&POSITIONAL[..n as usize]);
+        }
+        return std::borrow::Cow::Owned(vec![None; n as usize]);
     }
-    std::slice::from_raw_parts(ptr, n as usize).iter().map(|r| r.get()).collect()
+    std::borrow::Cow::Owned(std::slice::from_raw_parts(ptr, n as usize).iter().map(|r| r.get()).collect())
 }
 
 // ------------------------------------------------------------- lifecycle
@@ -435,6 +439,48 @@ pub unsafe extern "C" fn nx_attr(t: u64, b: u64, name: *const u8, len: usize, sp
     ret(call::get_attr(v(t, b), text(name, len), span))
 }
 
+/// What a place in the code last found: the record type (its id + 1) and
+/// the index of the field or method, in one word so that tasks on other
+/// threads never see half of it.
+fn cached(cache: &std::sync::atomic::AtomicU64, r: &Record) -> Option<usize> {
+    let c = cache.load(std::sync::atomic::Ordering::Relaxed);
+    ((c >> 32) as u32 == r.ty.id.wrapping_add(1)).then_some((c & 0xffff_ffff) as usize)
+}
+
+fn remember(cache: &std::sync::atomic::AtomicU64, r: &Record, i: usize) {
+    cache.store(((r.ty.id.wrapping_add(1) as u64) << 32) | i as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `obj.name`, remembering where the field of a record is.
+#[no_mangle]
+pub unsafe extern "C" fn nx_attr_ic(
+    t: u64,
+    b: u64,
+    name: *const u8,
+    len: usize,
+    span: u32,
+    cache: &std::sync::atomic::AtomicU64,
+) -> V {
+    let obj = v(t, b);
+    if let Some(Obj::Record(r)) = obj.get() {
+        let i = match cached(cache, r) {
+            Some(i) => Some(i),
+            None => {
+                let name = text(name, len);
+                let i = r.ty.fields.iter().position(|f| f.name == name);
+                if let Some(i) = i {
+                    remember(cache, r, i);
+                }
+                i
+            }
+        };
+        if let Some(i) = i {
+            return upgrade(r.fields.borrow()[i].v()).into_raw();
+        }
+    }
+    ret(call::get_attr(obj, text(name, len), span))
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn nx_set_attr(
     ot: u64,
@@ -589,6 +635,46 @@ pub unsafe extern "C" fn nx_call_method(
 ) -> V {
     let names = names(nm, n);
     ret(call::call_method(v(t, b), text(name, len), values(args, n), &names, span, name_span))
+}
+
+/// A method call, remembering where the method of a record type is.
+#[no_mangle]
+pub unsafe extern "C" fn nx_call_method_ic(
+    t: u64,
+    b: u64,
+    name: *const u8,
+    len: usize,
+    args: *const V,
+    nm: *const NameRef,
+    n: u64,
+    span: u32,
+    name_span: u32,
+    cache: &std::sync::atomic::AtomicU64,
+) -> V {
+    let obj = v(t, b);
+    let names = names(nm, n);
+    if let Some(Obj::Record(r)) = obj.get() {
+        let method = match cached(cache, r) {
+            Some(i) => Some(r.ty.methods.borrow()[i].1.v()),
+            None => {
+                let name = text(name, len);
+                if r.ty.fields.iter().any(|f| f.name == name) {
+                    None
+                } else {
+                    let methods = r.ty.methods.borrow();
+                    let i = methods.iter().position(|(m, _)| m == name);
+                    i.map(|i| {
+                        remember(cache, r, i);
+                        methods[i].1.v()
+                    })
+                }
+            }
+        };
+        if let Some(m) = method {
+            return ret(call::call_method_value(obj, m, values(args, n), &names, span));
+        }
+    }
+    ret(call::call_method(obj, text(name, len), values(args, n), &names, span, name_span))
 }
 
 #[no_mangle]

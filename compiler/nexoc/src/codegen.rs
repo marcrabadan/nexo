@@ -364,6 +364,14 @@ impl<'a> Gen<'a> {
     }
 
     /// `ptr @c.N, i64 len`
+    /// A word where a field access or method call remembers where it
+    /// found the member of the last record it saw.
+    fn inline_cache(&mut self) -> String {
+        let n = self.next();
+        let _ = writeln!(self.consts, "@ic.{n} = internal global i64 0");
+        format!("@ic.{n}")
+    }
+
     fn strarg(&mut self, s: &str) -> String {
         let c = self.cstr(s);
         format!("ptr {c}, i64 {}", s.len())
@@ -2987,7 +2995,8 @@ impl<'a> Gen<'a> {
                 let to = self.tb(&o);
                 let n = self.strarg(name);
                 let sp = self.span_id(*name_span);
-                let r = self.call_v("nx_attr", &format!("{to}, {n}, i32 {sp}"));
+                let ic = self.inline_cache();
+                let r = self.call_v("nx_attr_ic", &format!("{to}, {n}, i32 {sp}, ptr {ic}"));
                 self.check();
                 self.drop_val(&o);
                 self.owned(r)
@@ -3850,7 +3859,11 @@ impl<'a> Gen<'a> {
                 let to = self.tb(&o);
                 let na = self.strarg(&name);
                 let nsp = self.span_id(name_span);
-                let r = self.call_v("nx_call_method", &format!("{to}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
+                let ic = self.inline_cache();
+                let r = self.call_v(
+                    "nx_call_method_ic",
+                    &format!("{to}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}, ptr {ic}"),
+                );
                 self.check();
                 self.drop_all(&own_args);
                 self.drop_slot(&slot);
@@ -4374,6 +4387,8 @@ declare %V @nx_conform(i64, i64, ptr, i64, ptr, i64, i32)
 declare %V @nx_conform_return(i64, i64, ptr, i64, ptr, i64, i32)
 declare %V @nx_call(i64, i64, ptr, ptr, i64, i32)
 declare %V @nx_call_method(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32)
+declare %V @nx_call_method_ic(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32, ptr)
+declare %V @nx_attr_ic(i64, i64, ptr, i64, i32, ptr)
 declare %V @nx_builtin_call(i32, ptr, ptr, i64, i32)
 declare %V @nx_closure(ptr, ptr, ptr, i64)
 declare ptr @nx_cell()
