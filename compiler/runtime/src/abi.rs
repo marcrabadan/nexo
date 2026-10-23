@@ -659,10 +659,15 @@ pub unsafe extern "C" fn nx_call_method(
 /// the field types, and the record takes them.
 #[no_mangle]
 pub unsafe extern "C" fn nx_record_new(t: u64, b: u64, args: *const V, n: u64, span: u32) -> V {
-    let vals: Vec<Val> = values(args, n).iter().map(|x| Val::adopt(*x)).collect();
+    let args = values(args, n);
     match v(t, b).get() {
-        Some(Obj::Type(TypeRef::Record(rt))) if rt.fields.len() == vals.len() => {
-            let fields = rt.fields.iter().zip(vals).map(|(f, x)| call::field_value(f, x.plain())).collect();
+        Some(Obj::Type(TypeRef::Record(rt))) if rt.fields.len() == args.len() => {
+            let mut fields = Vec::with_capacity(args.len());
+            for (i, x) in args.iter().enumerate() {
+                let x = Val::adopt(*x).plain();
+                let f = &rt.fields[i];
+                fields.push(if f.weak { call::field_value(f, x) } else { x });
+            }
             Val::new(Obj::Record(Record {
                 ty: rt,
                 fields: Mut::new(fields),
@@ -671,8 +676,11 @@ pub unsafe extern "C" fn nx_record_new(t: u64, b: u64, args: *const V, n: u64, s
             .into_raw()
         }
         _ => {
-            let raw: Vec<V> = vals.iter().map(|x| x.v()).collect();
-            ret(call::call_value(v(t, b), &raw, span))
+            let r = ret(call::call_value(v(t, b), args, span));
+            for x in args {
+                release(*x);
+            }
+            r
         }
     }
 }
