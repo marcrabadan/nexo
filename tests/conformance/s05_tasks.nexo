@@ -1,0 +1,22 @@
+# Section 5: tasks run at the same time; what they print and return keeps
+# the order of the input
+type Account:
+    owner: str
+    balance: int
+
+accounts = parallel for name in ["ana", "luis", "eva"]:
+    print("opening", name)
+    a = Account(name, 0)
+    a.balance += len(name) * 10
+    return a
+print(accounts)
+
+# each statement of parallel: computes its own names
+parallel:
+    totals = [a.balance for a in accounts]
+    names = [a.owner for a in accounts]
+print(names, totals)
+
+# the results can be changed once the block ends
+accounts[0].balance = 1
+print(accounts[0])

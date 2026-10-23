@@ -437,13 +437,16 @@ pub struct BuiltinId(pub u32);
 pub struct CellBox {
     pub value: V,
     pub rc: AtomicU64,
+    /// the task that created it may change it (read by the compiled code
+    /// at offset 24, see cow.rs)
+    pub birth: u64,
 }
 
 pub type Cell = *mut CellBox;
 
 pub fn new_cell() -> Cell {
     count(1);
-    Box::into_raw(Box::new(CellBox { value: UNDEF, rc: AtomicU64::new(1) }))
+    Box::into_raw(Box::new(CellBox { value: UNDEF, rc: AtomicU64::new(1), birth: crate::state::stamp() }))
 }
 
 pub fn retain_cell(c: Cell) {

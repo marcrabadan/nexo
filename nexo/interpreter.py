@@ -28,15 +28,20 @@ from .types import (
 
 MISSING = object()
 
+# the stamp of the running task (see Interpreter.check_write): bindings
+# created by a task carry it
+_TASK = [0]
+
 
 class Binding:
-    __slots__ = ("value", "mutable", "type", "type_env")
+    __slots__ = ("value", "mutable", "type", "type_env", "birth")
 
     def __init__(self, value, mutable, type_=None, type_env=None):
         self.value = value
         self.mutable = mutable
         self.type = type_
         self.type_env = type_env
+        self.birth = _TASK[0]
 
 
 class Env:
@@ -146,8 +151,13 @@ class Interpreter:
         self.deadlines: list[tuple[float, Any]] = []
         self.tests: list[A.TestDef] = []
         self.contracts: dict[int, tuple[list, list]] = {}
-        # when the running task started (see check_write)
-        self.stamp = 0
+        # tasks of `parallel` (sequential in phase 0, D52): the last stamp
+        # given, the environment of the running `parallel:` task and the
+        # names it computes
+        self.stamps = 0
+        self.task_env: Env | None = None
+        self.task_outputs: list[str] = []
+        _TASK[0] = 0
 
     # ----------------------------------------------------------- running
     def load(self, source: str, file: str) -> A.Program:
@@ -232,6 +242,7 @@ class Interpreter:
                     if crossed_fn:
                         break
                     raise NexoError("immutable", span, name=name)
+                self.check_var_write(b, name, env, span)
                 if b.type is not None:
                     value = self.conform(value, b.type, b.type_env, name, value_span)
                 b.value = self.store_value(value)
@@ -418,8 +429,11 @@ class Interpreter:
 
     def exec_ParallelBlock(self, s: A.ParallelBlock, env: Env) -> None:
         # Sequential in phase 0: same error semantics, the first failure
-        # stops the remaining tasks and propagates.
-        self.exec_block(s.body, Env(env, transparent=True))
+        # stops the remaining tasks and propagates. Each statement is a task.
+        from .checker import assigned_names
+        for stmt in s.body:
+            task_env = Env(env, transparent=True)
+            self.run_task(lambda: self.exec(stmt, task_env), assigned_names([stmt]), task_env)
 
     def exec_TestDef(self, s: A.TestDef, env: Env) -> None:
         self.tests.append(s)
@@ -583,7 +597,7 @@ class Interpreter:
         if isinstance(e, A.Name):
             b = env.find(e.name)
             if b is not None and env.lookup(e.name) is b.value:
-                return ("var", b)
+                return ("var", b, e.name, env, e.span)
             return ("value", self.eval(e, env))
         if isinstance(e, A.Attr):
             return ("field", self.eval(e.obj, env), e.name, e.name_span)
@@ -597,6 +611,7 @@ class Interpreter:
         kind = parts[0]
         if kind == "var":
             b = parts[1]
+            self.check_var_write(b, parts[2], parts[3], parts[4])
             u = unique(b.value)
             if u is not b.value:
                 b.value = u
@@ -646,8 +661,39 @@ class Interpreter:
             return WeakRef(value)
         return value
 
+    @property
+    def stamp(self) -> int:
+        return _TASK[0]
+
     def check_write(self, record: Record, span: Span) -> None:
-        pass
+        """A task may only change records created after it started: the
+        others can be read by several tasks at once (section 5)."""
+        if record.birth < _TASK[0]:
+            raise NexoError("record_shared", span, type=record.type.name)
+
+    def check_var_write(self, b: Binding, name: str, env: Env, span: Span) -> None:
+        """Nor variables that existed before it, except the names a
+        `parallel:` task computes."""
+        if b.birth >= _TASK[0]:
+            return
+        if name in self.task_outputs:
+            e = env
+            while e is not None and e is not self.task_env and not e.is_fn:
+                e = e.parent
+            if e is self.task_env:
+                return
+        raise NexoError("task_write_var", span, name=name)
+
+    def run_task(self, run, outputs: list[str], env: Env | None):
+        """Run one task with a new stamp."""
+        saved = (_TASK[0], self.task_outputs, self.task_env)
+        self.stamps += 1
+        _TASK[0] = self.stamps
+        self.task_outputs, self.task_env = outputs, env
+        try:
+            return run()
+        finally:
+            _TASK[0], self.task_outputs, self.task_env = saved
 
     def temp_copy(self, value: Any) -> Any:
         """A value that is not in a place: a change to it is seen by nobody."""
@@ -737,15 +783,19 @@ class Interpreter:
             if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
                 raise NexoError("type_mismatch", a.value.span, name="max", type="int",
                                 value=repr_value(limit), vtype=type_name(limit))
-        results = []
-        for item in self.iterate(self.eval(e.iterable, env), e.iterable.span):
+        results = NList()
+
+        def task(item):
             task_env = Env(env)
             task_env.vars[e.var] = Binding(self.store_value(item), False)
             try:
                 self.exec_block(e.body, task_env)
-                results.append(None)
+                return None
             except ReturnSignal as r:
-                results.append(r.value)
+                return r.value
+
+        for item in list(self.iterate(self.eval(e.iterable, env), e.iterable.span)):
+            results.append(self.run_task(lambda: task(item), [], None))
         return results
 
     def eval_Pipeline(self, e: A.Pipeline, env: Env) -> Any:

@@ -29,8 +29,7 @@ pub struct Tls {
     /// 0: running normally; 1: an error value is on its way to a `try`;
     /// 2: a diagnostic is on its way to the end of the program (or test).
     pub failing: u8,
-    /// 1 while statements must call nx_check_deadline: a `try within`
-    /// runs, or the task was cancelled.
+    /// 1 while a `try within` runs: statements call nx_check_deadline.
     pub deadline_active: u8,
     pub pad: [u8; 6],
     /// calls in progress (D73)
@@ -83,8 +82,6 @@ pub struct TaskState {
     pub deadlines: Vec<(Instant, Val, u32)>,
     /// output of a `parallel` task, written in order when the block ends
     pub buffer: Option<String>,
-    /// the task was cancelled because an earlier one failed
-    pub cancelled: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 static PROGRAM: OnceLock<Program> = OnceLock::new();

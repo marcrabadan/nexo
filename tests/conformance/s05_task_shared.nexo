@@ -1,0 +1,9 @@
+# Section 5: a task cannot change data shared with the other tasks
+type Counter:
+    value: int
+
+counter = Counter(0)
+print("start")
+parallel for n in [1, 2, 3]:
+    counter.value += n
+print(counter.value)

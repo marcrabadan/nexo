@@ -126,6 +126,10 @@ enum FrameSrc<'a> {
     Default(&'a Expr),
     Test(&'a [Stmt]),
     Handler(&'a [Stmt]),
+    /// the body of a `parallel for` (one call per element)
+    Task(&'a [Stmt]),
+    /// a statement of a `parallel:` block
+    TaskStmt(&'a Stmt),
 }
 
 pub struct Gen<'a> {
@@ -1096,6 +1100,11 @@ impl<'a> Gen<'a> {
                     self.res.frames[frame].params.iter().map(|b| (self.res.bindings[*b].name.clone(), false)).collect();
                 ("on".into(), names)
             }
+            FrameSrc::Task(_) => {
+                let p = &self.res.bindings[self.res.frames[frame].params[0]].name;
+                ("task".into(), vec![(p.clone(), false)])
+            }
+            FrameSrc::TaskStmt(_) => ("task".into(), vec![]),
         };
         let fn_c = self.cstr(&fname);
         let mut pitems = Vec::new();
@@ -1244,8 +1253,11 @@ impl<'a> Gen<'a> {
                 self.own(&v);
                 self.store(&ret_slot, &v);
             }
-            FrameSrc::Test(body) | FrameSrc::Handler(body) => {
+            FrameSrc::Test(body) | FrameSrc::Handler(body) | FrameSrc::Task(body) => {
                 self.block(body)?;
+            }
+            FrameSrc::TaskStmt(st) => {
+                self.block(std::slice::from_ref(st))?;
             }
         }
         debug_assert!(self.f().live.is_empty(), "live temporaries at the end of a frame");
@@ -1715,7 +1727,19 @@ impl<'a> Gen<'a> {
             }
             StmtKind::Match { subject, arms } => self.match_stmt(s, subject, arms)?,
             StmtKind::Try { within, body, handlers } => self.try_stmt(s, within.as_ref(), body, handlers)?,
-            StmtKind::Parallel(body) => self.block(body)?,
+            StmtKind::Parallel(body) => {
+                // each statement is a task; they run at the same time
+                let mut clos = Vec::new();
+                for (i, st) in body.iter().enumerate() {
+                    let frame = self.res.frame_of[&Node::Task(s.id, i)];
+                    clos.push(self.closure(frame, FrameSrc::TaskStmt(st))?);
+                }
+                let arr = self.values_array(&clos);
+                let sp = self.span_id(s.span);
+                self.call_void("nx_parallel_block", &format!("ptr {arr}, i64 {}, i32 {sp}", clos.len()));
+                self.check();
+                self.drop_all(&clos);
+            }
             StmtKind::Test { name, body } => {
                 if self.opts.test_mode {
                     let frame = self.res.frame_of[&Node::Stmt(s.id)];
@@ -1844,6 +1868,7 @@ impl<'a> Gen<'a> {
                     self.cond_br(&def, &yes, &next);
                     self.place(&yes);
                     if kind == BKind::Var {
+                        self.task_write_check(*b, name, target.span);
                         let cur = self.load(&slot);
                         let v2 = match &bty {
                             Some(t) => {
@@ -1985,6 +2010,9 @@ impl<'a> Gen<'a> {
     fn place_ptr(&mut self, p: &Place<'a>) -> GResult<String> {
         Ok(match p {
             Place::Var(e, cands) => {
+                if let (ExprKind::Name(n), [b]) = (&e.kind, cands.as_slice()) {
+                    self.task_write_check(*b, n, e.span);
+                }
                 let ptr = self.binding_ptr_any(e, cands)?;
                 self.emit(&format!("call void @nx_unique_slot(ptr {ptr})"));
                 ptr
@@ -3440,6 +3468,7 @@ impl<'a> Gen<'a> {
     }
 
     fn parallel_for(&mut self, e: &'a Expr, iterable: &'a Expr, args: &'a [Arg], body: &'a [Stmt]) -> GResult<Val> {
+        let mut max = none();
         for a in args {
             if a.name.as_deref() != Some("max") {
                 return Err(Diagnostic::new("arg_unknown", a.span)
@@ -3452,39 +3481,67 @@ impl<'a> Gen<'a> {
             let sp = self.span_id(a.value.span);
             self.call_void("nx_parallel_max", &format!("{tv}, i32 {sp}"));
             self.check();
-            self.drop_val(&v);
+            max = v;
         }
-        let out = self.call_v("nx_list", "ptr null, i64 0");
-        let out = self.owned(out);
-        let results = self.spill(&out);
-        let scope = self.res.scope_of[&Node::Expr(e.id)];
-        let var = self.res.decl[&Node::Expr(e.id)];
         let it = self.expr(iterable, false)?;
-        // the tasks run one after the other: same results in order, and
-        // the first failure stops the rest
-        self.for_each(&it, iterable.span, |g, item| {
-            g.enter_scope(scope);
-            g.store_binding(var, item);
-            let task = g.alloca("%V");
-            g.emit(&format!("store %V {{ i64 0, i64 0 }}, ptr {task}"));
-            g.f().live.push(Live::Slot(task.clone()));
-            let cont = g.label();
-            let keep = g.f().live.len();
-            g.f().returns.push(RetCtx::Task { slot: task.clone(), cont: cont.clone(), live: keep });
-            g.block(body)?;
-            g.f().returns.pop();
-            g.br(&cont);
-            g.place(&cont);
-            let r = g.load(&task);
-            let l = g.load(&results);
-            let tl = g.tb(&l);
-            let tr = g.tb(&r);
-            g.call_void("nx_list_push", &format!("{tl}, {tr}"));
-            g.check();
-            g.drop_slot(&task);
-            Ok(())
-        })?;
-        Ok(self.unspill(&results))
+        // the body is a task: a function called for each element, on as
+        // many threads as there are processors (or `max`)
+        let frame = self.res.frame_of[&Node::Expr(e.id)];
+        let clo = self.closure(frame, FrameSrc::Task(body))?;
+        let ti = self.tb(&it);
+        let tc = self.tb(&clo);
+        let tm = self.tb(&max);
+        let sp = self.span_id(iterable.span);
+        let r = self.call_v("nx_parallel_for", &format!("{ti}, {tc}, {tm}, i32 {sp}"));
+        self.check();
+        self.drop_val(&clo);
+        self.drop_val(&it);
+        self.drop_val(&max);
+        Ok(self.owned(r))
+    }
+
+    /// A task cannot change a variable that existed before it started
+    /// (section 5): checked when the variable is a top-level one or a
+    /// captured one, unless the task is the `parallel:` statement that
+    /// computes it.
+    fn task_write_check(&mut self, b: BindingId, name: &str, span: Span) {
+        let frame = self.fs.last().unwrap().frame;
+        if self.res.task_outputs.get(&frame).is_some_and(|o| o.contains(&b)) {
+            return;
+        }
+        let birth = if self.res.is_static(b) {
+            None
+        } else {
+            match self.slot_of(b) {
+                Some(Slot::Value(_)) => return,
+                _ => {
+                    let c = self.cell_ptr(b);
+                    let p = self.reg();
+                    self.emit(&format!("{p} = getelementptr inbounds i8, ptr {c}, i64 24"));
+                    let x = self.reg();
+                    self.emit(&format!("{x} = load i64, ptr {p}"));
+                    Some(x)
+                }
+            }
+        };
+        let sp_ptr = self.reg();
+        self.emit(&format!("{sp_ptr} = getelementptr inbounds i8, ptr %tls, i64 16"));
+        let stamp = self.reg();
+        self.emit(&format!("{stamp} = load i64, ptr {sp_ptr}"));
+        let c = self.reg();
+        match birth {
+            None => self.emit(&format!("{c} = icmp ne i64 {stamp}, 0")),
+            Some(x) => self.emit(&format!("{c} = icmp ult i64 {x}, {stamp}")),
+        }
+        let bad = self.label();
+        let ok = self.label();
+        self.cond_br(&c, &bad, &ok);
+        self.place(&bad);
+        let n = self.strarg(name);
+        let sp = self.span_id(span);
+        self.call_void("nx_task_write", &format!("{n}, i32 {sp}"));
+        self.fail_here();
+        self.place(&ok);
     }
 }
 
@@ -3538,6 +3595,9 @@ no:
 }
 
 declare void @nx_destroy(ptr)
+declare %V @nx_parallel_for(i64, i64, i64, i64, i64, i64, i32)
+declare void @nx_parallel_block(ptr, i64, i32)
+declare void @nx_task_write(ptr, i64, i32)
 declare void @nx_cell_release(ptr)
 declare void @nx_iter_free(ptr)
 declare void @nx_scratch_clear()

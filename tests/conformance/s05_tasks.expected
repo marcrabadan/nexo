@@ -1,0 +1,6 @@
+opening ana
+opening luis
+opening eva
+[Account(owner: "ana", balance: 30), Account(owner: "luis", balance: 40), Account(owner: "eva", balance: 30)]
+["ana", "luis", "eva"] [30, 40, 30]
+Account(owner: "ana", balance: 1)

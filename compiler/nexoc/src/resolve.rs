@@ -86,6 +86,8 @@ pub enum FrameKind {
     Default,
     Test,
     Handler,
+    /// a task of `parallel for` or `parallel:` (run on another thread)
+    Task,
 }
 
 #[derive(Debug)]
@@ -108,6 +110,8 @@ pub enum Node {
     Step(u32, usize),
     Column(u32, usize, usize),
     Field(u32, usize),
+    /// statement i of a `parallel:` block
+    Task(u32, usize),
 }
 
 #[derive(Clone, Debug)]
@@ -161,6 +165,9 @@ pub struct Resolution {
     /// calls of a function to itself by name: they use the function's own
     /// closure, so it does not capture itself (a reference cycle)
     pub self_calls: std::collections::HashSet<u32>,
+    /// the names each task of a `parallel:` block computes (it may assign
+    /// them although they belong outside the task)
+    pub task_outputs: HashMap<FrameId, Vec<BindingId>>,
 }
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
@@ -209,6 +216,8 @@ struct Resolver {
     self_fn_binding: Option<BindingId>,
     /// calls to the function's own name: (call expr, scope, binding)
     pending_self: Vec<(u32, ScopeId, BindingId)>,
+    /// the tasks being resolved: (frame, true for `parallel for`)
+    tasks: Vec<(FrameId, bool)>,
 }
 
 impl Resolution {
@@ -243,7 +252,9 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             types: HashMap::new(),
             next_type_id: 1,
             self_calls: std::collections::HashSet::new(),
+            task_outputs: HashMap::new(),
         },
+        tasks: Vec::new(),
         self_fn: Vec::new(),
         self_fn_binding: None,
         pending_self: Vec::new(),
@@ -271,6 +282,64 @@ impl Resolver {
         self.r.frame_of.insert(node, id);
         self.r.scope_of.insert(node, root);
         (id, root)
+    }
+
+    /// A task frame. The root of a `parallel:` task is transparent: the
+    /// names it assigns belong to the enclosing scope (D25).
+    fn new_task_frame(&mut self, parent_scope: ScopeId, node: Node, transparent: bool) -> (FrameId, ScopeId) {
+        let parent_frame = self.r.scopes[parent_scope].frame;
+        let id = self.r.frames.len();
+        let kind = if transparent { SKind::Transparent } else { SKind::Normal };
+        let root = self.new_scope(Some(parent_scope), kind, id, true);
+        self.r.frames.push(Frame { parent: Some(parent_frame), kind: FrameKind::Task, root, free: Vec::new(), params: Vec::new() });
+        self.r.frame_of.insert(node, id);
+        self.r.scope_of.insert(node, root);
+        (id, root)
+    }
+
+    /// Inside a task of `parallel for`, a variable of outside the task
+    /// cannot be changed: the tasks run at the same time (section 5).
+    fn check_task_write(&self, scope: ScopeId, cands: &[BindingId], name: &str, span: nexo_diag::Span, any: bool) -> RResult<()> {
+        let Some((frame, true)) = self.tasks.last().copied() else { return Ok(()) };
+        if self.r.scopes[scope].frame != frame {
+            return Ok(());
+        }
+        let outside = cands.iter().any(|b| {
+            let binding = &self.r.bindings[*b];
+            binding.frame != frame && (any || binding.kind == BKind::Var)
+        });
+        if outside {
+            return Err(Diagnostic::new("task_write_var", span).arg("name", name));
+        }
+        Ok(())
+    }
+
+    /// The variable a place starts from (`xs` in `xs[0].add(1)`).
+    fn place_root(e: &Expr) -> Option<&Expr> {
+        match &e.kind {
+            ExprKind::Name(_) => Some(e),
+            ExprKind::Index { obj, .. } | ExprKind::Attr { obj, .. } | ExprKind::Propagate(obj) => Self::place_root(obj),
+            _ => None,
+        }
+    }
+
+    /// `place.add(x)` or `place[i] = x` inside a `parallel for` task.
+    fn check_task_change(&mut self, scope: ScopeId, place: &Expr) -> RResult<()> {
+        let Some(root) = Self::place_root(place) else { return Ok(()) };
+        let ExprKind::Name(n) = &root.kind else { return Ok(()) };
+        // records are shared: changing their fields is checked when it runs
+        if !matches!(place.kind, ExprKind::Name(_) | ExprKind::Index { .. }) {
+            return Ok(());
+        }
+        let mut cands = Vec::new();
+        let mut s = Some(scope);
+        while let Some(id) = s {
+            if let Some(b) = self.lookup_local(id, n) {
+                cands.push(b);
+            }
+            s = self.r.scopes[id].parent;
+        }
+        self.check_task_write(scope, &cands, n, root.span, true)
     }
 
     fn lookup_local(&self, scope: ScopeId, name: &str) -> Option<BindingId> {
@@ -605,11 +674,13 @@ impl Resolver {
                         let res = self.lookup(scope, n);
                         self.r.names.insert(target.id, res);
                         let a = self.assign_res(scope, n);
+                        let cands: Vec<BindingId> = a.cands.iter().map(|(b, _)| *b).collect();
                         self.r.assigns.insert(s.id, a);
-                        Ok(())
+                        self.check_task_write(scope, &cands, n, target.span, false)
                     }
                     ExprKind::Attr { obj, .. } => self.expr(scope, obj),
                     ExprKind::Index { obj, index } => {
+                        self.check_task_change(scope, obj)?;
                         self.expr(scope, obj)?;
                         self.expr(scope, index)
                     }
@@ -734,7 +805,24 @@ impl Resolver {
                 }
                 Ok(())
             }
-            StmtKind::Parallel(body) => self.block(scope, body),
+            StmtKind::Parallel(body) => {
+                // each statement is a task (section 5)
+                for (i, st) in body.iter().enumerate() {
+                    let (frame, root) = self.new_task_frame(scope, Node::Task(s.id, i), true);
+                    self.tasks.push((frame, false));
+                    let r = self.stmt(root, st);
+                    self.tasks.pop();
+                    r?;
+                    let mut outputs = Vec::new();
+                    for name in crate::checker::assigned_names(std::slice::from_ref(st)) {
+                        if let Some(b) = self.lookup_local(self.target(root), &name) {
+                            outputs.push(b);
+                        }
+                    }
+                    self.r.task_outputs.insert(frame, outputs);
+                }
+                Ok(())
+            }
             StmtKind::Test { body, .. } => {
                 let global_root = self.r.frames[GLOBAL_FRAME].root;
                 let (_, root) = self.new_frame(global_root, FrameKind::Test, Node::Stmt(s.id));
@@ -907,6 +995,11 @@ impl Resolver {
                 self.expr(scope, index)
             }
             ExprKind::Call { func, args } => {
+                if let ExprKind::Attr { obj, name, .. } = &func.kind {
+                    if name == "add" {
+                        self.check_task_change(scope, obj)?;
+                    }
+                }
                 // old(...) inside ensure is not a name (D53)
                 if !matches!(&func.kind, ExprKind::Name(n) if n == "old") && !self.self_call(scope, func) {
                     self.expr(scope, func)?;
@@ -968,11 +1061,17 @@ impl Resolver {
                 for a in args {
                     self.expr(scope, &a.value)?;
                 }
-                let inner = self.new_block_scope(scope, Node::Expr(e.id), body);
-                let b = self.declare(inner, var, BKind::Const, None, Origin::Plain);
+                // the body is a task: a frame of its own, run for each element
+                let (frame, root) = self.new_task_frame(scope, Node::Expr(e.id), false);
+                self.declare_block(root, body);
+                let b = self.declare(root, var, BKind::Const, None, Origin::Param);
                 self.r.bindings[b].entry = true;
+                self.r.frames[frame].params.push(b);
                 self.r.decl.insert(Node::Expr(e.id), b);
-                self.block(inner, body)
+                self.tasks.push((frame, true));
+                let r = self.block(root, body);
+                self.tasks.pop();
+                r
             }
             _ => Ok(()),
         }

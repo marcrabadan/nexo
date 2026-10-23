@@ -107,6 +107,202 @@ pub fn check(program: &Program) -> CResult {
     c.stmts(&program.body, Ctx::top())
 }
 
+// -- section 5: the tasks of a `parallel:` block ------------------------------
+
+/// The tasks of a `parallel:` block run at the same time: a task cannot
+/// use a name another task computes, two tasks cannot compute the same
+/// name, and `return` would leave only one task.
+fn check_parallel_block(body: &[Stmt]) -> CResult {
+    let mut assigned: Vec<(String, usize)> = Vec::new();
+    for (i, st) in body.iter().enumerate() {
+        let mut writes = Vec::new();
+        stmt_names(st, &mut Vec::new(), &mut writes, true)?;
+        for (n, span) in writes {
+            if assigned.iter().any(|(m, j)| *m == n && *j != i) {
+                return Err(Diagnostic::new("parallel_twice", span).arg("name", n));
+            }
+            if !assigned.iter().any(|(m, _)| *m == n) {
+                assigned.push((n, i));
+            }
+        }
+    }
+    for (i, st) in body.iter().enumerate() {
+        let mut reads = Vec::new();
+        stmt_names(st, &mut reads, &mut Vec::new(), true)?;
+        for (n, span) in reads {
+            if assigned.iter().any(|(m, j)| *m == n && *j != i) {
+                return Err(Diagnostic::new("parallel_sibling", span).arg("name", n));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The names a statement list assigns (outside nested functions).
+pub fn assigned_names(body: &[Stmt]) -> Vec<String> {
+    let mut writes = Vec::new();
+    for s in body {
+        let _ = stmt_names(s, &mut Vec::new(), &mut writes, false);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for (n, _) in writes {
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+fn root_name(e: &Expr) -> Option<(&str, Span)> {
+    match &e.kind {
+        ExprKind::Name(n) => Some((n.as_str(), e.span)),
+        ExprKind::Index { obj, .. } | ExprKind::Attr { obj, .. } | ExprKind::Propagate(obj) => root_name(obj),
+        _ => None,
+    }
+}
+
+/// Names read and assigned by a statement; a change through a place
+/// (`xs.add(x)`, `xs[i] = v`) assigns its variable.
+fn stmt_names(s: &Stmt, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>, top: bool) -> CResult {
+    // `top`: inside a task of `parallel:`, where `return` is not allowed
+    let block = |b: &[Stmt], reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>| -> CResult {
+        for x in b {
+            stmt_names(x, reads, writes, top)?;
+        }
+        Ok(())
+    };
+    match &s.kind {
+        StmtKind::Expr(e) => expr_names(e, reads, writes),
+        StmtKind::Assign { target, op, value, .. } => {
+            expr_names(value, reads, writes);
+            match &target.kind {
+                ExprKind::Name(n) => {
+                    if *op != "=" {
+                        reads.push((n.clone(), target.span));
+                    }
+                    writes.push((n.clone(), target.span));
+                }
+                ExprKind::Index { obj, index } => {
+                    if let Some((n, sp)) = root_name(obj) {
+                        if matches!(obj.kind, ExprKind::Name(_) | ExprKind::Index { .. }) {
+                            writes.push((n.to_string(), sp));
+                        }
+                    }
+                    expr_names(obj, reads, writes);
+                    expr_names(index, reads, writes);
+                }
+                _ => expr_names(target, reads, writes),
+            }
+        }
+        StmtKind::VarDecl { name, name_span, value, .. } => {
+            expr_names(value, reads, writes);
+            writes.push((name.clone(), *name_span));
+        }
+        StmtKind::Return(v) => {
+            if top {
+                return Err(Diagnostic::new("parallel_return", s.span));
+            }
+            if let Some(v) = v {
+                expr_names(v, reads, writes);
+            }
+        }
+        StmtKind::Expect(e) | StmtKind::Ensure(e) | StmtKind::Assert { expr: e, .. } => expr_names(e, reads, writes),
+        StmtKind::Emit { args, .. } => {
+            for a in args {
+                expr_names(&a.value, reads, writes);
+            }
+        }
+        StmtKind::If { branches, orelse } => {
+            for (c, b) in branches {
+                expr_names(c, reads, writes);
+                block(b, reads, writes)?;
+            }
+            if let Some(b) = orelse {
+                block(b, reads, writes)?;
+            }
+        }
+        StmtKind::For { iterable, body, .. } => {
+            expr_names(iterable, reads, writes);
+            block(body, reads, writes)?;
+        }
+        StmtKind::While { cond: e, body } | StmtKind::Repeat { count: e, body } => {
+            expr_names(e, reads, writes);
+            block(body, reads, writes)?;
+        }
+        StmtKind::Match { subject, arms } => {
+            expr_names(subject, reads, writes);
+            for a in arms {
+                if let Some(g) = &a.guard {
+                    expr_names(g, reads, writes);
+                }
+                block(&a.body, reads, writes)?;
+            }
+        }
+        StmtKind::Try { within, body, handlers } => {
+            if let Some(w) = within {
+                expr_names(w, reads, writes);
+            }
+            block(body, reads, writes)?;
+            for h in handlers {
+                block(&h.body, reads, writes)?;
+            }
+        }
+        StmtKind::Parallel(body) => block(body, reads, writes)?,
+        StmtKind::Fn(f) => writes.push((f.name.clone(), f.name_span)),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn expr_names(e: &Expr, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>) {
+    match &e.kind {
+        ExprKind::Name(n) => reads.push((n.clone(), e.span)),
+        ExprKind::Call { func, args } => {
+            if let ExprKind::Attr { obj, name, .. } = &func.kind {
+                if name == "add" && matches!(obj.kind, ExprKind::Name(_) | ExprKind::Index { .. }) {
+                    if let Some((n, sp)) = root_name(obj) {
+                        writes.push((n.to_string(), sp));
+                    }
+                }
+            }
+            if !matches!(&func.kind, ExprKind::Name(n) if n == "old") {
+                expr_names(func, reads, writes);
+            }
+            for a in args {
+                expr_names(&a.value, reads, writes);
+            }
+        }
+        ExprKind::Propagate(x) => expr_names(x, reads, writes),
+        ExprKind::Coalesce { left, right } => {
+            expr_names(left, reads, writes);
+            expr_names(right, reads, writes);
+        }
+        ExprKind::Lambda { body, .. } => expr_names(body, reads, writes),
+        ExprKind::Pipeline { source, steps } => {
+            expr_names(source, reads, writes);
+            for s in steps {
+                for x in s.expr.iter().chain(s.columns.iter()) {
+                    expr_names(x, reads, writes);
+                }
+            }
+        }
+        ExprKind::ParallelFor { iterable, args, body, .. } => {
+            expr_names(iterable, reads, writes);
+            for a in args {
+                expr_names(&a.value, reads, writes);
+            }
+            for s in body {
+                let _ = stmt_names(s, reads, &mut Vec::new(), false);
+            }
+        }
+        _ => {
+            for c in children(e) {
+                expr_names(c, reads, writes);
+            }
+        }
+    }
+}
+
 // -- section 7, rule 4: weak fields and reference cycles --------------------
 
 fn type_names<'a>(t: Option<&'a TypeExpr>, out: &mut Vec<&'a TypeName>) {
@@ -448,7 +644,10 @@ impl Checker {
                 }
                 Ok(())
             }
-            StmtKind::Parallel(body) => self.stmts(body, ctx),
+            StmtKind::Parallel(body) => {
+                check_parallel_block(body)?;
+                self.stmts(body, ctx)
+            }
             StmtKind::Event { body, .. } => self.stmts(body, Ctx::top()),
             _ => Ok(()),
         }

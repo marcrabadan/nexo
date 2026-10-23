@@ -995,6 +995,22 @@ pub extern "C" fn nx_parallel_max(t: u64, b: u64, span: u32) {
     }
 }
 
+#[no_mangle]
+pub extern "C" fn nx_parallel_for(it: u64, ib: u64, ft: u64, fb: u64, mt: u64, mb: u64, span: u32) -> V {
+    ret(crate::par::parallel_for(v(it, ib), v(ft, fb), v(mt, mb), span))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nx_parallel_block(tasks: *const V, n: u64, span: u32) {
+    let _ = crate::par::parallel_block(values(tasks, n), span);
+}
+
+/// A task changed a variable of outside the task (section 5).
+#[no_mangle]
+pub unsafe extern "C" fn nx_task_write(name: *const u8, len: usize, span: u32) {
+    diag(Diagnostic::new_spanless("task_write_var").arg("name", text(name, len)), span);
+}
+
 // --------------------------------------------------------- contracts, tests
 
 #[no_mangle]
@@ -1132,18 +1148,14 @@ pub extern "C" fn nx_deadline_push(t: u64, b: u64, within_span: u32, try_span: u
 
 #[no_mangle]
 pub extern "C" fn nx_deadline_pop() {
-    let (old, active) = state::with_task(|s| (s.deadlines.pop(), !s.deadlines.is_empty() || s.cancelled.is_some()));
+    let (old, active) = state::with_task(|s| (s.deadlines.pop(), !s.deadlines.is_empty()));
     drop(old);
     state::set_deadline_active(active);
 }
 
-/// Between statements while a `try within` runs (D58), or in a task that
-/// may be cancelled.
+/// Between statements while a `try within` runs (D58).
 #[no_mangle]
 pub extern "C" fn nx_check_deadline() {
-    if crate::par::cancelled() {
-        return;
-    }
     let now = std::time::Instant::now();
     let expired = state::with_task(|s| s.deadlines.iter().find(|(d, _, _)| now > *d).map(|(_, l, s)| (l.clone(), *s)));
     if let Some((limit, span)) = expired {

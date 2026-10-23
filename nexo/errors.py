@@ -239,6 +239,46 @@ MESSAGES: dict[str, dict[str, str]] = {
     # runtime diagnostics
     "name_not_found": {"es": '"{name}" no existe.', "en": '"{name}" does not exist.'},
     "fix.name_not_found": {"es": "Defínelo antes de usarlo.", "en": "Define it before using it."},
+    "task_write_var": {
+        "es": 'Una tarea de parallel no puede cambiar "{name}": es de fuera de la tarea y las tareas se ejecutan a la vez.',
+        "en": 'A parallel task cannot change "{name}": it belongs outside the task and the tasks run at the same time.',
+    },
+    "fix.task_write_var": {
+        "es": 'Devuelve el resultado con return y úsalo cuando termine el parallel.',
+        "en": 'Return the result with return and use it when the parallel ends.',
+    },
+    "record_shared": {
+        "es": 'Una tarea no puede cambiar un {type} creado antes de que empezara: otras tareas pueden estar leyéndolo.',
+        "en": 'A task cannot change a {type} created before it started: other tasks may be reading it.',
+    },
+    "fix.record_shared": {
+        "es": 'Crea el {type} dentro de la tarea, o devuelve el cambio con return y aplícalo cuando termine el parallel.',
+        "en": 'Create the {type} inside the task, or return the change and apply it when the parallel ends.',
+    },
+    "parallel_sibling": {
+        "es": '"{name}" lo calcula otra tarea de este parallel, y las tareas se ejecutan a la vez.',
+        "en": '"{name}" is computed by another task of this parallel, and the tasks run at the same time.',
+    },
+    "fix.parallel_sibling": {
+        "es": 'Usa "{name}" después del bloque parallel.',
+        "en": 'Use "{name}" after the parallel block.',
+    },
+    "parallel_twice": {
+        "es": 'Dos tareas de este parallel calculan "{name}".',
+        "en": 'Two tasks of this parallel compute "{name}".',
+    },
+    "fix.parallel_twice": {
+        "es": 'Cada tarea debe calcular un nombre distinto.',
+        "en": 'Each task must compute a different name.',
+    },
+    "parallel_return": {
+        "es": 'return no puede usarse dentro de un bloque parallel:.',
+        "en": 'return cannot be used inside a parallel: block.',
+    },
+    "fix.parallel_return": {
+        "es": 'Asigna el resultado a un nombre y úsalo después del bloque.',
+        "en": 'Assign the result to a name and use it after the block.',
+    },
     "weak_place": {
         "es": "weak solo puede marcar un campo de un type.",
         "en": "weak can only mark a field of a type.",

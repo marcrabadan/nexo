@@ -151,6 +151,7 @@ class Checker:
             for h in s.handlers:
                 self.stmts(h.body, ctx)
         elif isinstance(s, A.ParallelBlock):
+            check_parallel_block(s.body)
             self.stmts(s.body, ctx)
         elif isinstance(s, A.EventStmt):
             self.stmts(s.body, Ctx(None))
@@ -361,6 +362,157 @@ def _expr_fails(e: A.Expr) -> bool:
         parts = [e.source] + [x for s in e.steps for x in [s.expr, *s.columns] if x is not None]
         return any(_expr_fails(x) for x in parts)
     return any(_expr_fails(c) for c in children(e))
+
+
+# -- section 5: the tasks of a `parallel:` block -----------------------------
+
+def check_parallel_block(body: list[A.Stmt]) -> None:
+    """The tasks of a `parallel:` block run at the same time: a task cannot
+    use a name another task computes, two tasks cannot compute the same
+    name, and `return` would leave only one task."""
+    assigned: dict[str, int] = {}
+    for i, st in enumerate(body):
+        writes: list = []
+        stmt_names(st, [], writes, True)
+        for name, span in writes:
+            if name in assigned and assigned[name] != i:
+                raise NexoError("parallel_twice", span, name=name)
+            assigned.setdefault(name, i)
+    for i, st in enumerate(body):
+        reads: list = []
+        stmt_names(st, reads, [], True)
+        for name, span in reads:
+            if name in assigned and assigned[name] != i:
+                raise NexoError("parallel_sibling", span, name=name)
+
+
+def assigned_names(body: list[A.Stmt]) -> list[str]:
+    """The names a statement list assigns (outside nested functions)."""
+    writes: list = []
+    for s in body:
+        try:
+            stmt_names(s, [], writes, False)
+        except NexoError:
+            pass
+    out: list[str] = []
+    for name, _ in writes:
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def root_name(e: A.Expr):
+    if isinstance(e, A.Name):
+        return e
+    if isinstance(e, (A.Index, A.Attr)):
+        return root_name(e.obj)
+    if isinstance(e, A.Propagate):
+        return root_name(e.expr)
+    return None
+
+
+def stmt_names(s: A.Stmt, reads: list, writes: list, top: bool) -> None:
+    """Names read and assigned by a statement; a change through a place
+    (`xs.add(x)`, `xs[i] = v`) assigns its variable. `top`: inside a task of
+    `parallel:`, where `return` is not allowed."""
+    def block(b):
+        for x in b:
+            stmt_names(x, reads, writes, top)
+
+    if isinstance(s, A.ExprStmt):
+        expr_names(s.expr, reads, writes)
+    elif isinstance(s, A.Assign):
+        expr_names(s.value, reads, writes)
+        t = s.target
+        if isinstance(t, A.Name):
+            if s.op != "=":
+                reads.append((t.name, t.span))
+            writes.append((t.name, t.span))
+        elif isinstance(t, A.Index):
+            root = root_name(t.obj)
+            if root is not None and isinstance(t.obj, (A.Name, A.Index)):
+                writes.append((root.name, root.span))
+            expr_names(t.obj, reads, writes)
+            expr_names(t.index, reads, writes)
+        else:
+            expr_names(t, reads, writes)
+    elif isinstance(s, A.VarDecl):
+        expr_names(s.value, reads, writes)
+        writes.append((s.name, s.name_span))
+    elif isinstance(s, A.Return):
+        if top:
+            raise NexoError("parallel_return", s.span)
+        if s.value is not None:
+            expr_names(s.value, reads, writes)
+    elif isinstance(s, (A.Expect, A.Ensure, A.Assert)):
+        expr_names(s.expr, reads, writes)
+    elif isinstance(s, A.Emit):
+        for a in s.call.args:
+            expr_names(a.value, reads, writes)
+    elif isinstance(s, A.If):
+        for cond, b in s.branches:
+            expr_names(cond, reads, writes)
+            block(b)
+        if s.orelse:
+            block(s.orelse)
+    elif isinstance(s, A.For):
+        expr_names(s.iterable, reads, writes)
+        block(s.body)
+    elif isinstance(s, (A.While, A.Repeat)):
+        expr_names(s.cond if isinstance(s, A.While) else s.count, reads, writes)
+        block(s.body)
+    elif isinstance(s, A.Match):
+        expr_names(s.subject, reads, writes)
+        for arm in s.arms:
+            if arm.guard is not None:
+                expr_names(arm.guard, reads, writes)
+            block(arm.body)
+    elif isinstance(s, A.TryStmt):
+        if s.within is not None:
+            expr_names(s.within, reads, writes)
+        block(s.body)
+        for h in s.handlers:
+            block(h.body)
+    elif isinstance(s, A.ParallelBlock):
+        block(s.body)
+    elif isinstance(s, A.FnDef):
+        writes.append((s.name, s.name_span))
+
+
+def expr_names(e: A.Expr, reads: list, writes: list) -> None:
+    if isinstance(e, A.Name):
+        reads.append((e.name, e.span))
+    elif isinstance(e, A.Call):
+        f = e.func
+        if isinstance(f, A.Attr) and f.name == "add" and isinstance(f.obj, (A.Name, A.Index)):
+            root = root_name(f.obj)
+            if root is not None:
+                writes.append((root.name, root.span))
+        if not (isinstance(f, A.Name) and f.name == "old"):
+            expr_names(f, reads, writes)
+        for a in e.args:
+            expr_names(a.value, reads, writes)
+    elif isinstance(e, A.Propagate):
+        expr_names(e.expr, reads, writes)
+    elif isinstance(e, A.Coalesce):
+        expr_names(e.left, reads, writes)
+        expr_names(e.right, reads, writes)
+    elif isinstance(e, A.Lambda):
+        expr_names(e.body, reads, writes)
+    elif isinstance(e, A.Pipeline):
+        expr_names(e.source, reads, writes)
+        for step in e.steps:
+            for x in ([step.expr] if step.expr is not None else []) + list(step.columns):
+                expr_names(x, reads, writes)
+    elif isinstance(e, A.ParallelFor):
+        expr_names(e.iterable, reads, writes)
+        for a in e.args:
+            expr_names(a.value, reads, writes)
+        for s in e.body:
+            stmt_names(s, reads, [], False)
+    else:
+        for c in children(e):
+            expr_names(c, reads, writes)
 
 
 # -- section 7, rule 4: weak fields and reference cycles --------------------

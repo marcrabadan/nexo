@@ -1,0 +1,3 @@
+fn f():
+    parallel:
+        return 1

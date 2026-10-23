@@ -283,8 +283,9 @@ function is called with the element (`each print`, `map double`).
 
 ## Concurrency (section 5)
 
-**D52. `parallel` runs sequentially in phase 0**, as the prompt allows,
-keeping the same observable semantics: `parallel for` returns the results
+**D52. `parallel` runs sequentially in phase 0** (phase 1 runs it on
+threads from phase 2 on, D80), as the prompt allows, keeping the same
+observable semantics: `parallel for` returns the results
 in input order, and the first failing task stops the remaining ones and
 its error propagates. `max:` is validated (an int of at least 1) but has
 no effect. Inside a `parallel for` body, `return` gives the value of that
@@ -479,3 +480,33 @@ weak field does not keep its target alive; it is printed as `Node(...)`
 to JSON and CSV as none. Copies of records (`old()`) keep the weak
 reference. A cycle made at run time through a type that refers to itself
 (`a.next = a`) is not detected and is freed only when the program ends.
+
+**D80. `parallel` on threads.** In phase 1 the tasks of `parallel for` (one
+per element) and of `parallel:` (one per statement) run on up to one
+thread per processor, or `max:`. A program sees the same as running them
+one after the other in order (D52): results keep the input order; what a
+task prints is written when the block ends, in task order; the error of
+the first failing task (in order) propagates and the output and results of
+later tasks are dropped; tasks not started yet when one fails are not
+run. A task that is already running when an earlier one fails finishes
+(it is not interrupted), so only its side effects outside the program
+(writing files) can differ from phase 0. A `try within` limit applies
+inside the tasks too.
+
+**D81. What tasks can share.** Section 5 promises "no data races": the
+compiler rejects mutable data shared between tasks. Tasks read anything,
+and change only what is theirs:
+- A `parallel for` task cannot change (assign, or change a collection
+  through) a variable of outside the task; the compiler reports it when
+  the task's own code does it, and the program stops with the same message
+  when a function called by the task does it.
+- A task cannot change a record created before it started (it may be
+  read by the other tasks); records it creates are its own, and they can
+  be changed freely once the block ends.
+- Each statement of `parallel:` is a task that computes the names it
+  assigns (they are visible after the block, D25). Another statement of the
+  same block cannot use or assign those names (compile errors), and
+  `return` is not allowed inside the block.
+Phase 0 applies the same rules (its tasks run one after the other), so
+both give the same messages; a few are found by phase 0 only when the line
+runs.
