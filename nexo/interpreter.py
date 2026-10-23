@@ -260,6 +260,9 @@ class Interpreter:
         if s.annotations:
             a = s.annotations[0]
             raise NexoError("not_supported", a.span, what=f'"@{a.name}"')
+        if s.settings:
+            name, value = s.settings[0]
+            raise NexoError("not_supported", value.span, what=f'"{name} ="')
         if s.alias is not None:
             env.define(s.name, AliasType(s.name, s.alias, env))
             return

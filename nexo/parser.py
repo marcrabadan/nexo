@@ -54,7 +54,8 @@ def describe(tok: Token) -> str:
 
 
 class Parser:
-    def __init__(self, tokens: list[Token], file: str):
+    def __init__(self, tokens: list[Token], file: str, in_text: bool = False):
+        self.in_text = in_text  # parsing an {expr} inside a text literal
         self.toks = tokens
         self.p = 0
         self.file = file
@@ -85,6 +86,8 @@ class Parser:
 
     def error(self, expected: str, tok: Token | None = None) -> NexoError:
         tok = tok or self.peek()
+        if self.in_text and tok.kind == "EOF":
+            return NexoError("unexpected", tok.span, fix="expected", got='"}"', expected=expected)
         if expected == word("name") and tok.kind == "KEYWORD":
             return NexoError("reserved_word", tok.span, word=tok.value)
         return NexoError("unexpected", tok.span, fix="expected", got=describe(tok), expected=expected)
@@ -368,6 +371,7 @@ class Parser:
                 self.advance()
                 params.append(self.param())
         self.expect_op(")")
+        check_unique([(p.name, p.span) for p in params])
         return params
 
     def param(self) -> A.Param:
@@ -461,6 +465,8 @@ class Parser:
             else:
                 raise self.error(word("name"))
         self.advance()
+        check_unique([(f.name, f.span) for f in node.fields] + [(v.name, v.span) for v in node.variants]
+                     + [(m.name, m.name_span) for m in node.methods])
         if node.fields and node.variants:
             raise NexoError("type_mixed", node.name_span, name=node.name)
 
@@ -919,7 +925,7 @@ class Parser:
 
     def interpolation(self, part: Interp) -> A.Expr:
         tokens = tokenize_expr(part.source, self.file, part.line, part.col)
-        sub = Parser(tokens, self.file)
+        sub = Parser(tokens, self.file, in_text=True)
         node = sub.expr()
         if sub.peek().kind != "EOF":
             raise sub.error("}")
@@ -982,6 +988,14 @@ class Parser:
                 self.advance()
         self.expect_op("}")
         return A.MapLit(self.span_from(start), pairs)
+
+
+def check_unique(names: list[tuple[str, Span]]) -> None:
+    seen = set()
+    for name, span in names:
+        if name in seen:
+            raise NexoError("duplicate_name", span, name=name)
+        seen.add(name)
 
 
 def valid_target(node: A.Expr) -> bool:

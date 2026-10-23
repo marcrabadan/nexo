@@ -449,6 +449,9 @@ def check_int(value: int, span: Span | None) -> int:
 
 
 def hashable(value: Any, span: Span | None) -> Any:
-    if isinstance(value, (list, dict, NexoSet, Lazy)):
-        raise NexoError("unhashable", span, vtype=type_name(value))
-    return plain(value)
+    """Keys of maps and elements of sets: texts, numbers, bools, money,
+    quantities and enum variants without data."""
+    value = plain(value)
+    if value is None or isinstance(value, (str, int, float, Decimal, Money, Quantity, Variant)):
+        return value
+    raise NexoError("unhashable", span, vtype=type_name(value))

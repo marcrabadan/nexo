@@ -117,6 +117,11 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": '"{word}" is a reserved word and cannot be used as a name.',
     },
     "fix.reserved_word": {"es": "Elige otro nombre, por ejemplo {word}_.", "en": "Choose another name, for example {word}_."},
+    "duplicate_name": {"es": '"{name}" está repetido.', "en": '"{name}" is repeated.'},
+    "fix.duplicate_name": {
+        "es": "Cada parámetro, campo o variante necesita un nombre distinto.",
+        "en": "Each parameter, field or variant needs a different name.",
+    },
     "type_mixed": {
         "es": 'El type "{name}" mezcla campos y variantes.',
         "en": 'The type "{name}" mixes fields and variants.',
@@ -405,7 +410,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "bad_argument": {"es": "{fn}: {detail}.", "en": "{fn}: {detail}."},
     "fix.bad_argument": {"es": "Revisa los argumentos de {fn}.", "en": "Check the arguments of {fn}."},
     "unhashable": {"es": "Un valor {vtype} no puede ser clave ni elemento de un set.", "en": "A {vtype} value cannot be a key or a set element."},
-    "fix.unhashable": {"es": "Usa textos, números o bool como claves.", "en": "Use texts, numbers or bools as keys."},
+    "fix.unhashable": {
+        "es": "Usa textos, números, bool, money o variantes sin datos como claves.",
+        "en": "Use texts, numbers, bools, money or variants without data as keys.",
+    },
     "csv_value": {"es": "No se puede guardar {vtype} en un CSV.", "en": "{vtype} cannot be saved to a CSV."},
     "fix.csv_value": {"es": "Guarda una lista de filas (mapas) o de registros.", "en": "Save a list of rows (maps) or records."},
     "compare": {"es": "No se pueden comparar {a} y {b}.", "en": "{a} and {b} cannot be compared."},

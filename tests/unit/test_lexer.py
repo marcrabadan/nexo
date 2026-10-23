@@ -171,3 +171,9 @@ def test_spans():
 def test_statement_after_multiline_brackets_ends_with_newline():
     toks = kinds("x = [1,\n    2]\nprint(x)\n")
     assert [k for k, _ in toks].count("NEWLINE") == 2
+
+
+def test_indentation_fix_suggests_the_enclosing_level_inside_a_block():
+    with pytest.raises(NexoError) as e:
+        tokenize("if x:\n    a\n     b\n", "t.nexo")
+    assert e.value.args_ == {"n": 5, "expected": 4}

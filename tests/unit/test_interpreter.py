@@ -289,3 +289,18 @@ def test_not_supported_features_are_reported():
     assert error_of('ai:\n    model = "x"\n').key == "not_supported"
     assert error_of("@cache(10m)\nfn f():\n    return 1\n").key == "not_supported"
     assert error_of("every 5m:\n    pass\n").key == "not_supported"
+
+
+def test_map_keys_must_be_simple_values():
+    assert error_of("type A:\n    x: int\nm = {A(1): 2}\n").key == "unhashable"
+    assert error_of("m = {[1]: 2}\n").key == "unhashable"
+    assert run("type C:\n    Red\n    Blue\nm = {Red: 1}\nprint(m[Red])\nprint(m[Blue] ?? 0)\n") == "1\n0\n"
+
+
+def test_errors_inside_interpolation_point_at_the_brace():
+    e = error_of('print("{1 + }")\n')
+    assert e.key == "unexpected" and e.args_["got"] == '"}"'
+
+
+def test_type_settings_are_not_available():
+    assert error_of('type C:\n    name: str\n    purpose = "billing"\n').key == "not_supported"

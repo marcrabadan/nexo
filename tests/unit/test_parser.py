@@ -245,3 +245,11 @@ def test_spans_cover_expressions():
     e = expr("print(x + 1)")
     arg = e.args[0].value
     assert (arg.span.col, arg.span.end_col) == (7, 12)
+
+
+def test_duplicate_names():
+    for src in ("fn f(a, a):\n    pass\n", "type T:\n    a: int\n    a: str\n", "type E:\n    A\n    A\n",
+                "type T:\n    a: int\n    fn a(self):\n        pass\n"):
+        with pytest.raises(NexoError) as e:
+            parse(src, "t.nexo")
+        assert e.value.key == "duplicate_name"

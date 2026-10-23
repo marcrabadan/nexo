@@ -208,7 +208,10 @@ class Lexer:
         current = self.indents[-1]
         if count > current:
             if count != current + 4:
-                raise NexoError("indent_size", first, n=count, expected=current + 4)
+                opens_block = (len(self.tokens) >= 2 and self.tokens[-1].kind == "NEWLINE"
+                               and self.tokens[-2].is_op(":"))
+                expected = current + 4 if opens_block else current
+                raise NexoError("indent_size", first, n=count, expected=expected)
             self.indents.append(count)
             self.add("INDENT", None, first)
         elif count < current:
