@@ -29,9 +29,10 @@ Total with VAT: 350.65 EUR
 > **Status: early.** This repository holds the core of the language in two
 > implementations: a Python tree-walking interpreter (phase 0) and a Rust
 > compiler that produces native code through LLVM (phase 1). Both run the
-> same programs with the same output. Modules such as `nexo.ai`,
-> `nexo.web`, `nexo.db` and `nexo.infra` are described in the
-> specification but not implemented yet.
+> same programs with the same output. Phase 2 adds the memory model,
+> real `parallel`, `nexo.sync` and contracts the compiler proves. Modules
+> such as `nexo.ai`, `nexo.web`, `nexo.db` and `nexo.infra` are described
+> in the specification but not implemented yet.
 
 ## Contents
 
@@ -322,23 +323,60 @@ cd examples
 
 ## What is implemented
 
-This repository covers phases 0 and 1 of the plan in section 25 of the
-specification.
+This repository covers phases 0, 1 and 2 of the plan in section 25 of
+the specification.
 
 **Included:** constants and `var`; `type` (records, unions, enums with
 data, methods); `trait`; functions with named and default arguments;
 lambdas; `if`/`elif`/`else`, `for`, `while`, `repeat`, `match` with
 guards; comprehensions; errors (`T!`, `?`, `try`/`else e`, `fail()`);
 `T?` and `??`; `int` with overflow detection, `float`, `decimal` and
-`money`; pipelines; `parallel for` and `parallel:` (run sequentially with
-the same semantics); `expect`/`ensure`/`old()`; `test` and `assert`; and
+`money`; pipelines; `expect`/`ensure`/`old()`; `test` and `assert`; and
 the standard library functions `print`, `input`, `read`, `write`,
 `read_lines`, `len`, `range` and JSON/CSV.
 
-**Not yet:** `use` and the official modules (`ai`, `web`, `db`, `infra`,
-`ci`, `stream`, `ml`), `when`/`every`/`lifecycle`, and the memory model
-and performance goals of later phases. Using them gives a clear "not
-available in this phase" error rather than being silently ignored.
+**Phase 2:**
+
+- **Memory model (section 7).** Compiled programs free memory by
+  reference counting. `NEXO_LEAKCHECK=1` reports any object left at exit,
+  and every test suite runs with it.
+- **Values and references.** Lists, maps and sets are values, copied on
+  write; records are shared references.
+- **Weak fields.** A `weak T?` field does not keep its target alive, and a
+  cycle of strong fields between types is a compile error.
+- **Real `parallel`.** `parallel for` and `parallel:` run on threads.
+  Output and results stay in task order. A task may not change a record
+  or variable that another task can see.
+- **`nexo.sync`.** `use nexo.sync` enables `spawn`, `channel`, `select`
+  and `shared`. A deadlock is reported instead of hanging.
+- **Contracts the compiler proves.** A proven `ensure` costs nothing at
+  run time (D83), and `nexo build --release --trust-ensure` leaves out
+  the checks it could not prove.
+
+**Not yet:** the other official modules (`ai`, `web`, `db`, `infra`,
+`ci`, `stream`, `ml`) and `when`/`every`/`lifecycle`. Using them gives a
+clear "not available in this phase" error rather than being silently
+ignored.
+
+**Performance.** `compiler/bench/compare.py` times each benchmark against
+the same program in Rust (`rustc -O` with overflow checks, since Nexo
+checks overflow too). These are the latest ratios of Nexo time to Rust
+time:
+
+| Benchmark | Ratio |
+| --- | --- |
+| integer loop | 1.3× |
+| `parallel for` | 1.3× |
+| recursive `fib` | 2.0× |
+| strings | 3.5× |
+| lists and pipelines | 7× |
+| maps | 7× |
+| records | 8× |
+
+Code on ints is under the phase 2 goal of 2× Rust. Code on
+collections and records is not yet: every value is boxed and
+reference-counted, and each element passes through the runtime. The
+details are in D84.
 
 **Interpreter and compiler differences.** The two implementations print
 the same output for every program. The compiler catches some mistakes
@@ -402,6 +440,7 @@ cd compiler && cargo test && cd ..                   # compiler unit tests
 python3 compiler/scripts/conformance.py              # conformance suite with the compiler
 .venv/bin/python compiler/scripts/differential.py    # compiler output equals interpreter output
 compiler/bench/run.sh                                # benchmarks: native vs interpreter
+python3 compiler/bench/compare.py                    # benchmarks: native vs Rust
 ```
 
 To add a conformance test, put `NAME.nexo` and its exact output
