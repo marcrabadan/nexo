@@ -1,0 +1,43 @@
+var total = 0
+fn add(n):
+    total += n
+    return total
+print(add(2))
+print(add(3))
+fs = []
+var fl = []
+for i in 1..3:
+    fl.add(x -> x + i)
+for f in fl:
+    print(f(10))
+fn counter():
+    var n = 0
+    fn inc():
+        n += 1
+        return n
+    return inc
+c = counter()
+print(c())
+print(c())
+d = counter()
+print(d())
+x = 5
+fn shadow():
+    x = 7
+    return x
+print(shadow())
+print(x)
+fn outer(a):
+    fn inner(b):
+        return a + b
+    return inner(10)
+print(outer(1))
+make = k -> (y -> y * k)
+triple = make(3)
+print(triple(4))
+for i in 1..2:
+    y = i * 10
+    print(y)
+if true:
+    z = 1
+print(z)

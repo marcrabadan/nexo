@@ -172,6 +172,8 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("detail.positive", "el número de partes debe ser mayor que 0", "the number of parts must be greater than 0"),
     ("detail.step_zero", "el paso no puede ser 0", "the step cannot be 0"),
     ("detail.mode", "mode debe ser half_even o half_up", "mode must be half_even or half_up"),
+    // phase 1: the limit of nested calls of compiled programs (D73)
+    ("too_deep", "demasiadas llamadas anidadas (recursión infinita).", "too many nested calls (infinite recursion)."),
 ];
 
 pub(crate) static WORDS: &[(&str, &str, &str)] = &[

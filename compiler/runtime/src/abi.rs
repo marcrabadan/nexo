@@ -69,6 +69,26 @@ pub unsafe extern "C" fn nx_init(
     state::init(text(file, file_len), text(src, src_len), spans);
 }
 
+/// Run the program on a thread with a large stack, so that deep recursion
+/// reaches the call limit before the end of the stack.
+#[no_mangle]
+pub extern "C" fn nx_start(entry: extern "C" fn()) -> ! {
+    let handle = std::thread::Builder::new().stack_size(1 << 30).spawn(move || entry());
+    match handle {
+        Ok(h) => {
+            let _ = h.join();
+        }
+        Err(_) => entry(),
+    }
+    nx_exit(0)
+}
+
+/// More than MAX_DEPTH nested calls.
+#[no_mangle]
+pub extern "C" fn nx_too_deep() {
+    diag(Diagnostic::new_spanless("too_deep"), 0);
+}
+
 #[no_mangle]
 pub extern "C" fn nx_exit(code: i32) -> ! {
     state::flush();

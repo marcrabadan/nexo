@@ -1,0 +1,7 @@
+fn a() -> int!:
+    return b()?
+fn b() -> int!:
+    x = read("missing.file")?
+    return 1
+print("go")
+a()

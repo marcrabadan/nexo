@@ -1,0 +1,41 @@
+nums = [5, 3, 8, 1, 9, 2]
+print(nums |> where it > 2 |> map it * 2 |> sort by it desc |> take 3)
+print(nums |> sum)
+print(nums |> avg)
+print(nums |> count)
+print([] |> avg)
+words = ["pear", "fig", "banana", "kiwi"]
+print(words |> sort by len(it))
+print(words |> sort by len(it) desc)
+print(words |> map it.upper() |> where len(it) > 3)
+type Sale:
+    region: str
+    amount: int
+    product: str
+sales = [Sale("n", 10, "a"), Sale("s", 5, "b"), Sale("n", 7, "b"), Sale("e", 7, "a")]
+print(sales |> where amount > 5 |> map region)
+print(sales |> group by region |> sum amount)
+print(sales |> group by region |> count)
+print(sales |> group by product |> avg amount)
+print(sales |> sort by amount |> map product)
+print(sales |> pick region, amount |> take 2)
+sales |> where region == "n" |> each print
+fn big(s):
+    return s.amount > 6
+print(sales |> where big(it) |> count)
+double = x -> x * 2
+print(nums |> map double)
+print(nums |> map double(it))
+rows = [{"a": 1, "b": "x"}, {"a": 3, "b": "y"}, {"a": 2, "b": "x"}]
+print(rows |> where a > 1 |> map b)
+print(rows |> group by b |> sum a)
+print(rows |> sort by a desc |> map a)
+limit = 2
+print(rows |> where a >= limit |> count)
+lazy = nums |> map it + 1
+print(lazy)
+for v in nums |> where it % 2 == 0:
+    print(v)
+print(nums |> take 0)
+total = rows |> map a |> sum
+print(total)

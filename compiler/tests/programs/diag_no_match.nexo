@@ -1,0 +1,3 @@
+print("m")
+match 5:
+    1: print(1)

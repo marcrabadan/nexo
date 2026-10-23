@@ -1,0 +1,6 @@
+name = input("Name? ")
+age = input("Age? ")
+print("")
+print("{name} is {age}")
+rest = input()
+print("rest=[{rest}]")

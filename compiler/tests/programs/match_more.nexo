@@ -1,0 +1,38 @@
+fn describe(v):
+    match v:
+        0: return "zero"
+        1 or 2 or 3: return "small"
+        "hi": return "greeting"
+        true: return "yes"
+        none: return "nothing"
+        n if n is int and n > 100: return "big {n}"
+        _: return "other"
+for v in [0, 2, "hi", true, none, 500, 50, "x"]:
+    print(describe(v))
+type Tree:
+    Leaf(v: int)
+    Node(l: Tree, r: Tree)
+fn sum_tree(t) -> int:
+    match t:
+        Leaf(v): return v
+        Node(l, r): return sum_tree(l) + sum_tree(r)
+print(sum_tree(Node(Leaf(1), Node(Leaf(2), Leaf(3)))))
+type P:
+    x: int
+    y: int
+match P(1, 2):
+    P(1, y): print("x is one, y={y}")
+    _: print("no")
+match Leaf(5):
+    Leaf(5): print("five")
+    _: print("not five")
+fn kind(v):
+    match v:
+        Leaf(_): return "leaf"
+        Node(_, _): return "node"
+        P(_, _): return "point"
+print(kind(Leaf(1)))
+print(kind(P(1, 1)))
+match 7:
+    a if a < 5: print("small {a}")
+    b: print("bound {b}")

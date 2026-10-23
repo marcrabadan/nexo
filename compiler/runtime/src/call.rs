@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use nexo_diag::{suggest, Diagnostic};
 
 use crate::fmt::type_name;
-use crate::pipe::bind;
+use crate::pipe::{bind, force};
 use crate::state::{check, diag, R};
 use crate::types::{conform, TypeRef};
 use crate::value::*;
@@ -97,9 +97,11 @@ pub fn call(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<V> {
     match f.get() {
         Some(Obj::Func(func)) => {
             let mut bound = bind_args(func.info.name(), &fn_params(func.info), args, names, span)?;
+            // lazy values are read; float literals stay literals until the
+            // callee checks them against the parameter types
             for v in bound.iter_mut() {
                 if v.tag != T_MISSING {
-                    *v = bind(*v)?;
+                    *v = force(*v)?;
                 }
             }
             invoke(func, &bound, span)
@@ -135,7 +137,7 @@ pub fn call_method_value(receiver: V, method: V, args: &[V], names: &[Option<&st
     let mut bound = bind_args(func.info.name(), rest, args, names, span)?;
     for v in bound.iter_mut() {
         if v.tag != T_MISSING {
-            *v = bind(*v)?;
+            *v = force(*v)?;
         }
     }
     if takes_self {

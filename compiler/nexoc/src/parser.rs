@@ -333,17 +333,16 @@ impl<'s> Parser<'s> {
             let span = self.span_from(tok.span);
             return Ok(self.stmt_node(span, StmtKind::Emit { name, args, call_span: call.span }));
         }
+        // the span of expect/ensure is the keyword alone, as in phase 0
         if tok.is_kw("expect") {
             self.advance();
             let e = self.expr()?;
-            let span = self.span_from(tok.span);
-            return Ok(self.stmt_node(span, StmtKind::Expect(e)));
+            return Ok(self.stmt_node(tok.span, StmtKind::Expect(e)));
         }
         if tok.is_kw("ensure") {
             self.advance();
             let e = self.expr()?;
-            let span = self.span_from(tok.span);
-            return Ok(self.stmt_node(span, StmtKind::Ensure(e)));
+            return Ok(self.stmt_node(tok.span, StmtKind::Ensure(e)));
         }
         if tok.is_kw("assert") {
             self.advance();

@@ -27,6 +27,12 @@ pub static mut nx_failing: u8 = 0;
 #[no_mangle]
 pub static mut nx_deadline_active: u8 = 0;
 
+/// Calls in progress; compiled functions count them (D73).
+#[no_mangle]
+pub static mut nx_depth: u64 = 0;
+
+pub const MAX_DEPTH: u64 = 10_000;
+
 pub const ERROR: u8 = 1;
 pub const DIAG: u8 = 2;
 
