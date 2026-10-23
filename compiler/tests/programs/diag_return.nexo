@@ -1,3 +1,4 @@
+# reported before the program runs (D68)
 fn f() -> int:
     return "no"
 print("start")

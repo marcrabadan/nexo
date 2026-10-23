@@ -172,6 +172,11 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("detail.positive", "el número de partes debe ser mayor que 0", "the number of parts must be greater than 0"),
     ("detail.step_zero", "el paso no puede ser 0", "the step cannot be 0"),
     ("detail.mode", "mode debe ser half_even o half_up", "mode must be half_even or half_up"),
+    // phase 1: type errors found before the program runs (D68)
+    ("type_mismatch_static", "\"{name}\" es de tipo {type} pero recibe un valor {vtype}.", "\"{name}\" has type {type} but gets a {vtype} value."),
+    ("fix.type_mismatch_static", "Pasa un valor de tipo {type} o cambia el tipo declarado.", "Pass a value of type {type} or change the declared type."),
+    ("return_mismatch_static", "\"{fn}\" debe devolver {type} pero devuelve un valor {vtype}.", "\"{fn}\" must return {type} but returns a {vtype} value."),
+    ("fix.return_mismatch_static", "Devuelve un valor de tipo {type} o cambia el tipo de retorno.", "Return a value of type {type} or change the return type."),
     // phase 1: the limit of nested calls of compiled programs (D73)
     ("too_deep", "demasiadas llamadas anidadas (recursión infinita).", "too many nested calls (infinite recursion)."),
 ];

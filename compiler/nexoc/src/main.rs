@@ -11,6 +11,7 @@ mod codegen;
 mod lexer;
 mod parser;
 mod resolve;
+mod typecheck;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -34,6 +35,7 @@ fn to_ir(source: &str, name: &str, test_mode: bool) -> Result<String, CompileErr
     let program = parser::parse(source).map_err(fail)?;
     checker::check(&program).map_err(fail)?;
     let res = resolve::resolve(&program).map_err(fail)?;
+    typecheck::check(&program, &res).map_err(fail)?;
     let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
     let opts = codegen::Options { file: name.to_string(), lang, test_mode };
     codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)

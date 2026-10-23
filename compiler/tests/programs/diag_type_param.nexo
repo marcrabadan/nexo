@@ -1,3 +1,4 @@
+# reported before the program runs (D68)
 fn f(n: int):
     return n
 print(f(1))

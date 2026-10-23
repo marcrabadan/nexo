@@ -1,3 +1,4 @@
+# reported before the program runs (D68)
 type P:
     x: int
 p = P(1)

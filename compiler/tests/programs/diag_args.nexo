@@ -1,3 +1,4 @@
+# reported before the program runs (D68)
 fn g(a, b = 2):
     return a + b
 print(g(1))

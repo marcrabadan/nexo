@@ -4,3 +4,8 @@
 # D67: names that exist nowhere are a compile error (phase 0 found them
 # only when the line ran, after the earlier output)
 print(nmae)
+
+# D68: type errors that are certain are reported before the program runs
+# (phase 0 reported them when the line ran, after the earlier output)
+reported before the program runs (D68)
+set_status("open")
