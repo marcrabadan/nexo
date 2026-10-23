@@ -1996,8 +1996,14 @@ impl<'a> Gen<'a> {
                 });
                 let mut v = self.expr(value, typed_var)?;
                 if aug {
-                    let cur = self.name_read(target, name)?;
-                    let r = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
+                    // `x += v` reads x first (as an expression, so an int is known)
+                    let cur = self.expr(target, true)?;
+                    let int_op = matches!(&op[..1], "+" | "-" | "*") && self.certain_int(target) && self.certain_int(value);
+                    let r = if int_op {
+                        self.binop_int(&op[..1], &cur, &v, s.span.to(value.span))?
+                    } else {
+                        self.binop(&op[..1], &cur, &v, s.span.to(value.span))?
+                    };
                     self.drop_val(&v);
                     self.drop_val(&cur);
                     v = r;
