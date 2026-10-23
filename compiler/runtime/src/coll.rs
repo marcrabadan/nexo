@@ -105,8 +105,13 @@ pub fn str_len(s: &str) -> usize {
 /// `x[i]`: lists and texts by position (from 0), maps by key (a missing
 /// key gives none).
 pub fn get_index(obj: V, index: V, span: u32) -> R<Val> {
-    let forced = crate::pipe::force(obj)?;
-    let obj = forced.v();
+    let forced;
+    let obj = if matches!(obj.get(), Some(Obj::Lazy(_))) {
+        forced = crate::pipe::force(obj)?;
+        forced.v()
+    } else {
+        obj
+    };
     match obj.get() {
         Some(Obj::Map(m)) => {
             let k = hashable(index, span)?;

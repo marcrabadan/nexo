@@ -356,7 +356,14 @@ fn scratch(v: Val) -> *mut V {
 }
 
 fn scratch_clear() {
-    let old = SCRATCH.with(|s| std::mem::take(&mut *s.borrow_mut()));
+    let old = SCRATCH.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.is_empty() {
+            Vec::new()
+        } else {
+            std::mem::take(&mut *s)
+        }
+    });
     drop(old);
 }
 
@@ -427,6 +434,17 @@ pub unsafe extern "C" fn nx_call_method_at(
     let name = text(name, len);
     if name == "add" {
         crate::cow::make_unique(slot);
+        // `xs.add(x)`, the common case
+        if n == 1 && nm.is_null() {
+            if let Some(Obj::List(items)) = (*slot).get() {
+                let arg = *args;
+                if arg.tag != T_OBJ {
+                    items.borrow_mut().push(Val::simple(arg.plain()));
+                    scratch_clear();
+                    return NONE;
+                }
+            }
+        }
     }
     let names = names(nm, n);
     let r = ret(call::call_method(*slot, name, values(args, n), &names, span, name_span));

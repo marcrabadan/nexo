@@ -86,6 +86,10 @@ pub fn invoke(f: &'static Func, args: &[V], span: u32) -> R<Val> {
 
 /// Call a value with positional arguments only.
 pub fn call_value(f: V, args: &[V], span: u32) -> R<Val> {
+    static POSITIONAL: [Option<&str>; 8] = [None; 8];
+    if args.len() <= 8 {
+        return call(f, args, &POSITIONAL[..args.len()], span);
+    }
     let names: Vec<Option<&str>> = vec![None; args.len()];
     call(f, args, &names, span)
 }
@@ -321,8 +325,8 @@ pub fn call_method(obj: V, name: &str, args: &[V], names: &[Option<&str>], span:
             }
         },
         Some(Obj::Str(_) | Obj::List(_) | Obj::Lazy(_) | Obj::Map(_) | Obj::Set(_) | Obj::Channel(_)) => {
-            crate::stdlib::member(obj, name, name_span)?;
-            crate::stdlib::call_method(obj, crate::num::intern(name), args, names, span)
+            let name = crate::stdlib::method_name(obj, name, name_span)?;
+            crate::stdlib::call_method(obj, name, args, names, span)
         }
         _ => {
             let f = get_attr(obj, name, name_span)?;

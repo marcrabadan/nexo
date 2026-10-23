@@ -607,6 +607,17 @@ fn missing(vtype: &str, name: &str, candidates: &[&str], span: u32) -> crate::st
 }
 
 /// Members of builtin values: `list.sum`, `text.upper`, `json.parse`...
+/// The name of a method of a builtin type, or the error of `member`.
+pub fn method_name(obj: V, name: &str, span: u32) -> R<&'static str> {
+    match table(obj) {
+        Some((_, names)) => match names.iter().find(|n| **n == name) {
+            Some(n) => Ok(n),
+            None => Err(missing(&type_name(obj), name, names, span)),
+        },
+        None => Err(missing(&type_name(obj), name, &[], span)),
+    }
+}
+
 pub fn member(obj: V, name: &str, span: u32) -> R<Val> {
     if let Some(Obj::Namespace(ns)) = obj.get() {
         return match (*ns, name) {

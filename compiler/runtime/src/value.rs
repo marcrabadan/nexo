@@ -550,18 +550,73 @@ pub struct ErrorValue {
     pub fix: Option<&'static str>,
 }
 
+/// The hash of map keys: the multiply-and-rotate hash of rustc (keys are
+/// short and the tables are the program's own, so speed matters more than
+/// resistance to chosen collisions).
+#[derive(Default, Clone, Copy)]
+pub struct KeyHasher(u64);
+
+impl KeyHasher {
+    #[inline]
+    fn add(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(5) ^ x).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
+
+impl std::hash::Hasher for KeyHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.add(u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut b = [0u8; 8];
+            b[..rest.len()].copy_from_slice(rest);
+            self.add(u64::from_le_bytes(b));
+        }
+    }
+    #[inline]
+    fn write_u8(&mut self, i: u8) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.add(i);
+    }
+    #[inline]
+    fn write_i64(&mut self, i: i64) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn write_isize(&mut self, i: isize) {
+        self.add(i as u64);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+pub type KeyIndex = HashMap<Key, usize, std::hash::BuildHasherDefault<KeyHasher>>;
+
 /// An insertion-ordered map. Keys are simple values (D35).
 #[derive(Default, Clone)]
 pub struct NMap {
     pub entries: Vec<(Val, Val)>,
-    pub index: HashMap<Key, usize>,
+    pub index: KeyIndex,
 }
 
 /// An insertion-ordered set.
 #[derive(Default, Clone)]
 pub struct NSet {
     pub items: Vec<Val>,
-    pub index: HashMap<Key, usize>,
+    pub index: KeyIndex,
 }
 
 /// Identity of a map key or set element: values that are equal as keys
