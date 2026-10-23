@@ -920,3 +920,36 @@ pub extern "C" fn nx_check_deadline() {
         failure("Timeout", span, &[("limit", repr(limit))]);
     }
 }
+
+// ------------------------------------------------------------ odds and ends
+
+/// An int literal that does not fit in 64 bits.
+#[no_mangle]
+pub extern "C" fn nx_fail_overflow(span: u32) {
+    failure("Overflow", span, &[]);
+}
+
+thread_local! {
+    static TESTS: RefCell<Vec<(String, V)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A `test` block reached while running the top level of the file.
+#[no_mangle]
+pub unsafe extern "C" fn nx_test_register(name: *const u8, len: usize, t: u64, b: u64) {
+    let name = text(name, len).to_string();
+    TESTS.with(|tests| tests.borrow_mut().push((name, v(t, b))));
+}
+
+/// Run every registered test, each in its own scope (D54).
+#[no_mangle]
+pub extern "C" fn nx_run_tests() -> ! {
+    let tests: Vec<(String, V)> = TESTS.with(|t| t.borrow().clone());
+    if !tests.is_empty() {
+        nx_test_header();
+    }
+    for (name, f) in tests {
+        let _ = call::call_value(f, &[], 0);
+        unsafe { nx_test_result(name.as_ptr(), name.len()) };
+    }
+    nx_test_finish()
+}
