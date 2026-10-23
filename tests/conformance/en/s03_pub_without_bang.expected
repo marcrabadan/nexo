@@ -1,0 +1,4 @@
+Error in s03_pub_without_bang.nexo, line 1:
+  pub fn load(path: str):
+         ^^^^
+The pub function "load" can fail, but does not declare its return type. Add -> T! before the colon, with the type it returns.

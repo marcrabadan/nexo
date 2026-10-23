@@ -1,0 +1,4 @@
+Error in s03_else_without_var.nexo, line 3:
+  else:
+  ^^^^
+else in a try needs a name for the error. Write else e: and use e.message.

@@ -418,14 +418,6 @@ MESSAGES: dict[str, dict[str, str]] = {
         "es": "Revisa que la función devuelva un error en este caso.",
         "en": "Check that the function returns an error in this case.",
     },
-    "test_summary": {
-        "es": "{total} pruebas: {passed} correctas, {failed} fallidas",
-        "en": "{total} tests: {passed} passed, {failed} failed",
-    },
-    "test_summary_one_failed": {
-        "es": "{total} pruebas: {passed} correctas, 1 fallida",
-        "en": "{total} tests: {passed} passed, 1 failed",
-    },
     "no_tests": {"es": "No hay bloques test en {path}.", "en": "There are no test blocks in {path}."},
     # failures (error values). The first sentence becomes e.message.
     "unhandled": {"es": "Error sin gestionar{kind}: {message}", "en": "Unhandled error{kind}: {message}"},

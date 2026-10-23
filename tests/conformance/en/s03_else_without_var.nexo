@@ -1,0 +1,4 @@
+try:
+    data = read("config.txt")
+else:
+    data = ""
