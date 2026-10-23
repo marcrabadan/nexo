@@ -103,7 +103,214 @@ type CResult = Result<(), Diagnostic>;
 pub fn check(program: &Program) -> CResult {
     let mut c = Checker { fns: HashMap::new(), methods: HashMap::new() };
     c.collect(&program.body);
+    check_memory(&program.body)?;
     c.stmts(&program.body, Ctx::top())
+}
+
+// -- section 7, rule 4: weak fields and reference cycles --------------------
+
+fn type_names<'a>(t: Option<&'a TypeExpr>, out: &mut Vec<&'a TypeName>) {
+    if let Some(TypeExpr::Name(tn)) = t {
+        out.push(tn);
+        for p in &tn.params {
+            type_names(Some(p), out);
+        }
+    }
+}
+
+/// `weak` only marks a field of a record, as `weak T?` with T a record;
+/// two or more types that refer to each other through fields that are not
+/// weak form a reference cycle, which is a compile error.
+fn check_memory(body: &[Stmt]) -> CResult {
+    let mut types: Vec<&TypeDef> = Vec::new();
+    walk_stmts(body, true, &mut |s| {
+        if let StmtKind::Type(t) = &s.kind {
+            types.push(t);
+        }
+    });
+    let records: Vec<&str> =
+        types.iter().filter(|t| t.alias.is_none() && t.variants.is_empty()).map(|t| t.name.as_str()).collect();
+    let mut places: Vec<&TypeName> = Vec::new();
+    let mut first_err: Option<Diagnostic> = None;
+    let mut fns: Vec<&FnDef> = Vec::new();
+    walk_stmts(body, true, &mut |s| match &s.kind {
+        StmtKind::Assign { ty, .. } | StmtKind::VarDecl { ty, .. } => type_names(ty.as_ref(), &mut places),
+        StmtKind::Fn(f) => fns.push(f),
+        StmtKind::Type(t) => {
+            type_names(t.alias.as_ref(), &mut places);
+            for v in &t.variants {
+                for p in &v.params {
+                    type_names(p.ty.as_ref(), &mut places);
+                }
+            }
+            for m in &t.methods {
+                fns.push(m);
+            }
+            for f in &t.fields {
+                if let TypeExpr::Name(tn) = &f.ty {
+                    for p in &tn.params {
+                        type_names(Some(p), &mut places);
+                    }
+                    if tn.weak && first_err.is_none() {
+                        if !records.contains(&tn.name.as_str()) {
+                            first_err = Some(Diagnostic::new("weak_target", tn.span).arg("type", tn.name.clone()));
+                        } else if !tn.optional {
+                            first_err = Some(
+                                Diagnostic::new("weak_optional", tn.span)
+                                    .arg("name", f.name.clone())
+                                    .arg("type", tn.name.clone()),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    });
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+    for f in fns {
+        for p in &f.params {
+            type_names(p.ty.as_ref(), &mut places);
+        }
+        type_names(f.ret.as_ref(), &mut places);
+    }
+    if let Some(tn) = places.iter().find(|t| t.weak) {
+        return Err(Diagnostic::new("weak_place", tn.span));
+    }
+    check_cycles(&types)
+}
+
+fn check_cycles(types: &[&TypeDef]) -> CResult {
+    let order: HashMap<&str, usize> = types.iter().enumerate().map(|(i, t)| (t.name.as_str(), i)).collect();
+    let aliases: HashMap<&str, &TypeExpr> =
+        types.iter().filter_map(|t| t.alias.as_ref().map(|a| (t.name.as_str(), a))).collect();
+    fn targets<'a>(
+        t: Option<&'a TypeExpr>,
+        order: &HashMap<&str, usize>,
+        aliases: &HashMap<&'a str, &'a TypeExpr>,
+        seen: &mut Vec<&'a str>,
+        out: &mut Vec<String>,
+    ) {
+        let mut names = Vec::new();
+        type_names(t, &mut names);
+        for tn in names {
+            let n = tn.name.as_str();
+            if let Some(a) = aliases.get(n) {
+                if !seen.contains(&n) {
+                    seen.push(n);
+                    targets(Some(a), order, aliases, seen, out);
+                }
+            } else if order.contains_key(n) {
+                out.push(n.to_string());
+            }
+        }
+    }
+    // the fields of each type that keep other values alive
+    let mut edges: Vec<(&str, Vec<(&str, Span, Vec<String>)>)> = Vec::new();
+    for t in types {
+        if t.alias.is_some() {
+            continue;
+        }
+        let mut refs = Vec::new();
+        for f in &t.fields {
+            if matches!(&f.ty, TypeExpr::Name(tn) if tn.weak) {
+                continue;
+            }
+            let mut out = Vec::new();
+            targets(Some(&f.ty), &order, &aliases, &mut Vec::new(), &mut out);
+            refs.push((f.name.as_str(), f.ty.span(), out));
+        }
+        for v in &t.variants {
+            for p in &v.params {
+                let mut out = Vec::new();
+                targets(p.ty.as_ref(), &order, &aliases, &mut Vec::new(), &mut out);
+                let span = p.ty.as_ref().map(|t| t.span()).unwrap_or(p.span);
+                refs.push((p.name.as_str(), span, out));
+            }
+        }
+        edges.push((t.name.as_str(), refs));
+    }
+    let graph: Vec<(String, Vec<String>)> = edges
+        .iter()
+        .map(|(n, refs)| (n.to_string(), refs.iter().flat_map(|(_, _, ts)| ts.iter().cloned()).collect()))
+        .collect();
+    let comp = strongly_connected(&graph);
+    for (name, refs) in &edges {
+        let members = &comp[*name];
+        if members.len() < 2 {
+            continue;
+        }
+        for (field, span, ts) in refs {
+            for target in ts {
+                if target != name && members.contains(target) && order[target.as_str()] < order[name] {
+                    let mut cycle: Vec<&String> = members.iter().collect();
+                    cycle.sort_by_key(|n| order[n.as_str()]);
+                    let cycle: Vec<&str> = cycle.iter().map(|s| s.as_str()).collect();
+                    return Err(Diagnostic::new("type_cycle", *span)
+                        .arg("cycle", cycle.join(", "))
+                        .arg("field", field.to_string())
+                        .arg("type", target.clone()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The strongly connected component of each node (Tarjan).
+fn strongly_connected(graph: &[(String, Vec<String>)]) -> HashMap<String, Vec<String>> {
+    struct T<'g> {
+        graph: &'g [(String, Vec<String>)],
+        index: HashMap<&'g str, usize>,
+        low: HashMap<&'g str, usize>,
+        stack: Vec<&'g str>,
+        comp: HashMap<String, Vec<String>>,
+        counter: usize,
+    }
+    fn visit<'g>(t: &mut T<'g>, v: &'g str) {
+        t.index.insert(v, t.counter);
+        t.low.insert(v, t.counter);
+        t.counter += 1;
+        t.stack.push(v);
+        let succ: Vec<&'g str> = t.graph.iter().find(|(n, _)| n == v).map(|(_, s)| s.iter().map(|x| x.as_str()).collect()).unwrap_or_default();
+        for w in succ {
+            if !t.graph.iter().any(|(n, _)| n == w) {
+                continue;
+            }
+            if !t.index.contains_key(w) {
+                visit(t, w);
+                let lw = t.low[w];
+                let lv = t.low[v];
+                t.low.insert(v, lv.min(lw));
+            } else if t.stack.contains(&w) {
+                let iw = t.index[w];
+                let lv = t.low[v];
+                t.low.insert(v, lv.min(iw));
+            }
+        }
+        if t.low[v] == t.index[v] {
+            let mut members = Vec::new();
+            loop {
+                let w = t.stack.pop().unwrap();
+                members.push(w.to_string());
+                if w == v {
+                    break;
+                }
+            }
+            for w in &members {
+                t.comp.insert(w.clone(), members.clone());
+            }
+        }
+    }
+    let mut t = T { graph, index: HashMap::new(), low: HashMap::new(), stack: Vec::new(), comp: HashMap::new(), counter: 0 };
+    for (v, _) in graph {
+        if !t.index.contains_key(v.as_str()) {
+            visit(&mut t, v.as_str());
+        }
+    }
+    t.comp
 }
 
 impl Checker {

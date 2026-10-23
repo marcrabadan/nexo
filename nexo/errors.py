@@ -239,6 +239,38 @@ MESSAGES: dict[str, dict[str, str]] = {
     # runtime diagnostics
     "name_not_found": {"es": '"{name}" no existe.', "en": '"{name}" does not exist.'},
     "fix.name_not_found": {"es": "Defínelo antes de usarlo.", "en": "Define it before using it."},
+    "weak_place": {
+        "es": "weak solo puede marcar un campo de un type.",
+        "en": "weak can only mark a field of a type.",
+    },
+    "fix.weak_place": {
+        "es": "Escribe weak en el tipo de un campo, por ejemplo parent: weak Node?",
+        "en": "Write weak in the type of a field, for example parent: weak Node?",
+    },
+    "weak_optional": {
+        "es": "Un campo weak se queda sin valor cuando su destino se libera.",
+        "en": "A weak field loses its value when its target is freed.",
+    },
+    "fix.weak_optional": {
+        "es": "Escríbelo como opcional: {name}: weak {type}?",
+        "en": "Make it optional: {name}: weak {type}?",
+    },
+    "weak_target": {
+        "es": '"{type}" no es un type con campos: weak solo se usa con registros.',
+        "en": '"{type}" is not a type with fields: weak only applies to records.',
+    },
+    "fix.weak_target": {
+        "es": "Quita weak: esos valores no forman ciclos.",
+        "en": "Remove weak: those values cannot form cycles.",
+    },
+    "type_cycle": {
+        "es": "Los types {cycle} se refieren unos a otros: forman un ciclo de referencias que nunca se liberaría.",
+        "en": "The types {cycle} refer to each other: they form a reference cycle that would never be freed.",
+    },
+    "fix.type_cycle": {
+        "es": "Marca uno de los campos como weak, por ejemplo {field}: weak {type}?",
+        "en": "Mark one of the fields as weak, for example {field}: weak {type}?",
+    },
     "immutable": {
         "es": '"{name}" es inmutable y no se puede cambiar.',
         "en": '"{name}" is immutable and cannot be changed.',

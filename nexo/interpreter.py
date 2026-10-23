@@ -22,7 +22,7 @@ from .types import (
     AliasType, Builtin, BuiltinType, Currency, EnumType, ErrorKind, ErrorValue, Function,
     INT_MIN, Lazy, LambdaFn, LitFloat, Money, NexoFailure, NexoSet, NList, NMap, Quantity, Range, Record,
     RecordType, Symbol, TraitType, Variant, VariantValue, check_int, copy_collection, failure, hashable,
-    is_collection, plain, share, unique,
+    is_collection, plain, share, unique, WeakRef, field_value,
     repr_value, show, to_decimal, type_name,
 )
 
@@ -107,7 +107,7 @@ class RowEnv(Env):
             if isinstance(item, dict) and name in item:
                 return item[name]
             if isinstance(item, Record) and name in item.fields:
-                return item.fields[name]
+                return field_value(item.fields[name])
             if isinstance(item, VariantValue) and name in item.fields:
                 return item.fields[name]
         return super().lookup(name)
@@ -146,6 +146,8 @@ class Interpreter:
         self.deadlines: list[tuple[float, Any]] = []
         self.tests: list[A.TestDef] = []
         self.contracts: dict[int, tuple[list, list]] = {}
+        # when the running task started (see check_write)
+        self.stamp = 0
 
     # ----------------------------------------------------------- running
     def load(self, source: str, file: str) -> A.Program:
@@ -363,7 +365,7 @@ class Interpreter:
             elif isinstance(ctor, RecordType):
                 if not (isinstance(value, Record) and value.type is ctor):
                     return None
-                fields = list(value.fields.values())
+                fields = [field_value(v) for v in value.fields.values()]
             elif ctor is MISSING:
                 raise self.name_error(p.name, p.span, env)
             else:
@@ -371,8 +373,8 @@ class Interpreter:
             if len(fields) != len(p.args):
                 raise NexoError("variant_fields", p.span, name=p.name, n=len(fields), m=len(p.args))
             result: dict = {}
-            for sub, field_value in zip(p.args, fields):
-                b = self.match(sub, field_value, env)
+            for sub, sub_value in zip(p.args, fields):
+                b = self.match(sub, sub_value, env)
                 if b is None:
                     return None
                 result.update(b)
@@ -634,7 +636,15 @@ class Interpreter:
         return self.temp_copy(parts[1])
 
     def is_weak_field(self, obj: Record, name: str) -> bool:
-        return False
+        return type(obj.fields.get(name)) is WeakRef or any(
+            f.name == name and getattr(f.type, "weak", False) for f in obj.type.fields)
+
+    @staticmethod
+    def field_store(f: A.FieldDef, value: Any) -> Any:
+        """What a field stores: a weak field keeps a weak reference."""
+        if getattr(f.type, "weak", False) and isinstance(value, Record):
+            return WeakRef(value)
+        return value
 
     def check_write(self, record: Record, span: Span) -> None:
         pass
@@ -1005,8 +1015,8 @@ class Interpreter:
                 value = self.eval(f.default, rtype.env)
             else:
                 value = None
-            values[f.name] = self.store_value(self.conform(value, f.type, rtype.env, f.name, node.span))
-        return Record(rtype, values)
+            values[f.name] = self.field_store(f, self.store_value(self.conform(value, f.type, rtype.env, f.name, node.span)))
+        return Record(rtype, values, self.stamp)
 
     def construct_variant(self, variant: Variant, args: list, node: A.Node) -> VariantValue:
         params = variant.params
@@ -1024,7 +1034,7 @@ class Interpreter:
     def get_attr(self, obj: Any, name: str, span: Span) -> Any:
         if isinstance(obj, Record):
             if name in obj.fields:
-                return obj.fields[name]
+                return field_value(obj.fields[name])
             method = obj.type.methods.get(name)
             if method is not None:
                 return method.bind(obj)
@@ -1067,7 +1077,8 @@ class Interpreter:
             field = next((f for f in obj.type.fields if f.name == name), None)
             if field is None:
                 raise self.member_error(obj, name, span, list(obj.fields))
-            obj.fields[name] = self.store_value(self.conform(value, field.type, obj.type.env, name, value_span))
+            self.check_write(obj, span)
+            obj.fields[name] = self.field_store(field, self.store_value(self.conform(value, field.type, obj.type.env, name, value_span)))
             return
         if obj is None:
             raise NexoError("none_member", span, name=name)

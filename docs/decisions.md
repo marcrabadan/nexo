@@ -462,3 +462,20 @@ started with, even if the body changes the variable. `xs.add(xs)` adds the
 list as it was. Changing something that is not a place (`f().add(1)`)
 changes a copy nobody sees. Phase 0 keeps the same rules by counting the
 places that hold a collection (one, or more than one).
+
+**D79. `weak` fields and reference cycles.** Rule 4 makes "a reference
+cycle between `type` values" a compile error unless a field is `weak`,
+but its own example (`Node` with `children: list[Node]`) refers to itself
+and must compile. The compiler cannot know which references point "back",
+so the rule is about types: a type that refers to itself through its
+fields (a chain, a tree) is allowed; two or more types that refer to each
+other through fields that are not `weak` are an error, reported at the
+field that points back to the type defined first, with the fix
+`field: weak T?`. `weak` is only allowed at the top of a field's type
+(`parent: weak Node?`), the target must be a record type, and the field
+must be optional: once the target is freed the field reads `none`. A
+weak field does not keep its target alive; it is printed as `Node(...)`
+(only its type, so a parent-child pair does not print forever) and saved
+to JSON and CSV as none. Copies of records (`old()`) keep the weak
+reference. A cycle made at run time through a type that refers to itself
+(`a.next = a`) is not detected and is freed only when the program ends.

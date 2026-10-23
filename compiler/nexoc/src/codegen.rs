@@ -2193,7 +2193,9 @@ impl<'a> Gen<'a> {
                 Some(t) => {
                     let text = self.desc_text(t);
                     let dc = self.cstr(&text);
-                    (dc, text.len(), t.optional() as u8)
+                    // bit 1: optional; bit 2: a weak field
+                    let weak = matches!(t, TypeExpr::Name(tn) if tn.weak);
+                    (dc, text.len(), t.optional() as u8 | (weak as u8) << 1)
                 }
                 None => ("null".to_string(), 0, 0),
             };

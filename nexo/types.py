@@ -11,6 +11,7 @@ Mapping to Python:
 from __future__ import annotations
 
 import decimal
+import weakref
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Callable
@@ -165,6 +166,12 @@ class NexoSet:
         self.items[item] = True
 
 
+def weak_repr(w: "WeakRef") -> str:
+    """A weak field points back (to a parent): only its type is shown."""
+    target = w.get()
+    return "none" if target is None else f"{target.type.name}(...)"
+
+
 def share(value: Any) -> Any:
     """A collection stored in one more place (a variable, a field, an
     element, a parameter...). Plain Python lists and maps come from the
@@ -260,10 +267,36 @@ class RecordType:
     env: Any = None
 
 
+class WeakRef:
+    """The value of a `weak` field (section 7, rule 4): it does not keep
+    its target alive; reading it gives none once the target is freed."""
+
+    __slots__ = ("ref",)
+
+    def __init__(self, target: Any):
+        self.ref = weakref.ref(target)
+
+    def get(self) -> Any:
+        return self.ref()
+
+    def __eq__(self, other):
+        return isinstance(other, WeakRef) and other.ref() is self.ref()
+
+    def __hash__(self):
+        return id(self)
+
+
+def field_value(value: Any) -> Any:
+    """What reading a field gives (the target of a weak field)."""
+    return value.get() if type(value) is WeakRef else value
+
+
 @dataclass(eq=False)
 class Record:
     type: RecordType
     fields: dict[str, Any]
+    # the task that created it may change it (see Interpreter.check_write)
+    birth: int = 0
 
     def __eq__(self, other):
         return isinstance(other, Record) and other.type is self.type and other.fields == self.fields
@@ -497,7 +530,7 @@ def repr_value(value: Any) -> str:
     if isinstance(value, Range):
         return f"{value.start}..{value.end}"
     if isinstance(value, Record):
-        inner = ", ".join(f"{k}: {repr_value(v)}" for k, v in value.fields.items())
+        inner = ", ".join(f"{k}: {weak_repr(v) if type(v) is WeakRef else repr_value(v)}" for k, v in value.fields.items())
         return f"{value.type.name}({inner})"
     if isinstance(value, VariantValue):
         inner = ", ".join(f"{k}: {repr_value(v)}" for k, v in value.fields.items())
