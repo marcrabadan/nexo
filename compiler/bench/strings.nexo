@@ -1,0 +1,11 @@
+var parts = []
+for i in 1..300_000:
+    parts.add("w{i % 500}")
+var total = 0
+for p in parts:
+    total += len(p)
+line = "a b c d e f g h"
+var n = 0
+repeat 100_000:
+    n += len(line.split(" "))
+print(total, n)

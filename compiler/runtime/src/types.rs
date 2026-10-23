@@ -244,8 +244,13 @@ impl<'a> Reader<'a> {
 
 static DESCS: Mutex<Option<HashMap<usize, &'static TypeDesc>>> = Mutex::new(None);
 
-/// Decode (once) the type descriptor at `ptr`.
+/// Decode (once) the type descriptor at `ptr`. A length of 0 means `ptr`
+/// is a descriptor already decoded (the compiled code decodes them when
+/// the program starts).
 pub fn desc(ptr: *const u8, len: usize) -> &'static TypeDesc {
+    if len == 0 {
+        return unsafe { &*(ptr as *const TypeDesc) };
+    }
     let key = ptr as usize;
     let mut descs = DESCS.lock().unwrap();
     let map = descs.get_or_insert_with(HashMap::new);

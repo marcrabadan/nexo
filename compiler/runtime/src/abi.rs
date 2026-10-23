@@ -237,6 +237,12 @@ pub unsafe extern "C" fn nx_named(ptr: *const u8, len: usize) -> V {
     }
 }
 
+/// Decode a type descriptor (when the program starts).
+#[no_mangle]
+pub unsafe extern "C" fn nx_desc(ptr: *const u8, len: usize) -> *const types::TypeDesc {
+    types::desc(ptr, len)
+}
+
 /// Free an object whose count the compiled code brought to 0.
 #[no_mangle]
 pub unsafe extern "C" fn nx_destroy(h: *mut Heap) {

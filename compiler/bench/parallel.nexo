@@ -1,0 +1,13 @@
+fn work(n: int) -> int:
+    var t = 0
+    var i = 0
+    while i < 5_000_000:
+        t += (i * n) % 13
+        i += 1
+    return t
+sums = parallel for n in 1..16:
+    return work(n)
+var total = 0
+for s in sums:
+    total += s
+print(total)

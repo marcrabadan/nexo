@@ -10,6 +10,7 @@ mod ast;
 mod checker;
 mod codegen;
 mod lexer;
+mod narrow;
 mod parser;
 mod prove;
 mod resolve;

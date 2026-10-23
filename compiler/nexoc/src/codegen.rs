@@ -159,6 +159,8 @@ pub struct Gen<'a> {
     /// what the contract prover knows, and the type each method belongs to
     prover: Option<crate::prove::Types>,
     method_of: HashMap<u32, String>,
+    /// values that are certainly ints (no type checks at run time)
+    ints: Option<crate::narrow::Ints<'a>>,
 }
 
 fn op_code(op: &str) -> u32 {
@@ -296,6 +298,7 @@ impl<'a> Gen<'a> {
             known_fns: HashMap::new(),
             prover: None,
             method_of: HashMap::new(),
+            ints: None,
         }
     }
 
@@ -495,18 +498,97 @@ impl<'a> Gen<'a> {
         format!("{}:{}{}", display.len(), display, body)
     }
 
-    /// `ptr @d.N, i64 len` for a declared type.
+    /// `ptr desc, i64 0` for a declared type: the descriptor is decoded
+    /// once when the program starts (a length of 0 marks it decoded).
     fn desc_arg(&mut self, t: &TypeExpr) -> String {
         let text = self.desc_text(t);
         let name = match self.descs.get(&text) {
             Some(n) => n.clone(),
             None => {
                 let c = self.cstr(&text);
-                self.descs.insert(text.clone(), c.clone());
-                c
+                let g = format!("@dd.{}", self.next());
+                let _ = writeln!(self.globals, "{g} = internal global ptr null");
+                let r = format!("%i{}", self.next());
+                let _ = writeln!(self.init, "  {r} = call ptr @nx_desc(ptr {c}, i64 {})\n  store ptr {r}, ptr {g}", text.len());
+                self.descs.insert(text.clone(), g.clone());
+                g
             }
         };
-        format!("ptr {name}, i64 {}", text.len())
+        let d = self.reg();
+        self.emit(&format!("{d} = load ptr, ptr {name}"));
+        format!("ptr {d}, i64 0")
+    }
+
+    /// The tags a value of a builtin scalar type has when it needs no
+    /// conversion: the check is done inline and the runtime is called only
+    /// for anything else.
+    fn fast_tags(t: &TypeExpr) -> Option<Vec<u64>> {
+        let TypeExpr::Name(tn) = t else { return None };
+        if !tn.params.is_empty() || tn.fallible || tn.weak {
+            return None;
+        }
+        let mut tags = match tn.name.as_str() {
+            "int" => vec![T_INT],
+            "float" => vec![T_FLOAT],
+            "bool" => vec![T_BOOL],
+            _ => return None,
+        };
+        if tn.optional {
+            tags.push(T_NONE);
+        }
+        Some(tags)
+    }
+
+    /// i1: the value has one of the tags.
+    fn has_tag(&mut self, v: &Val, tags: &[u64]) -> String {
+        let mut acc = "false".to_string();
+        for t in tags {
+            let c = self.is_tag(v, *t);
+            let o = self.reg();
+            self.emit(&format!("{o} = or i1 {acc}, {c}"));
+            acc = o;
+        }
+        acc
+    }
+
+    /// `nx_conform` (or `nx_conform_return`) with the inline fast path; the
+    /// result is owned and `v` is used up.
+    fn conform_with(&mut self, v: Val, t: &TypeExpr, func: &str, name: &str, span: &str) -> Val {
+        let Some(tags) = Self::fast_tags(t) else {
+            let tb = self.tb(&v);
+            let d = self.desc_arg(t);
+            let n = self.strarg(name);
+            let r = self.call_v(func, &format!("{tb}, {d}, {n}, i32 {span}"));
+            self.check();
+            self.drop_val(&v);
+            return self.owned(r);
+        };
+        let slot = self.alloca("%V");
+        let ok = self.has_tag(&v, &tags);
+        let fast = self.label();
+        let slow = self.label();
+        let done = self.label();
+        self.cond_br(&ok, &fast, &slow);
+        self.place(&fast);
+        self.store(&slot, &v);
+        self.br(&done);
+        self.place(&slow);
+        let tb = self.tb(&v);
+        let d = self.desc_arg(t);
+        let n = self.strarg(name);
+        let r = self.call_v(func, &format!("{tb}, {d}, {n}, i32 {span}"));
+        self.check();
+        self.store(&slot, &r);
+        // the value is released on this path (on the other it is a scalar)
+        self.rc_dec(&v);
+        self.br(&done);
+        self.place(&done);
+        self.unlive(&Live::Reg(match &v {
+            Val::Reg(r) => r.clone(),
+            Val::Lit(..) => String::new(),
+        }));
+        let x = self.load(&slot);
+        self.owned(x)
     }
 
     // ------------------------------------------------------ instructions
@@ -1303,15 +1385,19 @@ impl<'a> Gen<'a> {
                 }
             }
             if let Some(ret) = &f.ret {
-                let tb = self.tb(&result);
-                let d = self.desc_arg(ret);
-                let n = self.strarg(&f.name);
-                let sp = self.span_id(f.name_span);
-                result = self.call_v("nx_conform_return", &format!("{tb}, {d}, {n}, i32 {sp}"));
-                self.check();
-                // the slot keeps the value before the check; the result is new
+                // the slot keeps the value before the check; the result is
+                // owned on its own (the conversion may make a new value)
+                self.rc_inc(&result);
+                let owned = self.owned(result.clone());
+                let sp = self.span_id(f.name_span).to_string();
+                let r = self.conform_with(owned, ret, "nx_conform_return", &f.name, &sp);
+                self.unlive(&Live::Reg(match &r {
+                    Val::Reg(x) => x.clone(),
+                    Val::Lit(..) => String::new(),
+                }));
                 let old = self.load(&ret_slot);
                 self.rc_dec(&old);
+                result = r;
             }
         }
         let r = self.agg(&result);
@@ -1382,13 +1468,7 @@ impl<'a> Gen<'a> {
         self.f().live.push(Live::Slot(slot.clone()));
         let mut v = self.unspill(&slot);
         if let Some(t) = &p.ty {
-            let tb = self.tb(&v);
-            let d = self.desc_arg(t);
-            let n = self.strarg(&p.name);
-            let c = self.call_v("nx_conform", &format!("{tb}, {d}, {n}, i32 %span"));
-            self.check();
-            self.drop_val(&v);
-            v = self.owned(c);
+            v = self.conform_with(v, t, "nx_conform", &p.name, "%span");
         }
         Ok(self.plain(v))
     }
@@ -1418,6 +1498,7 @@ impl<'a> Gen<'a> {
     pub fn program(mut self, program: &'a Program) -> GResult<String> {
         self.find_known_fns(program);
         self.prover = Some(crate::prove::Types::new(program));
+        self.ints = Some(crate::narrow::Ints::new(program, self.res, &self.known_fns));
         crate::checker::walk_stmts(&program.body, true, &mut |s| {
             if let StmtKind::Type(t) = &s.kind {
                 for m in &t.methods {
@@ -1867,14 +1948,8 @@ impl<'a> Gen<'a> {
     /// Check a value against a declared type; the result is owned and the
     /// value is used up.
     fn conform(&mut self, v: Val, t: &TypeExpr, name: &str, span: Span) -> GResult<Val> {
-        let tb = self.tb(&v);
-        let d = self.desc_arg(t);
-        let n = self.strarg(name);
-        let sp = self.span_id(span);
-        let r = self.call_v("nx_conform", &format!("{tb}, {d}, {n}, i32 {sp}"));
-        self.check();
-        self.drop_val(&v);
-        Ok(self.owned(r))
+        let sp = self.span_id(span).to_string();
+        Ok(self.conform_with(v, t, "nx_conform", name, &sp))
     }
 
     fn name_error(&mut self, name: &str, suggestion: Option<&str>, span: Span) {
@@ -2629,6 +2704,27 @@ impl<'a> Gen<'a> {
     /// can read it as a decimal). The result is owned when it is in
     /// `live`, borrowed otherwise.
     pub(crate) fn expr(&mut self, e: &'a Expr, lit_ok: bool) -> GResult<Val> {
+        let v = self.expr_any(e, lit_ok)?;
+        // a value that is certainly an int: its tag is a constant, so the
+        // checks that follow fold away
+        if let Val::Reg(r) = &v {
+            if !matches!(e.kind, ExprKind::BinOp { .. } | ExprKind::Num { .. }) && self.certain_int(e) {
+                let bits = self.reg();
+                self.emit(&format!("{bits} = extractvalue %V {r}, 1"));
+                let n = self.reg();
+                self.emit(&format!("{n} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {bits}, 1"));
+                self.unlive(&Live::Reg(r.clone()));
+                return Ok(Val::Reg(n));
+            }
+        }
+        Ok(v)
+    }
+
+    fn certain_int(&self, e: &Expr) -> bool {
+        self.ints.as_ref().is_some_and(|i| i.certain(e))
+    }
+
+    fn expr_any(&mut self, e: &'a Expr, lit_ok: bool) -> GResult<Val> {
         Ok(match &e.kind {
             ExprKind::Num { text, is_float: false } => match text.parse::<i64>() {
                 Ok(n) => lit(T_INT, n.to_string()),
@@ -2794,6 +2890,9 @@ impl<'a> Gen<'a> {
             ExprKind::BinOp { op, left, right } => {
                 let l = self.expr(left, true)?;
                 let r = self.expr(right, true)?;
+                if matches!(*op, "+" | "-" | "*" | "//" | "%") && self.certain_int(left) && self.certain_int(right) {
+                    return self.binop_int(op, &l, &r, e.span);
+                }
                 let v = self.binop(op, &l, &r, e.span)?;
                 self.drop_val(&r);
                 self.drop_val(&l);
@@ -2829,9 +2928,16 @@ impl<'a> Gen<'a> {
                 let end = self.label();
                 let fail = self.label();
                 let mut left = self.expr(&operands[0], true)?;
+                let mut left_int = self.certain_int(&operands[0]);
                 for (op, operand) in ops.iter().zip(&operands[1..]) {
                     let right = self.expr(operand, true)?;
-                    let c = self.compare_op(op, &left, &right, e.span)?;
+                    let right_int = self.certain_int(operand);
+                    let c = if left_int && right_int && *op != "in" && *op != "is" {
+                        self.compare_int(op, &left, &right)
+                    } else {
+                        self.compare_op(op, &left, &right, e.span)?
+                    };
+                    left_int = right_int;
                     self.drop_val(&left);
                     let next = self.label();
                     if self.is_live(&right) {
@@ -2990,6 +3096,120 @@ impl<'a> Gen<'a> {
         // an int, or a value the runtime made: owned either way
         let v = self.load(&slot);
         Ok(self.owned(v))
+    }
+
+    /// `+ - * // %` on two values that are certainly ints: only the
+    /// overflow and the division by zero go to the runtime (which reports
+    /// them).
+    fn binop_int(&mut self, op: &str, l: &Val, r: &Val, span: Span) -> GResult<Val> {
+        let a = self.bits_of(l);
+        let b = self.bits_of(r);
+        let fail = self.label();
+        let res = match op {
+            "+" | "-" | "*" => {
+                let f = match op {
+                    "+" => "sadd",
+                    "-" => "ssub",
+                    _ => "smul",
+                };
+                let pair = self.reg();
+                self.emit(&format!("{pair} = call {{ i64, i1 }} @llvm.{f}.with.overflow.i64(i64 {a}, i64 {b})"));
+                let ovf = self.reg();
+                self.emit(&format!("{ovf} = extractvalue {{ i64, i1 }} {pair}, 1"));
+                let ok = self.label();
+                self.cond_br(&ovf, &fail, &ok);
+                self.place(&ok);
+                let v = self.reg();
+                self.emit(&format!("{v} = extractvalue {{ i64, i1 }} {pair}, 0"));
+                v
+            }
+            _ => {
+                let zero = self.reg();
+                self.emit(&format!("{zero} = icmp eq i64 {b}, 0"));
+                let m1 = self.reg();
+                self.emit(&format!("{m1} = icmp eq i64 {b}, -1"));
+                let bad = if op == "//" {
+                    // MIN // -1 does not fit
+                    let min = self.reg();
+                    self.emit(&format!("{min} = icmp eq i64 {a}, -9223372036854775808"));
+                    let both = self.reg();
+                    self.emit(&format!("{both} = and i1 {m1}, {min}"));
+                    let bad = self.reg();
+                    self.emit(&format!("{bad} = or i1 {zero}, {both}"));
+                    bad
+                } else {
+                    zero
+                };
+                let ok = self.label();
+                self.cond_br(&bad, &fail, &ok);
+                self.place(&ok);
+                // x % -1 is 0 (and srem would trap on MIN % -1)
+                let bsafe = self.reg();
+                self.emit(&format!("{bsafe} = select i1 {m1}, i64 1, i64 {b}"));
+                let q = self.reg();
+                self.emit(&format!("{q} = sdiv i64 {a}, {bsafe}"));
+                let rem = self.reg();
+                self.emit(&format!("{rem} = srem i64 {a}, {bsafe}"));
+                let nz = self.reg();
+                self.emit(&format!("{nz} = icmp ne i64 {rem}, 0"));
+                let x = self.reg();
+                self.emit(&format!("{x} = xor i64 {rem}, {bsafe}"));
+                let neg = self.reg();
+                self.emit(&format!("{neg} = icmp slt i64 {x}, 0"));
+                let adj = self.reg();
+                self.emit(&format!("{adj} = and i1 {nz}, {neg}"));
+                if op == "//" {
+                    let q1 = self.reg();
+                    self.emit(&format!("{q1} = sub i64 {q}, 1"));
+                    let v = self.reg();
+                    self.emit(&format!("{v} = select i1 {adj}, i64 {q1}, i64 {q}"));
+                    // x // -1 is -x (MIN was sent to the runtime)
+                    let neg_a = self.reg();
+                    self.emit(&format!("{neg_a} = sub i64 0, {a}"));
+                    let v2 = self.reg();
+                    self.emit(&format!("{v2} = select i1 {m1}, i64 {neg_a}, i64 {v}"));
+                    v2
+                } else {
+                    let r1 = self.reg();
+                    self.emit(&format!("{r1} = add i64 {rem}, {bsafe}"));
+                    let v = self.reg();
+                    self.emit(&format!("{v} = select i1 {adj}, i64 {r1}, i64 {rem}"));
+                    let v2 = self.reg();
+                    self.emit(&format!("{v2} = select i1 {m1}, i64 0, i64 {v}"));
+                    v2
+                }
+            }
+        };
+        let v = self.reg();
+        self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
+        let done = self.label();
+        self.br(&done);
+        // the runtime reports the error (it always fails here)
+        self.place(&fail);
+        let tl = self.tb(l);
+        let tr = self.tb(r);
+        let sp = self.span_id(span);
+        self.call_v("nx_binop", &format!("i32 {}, {tl}, {tr}, i32 {sp}", op_code(op)));
+        self.fail_here();
+        self.place(&done);
+        Ok(Val::Reg(v))
+    }
+
+    /// A comparison of two values that are certainly ints.
+    fn compare_int(&mut self, op: &str, l: &Val, r: &Val) -> String {
+        let pred = match op {
+            "==" => "eq",
+            "!=" => "ne",
+            "<" => "slt",
+            ">" => "sgt",
+            "<=" => "sle",
+            _ => "sge",
+        };
+        let a = self.bits_of(l);
+        let b = self.bits_of(r);
+        let c = self.reg();
+        self.emit(&format!("{c} = icmp {pred} i64 {a}, {b}"));
+        c
     }
 
     /// Both values have this tag (an i1).
@@ -3890,6 +4110,7 @@ no:
 }
 
 declare void @nx_destroy(ptr)
+declare ptr @nx_desc(ptr, i64)
 declare %V @nx_parallel_for(i64, i64, i64, i64, i64, i64, i32)
 declare void @nx_parallel_block(ptr, i64, i32)
 declare void @nx_task_write(ptr, i64, i32)

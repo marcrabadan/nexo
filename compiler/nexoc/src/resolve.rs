@@ -174,6 +174,9 @@ pub struct Resolution {
     pub task_outputs: HashMap<FrameId, Vec<BindingId>>,
     /// the program has `use nexo.sync`
     pub sync: bool,
+    /// top-level names no function, lambda, task or test uses: they are
+    /// locals of the main program (kept in registers) instead of statics
+    pub main_local: std::collections::HashSet<BindingId>,
 }
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
@@ -225,6 +228,8 @@ struct Resolver {
     pending_self: Vec<(u32, ScopeId, BindingId)>,
     /// the tasks being resolved: (frame, true for `parallel for`)
     tasks: Vec<(FrameId, bool)>,
+    /// top-level names used from another frame
+    used_outside: std::collections::HashSet<BindingId>,
 }
 
 impl Resolution {
@@ -232,10 +237,11 @@ impl Resolution {
         &self.bindings[id]
     }
 
-    /// Names of the top level of the program live in static storage; every
-    /// other binding belongs to the frame (function) that runs its scope.
+    /// Names of the top level of the program that a function uses live in
+    /// static storage; every other binding belongs to the frame (function)
+    /// that runs its scope.
     pub fn is_static(&self, b: BindingId) -> bool {
-        self.bindings[b].scope == self.frames[GLOBAL_FRAME].root
+        self.bindings[b].scope == self.frames[GLOBAL_FRAME].root && !self.main_local.contains(&b)
     }
 }
 
@@ -261,7 +267,9 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             self_calls: std::collections::HashSet::new(),
             task_outputs: HashMap::new(),
             sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what } if what == "nexo.sync")),
+            main_local: std::collections::HashSet::new(),
         },
+        used_outside: std::collections::HashSet::new(),
         tasks: Vec::new(),
         self_fn: Vec::new(),
         self_fn_binding: None,
@@ -273,6 +281,11 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
     res.declare_block(root, &program.body);
     res.block(root, &program.body)?;
     res.finish_self_calls(program);
+    let global_root = res.r.frames[GLOBAL_FRAME].root;
+    let main_local = (0..res.r.bindings.len())
+        .filter(|b| res.r.bindings[*b].scope == global_root && !res.used_outside.contains(b))
+        .collect();
+    res.r.main_local = main_local;
     Ok(res.r)
 }
 
@@ -505,6 +518,9 @@ impl Resolver {
     fn note_use(&mut self, scope: ScopeId, b: BindingId) {
         let bf = self.r.bindings[b].frame;
         let mut f = self.r.scopes[scope].frame;
+        if self.r.is_static(b) && f != GLOBAL_FRAME {
+            self.used_outside.insert(b);
+        }
         if bf == f || self.r.is_static(b) {
             return;
         }
