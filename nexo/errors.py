@@ -462,6 +462,22 @@ MESSAGES: dict[str, dict[str, str]] = {
     },
     "err.Timeout": {"es": "El bloque tardó más de {limit}", "en": "The block took longer than {limit}"},
     "err.InvalidValue": {"es": "{detail}", "en": "{detail}"},
+    # details used inside error values and argument errors
+    "detail.not_a": {"es": '"{value}" no es un valor {type} válido', "en": '"{value}" is not a valid {type}'},
+    "detail.out_of_range": {"es": "{value} está fuera del rango {range}", "en": "{value} is outside the range {range}"},
+    "detail.missing_field": {"es": 'falta el campo "{field}" de {type}', "en": 'the field "{field}" of {type} is missing'},
+    "detail.field_type": {"es": 'el campo "{field}" debe ser {type}, pero es {vtype}', "en": 'the field "{field}" must be {type}, but it is {vtype}'},
+    "detail.expected": {"es": "se esperaba {type}, pero hay {vtype}", "en": "expected {type}, but found {vtype}"},
+    "detail.json": {"es": "el JSON no es válido ({reason}, línea {line})", "en": "the JSON is not valid ({reason}, line {line})"},
+    "detail.encoding": {"es": 'el archivo "{path}" no está en UTF-8', "en": 'the file "{path}" is not UTF-8'},
+    "detail.expects": {"es": "espera {what}, pero recibe {vtype}", "en": "expects {what}, but gets {vtype}"},
+    "detail.use_validate": {
+        "es": "no convierte texto; usa validate(x, as: {type})?",
+        "en": "does not convert text; use validate(x, as: {type})?",
+    },
+    "detail.positive": {"es": "el número de partes debe ser mayor que 0", "en": "the number of parts must be greater than 0"},
+    "detail.step_zero": {"es": "el paso no puede ser 0", "en": "the step cannot be 0"},
+    "detail.mode": {"es": "mode debe ser half_even o half_up", "en": "mode must be half_even or half_up"},
 }
 
 
