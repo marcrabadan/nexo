@@ -52,3 +52,43 @@ other use for them.
 level must be exactly 4 spaces deeper than the enclosing one; 2 or 8 spaces
 are errors, and a dedent must land on an open level.
 
+## Grammar (section 24)
+
+**D10. `assert` is missing from the grammar.** `assert` is a reserved word
+and section 14 uses `assert expr` and `assert expr fails`, but the EBNF has
+no rule for it. Phase 0 adds `assert_stmt = "assert" expr [ "fails" ]` as a
+`simple_stmt`; `fails` is contextual, like `within` and `desc`.
+
+**D11. Chained comparisons.** `comparison = coalesce { op coalesce }`
+allows `1 < x <= 10`. It means `1 < x and x <= 10`, as in mathematics
+(rule 3: understandable by someone with no experience).
+
+**D12. No trailing commas.** The EBNF for lists, maps, arguments and
+parameters has no trailing comma, so `[1, 2,]` is a syntax error.
+
+**D13. Steps of a pipeline.** `pipe_step = IDENT { expr | IDENT } | call`
+is ambiguous. Each step word has a fixed shape: `where expr`, `map expr`,
+`pick col, col`, `group by expr`, `sum [expr]`, `count`, `avg [expr]`,
+`sort by expr [desc]`, `take expr`, `each expr`. Any other step is a
+function (a name, attribute or call) that receives the value on the left
+as its first argument. A step word directly followed by `(` or `.` is an
+ordinary call.
+
+**D14. `sum amount` without `group by`.** Section 6 removed "`sum amount`
+without a preceding grouping word". This is checked when parsing:
+`sum col` and `avg col` must follow `group by` in the same pipeline, and
+only `sum`, `count` or `avg` may follow `group by`. Without a grouping,
+`sum`, `avg` and `count` take no column and aggregate the elements
+themselves (`numbers |> sum`, `amounts |> avg`, `rows |> count`). The
+error suggests `map amount |> sum` for the total of a column.
+
+**D15. Module blocks.** `config_block` covers `ai`, `infra`, `pipeline`,
+`policy`... which are all outside phase 0. They are parsed (so the file is
+still valid) and reported as "not available in phase 0" when run.
+
+**D16. Annotations.** Annotations (`@cache`, `@table`, `@tool`...) all
+belong to modules outside phase 0 and are reported as unavailable, instead
+of being silently ignored, which would change behaviour. Inline field
+annotations (`@private`, `@unique`) are parsed and ignored, since they do
+not change how core code runs.
+

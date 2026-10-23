@@ -122,11 +122,12 @@ class Lexer:
         src = self.src
         at_line_start = not self.expr_mode
         while self.i < len(src):
-            if at_line_start and not self.brackets:
+            if at_line_start:
                 at_line_start = False
-                if self.indentation():
-                    at_line_start = True
-                continue
+                if not self.brackets:
+                    if self.indentation():
+                        at_line_start = True
+                    continue
             c = src[self.i]
             if c == "\n":
                 if not self.brackets and not self.expr_mode:

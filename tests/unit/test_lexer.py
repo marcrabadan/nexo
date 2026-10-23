@@ -166,3 +166,8 @@ def test_spans():
     toks = tokenize("    \nprint(nmae)\n", "t.nexo")
     name = toks[2]
     assert (name.span.line, name.span.col, name.span.end_col) == (2, 7, 11)
+
+
+def test_statement_after_multiline_brackets_ends_with_newline():
+    toks = kinds("x = [1,\n    2]\nprint(x)\n")
+    assert [k for k, _ in toks].count("NEWLINE") == 2
