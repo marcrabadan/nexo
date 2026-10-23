@@ -140,7 +140,10 @@ pub fn release(v: V) {
 }
 
 fn release_weak(h: *mut Heap) {
-    if unsafe { &*h }.weak.fetch_sub(1, Ordering::Release) == 1 {
+    // with no weak references there is nobody to race with: a weak
+    // reference is only made from a strong one, and there is none left
+    let weak = &unsafe { &*h }.weak;
+    if weak.load(Ordering::Acquire) == 1 || weak.fetch_sub(1, Ordering::Release) == 1 {
         fence(Ordering::Acquire);
         unsafe { drop(Box::from_raw(h)) };
     }

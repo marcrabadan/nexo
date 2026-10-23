@@ -584,3 +584,13 @@ none of these changes what a program prints.
   code with no limit anywhere only reads that count.
 - A call to a function defined once, from its own body (or a function
   inside it), does not check that the function is defined (D29): it is.
+- `P(a, b)` with a record type defined once and one positional argument
+  per field checks the fields in the compiled code and builds the record
+  in one call; field accesses and method calls remember, at each place in
+  the code, where the last record type they saw keeps that member.
+- Map keys use a fast multiplicative hash instead of SipHash: maps keep
+  their insertion order, so the hash is never visible.
+- The Rust version of `bench/records` keeps its `Box` with
+  `std::hint::black_box`: rustc removes the allocation otherwise, and a
+  Nexo record is always a heap value (section 7), so without it the
+  comparison would measure nothing.

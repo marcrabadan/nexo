@@ -165,6 +165,8 @@ pub struct Gen<'a> {
     /// functions defined exactly once (called directly, without binding
     /// their arguments at run time)
     known_fns: HashMap<BindingId, &'a FnDef>,
+    /// record types defined once (D84)
+    known_types: HashMap<BindingId, &'a TypeDef>,
     /// what the contract prover knows, and the type each method belongs to
     prover: Option<crate::prove::Types>,
     method_of: HashMap<u32, String>,
@@ -307,6 +309,7 @@ impl<'a> Gen<'a> {
             int_params: false,
             fs: Vec::new(),
             known_fns: HashMap::new(),
+            known_types: HashMap::new(),
             prover: None,
             method_of: HashMap::new(),
             ints: None,
@@ -316,12 +319,22 @@ impl<'a> Gen<'a> {
     fn find_known_fns(&mut self, program: &'a Program) {
         let mut defs: HashMap<BindingId, usize> = HashMap::new();
         let mut fns: HashMap<BindingId, &'a FnDef> = HashMap::new();
+        let mut types: HashMap<BindingId, &'a TypeDef> = HashMap::new();
         let res = self.res;
         crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
             StmtKind::Fn(f) => {
                 if let Some(b) = res.decl.get(&Node::Stmt(s.id)) {
                     *defs.entry(*b).or_default() += 1;
                     fns.insert(*b, f);
+                }
+            }
+            StmtKind::Type(t) => {
+                if let Some(b) = res.decl.get(&Node::Stmt(s.id)) {
+                    *defs.entry(*b).or_default() += 1;
+                    let record = t.alias.is_none() && t.variants.is_empty() && !t.fields.is_empty();
+                    if record && t.settings.is_empty() && t.annotations.is_empty() {
+                        types.insert(*b, t);
+                    }
                 }
             }
             StmtKind::Assign { .. } | StmtKind::VarDecl { .. } => {
@@ -332,7 +345,9 @@ impl<'a> Gen<'a> {
             _ => {}
         });
         fns.retain(|b, f| defs.get(b) == Some(&1) && f.annotations.is_empty());
+        types.retain(|b, _| defs.get(b) == Some(&1));
         self.known_fns = fns;
+        self.known_types = types;
     }
 
     fn next(&mut self) -> usize {
@@ -3800,6 +3815,9 @@ impl<'a> Gen<'a> {
         if let Some(v) = self.direct_call(func, args, &first, span)? {
             return Ok(v);
         }
+        if let Some(v) = self.direct_construct(func, args, &first, span)? {
+            return Ok(v);
+        }
         let target = match &func.kind {
             ExprKind::Name(n) => match self.res.names.get(&func.id) {
                 Some(NameRes::Builtin(b)) if DIRECT_BUILTINS.contains(&b.as_str()) || matches!(b.as_str(), "decimal" | "float" | "int" | "str") => {
@@ -3900,6 +3918,65 @@ impl<'a> Gen<'a> {
 
     /// A call to a function defined once, with its arguments bound when
     /// compiling: the LLVM function is called directly.
+    /// `P(a, b)` for a record type defined once, with one positional
+    /// argument per field: the fields are checked here and the record is
+    /// built in one call (D84).
+    fn direct_construct(&mut self, func: &'a Expr, args: &'a [Arg], first: &Option<Val>, span: Span) -> GResult<Option<Val>> {
+        let ExprKind::Name(name) = &func.kind else { return Ok(None) };
+        let Some(NameRes::Bindings { cands, row: None, suggestion, .. }) = self.res.names.get(&func.id) else {
+            return Ok(None);
+        };
+        if cands.len() != 1 || first.is_some() {
+            return Ok(None);
+        }
+        let Some(t) = self.known_types.get(&cands[0]).copied() else { return Ok(None) };
+        if args.len() != t.fields.len() || args.iter().any(|a| a.name.is_some() || may_be_lazy(&a.value)) {
+            return Ok(None);
+        }
+        let suggestion = suggestion.clone();
+        let tv = self.load_binding(cands[0]);
+        let tslot = self.temp(&tv);
+        let tag = self.tag_of(&tv);
+        let undef = self.reg();
+        self.emit(&format!("{undef} = icmp eq i64 {tag}, {T_UNDEF}"));
+        let bad = self.label();
+        let ok = self.label();
+        self.cond_br(&undef, &bad, &ok);
+        self.place(&bad);
+        self.name_error(name, suggestion.as_deref(), func.span);
+        self.place(&ok);
+        let mut vals = Vec::new();
+        for a in args {
+            let v = self.expr(&a.value, true)?;
+            // each value is owned here until the record takes it
+            let v = if self.is_live(&v) {
+                v
+            } else {
+                self.rc_inc(&v);
+                self.owned(v)
+            };
+            vals.push(v);
+        }
+        let sp = self.span_id(span);
+        let sps = sp.to_string();
+        let mut checked = Vec::new();
+        for (v, f) in vals.into_iter().zip(&t.fields) {
+            checked.push(self.conform_with(v, &f.ty, "nx_conform", &f.name, &sps));
+        }
+        // the record takes the values
+        for v in &checked {
+            if let Val::Reg(r) = v {
+                self.unlive(&Live::Reg(r.clone()));
+            }
+        }
+        let arr = self.values_array(&checked);
+        let tv = self.load(&tslot);
+        let tb = self.tb(&tv);
+        let r = self.call_v("nx_record_new", &format!("{tb}, ptr {arr}, i64 {}, i32 {sp}", checked.len()));
+        self.check();
+        Ok(Some(self.owned(r)))
+    }
+
     fn direct_call(&mut self, func: &'a Expr, args: &'a [Arg], first: &Option<Val>, span: Span) -> GResult<Option<Val>> {
         let ExprKind::Name(name) = &func.kind else { return Ok(None) };
         let Some(NameRes::Bindings { cands, row: None, .. }) = self.res.names.get(&func.id) else { return Ok(None) };
@@ -4389,6 +4466,7 @@ declare %V @nx_call(i64, i64, ptr, ptr, i64, i32)
 declare %V @nx_call_method(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32)
 declare %V @nx_call_method_ic(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32, ptr)
 declare %V @nx_attr_ic(i64, i64, ptr, i64, i32, ptr)
+declare %V @nx_record_new(i64, i64, ptr, i64, i32)
 declare %V @nx_builtin_call(i32, ptr, ptr, i64, i32)
 declare %V @nx_closure(ptr, ptr, ptr, i64)
 declare ptr @nx_cell()

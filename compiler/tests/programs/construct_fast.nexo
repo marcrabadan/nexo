@@ -1,0 +1,38 @@
+type Point:
+    x: float
+    y: float
+
+type Named:
+    name: str
+    tag: str?
+    size: int = 3
+
+type Tree:
+    value: int
+    kids: list[Tree]
+    up: weak Tree?
+
+p = Point(1.5, 2)
+print(p, p.x + p.y)
+q = Point(1, 2.0)
+print(q)
+n = Named("a", none, 4)
+print(n, n.tag ?? "no tag")
+print(Named("b", "t", 5))
+print(Named("c", none))
+root = Tree(1, [], none)
+leaf = Tree(2, [], root)
+root.kids.add(leaf)
+print(leaf.up.value, len(root.kids))
+fn orphan():
+    t = Tree(10, [], none)
+    return Tree(11, [], t)
+print(orphan().up ?? "freed")
+xs = [Point(i, i * 2) for i in range(3)]
+print(xs)
+var total = 0.0
+for pt in xs:
+    total += pt.x
+print(total)
+vals = [1, "two"]
+print(Point(vals[0], vals[1]))

@@ -655,6 +655,28 @@ pub unsafe extern "C" fn nx_call_method(
     ret(call::call_method(v(t, b), text(name, len), values(args, n), &names, span, name_span))
 }
 
+/// `P(a, b)` compiled for a record type: the values are checked against
+/// the field types, and the record takes them.
+#[no_mangle]
+pub unsafe extern "C" fn nx_record_new(t: u64, b: u64, args: *const V, n: u64, span: u32) -> V {
+    let vals: Vec<Val> = values(args, n).iter().map(|x| Val::adopt(*x)).collect();
+    match v(t, b).get() {
+        Some(Obj::Type(TypeRef::Record(rt))) if rt.fields.len() == vals.len() => {
+            let fields = rt.fields.iter().zip(vals).map(|(f, x)| call::field_value(f, x.plain())).collect();
+            Val::new(Obj::Record(Record {
+                ty: rt,
+                fields: Mut::new(fields),
+                birth: std::cell::Cell::new(crate::state::stamp()),
+            }))
+            .into_raw()
+        }
+        _ => {
+            let raw: Vec<V> = vals.iter().map(|x| x.v()).collect();
+            ret(call::call_value(v(t, b), &raw, span))
+        }
+    }
+}
+
 /// A method call, remembering where the method of a record type is.
 #[no_mangle]
 pub unsafe extern "C" fn nx_call_method_ic(
