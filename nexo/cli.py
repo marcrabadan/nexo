@@ -214,5 +214,17 @@ def main(argv: list[str] | None = None) -> int:
     return run_file(rest[0])
 
 
+def entry() -> int:
+    """Console entry point: like main(), but a closed output pipe (for
+    example `nexo app.nexo | head`) ends the program quietly."""
+    import os
+    try:
+        return main()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(entry())

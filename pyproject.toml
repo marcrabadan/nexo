@@ -8,7 +8,7 @@ requires-python = ">=3.12"
 dev = ["pytest"]
 
 [project.scripts]
-nexo = "nexo.cli:main"
+nexo = "nexo.cli:entry"
 
 [build-system]
 requires = ["setuptools>=68"]
