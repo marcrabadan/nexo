@@ -1,0 +1,10 @@
+on paid(x):
+    if x > 1:
+        fail("too much {x}")
+    print("paid {x}")
+emit paid(1)
+try:
+    emit paid(5)
+else e:
+    print("caught {e.message}")
+emit paid(1, 2)

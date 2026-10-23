@@ -1,0 +1,15 @@
+xs = [10, 20]
+try:
+    print(xs[-1])
+else e:
+    print(e.message)
+s = "año"
+print(s[1])
+try:
+    print(s[3])
+else e:
+    print(e.kind)
+m = {none: "n", 1: "one", 1.5: "x"}
+print(m[none])
+print(m[1.0])
+print(m[1.5])

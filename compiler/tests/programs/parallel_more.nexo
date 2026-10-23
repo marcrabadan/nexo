@@ -1,0 +1,13 @@
+parallel:
+    a = 1 + 1
+    b = a * 3
+print(a, b)
+res = parallel for x in 1..4:
+    if x % 2 == 0:
+        return x
+print(res)
+try:
+    r = parallel for x in [1, 2], max: 0:
+        return x
+else e:
+    print("nope")

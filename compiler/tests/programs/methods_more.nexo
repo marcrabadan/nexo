@@ -1,0 +1,21 @@
+type Stack:
+    items: list[int]
+    fn push(self, v: int):
+        self.items.add(v)
+    fn peek(self) -> int?:
+        if len(self.items) == 0:
+            return none
+        return self.items[len(self.items) - 1]
+    fn size(self) -> int:
+        return len(self.items)
+    fn twice(self):
+        self.push(1)
+        self.push(2)
+        return self.size()
+s = Stack([])
+print(s.peek())
+s.push(5)
+print(s.peek())
+print(s.twice())
+print(s)
+print(s.size)

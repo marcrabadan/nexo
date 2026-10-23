@@ -1,0 +1,11 @@
+var k = 1
+f = x -> x + k
+k = 100
+print(f(1))
+compose = f -> (g -> (x -> f(g(x))))
+inc = x -> x + 1
+dbl = x -> x * 2
+print(compose(inc)(dbl)(5))
+apply = f -> f(3)
+print(apply(x -> x * x))
+print((x -> x - 1)(10))

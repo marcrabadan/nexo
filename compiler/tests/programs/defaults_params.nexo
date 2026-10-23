@@ -1,0 +1,26 @@
+fn area(w, h = w):
+    return w * h
+print(area(3))
+print(area(3, 4))
+fn greet(name: str?, greeting = "hi"):
+    return "{greeting} {name ?? "anon"}"
+print(greet())
+print(greet("ana"))
+print(greet(greeting: "yo", name: "eva"))
+type Cfg:
+    host: str = "localhost"
+    port: int = 80
+    tag: str?
+print(Cfg())
+print(Cfg(port: 8080))
+type Opt:
+    Some(v: int)
+    Nothing
+print(Some(v: 3))
+print([Some(1), Nothing, Some(2)])
+fn nothing():
+    return
+print(nothing())
+fn noret(x):
+    x + 1
+print(noret(1))

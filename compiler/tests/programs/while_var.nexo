@@ -1,0 +1,14 @@
+var i = 0
+var acc = []
+while i < 5:
+    i += 1
+    if i == 3:
+        acc.add("three")
+    else:
+        acc.add(i)
+print(acc)
+repeat 0:
+    print("never")
+repeat 2:
+    t = "rep"
+    print(t)

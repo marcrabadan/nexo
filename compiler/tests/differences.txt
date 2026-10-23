@@ -1,0 +1,6 @@
+# Programs whose output differs from the phase 0 interpreter on purpose.
+# A line is a fragment of the program text; see docs/decisions.md.
+#
+# D67: names that exist nowhere are a compile error (phase 0 found them
+# only when the line ran, after the earlier output)
+print(nmae)
