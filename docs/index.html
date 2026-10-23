@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexo programming language</title>
+<meta name="description" content="Nexo is a small, readable programming language with one way to do each thing: errors as values, exact money, data pipelines and contracts. It runs today with a Python interpreter and a native LLVM compiler.">
+<meta property="og:title" content="Nexo programming language">
+<meta property="og:description" content="One way to do each thing. Errors as values, exact money, data pipelines and contracts.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/logo.svg" alt="">Nexo</a>
+    <nav class="nav" aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#examples">Examples</a>
+      <a href="#start">Get started</a>
+      <a href="#roadmap">Roadmap</a>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<div class="hero">
+  <div class="wrap">
+    <div>
+      <span class="badge">Edition 0.1 · early prototype</span>
+      <h1>One way to do <em>each thing</em>.</h1>
+      <p class="lede">Nexo is a small programming language you can understand by reading it. Errors are values, money is exact, data flows through pipelines and functions state their contracts. It runs today as a Python interpreter and as a native compiler built on LLVM.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="#start">Get started</a>
+        <a class="btn btn-ghost" href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Read the specification</a>
+      </div>
+    </div>
+    <div class="code"><div class="code-bar"><span>invoice.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Line:
+    product: str
+    quantity: int
+    price: money
+
+lines = [
+    Line(&quot;Keyboard&quot;, 2, 49.90 EUR),
+    Line(&quot;Monitor&quot;, 1, 189.99 EUR)
+]
+
+total = lines |&gt; map it.price * it.quantity |&gt; sum
+vat = total * 21%
+
+print(&quot;Total: {total + vat} (VAT {vat})&quot;)
+for part in split(total + vat, 3):
+    print(&quot;  instalment: {part}&quot;)</code></pre><div class="out"><div class="out-label">$ nexo --lang en invoice.nexo</div><pre><code>Total: 350.65 EUR (VAT 60.86 EUR)
+  instalment: 116.89 EUR
+  instalment: 116.88 EUR
+  instalment: 116.88 EUR</code></pre></div></div>
+  </div>
+</div>
+
+<section class="alt" id="principles">
+  <div class="wrap">
+    <p class="eyebrow">Principles</p>
+    <h2>Five rules settle every design question</h2>
+    <p class="section-intro">Nexo has a small, stable core. Anything that does not fit in it lives in an official module with the same syntax.</p>
+    <ol class="rules">
+      <li>One way to do each thing.</li>
+      <li>What is safe and efficient is what you write by default; anything costly or dangerous is visible in the code.</li>
+      <li>If someone with no experience cannot understand it by reading it, it does not go into the core.</li>
+      <li>No keyword has two meanings.</li>
+      <li>Whatever does not fit in the core lives in an official module with the same syntax.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <p class="eyebrow">Features</p>
+    <h2>What the core gives you</h2>
+    <p class="section-intro">Every snippet on this page runs with the current implementation, and the output shown under it is what it prints.</p>
+
+    <div class="feature">
+      <div>
+        <h3>Errors are values, never hidden exceptions</h3>
+        <p>A function that can fail returns <code>T!</code>. There are only two things you can do with a possible error: pass it up with <code>?</code> or handle it on the spot with <code>try</code> and <code>else e</code>. Ignoring one is a compile error.</p>
+        <p>Missing values are a separate thing: <code>T?</code> and the <code>??</code> operator for a default. The two never mix.</p>
+      </div>
+      <div class="code"><div class="code-bar"><span>errors.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn divide(a, b):
+    if b == 0:
+        fail(&quot;Cannot divide by zero&quot;)
+    return a / b
+
+try:
+    print(divide(10, 4))
+    print(divide(1, 0))
+else e:
+    print(e.message)</code></pre><div class="out"><div class="out-label">$ nexo --lang en errors.nexo</div><pre><code>2.5
+Cannot divide by zero</code></pre></div></div>
+    </div>
+
+    <div class="feature flip">
+      <div>
+        <h3>Exact decimals and money</h3>
+        <p><code>decimal</code> and <code>money</code> are built in, with currency literals such as <code>49.90 EUR</code> and percentages such as <code>21%</code>. Integer overflow is detected instead of wrapping silently.</p>
+        <p><code>split</code> shares an amount into parts without losing a cent.</p>
+      </div>
+      <div class="code"><div class="code-bar"><span>money.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">print(0.1 + 0.2)                  # float
+price: decimal = 0.10
+print(price * 3)                  # decimal: exact
+
+total = 100.00 EUR
+for part in split(total, 3):
+    print(part)                   # no cent is lost</code></pre><div class="out"><div class="out-label">$ nexo --lang en money.nexo</div><pre><code>0.30000000000000004
+0.30
+33.34 EUR
+33.33 EUR
+33.33 EUR</code></pre></div></div>
+    </div>
+
+    <div class="feature">
+      <div>
+        <h3>Pipelines for data</h3>
+        <p>Read a CSV or JSON file and shape it with <code>where</code>, <code>map</code>, <code>pick</code>, <code>group by</code>, <code>sum</code>, <code>count</code>, <code>avg</code>, <code>sort by</code>, <code>take</code>, <code>each</code> and <code>save</code>. Columns are used by name and <code>it</code> is the current row.</p>
+      </div>
+      <div class="code"><div class="code-bar"><span>pipeline.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">sales = read(&quot;data/sales.csv&quot;)
+
+sales
+  |&gt; where amount &gt; 0
+  |&gt; group by region
+  |&gt; sum amount
+  |&gt; sort by amount desc
+  |&gt; take 2
+  |&gt; each print(&quot;{it[&quot;region&quot;]}: {it[&quot;amount&quot;]}&quot;)</code></pre><div class="out"><div class="out-label">$ nexo --lang en pipeline.nexo</div><pre><code>north: 1564.5
+east: 1460.0</code></pre></div></div>
+    </div>
+
+    <div class="feature flip">
+      <div>
+        <h3>Contracts you can read</h3>
+        <p><code>expect</code> states what must hold when a function is entered, <code>ensure</code> what must hold when it returns, and <code>old()</code> gives a value as it was on entry. A broken contract is a <code>ContractBroken</code> error showing the values involved, and it can be handled like any other error.</p>
+      </div>
+      <div class="code"><div class="code-bar"><span>contracts.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn withdraw(balance: money, amount: money) -&gt; money:
+    expect amount &gt; 0.00 EUR
+    expect amount &lt;= balance
+    return balance - amount
+
+print(withdraw(50.00 EUR, 20.00 EUR))
+print(withdraw(50.00 EUR, 80.00 EUR))</code></pre><div class="out"><div class="out-label">$ nexo --lang en contracts.nexo</div><pre><code>30.00 EUR
+Error in contracts.nexo, line 3:
+  expect amount &lt;= balance
+         ^^^^^^^^^^^^^^^^^
+Unhandled error (ContractBroken): expect amount &lt;= balance does not hold (amount = 80.00 EUR, balance = 50.00 EUR). Check the values the function receives or fix its body.</code></pre></div></div>
+    </div>
+
+    <div class="feature">
+      <div>
+        <h3>One word for your own types</h3>
+        <p><code>type</code> defines records, unions and enums with data, with methods inside. <code>trait</code> describes shared behaviour, and <code>match</code> takes patterns and guards.</p>
+      </div>
+      <div class="code"><div class="code-bar"><span>types.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Shape:
+    Circle(radius: float)
+    Rect(w: float, h: float)
+
+fn area(s: Shape) -&gt; float:
+    match s:
+        Circle(r): return 3.14159 * r * r
+        Rect(w, h): return w * h
+
+shapes = [Circle(1.0), Rect(2.0, 3.0)]
+print(shapes |&gt; map area(it))</code></pre><div class="out"><div class="out-label">$ nexo --lang en types.nexo</div><pre><code>[3.14159, 6.0]</code></pre></div></div>
+    </div>
+
+    <div class="feature flip">
+      <div>
+        <h3>Errors that tell you how to fix them</h3>
+        <p>Every message has the same shape: file and line, the highlighted snippet, what went wrong and how to fix it, with a "Did you mean...?" when there is a likely candidate. Messages are in Spanish by default and in English with <code>--lang en</code>.</p>
+      </div>
+      <div class="code"><div class="code-bar"><span>typo.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = &quot;Ana&quot;
+print(nmae)</code></pre><div class="out"><div class="out-label">$ nexo typo.nexo  (default: Spanish)</div><pre><code>Error en typo.nexo, línea 2:
+  print(nmae)
+        ^^^^
+&quot;nmae&quot; no existe. ¿Quisiste decir &quot;name&quot;?</code></pre></div></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Tests built in</h3>
+        <p><code>test</code> blocks and <code>assert</code> live next to the code. <code>assert ... fails</code> checks that something fails. Run them with <code>nexo test</code>.</p>
+      </div>
+      <div class="card">
+        <h3>Readable by default</h3>
+        <p>Indentation with a colon, no braces. Immutable unless you write <code>var</code>. Types are optional and inferred, and required only on <code>pub</code> functions.</p>
+      </div>
+      <div class="card">
+        <h3>Named and default arguments</h3>
+        <p>Calls always use parentheses and can name their arguments, as in <code>Account(owner: "Ana", balance: 100.00 EUR)</code>. Builders are just named arguments.</p>
+      </div>
+      <div class="card">
+        <h3>Comprehensions and lambdas</h3>
+        <p><code>[x * x for x in range(1, 8) if x % 2 == 1]</code> builds a list in one line, and lambdas work wherever a function does.</p>
+      </div>
+      <div class="card">
+        <h3>parallel, with simple semantics</h3>
+        <p><code>parallel for</code> and <code>parallel:</code> keep the order of results and the error semantics of their sequential versions.</p>
+      </div>
+      <div class="card">
+        <h3>Two implementations, one output</h3>
+        <p>The interpreter and the compiler run the same conformance suite and a differential test, and must print the same thing for every program.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="examples">
+  <div class="wrap">
+    <p class="eyebrow">Examples</p>
+    <h2>Small, real programs</h2>
+    <p class="section-intro">These come straight from the <a href="https://github.com/marcrabadan/nexo/tree/main/examples"><code>examples/</code></a> folder of the repository, where their expected output is checked on every test run.</p>
+    <div class="tabs" role="tablist" aria-label="Examples">
+      <button class="tab" role="tab" id="tab-sales" aria-controls="panel-sales" aria-selected="true">Sales report</button>
+      <button class="tab" role="tab" id="tab-bank" aria-controls="panel-bank" aria-selected="false" tabindex="-1">Bank contracts</button>
+      <button class="tab" role="tab" id="tab-grades" aria-controls="panel-grades" aria-selected="false" tabindex="-1">Grade book</button>
+      <button class="tab" role="tab" id="tab-tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1">Tests</button>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-sales" aria-labelledby="tab-sales">
+      <p>Totals per region from a CSV file, with <code>where</code>, <code>group by</code>, <code>sum</code>, <code>sort by</code>, <code>take</code> and <code>save</code>.</p>
+      <div class="code"><div class="code-bar"><span>examples/sales_report.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Sales report: totals per region from a CSV file.
+## Shows a pipeline with where, group by, sum, sort by, take and save.
+
+sales = read(&quot;data/sales.csv&quot;)
+
+print(&quot;Rows read: {sales |&gt; count}&quot;)
+
+by_region = sales
+  |&gt; where amount &gt; 0
+  |&gt; group by region
+  |&gt; sum amount
+  |&gt; sort by amount desc
+
+print(&quot;Sales per region:&quot;)
+for row in by_region:
+    print(&quot;  {row[&quot;region&quot;]}: {row[&quot;amount&quot;]} EUR&quot;)
+
+best = by_region |&gt; take 1
+print(&quot;Best region: {best[0][&quot;region&quot;]}&quot;)
+
+laptops = sales |&gt; where product == &quot;laptop&quot; |&gt; map amount
+print(&quot;Laptops sold: {len(laptops)}, average price {round(laptops |&gt; avg, 2)} EUR&quot;)
+
+refunds = sales |&gt; where amount &lt; 0 |&gt; count
+print(&quot;Refunds: {refunds}&quot;)
+
+by_region |&gt; save(&quot;sales_summary.out.csv&quot;)
+print(&quot;Saved sales_summary.out.csv&quot;)</code></pre><div class="out"><div class="out-label">$ nexo --lang en sales_report.nexo</div><pre><code>Rows read: 10
+Sales per region:
+  north: 1564.5 EUR
+  east: 1460.0 EUR
+  west: 1330.0 EUR
+  south: 1225.0 EUR
+Best region: north
+Laptops sold: 4, average price 1199.88 EUR
+Refunds: 1
+Saved sales_summary.out.csv</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-bank" aria-labelledby="tab-bank" hidden>
+      <p>Accounts guarded by <code>expect</code>, <code>ensure</code> and <code>old()</code>; a broken contract is an error that can be handled.</p>
+      <div class="code"><div class="code-bar"><span>examples/bank.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Bank accounts with contracts: expect, ensure and old() guard every
+## operation, and a broken contract is an error that can be handled.
+
+type Account:
+    owner: str
+    balance: money
+
+fn deposit(account: Account, amount: money):
+    expect amount &gt; 0.00 EUR
+    ensure account.balance == old(account.balance) + amount
+
+    account.balance += amount
+
+fn transfer(source: Account, target: Account, amount: money):
+    expect amount &gt; 0.00 EUR
+    expect source.balance &gt;= amount
+    ensure source.balance + target.balance == old(source.balance + target.balance)
+
+    source.balance -= amount
+    target.balance += amount
+
+ana = Account(owner: &quot;Ana&quot;, balance: 100.00 EUR)
+luis = Account(owner: &quot;Luis&quot;, balance: 20.00 EUR)
+
+deposit(ana, 50.00 EUR)
+transfer(ana, luis, 70.00 EUR)
+print(&quot;{ana.owner}: {ana.balance}&quot;)
+print(&quot;{luis.owner}: {luis.balance}&quot;)
+
+try:
+    transfer(luis, ana, 500.00 EUR)
+else e is ContractBroken:
+    print(&quot;Rejected: {e.message}&quot;)
+
+try:
+    deposit(ana, -5.00 EUR)
+else e is ContractBroken:
+    print(&quot;Rejected: {e.message}&quot;)
+
+test &quot;a transfer keeps the total&quot;:
+    a = Account(owner: &quot;A&quot;, balance: 10.00 EUR)
+    b = Account(owner: &quot;B&quot;, balance: 0.00 EUR)
+    transfer(a, b, 4.00 EUR)
+    assert a.balance == 6.00 EUR
+    assert b.balance == 4.00 EUR
+
+test &quot;cannot transfer more than the balance&quot;:
+    a = Account(owner: &quot;A&quot;, balance: 1.00 EUR)
+    b = Account(owner: &quot;B&quot;, balance: 0.00 EUR)
+    assert transfer(a, b, 2.00 EUR) fails</code></pre><div class="out"><div class="out-label">$ nexo --lang en bank.nexo</div><pre><code>Ana: 80.00 EUR
+Luis: 90.00 EUR
+Rejected: expect source.balance &gt;= amount does not hold (source.balance = 90.00 EUR, amount = 500.00 EUR)
+Rejected: expect amount &gt; 0.00 EUR does not hold (amount = -5.00 EUR)</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-grades" aria-labelledby="tab-grades" hidden>
+      <p>Records with methods, an enum, a trait and <code>match</code> with guards.</p>
+      <div class="code"><div class="code-bar"><span>examples/grades.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Grade book: records with methods, an enum, match with guards and a trait.
+
+trait Describable:
+    fn describe(self) -&gt; str
+
+type Grade:
+    Excellent
+    Good
+    Pass
+    Fail
+
+type Student is Describable:
+    name: str
+    scores: list[int]
+
+    fn average(self) -&gt; float:
+        return self.scores.sum() / len(self.scores)
+
+    fn describe(self) -&gt; str:
+        return &quot;{self.name} ({len(self.scores)} exams)&quot;
+
+fn grade(avg: float) -&gt; Grade:
+    match avg:
+        a if a &gt;= 9: return Excellent
+        a if a &gt;= 7: return Good
+        a if a &gt;= 5: return Pass
+        _: return Fail
+
+fn label(g: Grade) -&gt; str:
+    match g:
+        Excellent: return &quot;excellent&quot;
+        Good: return &quot;good&quot;
+        Pass: return &quot;pass&quot;
+        Fail: return &quot;fail&quot;
+
+students = [
+    Student(&quot;Ana&quot;, [9, 10, 9]),
+    Student(&quot;Luis&quot;, [6, 7, 5]),
+    Student(&quot;Eva&quot;, [4, 3, 6]),
+    Student(&quot;Marc&quot;, [8, 7, 9])
+]
+
+for s in students:
+    avg = s.average()
+    print(&quot;{s.describe()}: {round(avg, 1)} -&gt; {label(grade(avg))}&quot;)
+
+passed = students |&gt; where grade(it.average()) != Fail |&gt; count
+print(&quot;Passed: {passed} of {len(students)}&quot;)
+
+ranking = students |&gt; sort by it.average() desc |&gt; map name
+print(&quot;Ranking: {ranking}&quot;)
+
+test &quot;grades follow the average&quot;:
+    assert grade(9.5) == Excellent
+    assert grade(7.0) == Good
+    assert grade(4.9) == Fail
+
+test &quot;average of a student&quot;:
+    assert Student(&quot;X&quot;, [5, 7]).average() == 6.0</code></pre><div class="out"><div class="out-label">$ nexo --lang en grades.nexo</div><pre><code>Ana (3 exams): 9.3 -&gt; excellent
+Luis (3 exams): 6.0 -&gt; pass
+Eva (3 exams): 4.3 -&gt; fail
+Marc (3 exams): 8.0 -&gt; good
+Passed: 3 of 4
+Ranking: [&quot;Ana&quot;, &quot;Marc&quot;, &quot;Luis&quot;, &quot;Eva&quot;]</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-tests" aria-labelledby="tab-tests" hidden>
+      <p><code>test</code> blocks run with <code>nexo test</code>; <code>assert ... fails</code> checks that an expression fails, here with an integer overflow.</p>
+      <div class="code"><div class="code-bar"><span>tests.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn add(a: int, b: int) -&gt; int:
+    return a + b
+
+test &quot;basic sum&quot;:
+    assert add(2, 3) == 5
+
+test &quot;int overflow is detected&quot;:
+    assert add(9223372036854775807, 1) fails</code></pre><div class="out"><div class="out-label">$ nexo test tests.nexo</div><pre><code>✓ basic sum
+✓ int overflow is detected
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <p class="eyebrow">Get started</p>
+    <h2>Run your first Nexo program</h2>
+    <p class="section-intro">Nexo is not packaged yet, so you run it from a clone of the repository. The interpreter needs Python 3.12; the compiler also needs Rust (cargo) and clang.</p>
+    <div class="steps">
+      <div class="step">
+        <h3><span>1</span>Install the interpreter</h3>
+        <p>Clone the repository and install it in a virtual environment.</p>
+        <div class="code"><div class="code-bar"><span>shell</span><button class="copy" type="button">Copy</button></div><pre><code>git clone https://github.com/marcrabadan/nexo.git
+cd nexo
+python3.12 -m venv .venv
+.venv/bin/pip install -e '.[dev]'</code></pre></div>
+      </div>
+      <div class="step">
+        <h3><span>2</span>Write and run a program</h3>
+        <p>Save this as <code>hello.nexo</code> and run it, or start the REPL with <code>.venv/bin/nexo</code>.</p>
+        <div class="code"><div class="code-bar"><span>hello.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = &quot;world&quot;
+print(&quot;Hello, {name}!&quot;)</code></pre><div class="out"><div class="out-label">$ nexo --lang en hello.nexo</div><pre><code>Hello, world!</code></pre></div></div>
+      </div>
+      <div class="step">
+        <h3><span>3</span>Try the everyday commands</h3>
+        <div class="code"><div class="code-bar"><span>shell</span><button class="copy" type="button">Copy</button></div><pre><code># run a program
+.venv/bin/nexo examples/invoice.nexo
+# messages in English
+.venv/bin/nexo --lang en app.nexo
+# run the test blocks
+.venv/bin/nexo test examples/
+# interactive REPL
+.venv/bin/nexo</code></pre></div>
+      </div>
+      <div class="step">
+        <h3><span>4</span>Compile to native code</h3>
+        <p>The phase 1 compiler generates LLVM IR and links it with a small runtime library.</p>
+        <div class="code"><div class="code-bar"><span>shell</span><button class="copy" type="button">Copy</button></div><pre><code>cd compiler &amp;&amp; cargo build --release &amp;&amp; cd ..
+compiler/target/release/nexo examples/invoice.nexo
+compiler/target/release/nexo build --release app.nexo -o app
+./app</code></pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="roadmap">
+  <div class="wrap">
+    <p class="eyebrow">Roadmap</p>
+    <h2>Where Nexo is today</h2>
+    <p class="section-intro">Nexo is built in phases, and each one ends with something usable. The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> describes the whole language, including modules for AI, web, infrastructure and CI that are not implemented yet. Every choice made where it was ambiguous is recorded in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Phase</th><th>Deliverable</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>0. Prototype</td><td>Python tree-walking interpreter for the core</td><td><span class="status done">Done</span></td></tr>
+          <tr><td>1. Base compiler</td><td>Rust compiler: lexer, parser, gradual type checking, LLVM code generation</td><td><span class="status done">Done</span></td></tr>
+          <tr><td>2. Memory and concurrency</td><td>Memory model, real <code>parallel</code>, <code>nexo.sync</code></td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>3. Tooling</td><td><code>nexo fmt</code>, <code>lint</code>, <code>lsp</code>, editor extension</td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>4. Library and modules</td><td>Standard library, <code>nexo.ai</code>, <code>nexo.web</code>, <code>nexo.db</code>, C and Python interop</td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>5. Cloud and operations</td><td><code>nexo.infra</code>, <code>nexo.ci</code>, <code>nexo.stream</code>, feature flags, privacy</td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>6. Optimisation and 1.0</td><td>Performance goals, external audit, user studies</td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>7. Self-hosting</td><td>The compiler rewritten in Nexo</td><td><span class="status next">Planned</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Nexo · edition 0.1</span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
+      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">Design decisions</a>
+      <a href="https://github.com/marcrabadan/nexo/tree/main/examples">Examples</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
