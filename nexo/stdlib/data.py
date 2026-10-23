@@ -27,32 +27,31 @@ FLOAT_RE = re.compile(r"^-?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?$")
 
 # ------------------------------------------------------------------ csv
 
-def cell(text: str) -> Any:
-    if text == "":
-        return None
-    if INT_RE.match(text):
-        value = int(text)
-        if INT_MIN <= value <= INT_MAX:
-            return value
-        return text
-    if FLOAT_RE.match(text):
-        return float(text)
-    return text
+def column_kind(cells: list[str]) -> str:
+    """A column is int if every non-empty cell is an integer, float if every
+    one is a number, and text otherwise."""
+    values = [c for c in cells if c != ""]
+    if values and all(INT_RE.match(c) and INT_MIN <= int(c) <= INT_MAX for c in values):
+        return "int"
+    if values and all(FLOAT_RE.match(c) for c in values):
+        return "float"
+    return "str"
 
 
 def parse_csv(text: str) -> list[dict]:
-    reader = csv.reader(io.StringIO(text))
-    rows = list(reader)
+    rows = [r for r in csv.reader(io.StringIO(text))]
     if not rows:
         return []
-    header = rows[0]
+    header, body = rows[0], [r for r in rows[1:] if r]
+    columns = [[r[i] if i < len(r) else "" for r in body] for i in range(len(header))]
+    kinds = [column_kind(c) for c in columns]
+    convert = {"int": int, "float": float, "str": str}
     table = []
-    for raw in rows[1:]:
-        if not raw:
-            continue
+    for raw in body:
         row = {}
         for i, name in enumerate(header):
-            row[name] = cell(raw[i]) if i < len(raw) else None
+            text = raw[i] if i < len(raw) else ""
+            row[name] = None if text == "" else convert[kinds[i]](text)
         table.append(row)
     return table
 
@@ -175,7 +174,7 @@ def b_json_parse(call, text, as_=None):
     try:
         value = from_json(json.loads(text), call.span)
     except json.JSONDecodeError as exc:
-        raise invalid(call, "detail.json", reason=exc.msg, line=exc.lineno)
+        raise invalid(call, "detail.json", line=exc.lineno, col=exc.colno)
     if as_ is None:
         return value
     if isinstance(as_, BuiltinType) and as_.name == "list":

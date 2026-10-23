@@ -1,0 +1,34 @@
+## Invoice with exact money: decimal amounts, VAT as a percentage and an
+## exact split into instalments (no cent is lost).
+
+type Line:
+    product: str
+    quantity: int
+    price: money
+
+fn subtotal(line: Line) -> money:
+    return line.price * line.quantity
+
+lines = [
+    Line("Keyboard", 2, 49.90 EUR),
+    Line("Monitor", 1, 189.99 EUR),
+    Line("USB cable", 2, 4.95 EUR)
+]
+
+for line in lines:
+    print("{line.product}: {line.quantity} x {line.price} = {subtotal(line)}")
+
+total = lines |> map subtotal(it) |> sum
+vat = total * 21%
+grand_total = total + vat
+
+print("Subtotal:  {total}")
+print("VAT (21%): {vat}")
+print("Total:     {grand_total}")
+
+print("Three instalments:")
+for part in split(grand_total, 3):
+    print("  {part}")
+
+price: decimal = 0.10
+print("Ten items at {price}: {price * 10}")

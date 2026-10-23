@@ -1,0 +1,26 @@
+Products below minimum: 3 of 5
+  Staples box: order 10 for 11.00 EUR
+  Stapler: order 3 for 20.70 EUR
+  Notebook: order 16 for 20.00 EUR
+Restock cost: 51.70 EUR
+[
+  {
+    "sku": "B-201",
+    "name": "Staples box",
+    "quantity": 10,
+    "cost": "11.00 EUR"
+  },
+  {
+    "sku": "B-200",
+    "name": "Stapler",
+    "quantity": 3,
+    "cost": "20.70 EUR"
+  },
+  {
+    "sku": "A-100",
+    "name": "Notebook",
+    "quantity": 16,
+    "cost": "20.00 EUR"
+  }
+]
+

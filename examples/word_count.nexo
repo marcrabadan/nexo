@@ -1,0 +1,26 @@
+## Word frequency: the five most common words of a text file.
+
+fn clean(word: str) -> str:
+    return word.lower().replace(",", "").replace(".", "")
+
+fn set_of(items: list[str]):
+    var seen = {}
+    for item in items:
+        seen[item] = true
+    return seen.keys()
+
+text = read("data/poem.txt")
+words = [clean(w) for w in text.split()]
+
+print("Words: {len(words)}")
+print("Different words: {len(set_of(words))}")
+
+top = words
+  |> map {"word": it}
+  |> group by word
+  |> count
+  |> sort by count desc
+  |> take 5
+
+for row in top:
+    print("{row["word"]}: {row["count"]}")

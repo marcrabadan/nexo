@@ -1,0 +1,59 @@
+## Grade book: records with methods, an enum, match with guards and a trait.
+
+trait Describable:
+    fn describe(self) -> str
+
+type Grade:
+    Excellent
+    Good
+    Pass
+    Fail
+
+type Student is Describable:
+    name: str
+    scores: list[int]
+
+    fn average(self) -> float:
+        return self.scores.sum() / len(self.scores)
+
+    fn describe(self) -> str:
+        return "{self.name} ({len(self.scores)} exams)"
+
+fn grade(avg: float) -> Grade:
+    match avg:
+        a if a >= 9: return Excellent
+        a if a >= 7: return Good
+        a if a >= 5: return Pass
+        _: return Fail
+
+fn label(g: Grade) -> str:
+    match g:
+        Excellent: return "excellent"
+        Good: return "good"
+        Pass: return "pass"
+        Fail: return "fail"
+
+students = [
+    Student("Ana", [9, 10, 9]),
+    Student("Luis", [6, 7, 5]),
+    Student("Eva", [4, 3, 6]),
+    Student("Marc", [8, 7, 9])
+]
+
+for s in students:
+    avg = s.average()
+    print("{s.describe()}: {round(avg, 1)} -> {label(grade(avg))}")
+
+passed = students |> where grade(it.average()) != Fail |> count
+print("Passed: {passed} of {len(students)}")
+
+ranking = students |> sort by it.average() desc |> map name
+print("Ranking: {ranking}")
+
+test "grades follow the average":
+    assert grade(9.5) == Excellent
+    assert grade(7.0) == Good
+    assert grade(4.9) == Fail
+
+test "average of a student":
+    assert Student("X", [5, 7]).average() == 6.0

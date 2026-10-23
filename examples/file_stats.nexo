@@ -1,0 +1,19 @@
+## File statistics: counts lines and words of several files with
+## `parallel for`, keeping the results in the same order as the files.
+
+files = ["data/chapter1.txt", "data/chapter2.txt", "data/notes.txt"]
+
+stats = parallel for path in files, max: 4:
+    text = read(path)
+    return {"file": path, "lines": read_lines(path) |> count, "words": len(text.split())}
+
+for row in stats:
+    print("{row["file"]}: {row["lines"]} lines, {row["words"]} words")
+
+total = stats |> map words |> sum
+print("Total words: {total}")
+
+longest = stats |> sort by words desc |> take 1
+print("Longest: {longest[0]["file"]}")
+
+stats |> save("file_stats.out.csv")

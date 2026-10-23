@@ -468,7 +468,7 @@ MESSAGES: dict[str, dict[str, str]] = {
     "detail.missing_field": {"es": 'falta el campo "{field}" de {type}', "en": 'the field "{field}" of {type} is missing'},
     "detail.field_type": {"es": 'el campo "{field}" debe ser {type}, pero es {vtype}', "en": 'the field "{field}" must be {type}, but it is {vtype}'},
     "detail.expected": {"es": "se esperaba {type}, pero hay {vtype}", "en": "expected {type}, but found {vtype}"},
-    "detail.json": {"es": "el JSON no es válido ({reason}, línea {line})", "en": "the JSON is not valid ({reason}, line {line})"},
+    "detail.json": {"es": "el JSON no es válido (línea {line}, columna {col})", "en": "the JSON is not valid (line {line}, column {col})"},
     "detail.encoding": {"es": 'el archivo "{path}" no está en UTF-8', "en": 'the file "{path}" is not UTF-8'},
     "detail.expects": {"es": "espera {what}, pero recibe {vtype}", "en": "expects {what}, but gets {vtype}"},
     "detail.use_validate": {

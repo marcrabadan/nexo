@@ -1,0 +1,9 @@
+First three errors:
+  2026-10-01 09:01:12 ERROR db: connection lost
+  2026-10-01 09:01:15 ERROR db: connection lost
+  2026-10-01 09:05:42 ERROR auth: invalid token
+Errors per component:
+  db: 3
+  auth: 1
+  cache: 1
+Warnings: 1

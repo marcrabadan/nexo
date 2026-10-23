@@ -1,0 +1,5 @@
+data/chapter1.txt: 2 lines, 13 words
+data/chapter2.txt: 4 lines, 27 words
+data/notes.txt: 2 lines, 9 words
+Total words: 49
+Longest: data/chapter2.txt

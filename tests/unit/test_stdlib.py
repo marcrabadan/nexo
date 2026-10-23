@@ -16,6 +16,11 @@ def test_write_read_and_read_lines(in_tmp):
     assert (in_tmp / "a.txt").read_text() == "one\ntwo\nthree\n"
 
 
+def test_csv_columns_have_one_type(in_tmp):
+    (in_tmp / "t.csv").write_text("a,b,c\n1,1,x\n2,2.5,3\n")
+    assert run('print(read("t.csv"))\n') == '[{"a": 1, "b": 1.0, "c": "x"}, {"a": 2, "b": 2.5, "c": "3"}]\n'
+
+
 def test_read_missing_file_is_not_found():
     e = error_of('read("missing.txt")\n')
     assert e.kind == "NotFound" and e.message == 'No se encuentra el archivo "missing.txt"'
@@ -27,7 +32,7 @@ def test_csv_round_trip(in_tmp):
     (in_tmp / "p.csv").write_text("name,price,qty,note\npear,1.5,3,\ngrape,2,10,ripe\n")
     src = ('rows = read("p.csv")\nprint(rows)\n'
            'rows |> where qty > 5 |> pick name, qty |> save("out.csv")\nprint(read("out.csv"))\n')
-    assert run(src) == ('[{"name": "pear", "price": 1.5, "qty": 3, "note": none}, {"name": "grape", "price": 2, "qty": 10, "note": "ripe"}]\n'
+    assert run(src) == ('[{"name": "pear", "price": 1.5, "qty": 3, "note": none}, {"name": "grape", "price": 2.0, "qty": 10, "note": "ripe"}]\n'
                         '[{"name": "grape", "qty": 10}]\n')
     assert (in_tmp / "out.csv").read_text() == "name,qty\ngrape,10\n"
 
@@ -35,7 +40,7 @@ def test_csv_round_trip(in_tmp):
 def test_save_records_as_csv_and_json(in_tmp):
     src = ('type P:\n    name: str\n    price: decimal\nps = [P("a", 1.10), P("b", 2)]\nps |> save("p.csv")\nps |> save("p.json")\n'
            'print(read("p.csv"))\n')
-    assert run(src) == '[{"name": "a", "price": 1.1}, {"name": "b", "price": 2}]\n'
+    assert run(src) == '[{"name": "a", "price": 1.1}, {"name": "b", "price": 2.0}]\n'
     assert (in_tmp / "p.json").read_text() == '[\n  {\n    "name": "a",\n    "price": 1.10\n  },\n  {\n    "name": "b",\n    "price": 2\n  }\n]\n'
 
 

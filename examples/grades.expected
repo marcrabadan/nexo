@@ -1,0 +1,6 @@
+Ana (3 exams): 9.3 -> excellent
+Luis (3 exams): 6.0 -> pass
+Eva (3 exams): 4.3 -> fail
+Marc (3 exams): 8.0 -> good
+Passed: 3 of 4
+Ranking: ["Ana", "Marc", "Luis", "Eva"]

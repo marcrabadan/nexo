@@ -1,0 +1,23 @@
+## Tip calculator: reads external input, validates it and splits the bill
+## exactly between the diners.
+
+fn ask_decimal(prompt: str) -> decimal!:
+    return validate(input(prompt), as: decimal)?
+
+fn ask_int(prompt: str, allowed) -> int!:
+    return validate(input(prompt), as: int, range: allowed)?
+
+try:
+    bill = 1.00 EUR * ask_decimal("Bill amount in EUR: ")
+    percent = ask_int("Tip percentage: ", 0..100)
+    people = ask_int("Number of people: ", 1..50)
+    tip = bill * percent / 100
+    total = bill + tip
+    print("")
+    print("Tip: {tip}")
+    print("Total: {total}")
+    for share in split(total, people):
+        print("  pays {share}")
+else e:
+    print("")
+    print("Invalid input: {e.message}")

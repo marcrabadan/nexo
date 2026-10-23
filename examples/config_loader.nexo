@@ -1,0 +1,34 @@
+## Configuration loader: JSON into typed records, with every way of
+## failing handled (missing file, invalid JSON, missing fields, bad values).
+
+type Database:
+    host: str
+    port: int = 5432
+
+type Config:
+    name: str
+    debug: bool = false
+    database: Database
+    workers: int = 4
+
+pub fn load_config(path: str) -> Config!:
+    text = read(path)?
+    config = json.parse(text, as: Config)?
+    if config.workers < 1:
+        fail("workers must be at least 1, not {config.workers}")
+    return config
+
+fn describe(c: Config) -> str:
+    return "{c.name} on {c.database.host}:{c.database.port} with {c.workers} workers (debug: {c.debug})"
+
+defaults = Config(name: "default", database: Database(host: "localhost"))
+
+files = ["data/app.json", "data/missing.json", "data/broken.json", "data/no_database.json", "data/bad_workers.json"]
+for path in files:
+    try:
+        config = load_config(path)
+        print("{path}: {describe(config)}")
+    else e is NotFound:
+        print("{path}: not found, using {describe(defaults)}")
+    else e:
+        print("{path}: {e.message}")
