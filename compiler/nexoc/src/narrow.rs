@@ -33,7 +33,7 @@ enum Def<'a> {
     Other,
 }
 
-fn is_int_type(t: &TypeExpr) -> bool {
+pub fn is_int_type(t: &TypeExpr) -> bool {
     matches!(t, TypeExpr::Name(tn) if tn.name == "int" && tn.params.is_empty() && !tn.optional && !tn.fallible)
 }
 

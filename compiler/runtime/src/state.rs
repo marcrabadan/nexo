@@ -161,7 +161,19 @@ pub fn set_isolated(on: bool) {
     t().isolated = on as u64;
 }
 
+/// How many threads run a `try within`: the compiled code looks at this
+/// between statements and only then at its own thread's deadlines.
+#[no_mangle]
+pub static nx_any_deadline: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 pub fn set_deadline_active(on: bool) {
+    use std::sync::atomic::Ordering;
+    let was = t().deadline_active != 0;
+    if on && !was {
+        nx_any_deadline.fetch_add(1, Ordering::Relaxed);
+    } else if !on && was {
+        nx_any_deadline.fetch_sub(1, Ordering::Relaxed);
+    }
     t().deadline_active = on as u8;
 }
 

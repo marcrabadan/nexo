@@ -95,3 +95,33 @@ def test_trust_ensure_leaves_out_unproven_ensures(tmp_path, nexo):
     # every expect stays; the ensure the compiler could not prove is gone
     assert run([str(tmp_path / "trusted")], tmp_path).stdout.decode() == "7 3\nnot checked\nContractBroken\n"
     assert run([str(nexo), "build", "--trust-ensure", src.name], tmp_path).returncode == 2
+
+
+DEPTH = """
+fn down(n: int) -> int:
+    if n == 0:
+        return 0
+    return down(n - 1) + 1
+
+fn mixed(n) -> int:
+    return deeper(n)
+
+fn deeper(n: int) -> int:
+    if n == 0:
+        return 0
+    return mixed(n - 1) + 1
+
+print(down({a}) + mixed({b}))
+"""
+
+
+def test_call_depth_limit_counts_int_only_functions(tmp_path, nexo):
+    # a function on ints only keeps its depth in a register (D84); the
+    # limit of D73 is the same as for any other function
+    for a, b, ok in [(9999, 4999, True), (10000, 1, False), (1, 5000, False)]:
+        src = tmp_path / "d.nexo"
+        src.write_text(DEPTH.format(a=a, b=b))
+        proc = run([str(nexo), src.name], tmp_path)
+        assert (proc.returncode == 0) == ok, (a, b, proc.stdout)
+        if ok:
+            assert proc.stdout.decode() == f"{a + b}\n"

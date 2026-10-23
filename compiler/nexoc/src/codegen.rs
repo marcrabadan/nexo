@@ -117,6 +117,11 @@ struct FnState {
     old_slots: HashMap<u32, String>,
     ret_slot: String,
     ret_label: String,
+    /// the register holding the call depth of this frame (D73)
+    depth: Option<String>,
+    /// an int-only function's body: the caller's depth is the argument
+    /// %depth, and the depth in the thread state is only written
+    int_params: bool,
 }
 
 /// What a frame compiles from.
@@ -152,6 +157,10 @@ pub struct Gen<'a> {
     spans: Vec<Span>,
     span_ids: HashMap<(u32, u32, u32), u32>,
     frame_fns: HashMap<FrameId, (String, String)>,
+    /// functions on ints only: the version that takes the numbers directly
+    int_workers: HashMap<FrameId, String>,
+    /// set while compiling such a version
+    int_params: bool,
     fs: Vec<FnState>,
     /// functions defined exactly once (called directly, without binding
     /// their arguments at run time)
@@ -294,6 +303,8 @@ impl<'a> Gen<'a> {
             spans: Vec::new(),
             span_ids: HashMap::new(),
             frame_fns: HashMap::new(),
+            int_workers: HashMap::new(),
+            int_params: false,
             fs: Vec::new(),
             known_fns: HashMap::new(),
             prover: None,
@@ -599,6 +610,14 @@ impl<'a> Gen<'a> {
             let f = self.f();
             let _ = writeln!(f.body, "{l}:");
             f.terminated = false;
+        }
+        // an int-only function keeps its depth in a register: the thread
+        // state gets it before any call that may run other code (D84)
+        if self.f().int_params && is_foreign_call(line) {
+            let n = self.next();
+            let d = self.f().depth.clone().unwrap();
+            let f = self.f();
+            let _ = writeln!(f.body, "  %dp{n} = getelementptr inbounds i8, ptr %tls, i64 8\n  store i64 {d}, ptr %dp{n}");
         }
         let f = self.f();
         f.body.push_str("  ");
@@ -1223,8 +1242,98 @@ impl<'a> Gen<'a> {
             fname.len(),
             params.len()
         );
+        if let FrameSrc::Fn(f) = src {
+            if self.int_only(f) {
+                // the body takes the numbers in registers; the usual entry
+                // checks the arguments and calls it
+                let worker = format!("@fw.{n}");
+                self.int_workers.insert(frame, worker.clone());
+                self.int_params = true;
+                self.compile_frame(frame, src, &worker)?;
+                self.int_wrapper(frame, f, &name, &worker);
+                return Ok((name, info));
+            }
+        }
         self.compile_frame(frame, src, &name)?;
         Ok((name, info))
+    }
+
+    /// A function whose parameters and result are all `int`.
+    fn int_only(&self, f: &FnDef) -> bool {
+        !f.params.is_empty()
+            && f.params.iter().all(|p| p.default.is_none() && p.ty.as_ref().is_some_and(crate::narrow::is_int_type))
+            && f.ret.as_ref().is_some_and(crate::narrow::is_int_type)
+            && f.annotations.is_empty()
+            && !self.method_of.contains_key(&f.id)
+    }
+
+    fn int_wrapper(&mut self, frame: FrameId, f: &'a FnDef, name: &str, worker: &str) {
+        let st = self.new_fn_state(frame);
+        self.fs.push(st);
+        let mut payloads = Vec::new();
+        for (i, p) in f.params.iter().enumerate() {
+            let a = self.reg();
+            self.emit(&format!("{a} = getelementptr inbounds %V, ptr %args, i64 {i}"));
+            let v = self.load(&a);
+            let t = self.tag_of(&v);
+            let is_int = self.reg();
+            self.emit(&format!("{is_int} = icmp eq i64 {t}, {T_INT}"));
+            let fast = self.label();
+            let slow = self.label();
+            let done = self.label();
+            let bad = self.label();
+            self.cond_br(&is_int, &fast, &slow);
+            self.place(&fast);
+            let slot = self.alloca("i64");
+            let x = self.reg();
+            let av = self.agg(&v);
+            self.emit(&format!("{x} = extractvalue %V {av}, 1"));
+            self.emit(&format!("store i64 {x}, ptr {slot}"));
+            self.br(&done);
+            self.place(&slow);
+            // a missing argument is none, as in param_value
+            let missing = self.reg();
+            self.emit(&format!("{missing} = icmp eq i64 {t}, {T_MISSING}"));
+            let given = self.reg();
+            self.emit(&format!("{given} = select i1 {missing}, %V {{ i64 0, i64 0 }}, %V {av}"));
+            let tb = self.tb(&Val::Reg(given));
+            let d = self.desc_arg(p.ty.as_ref().unwrap());
+            let nm = self.strarg(&p.name);
+            let r = self.call_v("nx_conform", &format!("{tb}, {d}, {nm}, i32 %span"));
+            let fl = self.reg();
+            self.emit(&format!("{fl} = load i8, ptr %tls"));
+            let failed = self.reg();
+            self.emit(&format!("{failed} = icmp ne i8 {fl}, 0"));
+            let conformed = self.label();
+            self.cond_br(&failed, &bad, &conformed);
+            self.place(&bad);
+            self.emit("ret %V { i64 0, i64 0 }");
+            self.place(&conformed);
+            let y = self.reg();
+            let ar = self.agg(&r);
+            self.emit(&format!("{y} = extractvalue %V {ar}, 1"));
+            self.emit(&format!("store i64 {y}, ptr {slot}"));
+            self.br(&done);
+            self.place(&done);
+            let z = self.reg();
+            self.emit(&format!("{z} = load i64, ptr {slot}"));
+            payloads.push(format!("i64 {z}"));
+        }
+        let dp = self.reg();
+        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+        let d = self.reg();
+        self.emit(&format!("{d} = load i64, ptr {dp}"));
+        let r = self.reg();
+        self.emit(&format!("{r} = call %V {worker}(ptr %tls, ptr %clo, i64 {d}, {}, i32 %span)", payloads.join(", ")));
+        self.emit(&format!("store i64 {d}, ptr {dp}"));
+        self.emit(&format!("ret %V {r}"));
+        self.f().terminated = true;
+        let st = self.fs.pop().unwrap();
+        let mut text = format!("define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span) {{\nentry:\n");
+        text.push_str(&st.allocas);
+        text.push_str(&st.body);
+        text.push_str("}\n\n");
+        self.funcs.push_str(&text);
     }
 
     fn new_fn_state(&mut self, frame: FrameId) -> FnState {
@@ -1245,6 +1354,8 @@ impl<'a> Gen<'a> {
             old_slots: HashMap::new(),
             ret_slot: String::new(),
             ret_label: format!("RET{n}"),
+            depth: None,
+            int_params: false,
         }
     }
 
@@ -1264,6 +1375,7 @@ impl<'a> Gen<'a> {
     }
 
     fn compile_frame(&mut self, frame: FrameId, src: FrameSrc<'a>, name: &str) -> GResult<()> {
+        let int_params = std::mem::take(&mut self.int_params);
         let st = self.new_fn_state(frame);
         self.fs.push(st);
         self.frame_slots(frame);
@@ -1274,11 +1386,20 @@ impl<'a> Gen<'a> {
         // count nested calls (D73)
         let dp = self.reg();
         self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
-        let d = self.reg();
-        self.emit(&format!("{d} = load i64, ptr {dp}"));
+        let d = if int_params {
+            "%depth".to_string()
+        } else {
+            let d = self.reg();
+            self.emit(&format!("{d} = load i64, ptr {dp}"));
+            d
+        };
+        self.f().int_params = int_params;
         let d1 = self.reg();
+        self.f().depth = Some(d1.clone());
         self.emit(&format!("{d1} = add i64 {d}, 1"));
-        self.emit(&format!("store i64 {d1}, ptr {dp}"));
+        if !int_params {
+            self.emit(&format!("store i64 {d1}, ptr {dp}"));
+        }
         let deep = self.reg();
         self.emit(&format!("{deep} = icmp ugt i64 {d1}, {MAX_DEPTH}"));
         let too = self.label();
@@ -1304,6 +1425,12 @@ impl<'a> Gen<'a> {
         // parameters: the arguments are borrowed, the slots own them
         let params = self.res.frames[frame].params.clone();
         for (i, b) in params.iter().enumerate() {
+            if int_params {
+                let v = self.reg();
+                self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 %p{i}, 1"));
+                self.store_binding(*b, &Val::Reg(v));
+                continue;
+            }
             let p = self.reg();
             self.emit(&format!("{p} = getelementptr inbounds %V, ptr %args, i64 {i}"));
             let v = self.load(&p);
@@ -1403,7 +1530,12 @@ impl<'a> Gen<'a> {
         let r = self.agg(&result);
         // the slots are released; the result goes to the caller
         let mut text = String::new();
-        let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span) {{\nentry:");
+        if let (true, FrameSrc::Fn(f)) = (int_params, src) {
+            let ps: Vec<String> = (0..f.params.len()).map(|i| format!("i64 %p{i}")).collect();
+            let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, i64 %depth, {}, i32 %span) {{\nentry:", ps.join(", "));
+        } else {
+            let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span) {{\nentry:");
+        }
         let release = self.frame_release_text();
         for line in release.lines() {
             self.emit(line.trim());
@@ -1417,10 +1549,12 @@ impl<'a> Gen<'a> {
             let release = self.frame_release_text();
             let ret_release = self.release_text(&Live::Slot(ret_slot.clone()));
             let n = self.next();
-            let _ = writeln!(
-                tail,
-                "{u}:\n{release}{ret_release}  %ud{n}p = getelementptr inbounds i8, ptr %tls, i64 8\n  %ud{n} = load i64, ptr %ud{n}p\n  %ud{n}x = sub i64 %ud{n}, 1\n  store i64 %ud{n}x, ptr %ud{n}p\n  ret %V {{ i64 0, i64 0 }}"
-            );
+            let depth = if int_params {
+                String::new()
+            } else {
+                format!("  %ud{n}p = getelementptr inbounds i8, ptr %tls, i64 8\n  %ud{n} = load i64, ptr %ud{n}p\n  %ud{n}x = sub i64 %ud{n}, 1\n  store i64 %ud{n}x, ptr %ud{n}p\n")
+            };
+            let _ = writeln!(tail, "{u}:\n{release}{ret_release}{depth}  ret %V {{ i64 0, i64 0 }}");
         }
         let st = self.fs.pop().unwrap();
         text.push_str(&st.allocas);
@@ -1433,6 +1567,10 @@ impl<'a> Gen<'a> {
     }
 
     fn leave_depth(&mut self) {
+        if self.f().int_params {
+            // its caller puts its own depth back (D84)
+            return;
+        }
         let dp = self.reg();
         self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
         let d = self.reg();
@@ -1638,12 +1776,12 @@ impl<'a> Gen<'a> {
 
     /// `try within` checks the clock between statements (D58).
     fn deadline_tick(&mut self) {
-        let pa = self.reg();
-        self.emit(&format!("{pa} = getelementptr inbounds i8, ptr %tls, i64 1"));
+        // the thread's own flag is only read when some thread has a limit
+        // (its own one is counted before this code runs)
         let d = self.reg();
-        self.emit(&format!("{d} = load i8, ptr {pa}"));
+        self.emit(&format!("{d} = load atomic i32, ptr @nx_any_deadline unordered, align 4"));
         let c = self.reg();
-        self.emit(&format!("{c} = icmp ne i8 {d}, 0"));
+        self.emit(&format!("{c} = icmp ne i32 {d}, 0"));
         let yes = self.label();
         let done = self.label();
         self.cond_br(&c, &yes, &done);
@@ -3788,9 +3926,21 @@ impl<'a> Gen<'a> {
         // the function must have been defined when the call runs (D29);
         // a function defined once is never replaced, so it is only looked at
         // (a function calling itself uses its own closure)
-        let fv = if own_call { lit(T_OBJ, "0") } else { self.load_binding(b) };
+        // the same holds for a call made while the function runs (from its
+        // own body or a function inside it)
+        let frame = self.res.frame_of[&Node::Fn(f.id)];
+        let mut inside = Some(self.fs.last().unwrap().frame);
+        while let Some(fr) = inside {
+            if fr == frame {
+                break;
+            }
+            inside = self.res.frames[fr].parent;
+        }
+        let defined = own_call || inside.is_some();
+        let needs_value = !own_call && !self.res.frames[frame].free.is_empty();
+        let fv = if defined && !needs_value { lit(T_OBJ, "0") } else { self.load_binding(b) };
         let fslot = self.temp(&fv);
-        let t = self.tag_of(&fv);
+        let t = if defined { T_OBJ.to_string() } else { self.tag_of(&fv) };
         let undef = self.reg();
         self.emit(&format!("{undef} = icmp eq i64 {t}, {T_UNDEF}"));
         let bad = self.label();
@@ -3825,7 +3975,6 @@ impl<'a> Gen<'a> {
                 vals[i] = evaluated.iter().find(|(x, _)| x == ai).unwrap().1.clone();
             }
         }
-        let frame = self.res.frame_of[&Node::Fn(f.id)];
         let (fname, _) = self.frame_fn(frame, FrameSrc::Fn(f))?;
         let clo = if self.res.frames[frame].free.is_empty() {
             "null".to_string()
@@ -3838,11 +3987,56 @@ impl<'a> Gen<'a> {
             self.emit(&format!("{p} = call ptr @nx_func_ptr({tb})"));
             p
         };
-        let arr = self.values_array(&vals);
         let sp = self.span_id(span);
         let r = self.reg();
-        self.emit(&format!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {sp})"));
-        self.check();
+        let ints = first.is_none()
+            && slots.iter().all(|s| s.is_some_and(|ai| self.certain_int(&args[ai].value)));
+        match self.int_workers.get(&frame).cloned() {
+            Some(worker) if ints => {
+                let mut ps = Vec::new();
+                for v in &vals {
+                    ps.push(match v {
+                        Val::Lit(_, x) => format!("i64 {x}"),
+                        Val::Reg(x) => {
+                            let p = self.reg();
+                            self.emit(&format!("{p} = extractvalue %V {x}, 1"));
+                            format!("i64 {p}")
+                        }
+                    });
+                }
+                let d = match self.f().depth.clone() {
+                    Some(d) => d,
+                    None => {
+                        let dp = self.reg();
+                        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+                        let d = self.reg();
+                        self.emit(&format!("{d} = load i64, ptr {dp}"));
+                        d
+                    }
+                };
+                self.emit(&format!("{r} = call %V {worker}(ptr %tls, ptr {clo}, i64 {d}, {}, i32 {sp})", ps.join(", ")));
+                if !self.f().int_params {
+                    // the worker leaves its own depth in the thread state
+                    let dp = self.reg();
+                    self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+                    self.emit(&format!("store i64 {d}, ptr {dp}"));
+                }
+                // it returns an int unless it failed
+                let t = self.reg();
+                self.emit(&format!("{t} = extractvalue %V {r}, 0"));
+                let c = self.reg();
+                self.emit(&format!("{c} = icmp ne i64 {t}, {T_INT}"));
+                let ok = self.label();
+                let unwind = self.unwind_label();
+                self.cond_br(&c, &unwind, &ok);
+                self.place(&ok);
+            }
+            _ => {
+                let arr = self.values_array(&vals);
+                self.emit(&format!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {sp})"));
+                self.check();
+            }
+        }
         for (_, v) in evaluated.iter().rev() {
             self.drop_val(v);
         }
@@ -4221,6 +4415,16 @@ declare void @nx_emit(ptr, i64, ptr, i64, i32)
 declare void @nx_deadline_push(i64, i64, i32, i32)
 declare void @nx_deadline_pop()
 declare void @nx_check_deadline()
+@nx_any_deadline = external global i32
 declare void @nx_fail_overflow(i32)
 declare void @nx_test_register(ptr, i64, i64, i64)
 "#;
+
+/// A call to code that may read the call depth from the thread state.
+fn is_foreign_call(line: &str) -> bool {
+    let Some(i) = line.find("call ") else { return false };
+    let callee = &line[i..];
+    let Some(at) = callee.find('@') else { return false };
+    let name = &callee[at..];
+    !(name.starts_with("@fw.") || name.starts_with("@llvm.") || name.starts_with("@rc_") || name.starts_with("@nx_plainv"))
+}

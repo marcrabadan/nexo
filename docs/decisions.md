@@ -564,3 +564,23 @@ others are checked when the function runs (D53). Floats are never proven
 also leaves out the unproven `ensure` checks and their `old()` copies;
 every `expect` stays. A proven `ensure` whose own evaluation would
 overflow an int is not evaluated, so that Overflow is not raised.
+
+**D84. Fast paths of the compiled code.** The exit criterion of phase 2
+("benchmarks under 2× Rust") asks for code close to what the types allow;
+none of these changes what a program prints.
+- Values that are certainly ints (int literals, arithmetic on them,
+  `len`, variables assigned only ints, parameters declared `int`, calls to
+  a function defined once that returns `int`) skip the type checks of
+  arithmetic and comparisons.
+- A function defined once whose parameters (none optional or with a
+  default) and result are all `int` gets a second entry that takes the
+  numbers in registers; a direct call with certainly-int arguments uses it,
+  and the usual entry (calls through a value, other arguments) checks the
+  arguments and then calls it. It keeps its call depth (D73) in a
+  register and writes it to the thread state only before calling other
+  code; its caller puts its own depth back. The limit is the same.
+- The time limit of `try within` (D58) is still checked between
+  statements, but first through a count of the threads that have one, so
+  code with no limit anywhere only reads that count.
+- A call to a function defined once, from its own body (or a function
+  inside it), does not check that the function is defined (D29): it is.

@@ -358,6 +358,7 @@ pub fn spawn(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<()> {
         drop(copies);
         drop(f);
         state::with_task(|s| s.deadlines.clear());
+        state::set_deadline_active(false);
         finished();
     });
     if started.is_err() {

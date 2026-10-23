@@ -1,0 +1,52 @@
+fn fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+fn add(a: int, b: int) -> int:
+    return a + b
+
+fn apply_twice(n: int) -> int:
+    f = x -> x * 2
+    return f(f(n))
+
+fn down(n: int) -> int:
+    if n == 0:
+        return 0
+    return down(n - 1) + 1
+
+fn mixed(n) -> int:
+    return deeper(n)
+
+fn deeper(n: int) -> int:
+    if n == 0:
+        return 0
+    return mixed(n - 1) + 1
+
+fn big(n: int) -> int:
+    return n * n * n * n * n
+
+print(fib(20))
+print(add(2, b: 3))
+print(apply_twice(5))
+print(down(500))
+print(mixed(300))
+xs = [fib(i) for i in range(10)]
+print(xs)
+try:
+    print(big(100000))
+else e:
+    print("overflow:", e.message)
+print(down(900))
+print(mixed(400))
+print(fib(15))
+fn spin(n: int) -> int:
+    var i = 0
+    while i < n:
+        i += 1
+    return i
+try within 2ms:
+    print(spin(100_000_000_000))
+else e is Timeout:
+    print("timeout: {e.message}")
+print(spin(10))
