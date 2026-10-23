@@ -1,0 +1,31 @@
+n = 1
+fn bump():
+    n += 10
+    return n
+print(bump())
+print(n)
+var g = 0
+fn setg():
+    g = 5
+setg()
+print(g)
+fn nested():
+    var local = 1
+    fn inner():
+        local += 1
+        return local
+    inner()
+    inner()
+    return local
+print(nested())
+var t: decimal = 1.10
+t = 2.20
+print(t)
+t += 0.05
+print(t)
+list = [1, 2]
+print(list)
+str = "shadow"
+print(str)
+for i in 1..3:
+    k = i

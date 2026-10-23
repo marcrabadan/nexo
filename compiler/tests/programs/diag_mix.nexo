@@ -1,0 +1,5 @@
+# reported before the program runs (D68)
+a: decimal = 1.5
+b = 2.5
+print("x")
+print(a < b)

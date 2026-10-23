@@ -1,0 +1,13 @@
+[package]
+name = "nexoc"
+description = "The Nexo compiler: lexer, parser, checker and LLVM code generation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nexo"
+path = "src/main.rs"
+
+[dependencies]
+nexo-diag = { path = "../diag" }

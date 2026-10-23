@@ -1,0 +1,12 @@
+type U:
+    n: str
+    tags: list[str]
+u = U("ana", ["a", "b"])
+print("user: {u}")
+print("list: {[1.5, 2.0, decimal(3.10)]}")
+print("money {[1.00 EUR, 30s, 10%, 5 km]}")
+mm = {"k": "v"}
+print("map {mm} {{literal}")
+print("nested {"inner {1 + 1}"}")
+print("{none} {true} {1 == 1.0}")
+print("a" < "b", "b" < "a", "abc" <= "abd")

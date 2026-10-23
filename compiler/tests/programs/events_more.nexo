@@ -1,0 +1,9 @@
+var log = []
+on saved(name, size):
+    log.add("{name}:{size}")
+on saved(name, size):
+    print("saved {name}")
+emit saved("a", 1)
+emit saved("b", 2)
+emit unknown_event(1)
+print(log)

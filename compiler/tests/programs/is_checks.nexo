@@ -1,0 +1,21 @@
+type R:
+    a: int
+type E:
+    A
+    B(x: int)
+trait T:
+    fn m(self)
+type S is T:
+    v: int
+    fn m(self):
+        return 1
+vals = [none, 1, 1.5, "s", true, [1], {"a": 1}, set(1), 2.00 EUR, R(1), A, B(2), S(1), decimal(1)]
+for v in vals:
+    print("{v}: int={v is int} float={v is float} str={v is str} bool={v is bool} list={v is list} map={v is map} money={v is money} R={v is R} E={v is E} T={v is T} decimal={v is decimal} none={v is none}")
+print(B(1) is B)
+print(A is A)
+try:
+    fail("x")
+else e:
+    print(e is Error)
+    print(e is NotFound)

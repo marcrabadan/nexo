@@ -1,0 +1,2 @@
+nme = 1
+print(name)

@@ -1,0 +1,42 @@
+write("t.txt", "uno\ndos\ntres\n")
+print(read("t.txt"))
+for l in read_lines("t.txt"):
+    print("[{l}]")
+print(read_lines("t.txt") |> count)
+write("d.csv", "name,qty,price\npear,3,1.5\nfig,10,2\n")
+rows = read("d.csv")
+print(rows)
+rows |> where qty > 4 |> save("out.csv")
+print(read("out.csv"))
+type Item:
+    name: str
+    qty: int
+items = [Item("a", 1), Item("b", 2)]
+items |> save("items.json")
+print(read("items.json"))
+text = """{{"name": "x", "qty": 5}"""
+try:
+    it = json.parse(text, as: Item)
+    print(it)
+    print(json.parse("[1, 2.5, \"s\", true, null, {{\"k\": []}]"))
+    print(json.parse("{{\"name\": \"y\"}", as: Item))
+else e:
+    print(e.message)
+try:
+    print(json.parse("[1, 2"))
+else e:
+    print(e.message)
+try:
+    print(csv.parse("a,b\n1,2\n"))
+else e:
+    print(e.message)
+items |> save("items.txt")
+print(read("items.txt"))
+try:
+    print(validate("12", as: int))
+    print(validate("1.5", as: float))
+    print(validate("2.50", as: decimal))
+    print(validate("true", as: bool))
+    print(validate("x", as: int))
+else e:
+    print(e.message)

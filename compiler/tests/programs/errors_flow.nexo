@@ -1,0 +1,57 @@
+fn check(n) -> int!:
+    if n < 0:
+        fail("negative: {n}")
+    if n == 0:
+        fail("zero")
+    return n * 2
+for n in [1, -1, 0, 3]:
+    try:
+        print(check(n))
+    else e:
+        print("error {e.kind}: {e.message} at line {e.line}")
+fn wrap(n) -> int!:
+    v = check(n)?
+    return v + 1
+try:
+    print(wrap(2))
+    print(wrap(-5))
+    print("not here")
+else e:
+    print("wrapped: {e.message}")
+try:
+    try:
+        fail("inner")
+    else e is NotFound:
+        print("wrong")
+else e:
+    print("outer got {e.message}")
+try:
+    x = [1, 2][5]
+else e is OutOfRange:
+    print(e.message)
+try:
+    print(1 // 0)
+else e is DivisionByZero:
+    print(e.message)
+try:
+    fail("first")
+else e:
+    try:
+        fail(e)
+    else e2:
+        print("again: {e2.message} {e2 is Error}")
+fn safe(n):
+    try:
+        return check(n)
+    else e:
+        return -1
+print(safe(-3))
+print(safe(4))
+try:
+    read("nope/missing.txt")
+else e:
+    print(e.kind)
+    print(e.cause)
+r = parallel for k in [1, 2]:
+    return k * 100
+print(r)

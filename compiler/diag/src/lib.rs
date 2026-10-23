@@ -1,0 +1,308 @@
+//! Error messages of Nexo (section 14): the message catalog in Spanish and
+//! English, the renderer and the "Did you mean...?" suggestions.
+//!
+//! Every message is two sentences: what went wrong and how to fix it. They
+//! are rendered as
+//!
+//! ```text
+//! Error in app.nexo, line 4:
+//!   print(nmae)
+//!         ^^^^
+//! "nmae" does not exist. Did you mean "name"?
+//! ```
+//!
+//! Both the compiler and the runtime library use this crate, so a message
+//! reads the same whether it is found before or while the program runs.
+
+mod catalog;
+
+use std::sync::atomic::{AtomicU8, Ordering};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lang {
+    Es,
+    En,
+}
+
+static LANG: AtomicU8 = AtomicU8::new(0);
+
+pub fn set_lang(lang: Lang) {
+    LANG.store(if lang == Lang::En { 1 } else { 0 }, Ordering::Relaxed);
+}
+
+pub fn lang() -> Lang {
+    if LANG.load(Ordering::Relaxed) == 1 {
+        Lang::En
+    } else {
+        Lang::Es
+    }
+}
+
+pub fn parse_lang(text: &str) -> Option<Lang> {
+    match text {
+        "es" => Some(Lang::Es),
+        "en" => Some(Lang::En),
+        _ => None,
+    }
+}
+
+/// A position in the source: one line, columns counted in characters,
+/// 1-based, `end_col` exclusive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Span {
+    pub line: u32,
+    pub col: u32,
+    pub end_col: u32,
+}
+
+impl Span {
+    pub const fn new(line: u32, col: u32, end_col: u32) -> Span {
+        Span { line, col, end_col }
+    }
+
+    /// From the start of `self` to the end of `other`; cut at the end of the
+    /// line when they are on different lines.
+    pub fn to(self, other: Span) -> Span {
+        if other.line != self.line {
+            return Span::new(self.line, self.col, 1_000_000_000);
+        }
+        Span::new(self.line, self.col, self.end_col.max(other.end_col))
+    }
+}
+
+fn lookup(table: &'static [(&'static str, &'static str, &'static str)], key: &str) -> Option<&'static str> {
+    table
+        .iter()
+        .find(|(k, _, _)| *k == key)
+        .map(|(_, es, en)| if lang() == Lang::En { *en } else { *es })
+}
+
+pub fn has(key: &str) -> bool {
+    lookup(catalog::MESSAGES, key).is_some()
+}
+
+/// The text of a catalog entry with its `{placeholders}` filled in.
+pub fn msg(key: &str, args: &[(&str, String)]) -> String {
+    let template = lookup(catalog::MESSAGES, key).unwrap_or_else(|| panic!("unknown message {key}"));
+    format(template, args)
+}
+
+/// A word of the parser's "Unexpected X here. Expected Y." messages.
+pub fn word(key: &str) -> String {
+    lookup(catalog::WORDS, key).unwrap_or(key).to_string()
+}
+
+/// `str.format` semantics: `{name}` is replaced, `{{` and `}}` are braces.
+pub fn format(template: &str, args: &[(&str, String)]) -> String {
+    let mut out = String::with_capacity(template.len() + 16);
+    let mut chars = template.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' if chars.peek() == Some(&'{') => {
+                chars.next();
+                out.push('{');
+            }
+            '}' if chars.peek() == Some(&'}') => {
+                chars.next();
+                out.push('}');
+            }
+            '{' => {
+                let mut name = String::new();
+                for c in chars.by_ref() {
+                    if c == '}' {
+                        break;
+                    }
+                    name.push(c);
+                }
+                match args.iter().find(|(k, _)| *k == name) {
+                    Some((_, v)) => out.push_str(v),
+                    None => panic!("missing argument {name} in {template}"),
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// A diagnostic: a compile error, or a runtime mistake that is not an error
+/// value. It always ends the program and is never caught by `try`.
+#[derive(Clone, Debug)]
+pub struct Diagnostic {
+    pub key: &'static str,
+    pub span: Option<Span>,
+    /// Key of the fix sentence without the "fix." prefix; defaults to `key`.
+    pub fix: Option<&'static str>,
+    pub args: Vec<(&'static str, String)>,
+}
+
+impl Diagnostic {
+    pub fn new(key: &'static str, span: Span) -> Diagnostic {
+        Diagnostic { key, span: Some(span), fix: None, args: Vec::new() }
+    }
+
+    /// A diagnostic whose span is filled in later (the runtime knows the
+    /// span only as an index into the program's span table).
+    pub fn new_spanless(key: &'static str) -> Diagnostic {
+        Diagnostic { key, span: None, fix: None, args: Vec::new() }
+    }
+
+    pub fn arg(mut self, name: &'static str, value: impl Into<String>) -> Diagnostic {
+        self.args.push((name, value.into()));
+        self
+    }
+
+    pub fn fix(mut self, fix: &'static str) -> Diagnostic {
+        self.fix = Some(fix);
+        self
+    }
+
+    /// The two sentences: what went wrong and how to fix it.
+    pub fn text(&self) -> String {
+        let what = msg(self.key, &self.args);
+        let fix_key = format!("fix.{}", self.fix.unwrap_or(self.key));
+        if has(&fix_key) {
+            format!("{} {}", what, msg(&fix_key, &self.args))
+        } else {
+            what
+        }
+    }
+
+    pub fn arg_value(&self, name: &str) -> Option<&str> {
+        self.args.iter().find(|(k, _)| *k == name).map(|(_, v)| v.as_str())
+    }
+}
+
+/// Render a message in the section 14 format.
+pub fn render(file: &str, source: &str, span: Option<Span>, text: &str) -> String {
+    let Some(span) = span else {
+        return format!("Error: {text}\n");
+    };
+    let mut out = vec![msg("header", &[("file", file.to_string()), ("line", span.line.to_string())])];
+    let lines: Vec<&str> = source.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
+    let count = if source.ends_with('\n') { lines.len() - 1 } else { lines.len() };
+    if span.line >= 1 && (span.line as usize) <= count {
+        let line: Vec<char> = lines[span.line as usize - 1].chars().collect();
+        let cut = line.iter().take_while(|c| **c == ' ' || **c == '\t').count();
+        let mut stripped: Vec<char> = line[cut..].to_vec();
+        while stripped.last().is_some_and(|c| c.is_whitespace()) {
+            stripped.pop();
+        }
+        let start = (span.col as i64 - 1 - cut as i64).max(0) as usize;
+        let mut end = (span.end_col as i64 - 1 - cut as i64).min(stripped.len() as i64).max(0) as usize;
+        if end <= start {
+            end = start + 1;
+        }
+        out.push(format!("  {}", stripped.iter().collect::<String>()));
+        out.push(format!("  {}{}", " ".repeat(start), "^".repeat(end - start)));
+    }
+    out.push(text.to_string());
+    out.join("\n") + "\n"
+}
+
+/// The text of the source between the columns of a span ("" if outside).
+pub fn source_text(source: &str, span: Span) -> String {
+    let Some(line) = source.split('\n').nth(span.line as usize - 1) else {
+        return String::new();
+    };
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    line.chars()
+        .skip(span.col as usize - 1)
+        .take((span.end_col.saturating_sub(span.col)) as usize)
+        .collect()
+}
+
+/// Closest candidate by Damerau-Levenshtein distance, or None.
+pub fn suggest<'a, I: IntoIterator<Item = &'a str>>(name: &str, candidates: I) -> Option<String> {
+    let mut best: Option<(&str, usize)> = None;
+    let limit = if name.chars().count() <= 4 { 1 } else { 2 };
+    for cand in candidates {
+        if cand == name || cand.starts_with("__") {
+            continue;
+        }
+        let d = distance(name, cand);
+        if d <= limit && best.is_none_or(|(_, bd)| d < bd) {
+            best = Some((cand, d));
+        }
+    }
+    best.map(|(c, _)| c.to_string())
+}
+
+fn distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if (a.len() as i64 - b.len() as i64).abs() > 2 {
+        return 99;
+    }
+    let mut prev2: Option<Vec<usize>> = None;
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut cur = vec![0; b.len() + 1];
+        cur[0] = i;
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
+            if let Some(p2) = &prev2 {
+                if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                    cur[j] = cur[j].min(p2[j - 2] + 1);
+                }
+            }
+        }
+        prev2 = Some(prev);
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// Text of an unhandled error value: "Unhandled error (Kind): message. Fix."
+pub fn unhandled_text(kind: &str, message: &str, fix_key: Option<&str>) -> String {
+    let kind = if kind == "Error" { String::new() } else { format!(" ({kind})") };
+    let mut what = msg("unhandled", &[("kind", kind), ("message", message.to_string())]);
+    if !(what.ends_with('.') || what.ends_with('!') || what.ends_with('?')) {
+        what.push('.');
+    }
+    let fix = match fix_key {
+        Some(k) if has(k) => msg(k, &[]),
+        _ => msg("fix.unhandled", &[]),
+    };
+    format!("{what} {fix}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_the_section_14_example() {
+        set_lang(Lang::En);
+        let d = Diagnostic::new("name_not_found", Span::new(4, 7, 11))
+            .fix("suggest")
+            .arg("name", "nmae")
+            .arg("suggestion", "name");
+        let src = "name = \"Ana\"\nage = 30\ngreeting = \"Hello\"\nprint(nmae)\n";
+        let text = render("app.nexo", src, d.span, &d.text());
+        assert_eq!(
+            text,
+            "Error in app.nexo, line 4:\n  print(nmae)\n        ^^^^\n\"nmae\" does not exist. Did you mean \"name\"?\n"
+        );
+        set_lang(Lang::Es);
+        assert_eq!(d.text(), "\"nmae\" no existe. ¿Quisiste decir \"name\"?");
+    }
+
+    #[test]
+    fn format_keeps_literal_braces() {
+        assert_eq!(format("La interpolación {{}} está vacía.", &[]), "La interpolación {} está vacía.");
+    }
+
+    #[test]
+    fn suggestions_use_edit_distance() {
+        assert_eq!(suggest("nmae", ["name", "age"]), Some("name".into()));
+        assert_eq!(suggest("zzzzzz", ["name"]), None);
+        assert_eq!(suggest("lenght", ["length"]), Some("length".into()));
+    }
+
+    #[test]
+    fn source_text_cuts_by_characters() {
+        assert_eq!(source_text("x = \"ñandú\" + y\n", Span::new(1, 5, 12)), "\"ñandú\"");
+    }
+}

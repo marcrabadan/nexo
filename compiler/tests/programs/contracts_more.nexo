@@ -1,0 +1,30 @@
+type Account:
+    owner: str
+    balance: decimal
+fn withdraw(a: Account, amount: decimal):
+    expect amount > 0
+    expect a.balance >= amount
+    ensure a.balance == old(a.balance) - amount
+    a.balance -= amount
+acc = Account("ana", 100)
+withdraw(acc, 30)
+print(acc.balance)
+try:
+    withdraw(acc, 500)
+else e is ContractBroken:
+    print(e.message)
+try:
+    withdraw(acc, -1)
+else e:
+    print(e.message)
+fn bad_sum(xs) -> int:
+    ensure len(xs) > 10
+    return 1
+try:
+    print(bad_sum([1, 2]))
+else e:
+    print(e.message)
+fn sq(n: int) -> int:
+    expect n >= 0
+    return n * n
+print(sq(4))

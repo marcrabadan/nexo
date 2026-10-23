@@ -1,0 +1,3 @@
+x: str? = none
+print("before")
+print(x.upper())

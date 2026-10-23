@@ -1,0 +1,16 @@
+[package]
+name = "nexo-runtime"
+description = "Runtime library linked into every compiled Nexo program"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "nexo_runtime"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+nexo-diag = { path = "../diag" }
+num-bigint = "0.4"
+num-integer = "0.1"
+num-traits = "0.2"

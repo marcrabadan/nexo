@@ -1,0 +1,10 @@
+type P:
+    x: int
+    y: int
+    fn norm(self) -> int:
+        return self.x * self.x + self.y * self.y
+var acc = 0
+for i in 1..200_000:
+    p = P(i, i + 1)
+    acc += p.norm() % 10
+print(acc)

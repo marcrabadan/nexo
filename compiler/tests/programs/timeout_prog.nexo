@@ -1,0 +1,10 @@
+try within 2ms:
+    var i = 0
+    while i < 10_000_000:
+        i += 1
+else e is Timeout:
+    print("timeout: {e.message}")
+try within 1h:
+    print("fast")
+else e:
+    print("no")

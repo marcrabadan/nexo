@@ -1,0 +1,3 @@
+m = {"a": 1, "b": 2}
+print([k for k in m])
+print([[x, y] for x in 1..2 for_ignore in [1]] ?? 0)

@@ -1,0 +1,28 @@
+m = {"x": 1, "y": 2}
+print(m |> map it.upper())
+print("abc" |> map it.upper())
+print(1..5 |> where it % 2 == 1)
+print(set(3, 1) |> map it * 10)
+words = ["aa", "b", "cc", "ddd", "e"]
+print(words |> group by len(it) |> count)
+prices = [1.50 EUR, 2.25 EUR, 3.00 EUR]
+print(prices |> sum)
+print(prices |> avg)
+ds = [decimal(1.1), decimal(2.2)]
+print(ds |> sum)
+items = [{"k": none}, {"k": 2}, {"k": 1}]
+print(items |> sort by k |> map k)
+print([[1, 2], [3]] |> map len(it))
+fn boom(x):
+    if x == 2:
+        fail("boom at {x}")
+    return x
+try:
+    print([1, 2, 3] |> map boom(it))
+else e:
+    print(e.message)
+try:
+    print([1, 2, 3] |> map boom(it) |> take 1)
+else e:
+    print("not reached? {e.message}")
+print([3, 1, 2] |> sort by it)
