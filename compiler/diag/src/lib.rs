@@ -141,6 +141,12 @@ impl Diagnostic {
         Diagnostic { key, span: Some(span), fix: None, args: Vec::new() }
     }
 
+    /// A diagnostic whose span is filled in later (the runtime knows the
+    /// span only as an index into the program's span table).
+    pub fn new_spanless(key: &'static str) -> Diagnostic {
+        Diagnostic { key, span: None, fix: None, args: Vec::new() }
+    }
+
     pub fn arg(mut self, name: &'static str, value: impl Into<String>) -> Diagnostic {
         self.args.push((name, value.into()));
         self
