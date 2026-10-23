@@ -547,3 +547,20 @@ runs.
 A spawned task that reads a top-level constant at the moment the main
 program first assigns it is not detected; define constants before
 starting tasks.
+
+**D83. Contracts the compiler proves.** "A contract the compiler can
+prove costs nothing at runtime". Phase 2 proves the common case of the
+examples: a function whose body is straight-line integer arithmetic on its
+parameters and on the int fields of its record parameters (assignments
+and `+=`, `-=`, `*=` by a constant; a final `return`). It runs the body
+with symbolic values and proves an `ensure` that holds for every value on
+entry; since two record parameters of the same type may be the same
+record, it must hold in every case (the `transfer` example with ints is
+proven; `a.x += 1; b.x += 1` with `ensure a.x == old(a.x) + 1` is not).
+An `expect` is proven only when its condition is a constant. Proven
+contracts, and the `old()` copies only they use, are not compiled; the
+others are checked when the function runs (D53). Floats are never proven
+(their arithmetic is not exact). `nexo build --release --trust-ensure`
+also leaves out the unproven `ensure` checks and their `old()` copies;
+every `expect` stays. A proven `ensure` whose own evaluation would
+overflow an int is not evaluated, so that Overflow is not raised.

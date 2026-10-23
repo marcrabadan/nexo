@@ -156,6 +156,9 @@ pub struct Gen<'a> {
     /// functions defined exactly once (called directly, without binding
     /// their arguments at run time)
     known_fns: HashMap<BindingId, &'a FnDef>,
+    /// what the contract prover knows, and the type each method belongs to
+    prover: Option<crate::prove::Types>,
+    method_of: HashMap<u32, String>,
 }
 
 fn op_code(op: &str) -> u32 {
@@ -291,6 +294,8 @@ impl<'a> Gen<'a> {
             frame_fns: HashMap::new(),
             fs: Vec::new(),
             known_fns: HashMap::new(),
+            prover: None,
+            method_of: HashMap::new(),
         }
     }
 
@@ -1229,9 +1234,17 @@ impl<'a> Gen<'a> {
         let mut ensures: Vec<&Expr> = Vec::new();
         match src {
             FrameSrc::Fn(f) => {
+                // a contract the compiler proves costs nothing at run time;
+                // `--trust-ensure` leaves out the others too
+                let self_type = self.method_of.get(&f.id).cloned();
+                let proven = crate::prove::ensures(f, self_type.as_deref(), self.prover.as_ref().unwrap());
+                let mut k = 0;
                 for s in &f.body {
                     if let StmtKind::Ensure(e) = &s.kind {
-                        ensures.push(e);
+                        if !proven[k] {
+                            ensures.push(e);
+                        }
+                        k += 1;
                     }
                 }
                 // old() values are taken when the function is entered
@@ -1404,6 +1417,14 @@ impl<'a> Gen<'a> {
 
     pub fn program(mut self, program: &'a Program) -> GResult<String> {
         self.find_known_fns(program);
+        self.prover = Some(crate::prove::Types::new(program));
+        crate::checker::walk_stmts(&program.body, true, &mut |s| {
+            if let StmtKind::Type(t) = &s.kind {
+                for m in &t.methods {
+                    self.method_of.insert(m.id, t.name.clone());
+                }
+            }
+        });
         let mut st = self.new_fn_state(GLOBAL_FRAME);
         st.unwind = vec![("UNHANDLED".into(), 0)];
         self.fs.push(st);
@@ -1671,6 +1692,8 @@ impl<'a> Gen<'a> {
                     self.drop_val(v);
                 }
             }
+            // an expect that always holds is not checked
+            StmtKind::Expect(e) if crate::prove::expect_holds(e) => {}
             StmtKind::Expect(e) => {
                 let v = self.expr(e, false)?;
                 let c = self.truth(&v, e.span, "expect");

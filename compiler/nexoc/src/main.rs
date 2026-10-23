@@ -2,6 +2,7 @@
 //!
 //!     nexo file.nexo                     compile in development mode and run
 //!     nexo build [--release] file.nexo   compile to a native program
+//!         --trust-ensure                 (with --release) leave out unproven ensure checks
 //!     nexo test [paths...]               run the `test` blocks
 //!     --lang es|en                       language of messages (Spanish by default)
 
@@ -10,6 +11,7 @@ mod checker;
 mod codegen;
 mod lexer;
 mod parser;
+mod prove;
 mod resolve;
 mod typecheck;
 
@@ -20,9 +22,9 @@ use nexo_diag::{msg, render, Diagnostic, Lang};
 
 fn usage() -> &'static str {
     if nexo_diag::lang() == Lang::En {
-        "Usage: nexo [--lang es|en] [file.nexo | build [--release] [-o out] file.nexo | test [paths...]]"
+        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test [paths...]]"
     } else {
-        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release] [-o salida] archivo.nexo | test [rutas...]]"
+        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test [rutas...]]"
     }
 }
 
@@ -30,14 +32,14 @@ fn usage() -> &'static str {
 struct CompileError(String);
 
 /// Compile Nexo source to LLVM IR.
-fn to_ir(source: &str, name: &str, test_mode: bool) -> Result<String, CompileError> {
+fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Result<String, CompileError> {
     let fail = |d: Diagnostic| CompileError(render(name, source, d.span, &d.text()));
     let program = parser::parse(source).map_err(fail)?;
     checker::check(&program).map_err(fail)?;
     let res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
     let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
-    let opts = codegen::Options { file: name.to_string(), lang, test_mode, trust_ensure: false };
+    let opts = codegen::Options { file: name.to_string(), lang, test_mode, trust_ensure };
     codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)
 }
 
@@ -77,9 +79,11 @@ fn link(ir: &str, out: &Path, release: bool) -> Result<(), String> {
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
-    if std::env::var("NEXO_KEEP_IR").is_err() {
-        let _ = std::fs::remove_file(&ll);
+    // NEXO_KEEP_IR=1 keeps the IR next to the program (out.ll)
+    if std::env::var("NEXO_KEEP_IR").is_ok() {
+        let _ = std::fs::copy(&ll, out.with_extension("ll"));
     }
+    let _ = std::fs::remove_file(&ll);
     Ok(())
 }
 
@@ -100,7 +104,7 @@ fn run_file(path: &str) -> u8 {
             return 1;
         }
     };
-    let ir = match to_ir(&source, path, false) {
+    let ir = match to_ir(&source, path, false, false) {
         Ok(ir) => ir,
         Err(CompileError(text)) => {
             eprint!("{text}");
@@ -127,12 +131,15 @@ fn run_file(path: &str) -> u8 {
 /// `nexo build [--release] [-o out] file.nexo`
 fn build(args: &[String]) -> u8 {
     let mut release = false;
+    let mut trust_ensure = false;
     let mut out: Option<String> = None;
     let mut file: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--release" => release = true,
+            // unproven `ensure` checks are left out (Goals and guarantees)
+            "--trust-ensure" => trust_ensure = true,
             "-o" if i + 1 < args.len() => {
                 out = Some(args[i + 1].clone());
                 i += 1;
@@ -149,6 +156,10 @@ fn build(args: &[String]) -> u8 {
         eprintln!("{}", usage());
         return 2;
     };
+    if trust_ensure && !release {
+        eprintln!("{}", usage());
+        return 2;
+    }
     let source = match read_source(&file) {
         Ok(s) => s,
         Err(e) => {
@@ -156,7 +167,7 @@ fn build(args: &[String]) -> u8 {
             return 1;
         }
     };
-    let ir = match to_ir(&source, &file, false) {
+    let ir = match to_ir(&source, &file, false, trust_ensure) {
         Ok(ir) => ir,
         Err(CompileError(text)) => {
             eprint!("{text}");
@@ -242,7 +253,7 @@ fn run_tests(paths: &[String]) -> u8 {
         } else {
             display.clone()
         };
-        let ir = match to_ir(&source, &name, true) {
+        let ir = match to_ir(&source, &name, true, false) {
             Ok(ir) => ir,
             Err(CompileError(text)) => {
                 eprint!("{text}");
@@ -297,7 +308,7 @@ fn emit_ir(path: &str) -> u8 {
             return 1;
         }
     };
-    match to_ir(&source, path, false) {
+    match to_ir(&source, path, false, false) {
         Ok(ir) => {
             print!("{ir}");
             0

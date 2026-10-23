@@ -56,3 +56,42 @@ def test_example_compiled(example, tmp_path, nexo):
         out = proc.stdout.decode("utf-8")
         assert proc.returncode == 0, out
         assert "✗" not in out
+
+
+CONTRACTS = """type Account:
+    balance: int
+fn transfer(source: Account, target: Account, amount: int):
+    expect amount > 0
+    ensure source.balance + target.balance == old(source.balance + target.balance)
+    source.balance -= amount
+    target.balance += amount
+fn sloppy(a: Account):
+    ensure a.balance == old(a.balance)
+    a.balance -= 1
+a = Account(10)
+b = Account(0)
+transfer(a, b, 3)
+print(a.balance, b.balance)
+try:
+    sloppy(a)
+    print("not checked")
+else e:
+    print(e.kind)
+try:
+    transfer(a, b, 0)
+else e:
+    print(e.kind)
+"""
+
+
+def test_trust_ensure_leaves_out_unproven_ensures(tmp_path, nexo):
+    src = tmp_path / "c.nexo"
+    src.write_text(CONTRACTS)
+    proc = run([str(nexo), "build", "--release", src.name, "-o", "checked"], tmp_path)
+    assert proc.returncode == 0
+    assert run([str(tmp_path / "checked")], tmp_path).stdout.decode() == "7 3\nContractBroken\nContractBroken\n"
+    proc = run([str(nexo), "build", "--release", "--trust-ensure", src.name, "-o", "trusted"], tmp_path)
+    assert proc.returncode == 0
+    # every expect stays; the ensure the compiler could not prove is gone
+    assert run([str(tmp_path / "trusted")], tmp_path).stdout.decode() == "7 3\nnot checked\nContractBroken\n"
+    assert run([str(nexo), "build", "--trust-ensure", src.name], tmp_path).returncode == 2
