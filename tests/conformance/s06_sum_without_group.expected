@@ -1,0 +1,4 @@
+Error en s06_sum_without_group.nexo, línea 2:
+  total = sales |> sum amount
+                   ^^^^^^^^^^
+sum amount necesita un group by antes. Para el total de una columna usa map amount |> sum.

@@ -1,0 +1,4 @@
+Error en goals_ensure.nexo, línea 6:
+  ensure source.balance + target.balance == old(source.balance + target.balance)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error sin gestionar (ContractBroken): No se cumple ensure source.balance + target.balance == old(source.balance + target.balance) (source.balance = 90.0, target.balance = 50.0, old(source.balance + target.balance) = 150.0). Revisa los valores que recibe la función o corrige su cuerpo.

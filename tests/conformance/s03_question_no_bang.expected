@@ -1,0 +1,4 @@
+Error en s03_question_no_bang.nexo, línea 2:
+  text = read(path)?
+         ^^^^^^^^^^^
+"port_of" puede fallar, pero su tipo de retorno int no termina en !. Escríbelo como int!.

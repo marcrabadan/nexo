@@ -1,0 +1,22 @@
+sales = read("sales.csv")
+sales |> pick region |> take 2 |> each print
+print(sales |> count)
+print(sales |> where region == "north" |> map amount |> avg)
+sales |> group by region |> count |> each print
+print(sales |> group by region |> avg amount)
+
+names = ["ana", "luis", "eva"]
+print(names |> sort by len(it) desc |> take 2)
+print([1, 2, 3] |> sum)
+
+fn double_all(xs):
+    return [x * 2 for x in xs]
+
+fn scale(xs, factor):
+    return [x * factor for x in xs]
+
+print([1, 2] |> double_all)
+print([1, 2] |> scale(10))
+
+big = sales |> where amount >= 1500 |> map region
+print(big)

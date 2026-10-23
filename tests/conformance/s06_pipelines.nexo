@@ -1,0 +1,15 @@
+read("sales.csv")
+  |> where amount > 1000
+  |> group by region
+  |> sum amount
+  |> sort by amount desc
+  |> save("summary.csv")
+
+print(read("summary.csv"))
+
+numbers = [3, -1, 4, -5, 2]
+positives = numbers |> where it > 0 |> map it * 2
+print(positives)
+
+for line in read_lines("log_50GB.txt") |> where "ERROR" in it |> take 2:
+    print(line)

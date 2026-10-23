@@ -1,0 +1,4 @@
+Error en s02_union_error.nexo, línea 2:
+  s: Status = "open"
+              ^^^^^^
+"s" es de tipo Status pero recibe "open" (str). Usa uno de estos valores: "active", "closed".

@@ -1,0 +1,20 @@
+name = "Ana"
+var counter = 0
+age: int = 30                      # optional type
+email: str? = none                 # may be missing
+
+print("Hello {name}, you are {age}")
+print(email ?? "no email")
+
+fruits = ["pear", "grape"]         # list
+prices = {"pear": 1.2, "grape": 3} # map
+tags = set("new", "sale")          # set
+text = """
+    Several lines
+    with {name}
+"""
+
+print(fruits)
+print(prices)
+print(tags)
+print(text)

@@ -1,0 +1,4 @@
+Error en s03_coalesce_on_error.nexo, línea 1:
+  data = read("config.txt") ?? ""
+         ^^^^^^^^^^^^^^^^^^
+?? solo sirve para valores que pueden faltar (T?), pero "read" puede fallar (T!). Usa ? para pasar el error o try y else e para gestionarlo.

@@ -1,0 +1,4 @@
+on order_created(order):
+    print("Thank you for your purchase, {order}!")
+
+emit order_created("Ana")

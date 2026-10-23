@@ -1,0 +1,13 @@
+{"region": "north"}
+{"region": "south"}
+6
+1350.0
+{"region": "north", "count": 2}
+{"region": "south", "count": 2}
+{"region": "east", "count": 2}
+[{"region": "north", "amount": 1350.0}, {"region": "south", "amount": 950.0}, {"region": "east", "amount": 1150.0}]
+["luis", "ana"]
+6
+[2, 4]
+[10, 20]
+["north", "east"]

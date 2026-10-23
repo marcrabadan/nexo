@@ -1,0 +1,12 @@
+fn greet(person, greeting = "Hello"):
+    return "{greeting}, {person}"
+
+pub fn total(prices: list[float]) -> float:   # types required because it is pub
+    return prices.sum()
+
+double = x -> x * 2                            # lambda: a single expression
+
+print(greet("Ana"))
+print(greet("Luis", greeting: "Hi"))
+print(total([1.5, 2.5]))
+print(double(21))

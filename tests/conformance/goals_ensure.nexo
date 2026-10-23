@@ -1,0 +1,11 @@
+type Account:
+    owner: str
+    balance: float
+
+fn leak(source: Account, target: Account, amount: float):
+    ensure source.balance + target.balance == old(source.balance + target.balance)
+    source.balance -= amount
+
+a = Account(owner: "Ana", balance: 100.0)
+b = Account(owner: "Luis", balance: 50.0)
+leak(a, b, 10.0)

@@ -1,0 +1,4 @@
+Error en s17_currency_mismatch.nexo, línea 3:
+  print(a + b)
+        ^^^^^
+No se puede operar con money en monedas distintas (EUR y USD). Convierte antes con convert(x, to: EUR, rate: ...).

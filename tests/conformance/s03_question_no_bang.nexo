@@ -1,0 +1,5 @@
+fn port_of(path: str) -> int:
+    text = read(path)?
+    return len(text)
+
+print(port_of("app.json"))

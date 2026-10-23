@@ -1,0 +1,2 @@
+text = read("nope.txt")
+print(text)

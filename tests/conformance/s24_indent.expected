@@ -1,0 +1,4 @@
+Error en s24_indent.nexo, línea 2:
+  print(1)
+  ^^^^^
+La indentación debe ser de 4 espacios por nivel (hay 2). Indenta este bloque con 4 espacios.

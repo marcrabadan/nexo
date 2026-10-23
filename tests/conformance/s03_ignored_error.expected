@@ -1,0 +1,4 @@
+Error en s03_ignored_error.nexo, línea 7:
+  return divide(x, 2)
+         ^^^^^^^^^^^^
+La llamada a "divide" puede fallar y su error se ignora. Añade ? al final para pasarlo al llamador, o gestiónalo con try y else e.
