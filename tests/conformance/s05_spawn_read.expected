@@ -1,0 +1,4 @@
+Error en s05_spawn_read.nexo, línea 7:
+  seen.add(x)
+  ^^^^
+Una tarea no puede cambiar "seen": es de fuera de la tarea, y otras tareas pueden usarla a la vez. Devuelve el resultado con return (en parallel) o envíalo por un channel (en spawn).

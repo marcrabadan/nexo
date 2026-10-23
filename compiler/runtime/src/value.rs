@@ -583,7 +583,7 @@ pub struct Record {
     pub ty: &'static RecordType,
     pub fields: Mut<Vec<Val>>,
     /// the task that created it may change it (see `cow::check_write`)
-    pub birth: u64,
+    pub birth: std::cell::Cell<u64>,
 }
 
 pub struct VariantValue {
@@ -625,8 +625,8 @@ pub enum Obj {
     Namespace(&'static str),
     /// a channel of `nexo.sync`
     Channel(crate::sync::Channel),
-    /// `channel[T]`: makes channels
-    ChannelType,
+    /// `channel` and `channel[T]`: make channels
+    ChannelType(Option<Val>),
 }
 
 pub fn list(items: Vec<Val>) -> Val {

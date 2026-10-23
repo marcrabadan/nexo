@@ -1,0 +1,6 @@
+job 1
+job 2
+Error en s05_deadlock.nexo, línea 4:
+  for j in jobs:
+           ^^^^
+Todas las tareas están esperando en un channel y ninguna puede continuar. Cierra el channel con close() cuando no haya nada más que enviar, o envía lo que otra tarea espera.

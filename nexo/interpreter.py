@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import itertools
 import sys
+import threading
 import time
 from decimal import Decimal
 from typing import Any
@@ -28,20 +29,35 @@ from .types import (
 
 MISSING = object()
 
-# the stamp of the running task (see Interpreter.check_write): bindings
-# created by a task carry it
-_TASK = [0]
+class _TaskState(threading.local):
+    """What belongs to the running task (the program, a task of
+    `parallel`, or a spawned task with its own thread)."""
+
+    def __init__(self):
+        # the stamp of the task (see Interpreter.check_write): bindings and
+        # records created by the task carry it
+        self.stamp = 0
+        self.isolated = False  # a spawned task (nexo.sync)
+        self.in_task = 0  # tasks of `parallel` running
+        self.deadlines: list = []
+        self.old_stack: list = []
+        self.task_env = None
+        self.task_outputs: list[str] = []
+
+
+_TASK = _TaskState()
 
 
 class Binding:
-    __slots__ = ("value", "mutable", "type", "type_env", "birth")
+    __slots__ = ("value", "mutable", "type", "type_env", "birth", "shared")
 
     def __init__(self, value, mutable, type_=None, type_env=None):
         self.value = value
         self.mutable = mutable
         self.type = type_
         self.type_env = type_env
-        self.birth = _TASK[0]
+        self.birth = _TASK.stamp
+        self.shared = False
 
 
 class Env:
@@ -147,17 +163,25 @@ class Interpreter:
         self.checker_fns: dict[str, bool] = {}
         self.checker_methods: dict[str, bool] = {}
         self.handlers: dict[str, list] = {}
-        self.old_stack: list[dict] = []
-        self.deadlines: list[tuple[float, Any]] = []
         self.tests: list[A.TestDef] = []
         self.contracts: dict[int, tuple[list, list]] = {}
-        # tasks of `parallel` (sequential in phase 0, D52): the last stamp
-        # given, the environment of the running `parallel:` task and the
-        # names it computes
-        self.stamps = 0
-        self.task_env: Env | None = None
-        self.task_outputs: list[str] = []
-        _TASK[0] = 0
+        # tasks of `parallel` (sequential in phase 0, D52) and of spawn
+        self.stamps = itertools.count(1)
+        self.sync = False
+        self.shared_names: set[str] = set()
+        self.shared_uses: dict[int, bool] = {}
+        _TASK.__init__()
+        from .stdlib import sync
+        sync.reset()
+
+    # what belongs to the running task
+    deadlines = property(lambda self: _TASK.deadlines, lambda self, v: setattr(_TASK, "deadlines", v))
+    old_stack = property(lambda self: _TASK.old_stack, lambda self, v: setattr(_TASK, "old_stack", v))
+    task_env = property(lambda self: _TASK.task_env, lambda self, v: setattr(_TASK, "task_env", v))
+    task_outputs = property(lambda self: _TASK.task_outputs, lambda self, v: setattr(_TASK, "task_outputs", v))
+
+    def new_stamp(self) -> int:
+        return next(self.stamps)
 
     # ----------------------------------------------------------- running
     def load(self, source: str, file: str) -> A.Program:
@@ -183,7 +207,52 @@ class Interpreter:
         if self.deadlines:
             self.check_deadline()
         method = getattr(self, "exec_" + type(s).__name__)
+        if self.shared_names and self.uses_shared(s):
+            # a statement that uses a shared variable holds its lock
+            from .stdlib.sync import SharedLock
+            with SharedLock():
+                method(s, env)
+            return
         method(s, env)
+
+    def uses_shared(self, s: A.Stmt) -> bool:
+        """Does the statement use a shared variable in its own expressions
+        (not in the statements of its blocks)?"""
+        key = id(s)
+        if key not in self.shared_uses:
+            from .checker import expr_names
+            exprs: list = []
+            if isinstance(s, (A.ExprStmt, A.Expect, A.Assert)):
+                exprs = [s.expr]
+            elif isinstance(s, A.Return) and s.value is not None:
+                exprs = [s.value]
+            elif isinstance(s, A.Assign):
+                exprs = [s.target, s.value]
+            elif isinstance(s, (A.VarDecl, A.SharedDecl)):
+                exprs = [s.value]
+            elif isinstance(s, A.If):
+                exprs = [c for c, _ in s.branches]
+            elif isinstance(s, A.For):
+                exprs = [s.iterable]
+            elif isinstance(s, A.While):
+                exprs = [s.cond]
+            elif isinstance(s, A.Repeat):
+                exprs = [s.count]
+            elif isinstance(s, A.Match):
+                exprs = [s.subject]
+            elif isinstance(s, A.Spawn):
+                exprs = [s.call]
+            elif isinstance(s, A.Emit):
+                exprs = [a.value for a in s.call.args]
+            elif isinstance(s, A.Select):
+                exprs = [a.channel or a.after for a in s.arms if (a.channel or a.after) is not None]
+            names: list = []
+            for e in exprs:
+                expr_names(e, names, names)
+            if isinstance(s, A.Assign) and isinstance(s.target, A.Name):
+                names.append((s.target.name, None))
+            self.shared_uses[key] = any(n in self.shared_names for n, _ in names)
+        return self.shared_uses[key]
 
     def exec_ExprStmt(self, s: A.ExprStmt, env: Env) -> None:
         self.eval(s.expr, env)
@@ -220,7 +289,7 @@ class Interpreter:
             self.set_attr(obj, target.name, value, target.name_span, s.value.span)
             return
         index = self.eval(target.index, env)
-        value = self.eval(s.value, env)
+        value = self.into_shared(obj, self.eval(s.value, env))
         container = self.place_resolve(obj)
         if s.op != "=":
             value = self.binop(s.op[0], self.get_index(container, index, target.span), value,
@@ -246,6 +315,9 @@ class Interpreter:
                 if b.type is not None:
                     value = self.conform(value, b.type, b.type_env, name, value_span)
                 b.value = self.store_value(value)
+                if b.shared:
+                    from .stdlib.sync import shared_store
+                    b.value = shared_store(b.value)
                 return
             if e.is_fn:
                 crossed_fn = True
@@ -467,8 +539,51 @@ class Interpreter:
             raise NexoError("assert_failed", e.span, expr=text, detail=detail)
 
     def exec_Use(self, s: A.Use, env: Env) -> None:
+        if s.lang is None and s.name == "nexo.sync":
+            from .stdlib.sync import ChannelMaker
+            self.sync = True
+            self.builtins.define("channel", ChannelMaker())
+            return
         name = f"{s.lang} {s.name}" if s.lang else s.name
         raise NexoError("not_supported", s.span, what=f'"use {name}"')
+
+    # ------------------------------------------------------ nexo.sync
+
+    def exec_Spawn(self, s: A.Spawn, env: Env) -> None:
+        from .stdlib.sync import spawn
+        func = self.eval(s.call.func, env)
+        args = self.eval_args(s.call.args, env)
+        spawn(self, func, args, s.call)
+
+    def exec_SharedDecl(self, s: A.SharedDecl, env: Env) -> None:
+        from .stdlib.sync import shared_store
+        value = shared_store(self.store_value(self.eval(s.value, env)))
+        target = env.target()
+        if s.name in target.vars:
+            raise NexoError("already_declared", s.name_span, name=s.name)
+        target.define(s.name, value, True)
+        target.vars[s.name].shared = True
+        self.shared_names.add(s.name)
+
+    def exec_Select(self, s: A.Select, env: Env) -> None:
+        from .stdlib.sync import select
+        channels = [self.eval(a.channel, env) for a in s.arms if a.channel is not None]
+        limit = None
+        for a in s.arms:
+            if a.after is not None:
+                limit = self.eval(a.after, env)
+        k, value = select(self, channels, limit, s.span)
+        i = 0
+        for arm in s.arms:
+            want = i if arm.channel is not None else len(channels)
+            if arm.channel is not None:
+                i += 1
+            if k == want:
+                arm_env = Env(env, transparent=True)
+                if arm.var is not None:
+                    arm_env.vars[arm.var] = Binding(self.store_value(value), False)
+                self.exec_block(arm.body, arm_env)
+                return
 
     def exec_ConfigBlock(self, s: A.ConfigBlock, env: Env) -> None:
         raise NexoError("not_supported", s.span, what=f'"{s.word}:"')
@@ -534,6 +649,15 @@ class Interpreter:
         value = env.lookup(name)
         if value is MISSING:
             raise self.name_error(name, span, env)
+        if self.sync:
+            b = env.find(name)
+            if b is not None and b.value is value:
+                if b.shared:
+                    from .stdlib.sync import shared_read
+                    return shared_read(value)
+                if _TASK.isolated and b.birth < _TASK.stamp:
+                    from .stdlib.sync import isolated_read
+                    isolated_read(b, name, span)
         return value
 
     def name_error(self, name: str, span: Span, env: Env) -> NexoError:
@@ -579,7 +703,7 @@ class Interpreter:
         if isinstance(e.func, A.Attr) and e.func.name == "add" and isinstance(e.func.obj, (A.Name, A.Attr, A.Index)):
             # `place.add(x)` changes the collection in its place
             parts = self.place_parts(e.func.obj, env)
-            args = self.eval_args(e.args, env)
+            args = [(n, self.into_shared(parts, v)) for n, v in self.eval_args(e.args, env)]
             obj = self.place_resolve(parts)
             func = self.get_attr(obj, "add", e.func.name_span)
             return self.call_at(func, args, e)
@@ -650,6 +774,15 @@ class Interpreter:
             return self.temp_copy(self.get_index(container, index, span))
         return self.temp_copy(parts[1])
 
+    def into_shared(self, parts: tuple, value: Any) -> Any:
+        """A value stored inside a shared variable is a copy of its own."""
+        while parts[0] == "index":
+            parts = parts[1]
+        if parts[0] == "var" and parts[1].shared:
+            from .stdlib.sync import shared_store
+            return shared_store(self.bind_value(value))
+        return value
+
     def is_weak_field(self, obj: Record, name: str) -> bool:
         return type(obj.fields.get(name)) is WeakRef or any(
             f.name == name and getattr(f.type, "weak", False) for f in obj.type.fields)
@@ -663,18 +796,18 @@ class Interpreter:
 
     @property
     def stamp(self) -> int:
-        return _TASK[0]
+        return _TASK.stamp
 
     def check_write(self, record: Record, span: Span) -> None:
         """A task may only change records created after it started: the
         others can be read by several tasks at once (section 5)."""
-        if record.birth < _TASK[0]:
+        if record.birth < _TASK.stamp:
             raise NexoError("record_shared", span, type=record.type.name)
 
     def check_var_write(self, b: Binding, name: str, env: Env, span: Span) -> None:
         """Nor variables that existed before it, except the names a
         `parallel:` task computes."""
-        if b.birth >= _TASK[0]:
+        if b.birth >= _TASK.stamp or b.shared:
             return
         if name in self.task_outputs:
             e = env
@@ -686,14 +819,15 @@ class Interpreter:
 
     def run_task(self, run, outputs: list[str], env: Env | None):
         """Run one task with a new stamp."""
-        saved = (_TASK[0], self.task_outputs, self.task_env)
-        self.stamps += 1
-        _TASK[0] = self.stamps
+        saved = (_TASK.stamp, self.task_outputs, self.task_env)
+        _TASK.stamp = self.new_stamp()
+        _TASK.in_task += 1
         self.task_outputs, self.task_env = outputs, env
         try:
             return run()
         finally:
-            _TASK[0], self.task_outputs, self.task_env = saved
+            _TASK.stamp, self.task_outputs, self.task_env = saved
+            _TASK.in_task -= 1
 
     def temp_copy(self, value: Any) -> Any:
         """A value that is not in a place: a change to it is seen by nobody."""
@@ -926,6 +1060,10 @@ class Interpreter:
             return self.construct(func, args, node)
         if isinstance(func, Variant) and func.params:
             return self.construct_variant(func, args, node)
+        if type(func).__name__ == "ChannelMaker":
+            from .stdlib.sync import new_channel
+            bound = self.bind_args("channel", ["size"], args, node, lambda n: True)
+            return new_channel(Call(self, node), func, bound.get("size"))
         if isinstance(func, BuiltinType):
             conv = self.builtins.lookup("__convert_" + func.name)
             if conv is not MISSING:
@@ -1137,6 +1275,8 @@ class Interpreter:
     def get_index(self, obj: Any, index: Any, span: Span) -> Any:
         if isinstance(obj, Lazy):
             obj = list(obj)
+        if type(obj).__name__ == "ChannelMaker" and obj.elem is None:
+            return obj[index]
         if isinstance(obj, dict):
             return obj.get(hashable(index, span))
         if isinstance(obj, (list, str)):
@@ -1190,6 +1330,9 @@ class Interpreter:
             return iter(value) if isinstance(value, list) else iter(list(value))
         if isinstance(value, (Lazy, Range)):
             return iter(value)
+        if type(value).__name__ == "Channel":
+            from .stdlib.sync import iterate
+            return iterate(value, span)
         if isinstance(value, dict):
             return iter(list(value))
         if isinstance(value, str):
@@ -1312,7 +1455,7 @@ class Interpreter:
             if type(value) is LitFloat or (isinstance(value, int) and not isinstance(value, bool)):
                 return True, to_decimal(value)
             return False, value
-        if name in ("str", "bool", "money", "map", "set"):
+        if name in ("str", "bool", "money", "map", "set", "channel"):
             if not builtin_is(value, name):
                 return False, value
             if name == "map" and len(t.params) == 2:
@@ -1415,6 +1558,8 @@ def builtin_is(value: Any, name: str) -> bool:
         return isinstance(value, dict)
     if name == "set":
         return isinstance(value, NexoSet)
+    if name == "channel":
+        return type(value).__name__ == "Channel"
     return False
 
 

@@ -110,6 +110,8 @@ pub extern "C" fn nx_too_deep() {
 
 #[no_mangle]
 pub extern "C" fn nx_exit(code: i32) -> ! {
+    // the program ends when every spawned task has ended
+    crate::sync::wait_all();
     if leakcheck_enabled() {
         check_leaks();
     }
@@ -1003,6 +1005,56 @@ pub extern "C" fn nx_parallel_for(it: u64, ib: u64, ft: u64, fb: u64, mt: u64, m
 #[no_mangle]
 pub unsafe extern "C" fn nx_parallel_block(tasks: *const V, n: u64, span: u32) {
     let _ = crate::par::parallel_block(values(tasks, n), span);
+}
+
+// --------------------------------------------------------------- nexo.sync
+
+#[no_mangle]
+pub unsafe extern "C" fn nx_spawn(t: u64, b: u64, args: *const V, nm: *const NameRef, n: u64, span: u32) {
+    let names = names(nm, n);
+    let _ = crate::sync::spawn(v(t, b), values(args, n), &names, span);
+}
+
+/// `select:`: the arm that runs (see sync::select); its value in `out`.
+#[no_mangle]
+pub unsafe extern "C" fn nx_select(chans: *const V, n: u64, lt: u64, lb: u64, out: *mut V, span: u32) -> i64 {
+    let mut value = Val::none();
+    match crate::sync::select(values(chans, n), v(lt, lb), &mut value, span) {
+        Ok(i) => {
+            *out = value.into_raw();
+            i
+        }
+        Err(_) => {
+            *out = NONE;
+            -1
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn nx_shared_lock() {
+    crate::sync::shared_lock();
+}
+
+#[no_mangle]
+pub extern "C" fn nx_shared_unlock() {
+    crate::sync::shared_unlock();
+}
+
+#[no_mangle]
+pub extern "C" fn nx_shared_read(t: u64, b: u64) -> V {
+    crate::sync::shared_read(v(t, b)).into_raw()
+}
+
+#[no_mangle]
+pub extern "C" fn nx_shared_store(t: u64, b: u64) -> V {
+    crate::sync::shared_store(v(t, b)).into_raw()
+}
+
+/// A spawned task reads a variable of the program.
+#[no_mangle]
+pub unsafe extern "C" fn nx_isolated_read(t: u64, b: u64, name: *const u8, len: usize, is_var: u32, span: u32) {
+    let _ = crate::sync::isolated_read(v(t, b), text(name, len), is_var != 0, span);
 }
 
 /// A task changed a variable of outside the task (section 5).

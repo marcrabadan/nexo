@@ -83,7 +83,7 @@ pub fn iterate(v: V, span: u32) -> R<Items> {
             let chars: Vec<Val> = s.chars().map(|c| Val::str(c.to_string())).collect();
             Ok(Box::new(chars.into_iter().map(Ok)))
         }
-        Some(Obj::Channel(c)) => Ok(crate::sync::iterate(c, v)),
+        Some(Obj::Channel(c)) => Ok(crate::sync::iterate(c, v, span)),
         _ => Err(diag(Diagnostic::new_spanless("not_iterable").arg("vtype", type_name(v)), span)),
     }
 }

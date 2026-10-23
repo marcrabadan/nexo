@@ -23,6 +23,15 @@ static STAMPS: AtomicU64 = AtomicU64::new(1);
 /// threads working for `parallel` besides the ones that started the blocks
 static EXTRA: AtomicUsize = AtomicUsize::new(0);
 
+thread_local! {
+    /// tasks of `parallel` running on this thread
+    static IN_TASK: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+pub fn in_task() -> bool {
+    IN_TASK.with(|t| t.get() > 0)
+}
+
 pub fn new_stamp() -> u64 {
     STAMPS.fetch_add(1, Ordering::Relaxed)
 }
@@ -82,7 +91,9 @@ fn run_task(f: V, arg: Option<V>, from: &Inherit, span: u32) -> Outcome {
     let was_active = has_deadline || !old_deadlines.is_empty();
     state::set_deadline_active(has_deadline);
     let args: Vec<V> = arg.into_iter().collect();
+    IN_TASK.with(|t| t.set(t.get() + 1));
     let r = call_value(f, &args, span);
+    IN_TASK.with(|t| t.set(t.get() - 1));
     let failure = if state::failing() != 0 { Some(state::take_pending()) } else { None };
     let value = r.unwrap_or(Val::none());
     let (output, mine) = state::with_task(|s| {

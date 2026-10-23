@@ -54,6 +54,8 @@ pub struct Binding {
     pub captured: bool,
     /// bound before its scope runs (parameters, loop and pattern variables)
     pub entry: bool,
+    /// a `shared` variable (nexo.sync): used under a lock, read as a copy
+    pub shared: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +114,8 @@ pub enum Node {
     Field(u32, usize),
     /// statement i of a `parallel:` block
     Task(u32, usize),
+    /// arm i of a `select:`
+    SelectArm(u32, usize),
 }
 
 #[derive(Clone, Debug)]
@@ -168,6 +172,8 @@ pub struct Resolution {
     /// the names each task of a `parallel:` block computes (it may assign
     /// them although they belong outside the task)
     pub task_outputs: HashMap<FrameId, Vec<BindingId>>,
+    /// the program has `use nexo.sync`
+    pub sync: bool,
 }
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
@@ -205,7 +211,8 @@ pub fn is_builtin(name: &str) -> bool {
     builtin_names().contains(&name)
 }
 
-pub const BUILTIN_TYPES: &[&str] = &["int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "any"];
+pub const BUILTIN_TYPES: &[&str] =
+    &["int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "any", "channel"];
 
 type RResult<T> = Result<T, Diagnostic>;
 
@@ -253,6 +260,7 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             next_type_id: 1,
             self_calls: std::collections::HashSet::new(),
             task_outputs: HashMap::new(),
+            sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what } if what == "nexo.sync")),
         },
         tasks: Vec::new(),
         self_fn: Vec::new(),
@@ -363,7 +371,17 @@ impl Resolver {
         }
         let frame = self.r.scopes[scope].frame;
         let entry = origin == Origin::Param;
-        self.r.bindings.push(Binding { name: name.to_string(), kind, ty, origin, scope, frame, captured: false, entry });
+        self.r.bindings.push(Binding {
+            name: name.to_string(),
+            kind,
+            ty,
+            origin,
+            scope,
+            frame,
+            captured: false,
+            entry,
+            shared: false,
+        });
         let id = self.r.bindings.len() - 1;
         self.r.scopes[scope].names.push((name.to_string(), id));
         id
@@ -449,6 +467,15 @@ impl Resolver {
                     }
                 }
                 StmtKind::Parallel(body) => self.declare_block(scope, body),
+                StmtKind::Shared { name, .. } => {
+                    let b = self.declare(scope, name, BKind::Var, None, Origin::Plain);
+                    self.r.bindings[b].shared = true;
+                }
+                StmtKind::Select { arms } => {
+                    for a in arms {
+                        self.declare_block(scope, &a.body);
+                    }
+                }
                 _ => {}
             }
         }
@@ -467,6 +494,9 @@ impl Resolver {
             }
         }
         out.extend(builtin_names().into_iter().map(String::from));
+        if self.r.sync {
+            out.push("channel".into());
+        }
         out
     }
 
@@ -503,7 +533,7 @@ impl Resolver {
             }
             s = self.r.scopes[id].parent;
         }
-        if cands.is_empty() && row.is_none() && is_builtin(name) {
+        if cands.is_empty() && row.is_none() && (is_builtin(name) || (self.r.sync && name == "channel")) {
             return NameRes::Builtin(name.to_string());
         }
         for b in &cands {
@@ -802,6 +832,30 @@ impl Resolver {
                     self.r.bindings[b].entry = true;
                     self.r.decl.insert(Node::Handler(s.id, i), b);
                     self.block(hs, &h.body)?;
+                }
+                Ok(())
+            }
+            StmtKind::Spawn { call } => self.expr(scope, call),
+            StmtKind::Shared { name, value, .. } => {
+                self.expr(scope, value)?;
+                let a = self.assign_res(scope, name);
+                self.r.assigns.insert(s.id, a);
+                Ok(())
+            }
+            StmtKind::Select { arms } => {
+                for (i, arm) in arms.iter().enumerate() {
+                    if let Some(c) = arm.channel.as_ref().or(arm.after.as_ref()) {
+                        self.expr(scope, c)?;
+                    }
+                    let frame = self.r.scopes[scope].frame;
+                    let arm_scope = self.new_scope(Some(scope), SKind::Transparent, frame, false);
+                    self.r.scope_of.insert(Node::SelectArm(s.id, i), arm_scope);
+                    if let Some(v) = &arm.var {
+                        let b = self.declare(arm_scope, v, BKind::Const, None, Origin::Plain);
+                        self.r.bindings[b].entry = true;
+                        self.r.decl.insert(Node::SelectArm(s.id, i), b);
+                    }
+                    self.block(arm_scope, &arm.body)?;
                 }
                 Ok(())
             }

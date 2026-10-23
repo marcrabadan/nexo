@@ -1,4 +1,4 @@
 Error en s05_task_outer.nexo, línea 3:
   total += n
   ^^^^^
-Una tarea de parallel no puede cambiar "total": es de fuera de la tarea y las tareas se ejecutan a la vez. Devuelve el resultado con return y úsalo cuando termine el parallel.
+Una tarea no puede cambiar "total": es de fuera de la tarea, y otras tareas pueden usarla a la vez. Devuelve el resultado con return (en parallel) o envíalo por un channel (en spawn).

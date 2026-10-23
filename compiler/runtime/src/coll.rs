@@ -132,6 +132,8 @@ pub fn get_index(obj: V, index: V, span: u32) -> R<Val> {
             }
             Ok(Val::str(s.chars().nth(i as usize).unwrap().to_string()))
         }
+        // `channel[Order]`: channels that carry values of that type
+        Some(Obj::ChannelType(None)) => Ok(Val::new(Obj::ChannelType(Some(Val::from(index))))),
         _ if obj.is_none() => Err(diag(Diagnostic::new_spanless("none_member").arg("name", "[]"), span)),
         _ => Err(diag(Diagnostic::new_spanless("not_indexable").arg("vtype", type_name(obj)), span)),
     }
@@ -275,7 +277,7 @@ pub fn deep_copy(v: V) -> Val {
             fields: Mut::new(
                 r.fields.borrow().iter().map(|x| if x.tag == T_WEAK { x.clone() } else { deep_copy(x.v()) }).collect(),
             ),
-            birth: crate::state::stamp(),
+            birth: std::cell::Cell::new(crate::state::stamp()),
         })),
         Some(Obj::VariantValue(vv)) => Val::new(Obj::VariantValue(VariantValue {
             variant: vv.variant,

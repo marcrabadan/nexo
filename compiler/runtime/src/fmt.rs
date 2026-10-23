@@ -30,7 +30,7 @@ pub fn type_name(v: V) -> String {
             Obj::Currency(_) => "currency".into(),
             Obj::Symbol(_) => "Symbol".into(),
             Obj::Namespace(_) => "Namespace".into(),
-            Obj::Channel(_) | Obj::ChannelType => "channel".into(),
+            Obj::Channel(_) | Obj::ChannelType(_) => "channel".into(),
         },
         _ => "none".into(),
     }
@@ -237,7 +237,7 @@ pub fn repr_into(v: V, out: &mut String) {
             Obj::Symbol(s) => out.push_str(s),
             Obj::Namespace(n) => out.push_str(n),
             Obj::Channel(_) => out.push_str("channel"),
-            Obj::ChannelType => out.push_str("channel"),
+            Obj::ChannelType(_) => out.push_str("channel"),
         },
         _ => out.push_str("none"),
     }

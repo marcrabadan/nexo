@@ -249,6 +249,19 @@ fn stmt_names(s: &Stmt, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(Strin
         }
         StmtKind::Parallel(body) => block(body, reads, writes)?,
         StmtKind::Fn(f) => writes.push((f.name.clone(), f.name_span)),
+        StmtKind::Spawn { call } => expr_names(call, reads, writes),
+        StmtKind::Shared { name, name_span, value } => {
+            expr_names(value, reads, writes);
+            writes.push((name.clone(), *name_span));
+        }
+        StmtKind::Select { arms } => {
+            for a in arms {
+                if let Some(c) = a.channel.as_ref().or(a.after.as_ref()) {
+                    expr_names(c, reads, writes);
+                }
+                block(&a.body, reads, writes)?;
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -648,6 +661,24 @@ impl Checker {
                 check_parallel_block(body)?;
                 self.stmts(body, ctx)
             }
+            // an error nobody handles in a spawned task ends the program
+            StmtKind::Spawn { call: Expr { kind: ExprKind::Call { func, args }, .. } } => {
+                self.expr(func, ctx, false)?;
+                for a in args {
+                    self.expr(&a.value, ctx, false)?;
+                }
+                Ok(())
+            }
+            StmtKind::Shared { value, .. } => self.expr(value, ctx, false),
+            StmtKind::Select { arms } => {
+                for a in arms {
+                    if let Some(c) = a.channel.as_ref().or(a.after.as_ref()) {
+                        self.expr(c, ctx, false)?;
+                    }
+                    self.stmts(&a.body, ctx)?;
+                }
+                Ok(())
+            }
             StmtKind::Event { body, .. } => self.stmts(body, Ctx::top()),
             _ => Ok(()),
         }
@@ -848,6 +879,7 @@ pub fn walk_stmts<'a>(body: &'a [Stmt], into_fns: bool, f: &mut dyn FnMut(&'a St
                 blocks.push(body);
                 blocks.extend(handlers.iter().map(|h| h.body.as_slice()));
             }
+            StmtKind::Select { arms } => blocks.extend(arms.iter().map(|a| a.body.as_slice())),
             _ => {}
         }
         for b in blocks {
@@ -905,6 +937,12 @@ fn body_fails(body: &[Stmt], in_try: bool) -> bool {
                 }
             }
             StmtKind::Parallel(body) => nested.push(body),
+            StmtKind::Select { arms } => {
+                for a in arms {
+                    nested.push(&a.body);
+                }
+            }
+            StmtKind::Shared { value, .. } => exprs.push(value),
             StmtKind::Expr(e) => exprs.push(e),
             StmtKind::Assign { target, value, .. } => {
                 exprs.push(target);

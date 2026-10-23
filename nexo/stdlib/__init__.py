@@ -37,7 +37,11 @@ def members(interp, obj: Any, name: str, span: Span) -> Any:
         if name in obj.attrs:
             return obj.attrs[name]
         return _missing(obj.name, name, span, list(obj.attrs))
-    table = core.METHODS.get(_kind(obj))
+    if type(obj).__name__ == "Channel":
+        from . import sync
+        table = sync.METHODS
+    else:
+        table = core.METHODS.get(_kind(obj))
     if table is None or name not in table:
         return _missing(type_name(obj), name, span, list(table or {}))
     fn = table[name]

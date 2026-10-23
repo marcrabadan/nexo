@@ -721,6 +721,7 @@ pub fn named_value(name: &str) -> Option<Val> {
         }
         "half_up" | "half_even" => Obj::Symbol(crate::num::intern(name)),
         "json" | "csv" => Obj::Namespace(crate::num::intern(name)),
+        "channel" => Obj::ChannelType(None),
         _ if crate::types::ERROR_KINDS.contains(&name) => Obj::Type(TypeRef::ErrorKind(crate::num::intern(name))),
         _ if crate::num::is_currency(name) => Obj::Currency(crate::num::intern(name)),
         _ => return None,

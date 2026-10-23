@@ -1,0 +1,9 @@
+use nexo.sync
+fn worker(c):
+    for x in c:
+        print("got", x)
+jobs = channel(size: 2)
+spawn worker(jobs)
+jobs.send(1)
+jobs.send(2)
+print("main done")

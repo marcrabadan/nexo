@@ -58,7 +58,7 @@ pub fn make_unique_val(slot: &mut Val) -> V {
 /// Changing a record: only the task that created it (or a later one in
 /// the same line of tasks) may do it.
 pub fn check_write(r: &Record, span: u32) -> R<()> {
-    if r.birth < stamp() {
+    if r.birth.get() < stamp() {
         return Err(diag(Diagnostic::new_spanless("record_shared").arg("type", r.ty.name.clone()), span));
     }
     Ok(())
@@ -75,7 +75,7 @@ pub fn copy_records(v: V) -> Val {
                 .iter()
                 .map(|f| if f.tag == T_WEAK { Val::none() } else { copy_records(f.v()) })
                 .collect();
-            Val::new(Obj::Record(Record { ty: r.ty, fields: Mut::new(fields), birth: stamp() }))
+            Val::new(Obj::Record(Record { ty: r.ty, fields: Mut::new(fields), birth: std::cell::Cell::new(stamp()) }))
         }
         Some(Obj::List(items)) => {
             if !items.borrow().iter().any(|x| has_records(x.v())) {

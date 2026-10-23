@@ -58,6 +58,9 @@ def run_file(path: str) -> int:
     interp = Interpreter()
     try:
         interp.run(source, path)
+        # the program ends when every spawned task has ended
+        from .stdlib.sync import wait_all
+        wait_all()
     except (NexoError, NexoFailure) as exc:
         report(exc)
         return 1

@@ -23,6 +23,8 @@ pub struct Parser<'s> {
     /// token index right after an expression that ended in a block
     block_end: usize,
     next_id: u32,
+    /// after `use nexo.sync`, spawn, select and shared start statements
+    sync: bool,
 }
 
 fn describe(tok: &Token) -> String {
@@ -54,7 +56,7 @@ fn is_literal_start(tok: &Token) -> bool {
 
 impl<'s> Parser<'s> {
     pub fn new(toks: Vec<Token>, source: &'s str, in_text: bool, next_id: u32) -> Parser<'s> {
-        Parser { toks, p: 0, source, in_text, block_end: usize::MAX, next_id }
+        Parser { toks, p: 0, source, in_text, block_end: usize::MAX, next_id, sync: false }
     }
 
     fn id(&mut self) -> u32 {
@@ -284,6 +286,9 @@ impl<'s> Parser<'s> {
                 _ => {}
             }
         }
+        if self.sync && matches!(&tok.tok, Tok::Name(n) if n == "select") && self.peek_at(1).is_op(":") {
+            return self.select_stmt();
+        }
         let stmt = self.simple_stmt()?;
         self.expect_newline()?;
         Ok(stmt)
@@ -319,6 +324,27 @@ impl<'s> Parser<'s> {
         }
         if tok.is_kw("use") {
             return self.use_stmt();
+        }
+        if self.sync && matches!(&tok.tok, Tok::Name(n) if n == "spawn") && matches!(self.peek_at(1).tok, Tok::Name(_)) {
+            self.advance();
+            let call = self.postfix()?;
+            if !matches!(call.kind, ExprKind::Call { .. }) {
+                return Err(self.error_at(&word("call"), &tok));
+            }
+            let span = self.span_from(tok.span);
+            return Ok(self.stmt_node(span, StmtKind::Spawn { call }));
+        }
+        if self.sync
+            && matches!(&tok.tok, Tok::Name(n) if n == "shared")
+            && matches!(self.peek_at(1).tok, Tok::Name(_))
+            && self.peek_at(2).is_op("=")
+        {
+            self.advance();
+            let (name, name_span) = self.expect_name()?;
+            self.expect_op("=")?;
+            let value = self.expr()?;
+            let span = self.span_from(tok.span);
+            return Ok(self.stmt_node(span, StmtKind::Shared { name, name_span, value }));
         }
         if tok.is_kw("emit") {
             self.advance();
@@ -452,12 +478,54 @@ impl<'s> Parser<'s> {
             self.advance();
             self.expect_name()?;
         }
+        if lang.is_none() && name == "nexo.sync" {
+            self.sync = true;
+        }
         let what = match lang {
             Some(l) => format!("{l} {name}"),
             None => name,
         };
         let span = self.span_from(tok.span);
         Ok(self.stmt_node(span, StmtKind::Use { what }))
+    }
+
+    /// select: arms `NAME from expr: ...` and `after expr: ...` (nexo.sync)
+    fn select_stmt(&mut self) -> PResult<Stmt> {
+        let start = self.advance();
+        self.expect_op(":")?;
+        self.expect_newline_raw()?;
+        if self.peek().tok != Tok::Indent {
+            return Err(self.error(&word("indented")));
+        }
+        self.advance();
+        let mut arms = Vec::new();
+        while self.peek().tok != Tok::Dedent {
+            let tok = self.peek().clone();
+            let (mut var, mut channel, mut after) = (None, None, None);
+            let next_is_from = matches!(&self.peek_at(1).tok, Tok::Name(n) if n == "from");
+            if matches!(&tok.tok, Tok::Name(n) if n == "after") && !next_is_from {
+                self.advance();
+                after = Some(self.expr()?);
+            } else {
+                var = Some(self.expect_name()?.0);
+                if !self.at_name("from") {
+                    return Err(self.error("\"from\""));
+                }
+                self.advance();
+                channel = Some(self.expr()?);
+            }
+            self.expect_op(":")?;
+            let body = if self.peek().tok == Tok::Newline {
+                self.indented_body()?
+            } else {
+                let s = self.simple_stmt()?;
+                self.expect_newline()?;
+                vec![s]
+            };
+            arms.push(SelectArm { span: tok.span, var, channel, after, body });
+        }
+        self.advance();
+        Ok(self.stmt_node(start.span, StmtKind::Select { arms }))
     }
 
     fn dotted_name(&mut self) -> PResult<String> {

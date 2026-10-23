@@ -94,6 +94,8 @@ enum Live {
     Slot(String),
     /// an iterator (nx_iter)
     Iter(String),
+    /// the lock of `shared` variables
+    Lock,
 }
 
 struct FnState {
@@ -641,6 +643,7 @@ impl<'a> Gen<'a> {
                 format!("  {x} = load %V, ptr {a}\n  call void @rc_dec(%V {x})\n")
             }
             Live::Iter(i) => format!("  call void @nx_iter_free(ptr {i})\n"),
+            Live::Lock => "  call void @nx_shared_unlock()\n".to_string(),
         }
     }
 
@@ -950,6 +953,14 @@ impl<'a> Gen<'a> {
     fn load_binding(&mut self, b: BindingId) -> Val {
         let p = self.binding_ptr(b);
         self.load(&p)
+    }
+
+    /// Store into a binding a value that is already owned for it.
+    fn store_binding_raw(&mut self, b: BindingId, v: &Val) {
+        let p = self.binding_ptr(b);
+        let old = self.load(&p);
+        self.store(&p, v);
+        self.rc_dec(&old);
     }
 
     /// Store into a binding, which takes ownership of `v`; the old value
@@ -1482,7 +1493,17 @@ impl<'a> Gen<'a> {
             self.static_assign_check(s, &mut assigned)?;
             self.deadline_tick();
             let before = self.f().live.len();
+            // a statement that uses a shared variable holds its lock
+            let locked = self.uses_shared(s);
+            if locked {
+                self.call_void("nx_shared_lock", "");
+                self.f().live.push(Live::Lock);
+            }
             self.stmt(s)?;
+            if locked {
+                self.unlive(&Live::Lock);
+                self.call_void("nx_shared_unlock", "");
+            }
             debug_assert_eq!(self.f().live.len(), before, "temporaries left by a statement at line {}", s.span.line);
         }
         Ok(())
@@ -1592,7 +1613,37 @@ impl<'a> Gen<'a> {
                     }
                 }
             }
+            StmtKind::Use { what } if what == "nexo.sync" => {}
             StmtKind::Use { what } => return Err(not_supported(format!("\"use {what}\""), s.span)),
+            StmtKind::Spawn { call } => {
+                let ExprKind::Call { func, args } = &call.kind else { unreachable!() };
+                let f = self.expr(func, false)?;
+                let mut vals = Vec::new();
+                let mut names: Vec<Option<&str>> = Vec::new();
+                for a in args {
+                    vals.push(self.expr(&a.value, true)?);
+                    names.push(a.name.as_deref());
+                }
+                let arr = self.values_array(&vals);
+                let nm = self.names_array(&names);
+                let tf = self.tb(&f);
+                let sp = self.span_id(call.span);
+                self.call_void("nx_spawn", &format!("{tf}, ptr {arr}, ptr {nm}, i64 {}, i32 {sp}", vals.len()));
+                self.check();
+                self.drop_all(&vals);
+                self.drop_val(&f);
+            }
+            StmtKind::Shared { value, .. } => {
+                let v = self.expr(value, false)?;
+                let v = self.bind(v, value);
+                let tv = self.tb(&v);
+                let c = self.call_v("nx_shared_store", &tv);
+                self.drop_val(&v);
+                let c = self.owned(c);
+                let target = self.res.assigns[&s.id].target;
+                self.store_binding(target, &c);
+            }
+            StmtKind::Select { arms } => self.select_stmt(s, arms)?,
             StmtKind::Config { word } => return Err(not_supported(format!("\"{word}:\""), s.span)),
             StmtKind::Event { kind, name, body, .. } => {
                 if *kind != "on" {
@@ -1853,7 +1904,14 @@ impl<'a> Gen<'a> {
                     self.drop_val(&cur);
                     v = r;
                 }
-                let v = self.bind(v, value);
+                let mut v = self.bind(v, value);
+                if a.cands.iter().any(|(b, _)| self.res.bindings[*b].shared) {
+                    // a shared variable keeps a copy of its own
+                    let tv = self.tb(&v);
+                    let c = self.call_v("nx_shared_store", &tv);
+                    self.drop_val(&v);
+                    v = self.owned(c);
+                }
                 // the value waits in a slot; each path moves it out
                 let slot = self.spill_owned(&v);
                 let done = self.label();
@@ -1940,6 +1998,7 @@ impl<'a> Gen<'a> {
                 let place = self.place_parts(obj)?;
                 let i = self.expr(index, false)?;
                 let v = self.expr(value, false)?;
+                let v = self.into_shared(&place, v);
                 let sp = self.span_id(target.span);
                 let ptr = self.place_ptr(&place)?;
                 let ti = self.tb(&i);
@@ -2044,6 +2103,22 @@ impl<'a> Gen<'a> {
                 a
             }
         })
+    }
+
+    /// A value stored inside a shared variable is a copy of its own.
+    fn into_shared(&mut self, p: &Place<'a>, v: Val) -> Val {
+        let mut root = p;
+        while let Place::Index(inner, ..) = root {
+            root = inner;
+        }
+        let Place::Var(_, cands) = root else { return v };
+        if !cands.iter().any(|b| self.res.bindings[*b].shared) {
+            return v;
+        }
+        let tv = self.tb(&v);
+        let c = self.call_v("nx_shared_store", &tv);
+        self.drop_val(&v);
+        self.owned(c)
     }
 
     fn drop_place(&mut self, p: Place<'a>) {
@@ -3007,7 +3082,198 @@ impl<'a> Gen<'a> {
 
     fn name_read(&mut self, e: &'a Expr, name: &str) -> GResult<Val> {
         let res = self.res.names.get(&e.id).cloned().unwrap_or_else(|| panic!("unresolved name {name}"));
-        self.resolved(&res, name, e.span)
+        let v = self.resolved(&res, name, e.span)?;
+        let NameRes::Bindings { cands, row: None, .. } = &res else { return Ok(v) };
+        if cands.iter().any(|b| self.res.bindings[*b].shared) {
+            // a shared variable is read as a copy (nexo.sync)
+            let tv = self.tb(&v);
+            let c = self.call_v("nx_shared_read", &tv);
+            self.drop_val(&v);
+            return Ok(self.owned(c));
+        }
+        if let [b] = cands.as_slice() {
+            self.isolated_check(*b, &v, name, e.span);
+        }
+        Ok(v)
+    }
+
+    /// A spawned task cannot read a variable of the program that others
+    /// may change (a `var`, or a list, map, set or record).
+    fn isolated_check(&mut self, b: BindingId, v: &Val, name: &str, span: Span) {
+        let binding = &self.res.bindings[b];
+        if !matches!(binding.origin, Origin::Plain | Origin::Param) {
+            return;
+        }
+        let is_var = binding.kind == BKind::Var;
+        let cell_birth = if self.res.is_static(b) {
+            None
+        } else {
+            match self.slot_of(b) {
+                Some(Slot::Value(_)) => return,
+                _ => Some(self.cell_ptr(b)),
+            }
+        };
+        let ip = self.reg();
+        self.emit(&format!("{ip} = getelementptr inbounds i8, ptr %tls, i64 24"));
+        let iso = self.reg();
+        self.emit(&format!("{iso} = load i64, ptr {ip}"));
+        let mut c = self.reg();
+        self.emit(&format!("{c} = icmp ne i64 {iso}, 0"));
+        if let Some(cell) = cell_birth {
+            // a cell made by the task itself is its own
+            let bp = self.reg();
+            self.emit(&format!("{bp} = getelementptr inbounds i8, ptr {cell}, i64 24"));
+            let birth = self.reg();
+            self.emit(&format!("{birth} = load i64, ptr {bp}"));
+            let sp_ptr = self.reg();
+            self.emit(&format!("{sp_ptr} = getelementptr inbounds i8, ptr %tls, i64 16"));
+            let stamp = self.reg();
+            self.emit(&format!("{stamp} = load i64, ptr {sp_ptr}"));
+            let old = self.reg();
+            self.emit(&format!("{old} = icmp ult i64 {birth}, {stamp}"));
+            let both = self.reg();
+            self.emit(&format!("{both} = and i1 {c}, {old}"));
+            c = both;
+        }
+        let bad = self.label();
+        let ok = self.label();
+        self.cond_br(&c, &bad, &ok);
+        self.place(&bad);
+        let tv = self.tb(v);
+        let n = self.strarg(name);
+        let sp = self.span_id(span);
+        self.call_void("nx_isolated_read", &format!("{tv}, {n}, i32 {}, i32 {sp}", is_var as u32));
+        self.check();
+        self.br(&ok);
+        self.place(&ok);
+    }
+
+    /// Does a statement use a shared variable (in its own expressions, not
+    /// in the statements of its blocks)?
+    fn uses_shared(&self, s: &Stmt) -> bool {
+        if !self.res.sync {
+            return false;
+        }
+        let mut exprs: Vec<&Expr> = Vec::new();
+        match &s.kind {
+            StmtKind::Expr(e) | StmtKind::Expect(e) | StmtKind::Return(Some(e)) => exprs.push(e),
+            StmtKind::Assert { expr, .. } => exprs.push(expr),
+            StmtKind::Assign { target, value, .. } => {
+                exprs.push(target);
+                exprs.push(value);
+            }
+            StmtKind::VarDecl { value, .. } | StmtKind::Shared { value, .. } => exprs.push(value),
+            StmtKind::If { branches, .. } => exprs.extend(branches.iter().map(|(c, _)| c)),
+            StmtKind::For { iterable: e, .. } | StmtKind::While { cond: e, .. } | StmtKind::Repeat { count: e, .. } => {
+                exprs.push(e)
+            }
+            StmtKind::Match { subject, .. } => exprs.push(subject),
+            StmtKind::Spawn { call } => exprs.push(call),
+            StmtKind::Emit { args, .. } => exprs.extend(args.iter().map(|a| &a.value)),
+            StmtKind::Select { arms } => exprs.extend(arms.iter().filter_map(|a| a.channel.as_ref().or(a.after.as_ref()))),
+            _ => {}
+        }
+        if let StmtKind::Assign { .. } = &s.kind {
+            if let Some(a) = self.res.assigns.get(&s.id) {
+                if a.cands.iter().any(|(b, _)| self.res.bindings[*b].shared) {
+                    return true;
+                }
+            }
+        }
+        exprs.iter().any(|e| self.expr_uses_shared(e))
+    }
+
+    fn expr_uses_shared(&self, e: &Expr) -> bool {
+        if let ExprKind::Name(_) = &e.kind {
+            if let Some(NameRes::Bindings { cands, .. }) = self.res.names.get(&e.id) {
+                return cands.iter().any(|b| self.res.bindings[*b].shared);
+            }
+            return false;
+        }
+        let mut found = false;
+        let mut visit = |x: &Expr| found |= self.expr_uses_shared(x);
+        match &e.kind {
+            ExprKind::Call { func, args } => {
+                visit(func);
+                for a in args {
+                    visit(&a.value);
+                }
+            }
+            ExprKind::Propagate(x) => visit(x),
+            ExprKind::Coalesce { left, right } => {
+                visit(left);
+                visit(right);
+            }
+            ExprKind::Pipeline { source, steps } => {
+                visit(source);
+                for st in steps {
+                    for x in st.expr.iter().chain(st.columns.iter()) {
+                        visit(x);
+                    }
+                }
+            }
+            ExprKind::ParallelFor { iterable, .. } => visit(iterable),
+            ExprKind::Lambda { .. } => {}
+            _ => {
+                for c in crate::checker::children(e) {
+                    visit(c);
+                }
+            }
+        }
+        found
+    }
+
+    fn select_stmt(&mut self, s: &'a Stmt, arms: &'a [SelectArm]) -> GResult<()> {
+        let mut chans = Vec::new();
+        let mut limit = none();
+        for a in arms {
+            if let Some(c) = &a.channel {
+                chans.push(self.expr(c, false)?);
+            } else if let Some(x) = &a.after {
+                limit = self.expr(x, false)?;
+            }
+        }
+        let arr = self.values_array(&chans);
+        let out = self.alloca("%V");
+        let tl = self.tb(&limit);
+        let sp = self.span_id(s.span);
+        let idx = self.reg();
+        self.emit(&format!("{idx} = call i64 @nx_select(ptr {arr}, i64 {}, {tl}, ptr {out}, i32 {sp})", chans.len()));
+        self.check();
+        self.drop_all(&chans);
+        self.drop_val(&limit);
+        let value = self.load(&out);
+        let value = self.owned(value);
+        let end = self.label();
+        let mut k = 0;
+        for (i, a) in arms.iter().enumerate() {
+            let want = if a.channel.is_some() {
+                k += 1;
+                k - 1
+            } else {
+                chans.len()
+            };
+            let c = self.reg();
+            self.emit(&format!("{c} = icmp eq i64 {idx}, {want}"));
+            let yes = self.label();
+            let next = self.label();
+            self.cond_br(&c, &yes, &next);
+            self.place(&yes);
+            let scope = self.res.scope_of[&Node::SelectArm(s.id, i)];
+            self.enter_scope(scope);
+            if a.var.is_some() {
+                let b = self.res.decl[&Node::SelectArm(s.id, i)];
+                self.rc_inc(&value);
+                self.store_binding_raw(b, &value);
+            }
+            self.block(&a.body)?;
+            self.br(&end);
+            self.place(&next);
+        }
+        self.br(&end);
+        self.place(&end);
+        self.drop_val(&value);
+        Ok(())
     }
 
     fn builtin_value(&mut self, name: &str) -> Val {
@@ -3172,7 +3438,10 @@ impl<'a> Gen<'a> {
         }
         let mut own_args = Vec::new();
         for a in args {
-            let v = self.expr(&a.value, true)?;
+            let mut v = self.expr(&a.value, true)?;
+            if let Target::Place(p, ..) = &target {
+                v = self.into_shared(p, v);
+            }
             vals.push(v.clone());
             own_args.push(v);
             names.push(a.name.as_deref());
@@ -3505,6 +3774,9 @@ impl<'a> Gen<'a> {
     /// captured one, unless the task is the `parallel:` statement that
     /// computes it.
     fn task_write_check(&mut self, b: BindingId, name: &str, span: Span) {
+        if self.res.bindings[b].shared {
+            return;
+        }
         let frame = self.fs.last().unwrap().frame;
         if self.res.task_outputs.get(&frame).is_some_and(|o| o.contains(&b)) {
             return;
@@ -3598,6 +3870,13 @@ declare void @nx_destroy(ptr)
 declare %V @nx_parallel_for(i64, i64, i64, i64, i64, i64, i32)
 declare void @nx_parallel_block(ptr, i64, i32)
 declare void @nx_task_write(ptr, i64, i32)
+declare void @nx_spawn(i64, i64, ptr, ptr, i64, i32)
+declare i64 @nx_select(ptr, i64, i64, i64, ptr, i32)
+declare void @nx_shared_lock()
+declare void @nx_shared_unlock()
+declare %V @nx_shared_read(i64, i64)
+declare %V @nx_shared_store(i64, i64)
+declare void @nx_isolated_read(i64, i64, ptr, i64, i32, i32)
 declare void @nx_cell_release(ptr)
 declare void @nx_iter_free(ptr)
 declare void @nx_scratch_clear()

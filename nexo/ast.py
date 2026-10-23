@@ -235,6 +235,33 @@ class Use(Stmt):
     alias: str | None
 
 
+# nexo.sync (section 5)
+
+@dataclass
+class Spawn(Stmt):
+    call: "Call"
+
+
+@dataclass
+class SelectArm(Node):
+    var: str | None  # msg in `msg from input:`; None for `after`
+    channel: "Expr | None"
+    after: "Expr | None"
+    body: list[Stmt]
+
+
+@dataclass
+class Select(Stmt):
+    arms: list[SelectArm]
+
+
+@dataclass
+class SharedDecl(Stmt):
+    name: str
+    name_span: Span
+    value: "Expr"
+
+
 @dataclass
 class Emit(Stmt):
     call: Call

@@ -1,0 +1,5 @@
+use nexo.sync
+c = channel()
+print("before")
+x = c.receive()
+print("never")

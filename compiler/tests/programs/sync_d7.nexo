@@ -1,0 +1,4 @@
+use nexo.sync
+fn boom(x):
+    fail("worker failed with {x}")
+spawn boom(3)

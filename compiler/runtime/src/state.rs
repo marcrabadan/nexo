@@ -36,11 +36,14 @@ pub struct Tls {
     pub depth: u64,
     /// when this task started (see `cow::check_write`)
     pub stamp: u64,
+    /// 1 in a task started with `spawn`: it cannot read the program's
+    /// variables that others may change (see sync.rs)
+    pub isolated: u64,
 }
 
 thread_local! {
     static TLS: UnsafeCell<Tls> = const {
-        UnsafeCell::new(Tls { failing: 0, deadline_active: 0, pad: [0; 6], depth: 0, stamp: 0 })
+        UnsafeCell::new(Tls { failing: 0, deadline_active: 0, pad: [0; 6], depth: 0, stamp: 0, isolated: 0 })
     };
     static TASK: RefCell<TaskState> = RefCell::new(TaskState::default());
 }
@@ -152,6 +155,10 @@ pub fn stamp() -> u64 {
 
 pub fn set_stamp(s: u64) {
     t().stamp = s;
+}
+
+pub fn set_isolated(on: bool) {
+    t().isolated = on as u64;
 }
 
 pub fn set_deadline_active(on: bool) {

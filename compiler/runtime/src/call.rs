@@ -104,6 +104,10 @@ pub fn call(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
         Some(Obj::BuiltinMethod(obj, name)) => crate::stdlib::call_method(obj.v(), name, args, names, span),
         Some(Obj::Builtin(id)) => crate::stdlib::call(*id, args, names, span),
         Some(Obj::Type(TypeRef::Record(rt))) => construct(rt, args, names, span),
+        Some(Obj::ChannelType(elem)) => {
+            let bound = bind_args("channel", &[("size", true)], args, names, span)?;
+            crate::sync::new_channel(elem.clone(), bound[0], span)
+        }
         Some(Obj::Variant(var)) if !var.params.is_empty() => construct_variant(var, args, names, span),
         Some(Obj::Type(TypeRef::Builtin(name))) => match *name {
             "decimal" => crate::stdlib::call(crate::stdlib::B_DECIMAL, args, names, span),
@@ -165,7 +169,7 @@ pub fn construct(rt: &'static crate::types::RecordType, args: &[V], names: &[Opt
         let v = conform(v.v(), f.ty.expect("record fields are typed"), &f.name, span)?;
         values.push(field_value(f, bind(v.v())?));
     }
-    Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(values), birth: crate::state::stamp() })))
+    Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(values), birth: std::cell::Cell::new(crate::state::stamp()) })))
 }
 
 pub fn construct_variant(

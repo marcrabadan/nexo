@@ -357,7 +357,8 @@ newline, and returns `""` at the end of the input.
 
 ## Outside phase 0
 
-**D65. Unavailable features fail loudly.** `use`, module blocks (`ai:`,
+**D65. Unavailable features fail loudly.** `use` (except `use nexo.sync`
+from phase 2 on, D82), module blocks (`ai:`,
 `infra`...), annotations, `key = value` settings inside a type, `when`,
 `every` and `lifecycle` are parsed and then reported as "not available in
 phase 0" instead of being silently ignored.
@@ -510,3 +511,39 @@ and change only what is theirs:
 Phase 0 applies the same rules (its tasks run one after the other), so
 both give the same messages; a few are found by phase 0 only when the line
 runs.
+
+**D82. `nexo.sync`.** Section 5 shows `spawn`, `channel`, `select` and
+`shared` without defining them; the smallest consistent set is:
+- `use nexo.sync` makes them available: `spawn`, `select` and `shared`
+  start statements and `channel` is a name. Without it they are ordinary
+  names (they are contextual words, section 27).
+- `channel(size: n)` or `channel[T](size: n)` makes a channel; `size` is
+  how many values can wait without a receiver, 0 by default (each send
+  waits until a task takes the value). `c.send(x)` (x must be a T),
+  `c.receive()` (none once the channel is closed and empty), `c.close()`,
+  and `for x in c:` (until it is closed and empty). Sending on a closed
+  channel is an error.
+- `spawn f(args)` runs the call in a new task. A spawned task works on
+  copies: its arguments and every value that travels through a channel
+  are copied, records included, so two tasks never share a record. It
+  cannot read variables of the program that others may change (a `var`,
+  or a list, map, set or record), only constants with values nobody can
+  change, functions, types and channels. An error nobody handles in a
+  spawned task ends the program, as at the top level.
+- The program ends when every spawned task has ended. When every task
+  waits on a channel (or the lock of `shared`) nobody can go on: the
+  program ends with a deadlock error, shown where the main program waits
+  (or else where the first spawned task does). Tasks of `parallel` that
+  wait on a channel are not counted.
+- `select:` has arms `name from channel:` and `after limit:`. It takes the
+  first channel (in order) that has a value; `after` runs when nothing
+  arrives within the limit, or at once if every channel is closed; without
+  `after`, a select whose channels are all closed does nothing.
+- `shared name = value` declares a variable every task can read and
+  change. Every statement that uses it holds one lock for all shared
+  variables (it can be taken again by the same task), values are copied in
+  and out (records included), and changes through it (`cache[k] = v`)
+  happen under the lock.
+A spawned task that reads a top-level constant at the moment the main
+program first assigns it is not detected; define constants before
+starting tasks.

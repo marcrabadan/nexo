@@ -449,6 +449,8 @@ def type_name(value: Any) -> str:
         return "map"
     if isinstance(value, NexoSet):
         return "set"
+    if type(value).__name__ in ("Channel", "ChannelMaker"):
+        return "channel"
     if isinstance(value, Range):
         return "range"
     if isinstance(value, Lazy):
@@ -547,6 +549,8 @@ def repr_value(value: Any) -> str:
         return value.code
     if isinstance(value, Symbol):
         return value.name
+    if type(value).__name__ in ("Channel", "ChannelMaker"):
+        return "channel"
     return str(value)
 
 

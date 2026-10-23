@@ -1360,6 +1360,20 @@ impl<'a> TypeChecker<'a> {
                 }
             }
             StmtKind::Parallel(body) => self.block(body, func)?,
+            StmtKind::Spawn { call } => {
+                self.ty(call)?;
+            }
+            StmtKind::Shared { value, .. } => {
+                self.ty(value)?;
+            }
+            StmtKind::Select { arms } => {
+                for a in arms {
+                    if let Some(c) = a.channel.as_ref().or(a.after.as_ref()) {
+                        self.ty(c)?;
+                    }
+                    self.block(&a.body, func)?;
+                }
+            }
             StmtKind::Test { body, .. } => self.block(body, None)?,
             StmtKind::Event { body, .. } => self.block(body, None)?,
             _ => {}

@@ -634,7 +634,7 @@ fn as_type(value: V, t: Target, span: u32) -> R<Val> {
                     return Err(invalid(span, "detail.missing_field", &[("field", f.name.clone()), ("type", rt.name.clone())]));
                 }
             }
-            Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(fields), birth: crate::state::stamp() })))
+            Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(fields), birth: std::cell::Cell::new(crate::state::stamp()) })))
         }
         Target::List(param) => {
             let Some(Obj::List(items)) = value.get() else {
