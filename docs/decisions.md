@@ -365,3 +365,58 @@ phase 0" instead of being silently ignored.
 **D66. `on` and `emit`.** They are core reserved words with a clear
 meaning (section 4), so phase 0 implements them: `emit` calls each `on`
 handler at once, in the order they were declared.
+
+## Phase 1: the compiler (section 25)
+
+**D67. Unknown names are compile errors.** A name that no scope declares and
+that is not a builtin is reported before the program runs, with the same
+"Did you mean...?" message. Phase 0 found it only when the line ran. A name
+that exists but is not assigned yet when it is read (a function called
+before its `fn` line, D29) is still an error at run time.
+
+**D68. Static type checking is gradual.** Types are optional and inferred
+(section 2), so the compiler infers a type only when it is certain:
+literals, declared types, functions defined once, records, variants and
+operators on known types. A mistake that would certainly happen when the
+line runs (mixing float and decimal, money in two currencies, a wrong
+argument, a missing field, a condition that is not bool, a literal of the
+wrong type...) is reported before the program runs with the runtime's
+message. When the wrong value is not a literal its text is unknown, so the
+messages `type_mismatch_static` and `return_mismatch_static` say "a value
+of type T" instead. Everything else is checked when the value is stored
+(D33).
+
+**D69. How Nexo is compiled.** The compiler (Rust, `compiler/nexoc`) emits
+LLVM IR as text and clang compiles it and links it with the runtime
+library (`compiler/runtime`, a Rust static library). Values are two words
+(tag and bits); ints, comparisons and direct calls to functions defined
+once are native code, everything else calls the runtime. Errors travel as
+in phase 0: after each call that can fail the code checks a flag and jumps
+to the nearest `try`. `nexo file.nexo` builds with `-O1` and runs;
+`nexo build --release` uses `-O2`.
+
+**D70. Memory in phase 1.** Heap values are never freed. The memory model
+of section 7 (ownership, copy-on-write, reference counting) is phase 2.
+
+**D71. Module features are compile errors.** `use`, module blocks,
+annotations, type settings, `when`, `every` and `lifecycle` (D65) cannot be
+compiled, so the compiler rejects them instead of failing when the line
+runs. The message now says "phase 1".
+
+**D72. No REPL in the compiler.** The REPL is part of phase 3 (tooling); in
+phase 1 `nexo` with no arguments shows the usage. The phase 0 interpreter
+keeps its REPL.
+
+**D73. Nested calls.** A compiled program allows 10,000 nested calls (the
+limit phase 0 set for Python) and runs on a 1 GB stack; beyond that it
+ends with "too many nested calls", as phase 0 did. Phase 0 actually failed
+much earlier (about 1,000 Nexo calls) because of Python's own frames.
+
+**D74. Checked when compiling.** An unnamed argument after a named one,
+an unknown type name, a trait that does not exist or a missing trait
+method, and `else e is X` with an unknown X are compile errors (phase 0
+found them when the line ran).
+
+**D75. Language of messages.** `--lang` is fixed when the program is
+compiled: a native program reports its errors in the language it was
+compiled with.

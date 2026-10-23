@@ -9,3 +9,10 @@ print(nmae)
 # (phase 0 reported them when the line ran, after the earlier output)
 reported before the program runs (D68)
 set_status("open")
+
+# D71: module features are compile errors and the message says phase 1
+use nexo.db
+model = "x"
+@cache(10m)
+every 5m:
+purpose = "billing"

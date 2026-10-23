@@ -1,7 +1,12 @@
-# Nexo — phase 0 prototype
+# Nexo — phases 0 and 1
 
-A Python 3.12 tree-walking interpreter for the core of Nexo, a new
-programming language. This is phase 0 of section 25 of the specification.
+The core of Nexo, a new programming language, in two implementations
+(section 25 of the specification):
+
+- phase 0: a Python 3.12 tree-walking interpreter (`nexo/`);
+- phase 1: a compiler written in Rust that generates native code with
+  LLVM (`compiler/`). Both must give the same output on every program,
+  except for the differences recorded in docs/decisions.md (D67-D75).
 
 ## Source of truth
 
@@ -28,6 +33,14 @@ nexo/
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text)
   unit/           pytest unit tests per layer
+compiler/
+  diag/           es/en message catalog and the section 14 renderer
+  nexoc/          the `nexo` driver: lexer, parser, checker, resolve
+                  (scopes, closures), typecheck (gradual), codegen (LLVM IR)
+  runtime/        static library linked into every compiled program
+  tests/programs/ extra programs for the differential test
+  scripts/        conformance.py, differential.py
+  bench/          benchmarks (run.sh)
 examples/         real programs; NAME.expected (and NAME.stdin) checked by
                   tests/test_examples.py
 docs/decisions.md every ambiguity found and the choice made
@@ -44,6 +57,19 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/nexo --lang en file.nexo
 ```
 
+Phase 1 (needs cargo and clang):
+
+```
+cd compiler && cargo build && cargo test
+compiler/target/debug/nexo file.nexo          # compile and run
+compiler/target/debug/nexo build --release file.nexo -o app
+python3 compiler/scripts/conformance.py       # conformance + examples
+.venv/bin/python compiler/scripts/differential.py  # same output as phase 0
+```
+
+`tests/test_compiler.py` runs the conformance suite and the examples with
+the compiled binaries inside pytest (skipped without cargo/clang).
+
 Conformance pairs: `tests/conformance/NAME.nexo` runs from the directory
 `tests/conformance/` and its stdout (plus the rendered error, if the program
 fails) must equal `NAME.expected` exactly. Messages in `.expected` files are
@@ -51,7 +77,7 @@ in Spanish (the default); a `NAME.args` file holds extra CLI arguments
 placed before the file name, such as `--lang en` (see `tests/conformance/en/`)
 or `test`.
 
-## Scope (phase 0)
+## Scope (phases 0 and 1)
 
 Included: lexer/parser per section 24; constants and `var`; `type`
 (records, unions, enums with data, methods); `trait`; `fn` with named and
@@ -69,6 +95,11 @@ stream, ml, policy, native performance.
 
 ## Rules
 
+- Phase 1: every change keeps the conformance suite at 100% and the
+  differential test without unexpected differences; a new intended
+  difference goes to compiler/tests/differences.txt and docs/decisions.md.
+- Messages exist in nexo/errors.py and compiler/diag/src/catalog.rs; keep
+  them in sync.
 - Build in layers (lexer, parser, interpreter, stdlib); each layer has
   passing tests before moving on.
 - Conformance tests come from the examples in the specification.
