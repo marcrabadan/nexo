@@ -1,0 +1,4 @@
+Error en app.nexo, línea 4:
+  print(nmae)
+        ^^^^
+"nmae" no existe. ¿Quisiste decir "name"?

@@ -1,0 +1,9 @@
+fn divide(a, b):
+    if b == 0:
+        fail("Cannot divide by zero")
+    return a / b
+
+fn half(x):
+    return divide(x, 2)
+
+print(half(10))

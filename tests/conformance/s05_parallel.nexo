@@ -1,0 +1,23 @@
+fn square(n):
+    return n * n
+
+results = parallel for n in [1, 2, 3, 4], max: 2:
+    return square(n)
+print(results)
+
+parallel:
+    a = square(3)
+    b = square(4)
+print(a + b)
+
+fn check(n):
+    if n == 3:
+        fail("bad item {n}")
+    return n
+
+try:
+    r = parallel for n in [1, 2, 3, 4]:
+        return check(n)
+    print(r)
+else e:
+    print("failed: {e.message}")

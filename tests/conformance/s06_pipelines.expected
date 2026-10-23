@@ -1,0 +1,4 @@
+[{"region": "north", "amount": 2700}, {"region": "east", "amount": 2000}, {"region": "south", "amount": 1100}]
+[6, 8, 4]
+2024-01-01 ERROR disk full
+2024-01-02 ERROR timeout

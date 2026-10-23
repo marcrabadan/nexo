@@ -1,0 +1,11 @@
+date,region,product,amount
+2026-09-01,north,laptop,1200
+2026-09-01,south,mouse,25.5
+2026-09-02,north,monitor,340
+2026-09-03,east,laptop,1150
+2026-09-03,south,laptop,1199.5
+2026-09-04,west,keyboard,80
+2026-09-05,east,monitor,310
+2026-09-05,north,mouse,24.5
+2026-09-06,west,laptop,1250
+2026-09-07,south,refund,-25.5

@@ -1,0 +1,28 @@
+## Inventory check: finds products below their minimum stock, prices the
+## restock order exactly and saves it as JSON.
+
+type Order:
+    sku: str
+    name: str
+    quantity: int
+    cost: money
+
+items = read("data/inventory.csv")
+low = items |> where stock < min_stock |> sort by stock
+
+print("Products below minimum: {low |> count} of {items |> count}")
+
+var orders = []
+for item in low:
+    quantity = item["min_stock"] - item["stock"]
+    unit_cost = 1.00 EUR * decimal(item["unit_cost"])
+    orders.add(Order(item["sku"], item["name"], quantity, unit_cost * quantity))
+
+for order in orders:
+    print("  {order.name}: order {order.quantity} for {order.cost}")
+
+total = orders |> map cost |> sum
+print("Restock cost: {total}")
+
+orders |> save("restock.out.json")
+print(read("restock.out.json"))

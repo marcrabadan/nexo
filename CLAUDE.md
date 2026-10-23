@@ -18,16 +18,18 @@ nexo/
   lexer.py        tokens, INDENT/DEDENT, unit literals, string interpolation
   parser.py       recursive descent, follows the EBNF of section 24
   ast.py          typed AST (dataclasses)
-  interpreter.py  tree-walking evaluator
+  interpreter.py  tree-walking evaluator (scopes, calls, pipelines, contracts)
   checker.py      static pre-pass ("compile errors": ignored T!, misplaced ?)
-  types.py        runtime values: int/float/decimal/money, records, enums, errors
+  numbers.py      section 17 arithmetic: int overflow, float/decimal, money, units
+  types.py        runtime values: decimal/money/units, records, enums, errors
   errors.py       error type + section 14 renderer + i18n (es default, en)
   stdlib/         builtins, io, data (JSON/CSV)
   cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text)
   unit/           pytest unit tests per layer
-examples/         real programs, each smoke-tested
+examples/         real programs; NAME.expected (and NAME.stdin) checked by
+                  tests/test_examples.py
 docs/decisions.md every ambiguity found and the choice made
 ```
 
@@ -45,7 +47,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 Conformance pairs: `tests/conformance/NAME.nexo` runs from the directory
 `tests/conformance/` and its stdout (plus the rendered error, if the program
 fails) must equal `NAME.expected` exactly. Messages in `.expected` files are
-in Spanish (the default) unless the file starts with `# lang: en`.
+in Spanish (the default); a `NAME.args` file holds extra CLI arguments
+placed before the file name, such as `--lang en` (see `tests/conformance/en/`)
+or `test`.
 
 ## Scope (phase 0)
 
@@ -72,4 +76,8 @@ stream, ml, policy, native performance.
   highlighted snippet, what went wrong, how to fix it, "Did you mean...?".
   Spanish by default, English with `--lang en`. Every new message needs
   both translations in `nexo/errors.py`.
+- Unhandled errors and compile errors are two different things: error
+  values (`NexoFailure`) are caught by `try`; diagnostics (`NexoError`)
+  never are. See docs/decisions.md D17-D24.
+- Record every new ambiguity in docs/decisions.md (next number in sequence).
 - One small commit per working step. pytest must stay at 100%.

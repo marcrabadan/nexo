@@ -1,0 +1,2 @@
+text = read("app.json")?
+print(text)

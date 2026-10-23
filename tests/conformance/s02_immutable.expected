@@ -1,0 +1,4 @@
+Error en s02_immutable.nexo, línea 2:
+  name = "Eva"
+  ^^^^
+"name" es inmutable y no se puede cambiar. Decláralo con var name = ... si necesitas cambiarlo.

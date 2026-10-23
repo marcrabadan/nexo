@@ -1,0 +1,55 @@
+## To-do list: an enum for priorities, records, events with on/emit and
+## tests that run with `nexo test examples/todo.nexo`.
+
+type Priority:
+    Low
+    Medium
+    High
+
+type Task:
+    title: str
+    priority: Priority
+    done: bool = false
+
+var tasks = []
+
+fn add_task(title: str, priority: Priority):
+    tasks.add(Task(title, priority))
+
+fn weight(p: Priority) -> int:
+    match p:
+        High: return 3
+        Medium: return 2
+        Low: return 1
+
+on task_done(task):
+    print("Done: {task.title}")
+
+fn complete(title: str) -> bool:
+    for t in tasks:
+        if t.title == title and not t.done:
+            t.done = true
+            emit task_done(t)
+            return true
+    return false
+
+add_task("Water the plants", Low)
+add_task("Send the invoice", High)
+add_task("Book the dentist", Medium)
+add_task("Fix the bike", Medium)
+
+complete("Book the dentist")
+print("Completed again? {complete("Book the dentist")}")
+
+pending = tasks |> where not done |> sort by weight(priority) desc
+print("Pending:")
+for t in pending:
+    print("  [{t.priority}] {t.title}")
+
+test "completing a task":
+    add_task("Test task", Low)
+    assert complete("Test task")
+    assert not complete("Test task")
+
+test "priorities have weights":
+    assert weight(High) > weight(Low)

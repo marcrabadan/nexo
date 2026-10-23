@@ -1,0 +1,22 @@
+price: decimal = 19.99
+total = price * 3                      # 59.97, exact
+print(total)
+
+invoice: money = 120.00 EUR
+vat = invoice * 21%                    # 25.20 EUR
+print(vat)
+print(invoice + vat)
+parts = split(100.00 EUR, 3)           # [33.34 EUR, 33.33 EUR, 33.33 EUR]
+print(parts)
+
+print(0.1 + 0.2)                       # 0.30000000000000004 (float)
+x: decimal = 0.1
+print(x + 0.2)                         # 0.3 (decimal)
+
+print(7 / 2)
+print(7 // 2)
+print(round(2.5))
+print(round(decimal(2.675), 2))
+print(round(decimal(2.665), 2, mode: half_up))
+print(1_000 * 3)
+print(1e-3)

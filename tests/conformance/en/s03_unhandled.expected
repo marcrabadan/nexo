@@ -1,0 +1,5 @@
+4.0
+Error in s03_unhandled.nexo, line 3:
+  fail("Cannot divide by zero")
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Unhandled error: Cannot divide by zero. Handle it with try and else e.

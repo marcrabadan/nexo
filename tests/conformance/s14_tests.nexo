@@ -1,0 +1,14 @@
+fn add(a, b):
+    return a + b
+
+pub fn load_config(path: str) -> str!:
+    return read(path)?
+
+test "basic sum":
+    assert add(2, 3) == 5
+
+test "fails with an invalid path":
+    assert load_config("missing.json") fails
+
+test "broken":
+    assert add(2, 2) == 5

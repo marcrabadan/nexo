@@ -1,0 +1,4 @@
+name = "Ana"
+age = 30
+greeting = "Hello"
+print(nmae)

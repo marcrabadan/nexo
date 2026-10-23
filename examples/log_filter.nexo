@@ -1,0 +1,23 @@
+## Log filter: reads a log lazily line by line and summarises the errors.
+
+fn component_of(line: str) -> str:
+    parts = line.split(" ")
+    return parts[3].replace(":", "")
+
+print("First three errors:")
+for line in read_lines("data/app.log") |> where "ERROR" in it |> take 3:
+    print("  {line}")
+
+errors_by_component = read_lines("data/app.log")
+  |> where "ERROR" in it
+  |> map {"component": component_of(it)}
+  |> group by component
+  |> count
+  |> sort by count desc
+
+print("Errors per component:")
+for row in errors_by_component:
+    print("  {row["component"]}: {row["count"]}")
+
+warnings = read_lines("data/app.log") |> where "WARN" in it |> count
+print("Warnings: {warnings}")

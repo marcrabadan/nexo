@@ -1,0 +1,5 @@
+2024-01-01 INFO start
+2024-01-01 ERROR disk full
+2024-01-02 INFO retry
+2024-01-02 ERROR timeout
+2024-01-03 ERROR again

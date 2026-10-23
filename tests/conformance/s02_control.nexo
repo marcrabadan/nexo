@@ -1,0 +1,46 @@
+age = 15
+fruits = ["pear", "grape"]
+var counter = 0
+
+if age >= 18:
+    print("Adult")
+elif age >= 13:
+    print("Teenager")
+else:
+    print("Child")
+
+for fruit in fruits:
+    print(fruit)
+
+for i in 1..10:          # inclusive range
+    print(i)
+
+repeat 3:
+    print("Hello")
+
+while counter < 5:
+    counter += 1
+print(counter)
+
+type Event:
+    Click(x: int, y: int)
+    Key(code: str)
+    Quit
+
+fn close():
+    print("closing")
+
+fn handle(event):
+    match event:
+        Click(x, y) if x > 100: print("right")
+        Key("q") or Quit:       close()
+        _:                      pass
+
+handle(Click(150, 10))
+handle(Click(50, 10))
+handle(Key("q"))
+handle(Quit)
+handle(Key("x"))
+
+list = [-1, 2, 3]
+print([n * 2 for n in list if n > 0])

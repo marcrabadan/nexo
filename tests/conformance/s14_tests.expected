@@ -1,0 +1,8 @@
+✓ basic sum
+✓ fails with an invalid path
+✗ broken
+Error en s14_tests.nexo, línea 14:
+  assert add(2, 2) == 5
+         ^^^^^^^^^^^^^^
+La aserción no se cumple: add(2, 2) == 5 (4 == 5). Corrige el código o el valor esperado.
+3 pruebas: 2 correctas, 1 fallida

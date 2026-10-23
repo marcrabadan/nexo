@@ -1,0 +1,4 @@
+Error en s02_none_error.nexo, línea 1:
+  age: int = none
+             ^^^^
+"age" es de tipo int y no puede ser none. Si puede faltar, decláralo como int?.

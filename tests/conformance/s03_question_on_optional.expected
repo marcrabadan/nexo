@@ -1,0 +1,4 @@
+Error en s03_question_on_optional.nexo, línea 2:
+  return email?
+         ^^^^^^
+? solo sirve para valores que pueden fallar (T!). Para valores que pueden faltar (T?) usa ?? con un valor por defecto.

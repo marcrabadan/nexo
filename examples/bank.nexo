@@ -1,0 +1,50 @@
+## Bank accounts with contracts: expect, ensure and old() guard every
+## operation, and a broken contract is an error that can be handled.
+
+type Account:
+    owner: str
+    balance: money
+
+fn deposit(account: Account, amount: money):
+    expect amount > 0.00 EUR
+    ensure account.balance == old(account.balance) + amount
+
+    account.balance += amount
+
+fn transfer(source: Account, target: Account, amount: money):
+    expect amount > 0.00 EUR
+    expect source.balance >= amount
+    ensure source.balance + target.balance == old(source.balance + target.balance)
+
+    source.balance -= amount
+    target.balance += amount
+
+ana = Account(owner: "Ana", balance: 100.00 EUR)
+luis = Account(owner: "Luis", balance: 20.00 EUR)
+
+deposit(ana, 50.00 EUR)
+transfer(ana, luis, 70.00 EUR)
+print("{ana.owner}: {ana.balance}")
+print("{luis.owner}: {luis.balance}")
+
+try:
+    transfer(luis, ana, 500.00 EUR)
+else e is ContractBroken:
+    print("Rejected: {e.message}")
+
+try:
+    deposit(ana, -5.00 EUR)
+else e is ContractBroken:
+    print("Rejected: {e.message}")
+
+test "a transfer keeps the total":
+    a = Account(owner: "A", balance: 10.00 EUR)
+    b = Account(owner: "B", balance: 0.00 EUR)
+    transfer(a, b, 4.00 EUR)
+    assert a.balance == 6.00 EUR
+    assert b.balance == 4.00 EUR
+
+test "cannot transfer more than the balance":
+    a = Account(owner: "A", balance: 1.00 EUR)
+    b = Account(owner: "B", balance: 0.00 EUR)
+    assert transfer(a, b, 2.00 EUR) fails

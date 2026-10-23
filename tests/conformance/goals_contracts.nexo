@@ -1,0 +1,22 @@
+type Account:
+    owner: str
+    balance: float
+
+fn transfer(source: Account, target: Account, amount: float):
+    expect amount > 0
+    expect source.balance >= amount
+    ensure source.balance + target.balance == old(source.balance + target.balance)
+
+    source.balance -= amount
+    target.balance += amount
+
+a = Account(owner: "Ana", balance: 100.0)
+b = Account(owner: "Luis", balance: 50.0)
+transfer(a, b, 30.0)
+print(a.balance)
+print(b.balance)
+
+try:
+    transfer(a, b, 500.0)
+else e is ContractBroken:
+    print(e.message)

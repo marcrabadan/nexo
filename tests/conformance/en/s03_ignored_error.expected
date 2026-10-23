@@ -1,0 +1,4 @@
+Error in s03_ignored_error.nexo, line 7:
+  return divide(x, 2)
+         ^^^^^^^^^^^^
+The call to "divide" can fail and its error is ignored. Add ? at the end to pass it to the caller, or handle it with try and else e.

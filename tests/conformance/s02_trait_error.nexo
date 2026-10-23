@@ -1,0 +1,5 @@
+trait Shape:
+    fn area(self) -> float
+
+type Square is Shape:
+    side: float

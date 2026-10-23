@@ -1,0 +1,10 @@
+Rows read: 10
+Sales per region:
+  north: 1564.5 EUR
+  east: 1460.0 EUR
+  west: 1330.0 EUR
+  south: 1225.0 EUR
+Best region: north
+Laptops sold: 4, average price 1199.88 EUR
+Refunds: 1
+Saved sales_summary.out.csv

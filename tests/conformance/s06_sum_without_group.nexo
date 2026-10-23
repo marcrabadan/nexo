@@ -1,0 +1,2 @@
+sales = read("sales.csv")
+total = sales |> sum amount

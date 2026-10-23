@@ -1,0 +1,10 @@
+fn find(names, target) -> str?:
+    for n in names:
+        if n == target:
+            return n
+    return none
+
+print(find(["a", "b"], "b") ?? "missing")
+print(find(["a", "b"], "z") ?? "missing")
+rates = {"ES": 21}
+print(rates["FR"] ?? 20)

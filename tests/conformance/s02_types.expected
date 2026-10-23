@@ -1,0 +1,8 @@
+true
+User(name: "Ana", age: 30, email: none)
+active
+12.566370614359172
+true
+Click(x: 150, y: 20)
+Key(code: "q")
+Quit

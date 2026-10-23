@@ -1,0 +1,28 @@
+## Sales report: totals per region from a CSV file.
+## Shows a pipeline with where, group by, sum, sort by, take and save.
+
+sales = read("data/sales.csv")
+
+print("Rows read: {sales |> count}")
+
+by_region = sales
+  |> where amount > 0
+  |> group by region
+  |> sum amount
+  |> sort by amount desc
+
+print("Sales per region:")
+for row in by_region:
+    print("  {row["region"]}: {row["amount"]} EUR")
+
+best = by_region |> take 1
+print("Best region: {best[0]["region"]}")
+
+laptops = sales |> where product == "laptop" |> map amount
+print("Laptops sold: {len(laptops)}, average price {round(laptops |> avg, 2)} EUR")
+
+refunds = sales |> where amount < 0 |> count
+print("Refunds: {refunds}")
+
+by_region |> save("sales_summary.out.csv")
+print("Saved sales_summary.out.csv")
