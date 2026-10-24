@@ -1,0 +1,11 @@
+use nexo.sync
+
+var seen = []
+
+fn worker(c):
+    for x in c:
+        seen.add(x)
+
+c = channel()
+spawn worker(c)
+c.send(1)

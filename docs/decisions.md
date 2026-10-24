@@ -162,9 +162,8 @@ shadowed: section 2 uses `list` as a variable.
 
 **D27. What immutable means.** `x = 1` makes the name immutable, not the
 value: the `transfer` example in "Goals and guarantees" changes
-`source.balance` through an immutable parameter. Records and collections
-are shared by reference in phase 0; the memory model of section 7
-(copy-on-write) belongs to phase 2.
+`source.balance` through an immutable parameter. Records are shared by
+reference; collections are values from phase 2 on (D78).
 
 **D28. Conditions must be bool.** `if 1:` is an error. There is no
 "truthiness" (rule 3: understandable without experience).
@@ -284,8 +283,9 @@ function is called with the element (`each print`, `map double`).
 
 ## Concurrency (section 5)
 
-**D52. `parallel` runs sequentially in phase 0**, as the prompt allows,
-keeping the same observable semantics: `parallel for` returns the results
+**D52. `parallel` runs sequentially in phase 0** (phase 1 runs it on
+threads from phase 2 on, D80), as the prompt allows, keeping the same
+observable semantics: `parallel for` returns the results
 in input order, and the first failing task stops the remaining ones and
 its error propagates. `max:` is validated (an int of at least 1) but has
 no effect. Inside a `parallel for` body, `return` gives the value of that
@@ -357,7 +357,8 @@ newline, and returns `""` at the end of the input.
 
 ## Outside phase 0
 
-**D65. Unavailable features fail loudly.** `use`, module blocks (`ai:`,
+**D65. Unavailable features fail loudly.** `use` (except `use nexo.sync`
+from phase 2 on, D82), module blocks (`ai:`,
 `infra`...), annotations, `key = value` settings inside a type, `when`,
 `every` and `lifecycle` are parsed and then reported as "not available in
 phase 0" instead of being silently ignored.
@@ -396,7 +397,8 @@ to the nearest `try`. `nexo file.nexo` builds with `-O1` and runs;
 `nexo build --release` uses `-O2`.
 
 **D70. Memory in phase 1.** Heap values are never freed. The memory model
-of section 7 (ownership, copy-on-write, reference counting) is phase 2.
+of section 7 (ownership, copy-on-write, reference counting) is phase 2
+(D76).
 
 **D71. Module features are compile errors.** `use`, module blocks,
 annotations, type settings, `when`, `every` and `lifecycle` (D65) cannot be
@@ -420,3 +422,180 @@ found them when the line ran).
 **D75. Language of messages.** `--lang` is fixed when the program is
 compiled: a native program reports its errors in the language it was
 compiled with.
+
+## Phase 2: memory and concurrency (section 25)
+
+**D76. Reference counting everywhere.** Section 7 allows reference counting
+"wherever the compiler cannot prove a single owner". Phase 2 counts the
+references of every heap value (texts, collections, records, functions,
+captured variables) and frees a value when its last owner lets it go; the
+count is atomic so values can be read by several tasks at once (D80). Each
+function owns the values of its variables and releases them when it ends,
+also when it ends with an error. Proving single owners (rule 3) is an
+optimisation left for later; it does not change what a program does.
+Constants of the program (literal texts and units, types, variants) are
+never freed. `NEXO_LEAKCHECK=1` makes a compiled program release
+everything at the end and report the values that were not freed; the
+conformance suite, the examples and the differential programs run with it
+and must leave nothing ("no leaks in the test suite", section 25).
+
+**D77. A function that calls itself does not capture itself.** A nested
+function that calls itself by name would hold a reference to the cell
+that holds it: a cycle that is never freed. A call of a function defined
+once to its own name uses the function itself instead. Two nested
+functions that call each other still form a cycle and are freed only when
+the program ends.
+
+**D78. Collections are values; records are shared.** Section 7 says
+collections are "borrowed by default" and copied when "modified after
+being shared", and that small `type` values "are copied". Copying is only
+invisible for values nobody changes, and the `transfer` example (Goals and
+guarantees) changes the records it receives, and rule 4 speaks of
+reference cycles between `type` values. So: lists, maps and sets behave as
+values. `b = a`, passing `a` to a function, storing it in a field or a
+list, all give a value that changing `b` does not affect; the copy is made
+only when one of them is changed while the other still holds it. Records
+are shared: `q = p; q.x = 2` changes `p` (D27); a list of records copied
+on write still holds the same records. Texts never change. A collection
+is changed through a place: a variable, a field, an element
+(`xs.add(x)`, `m[k] = v`, `order.items.add(x)`, `grid[0][1] = 5`); the
+change goes to that place only. A loop over a collection sees the value it
+started with, even if the body changes the variable. `xs.add(xs)` adds the
+list as it was. Changing something that is not a place (`f().add(1)`)
+changes a copy nobody sees. Phase 0 keeps the same rules by counting the
+places that hold a collection (one, or more than one).
+
+**D79. `weak` fields and reference cycles.** Rule 4 makes "a reference
+cycle between `type` values" a compile error unless a field is `weak`,
+but its own example (`Node` with `children: list[Node]`) refers to itself
+and must compile. The compiler cannot know which references point "back",
+so the rule is about types: a type that refers to itself through its
+fields (a chain, a tree) is allowed; two or more types that refer to each
+other through fields that are not `weak` are an error, reported at the
+field that points back to the type defined first, with the fix
+`field: weak T?`. `weak` is only allowed at the top of a field's type
+(`parent: weak Node?`), the target must be a record type, and the field
+must be optional: once the target is freed the field reads `none`. A
+weak field does not keep its target alive; it is printed as `Node(...)`
+(only its type, so a parent-child pair does not print forever) and saved
+to JSON and CSV as none. Copies of records (`old()`) keep the weak
+reference. A cycle made at run time through a type that refers to itself
+(`a.next = a`) is not detected and is freed only when the program ends.
+
+**D80. `parallel` on threads.** In phase 1 the tasks of `parallel for` (one
+per element) and of `parallel:` (one per statement) run on up to one
+thread per processor, or `max:`. A program sees the same as running them
+one after the other in order (D52): results keep the input order; what a
+task prints is written when the block ends, in task order; the error of
+the first failing task (in order) propagates and the output and results of
+later tasks are dropped; tasks not started yet when one fails are not
+run. A task that is already running when an earlier one fails finishes
+(it is not interrupted), so only its side effects outside the program
+(writing files) can differ from phase 0. A `try within` limit applies
+inside the tasks too.
+
+**D81. What tasks can share.** Section 5 promises "no data races": the
+compiler rejects mutable data shared between tasks. Tasks read anything,
+and change only what is theirs:
+- A `parallel for` task cannot change (assign, or change a collection
+  through) a variable of outside the task; the compiler reports it when
+  the task's own code does it, and the program stops with the same message
+  when a function called by the task does it.
+- A task cannot change a record created before it started (it may be
+  read by the other tasks); records it creates are its own, and they can
+  be changed freely once the block ends.
+- Each statement of `parallel:` is a task that computes the names it
+  assigns (they are visible after the block, D25). Another statement of the
+  same block cannot use or assign those names (compile errors), and
+  `return` is not allowed inside the block.
+Phase 0 applies the same rules (its tasks run one after the other), so
+both give the same messages; a few are found by phase 0 only when the line
+runs.
+
+**D82. `nexo.sync`.** Section 5 shows `spawn`, `channel`, `select` and
+`shared` without defining them; the smallest consistent set is:
+- `use nexo.sync` makes them available: `spawn`, `select` and `shared`
+  start statements and `channel` is a name. Without it they are ordinary
+  names (they are contextual words, section 27).
+- `channel(size: n)` or `channel[T](size: n)` makes a channel; `size` is
+  how many values can wait without a receiver, 0 by default (each send
+  waits until a task takes the value). `c.send(x)` (x must be a T),
+  `c.receive()` (none once the channel is closed and empty), `c.close()`,
+  and `for x in c:` (until it is closed and empty). Sending on a closed
+  channel is an error.
+- `spawn f(args)` runs the call in a new task. A spawned task works on
+  copies: its arguments and every value that travels through a channel
+  are copied, records included, so two tasks never share a record. It
+  cannot read variables of the program that others may change (a `var`,
+  or a list, map, set or record), only constants with values nobody can
+  change, functions, types and channels. An error nobody handles in a
+  spawned task ends the program, as at the top level.
+- The program ends when every spawned task has ended. When every task
+  waits on a channel (or the lock of `shared`) nobody can go on: the
+  program ends with a deadlock error, shown where the main program waits
+  (or else where the first spawned task does). Tasks of `parallel` that
+  wait on a channel are not counted.
+- `select:` has arms `name from channel:` and `after limit:`. It takes the
+  first channel (in order) that has a value; `after` runs when nothing
+  arrives within the limit, or at once if every channel is closed; without
+  `after`, a select whose channels are all closed does nothing.
+- `shared name = value` declares a variable every task can read and
+  change. Every statement that uses it holds one lock for all shared
+  variables (it can be taken again by the same task), values are copied in
+  and out (records included), and changes through it (`cache[k] = v`)
+  happen under the lock.
+A spawned task that reads a top-level constant at the moment the main
+program first assigns it is not detected; define constants before
+starting tasks.
+
+**D83. Contracts the compiler proves.** "A contract the compiler can
+prove costs nothing at runtime". Phase 2 proves the common case of the
+examples: a function whose body is straight-line integer arithmetic on its
+parameters and on the int fields of its record parameters (assignments
+and `+=`, `-=`, `*=` by a constant; a final `return`). It runs the body
+with symbolic values and proves an `ensure` that holds for every value on
+entry; since two record parameters of the same type may be the same
+record, it must hold in every case (the `transfer` example with ints is
+proven; `a.x += 1; b.x += 1` with `ensure a.x == old(a.x) + 1` is not).
+An `expect` is proven only when its condition is a constant. Proven
+contracts, and the `old()` copies only they use, are not compiled; the
+others are checked when the function runs (D53). Floats are never proven
+(their arithmetic is not exact). `nexo build --release --trust-ensure`
+also leaves out the unproven `ensure` checks and their `old()` copies;
+every `expect` stays. A proven `ensure` whose own evaluation would
+overflow an int is not evaluated, so that Overflow is not raised.
+A function whose `expect` or `ensure` may change something (it calls a
+function other than `old()`, or uses a pipeline or a lambda) has none of
+its contracts proven: the change would make the symbolic run wrong. As
+with any statement, a contract that reads a `shared` variable (D82),
+and the `old()` value taken for it, holds the lock while it is read.
+
+**D84. Fast paths of the compiled code.** The exit criterion of phase 2
+("benchmarks under 2× Rust") asks for code close to what the types allow;
+none of these changes what a program prints.
+- Values that are certainly ints (int literals, arithmetic on them,
+  `len`, variables assigned only ints, parameters declared `int`, calls to
+  a function defined once that returns `int`) skip the type checks of
+  arithmetic and comparisons.
+- A function defined once whose parameters (none optional or with a
+  default) and result are all `int` gets a second entry that takes the
+  numbers in registers; a direct call with certainly-int arguments uses it,
+  and the usual entry (calls through a value, other arguments) checks the
+  arguments and then calls it. It keeps its call depth (D73) in a
+  register and writes it to the thread state only before calling other
+  code; its caller puts its own depth back. The limit is the same.
+- The time limit of `try within` (D58) is still checked between
+  statements, but first through a count of the threads that have one, so
+  code with no limit anywhere only reads that count.
+- A call to a function defined once, from its own body (or a function
+  inside it), does not check that the function is defined (D29): it is.
+- `P(a, b)` with a record type defined once and one positional argument
+  per field checks the fields in the compiled code and builds the record
+  in one call; field accesses and method calls remember, at each place in
+  the code, where the last record type they saw keeps that member.
+- Map keys use a fast multiplicative hash instead of SipHash: maps keep
+  their insertion order, so the hash is never visible.
+- The Rust version of `bench/records` keeps its `Box` with
+  `std::hint::black_box`: rustc removes the allocation otherwise, and a
+  Nexo record is always a heap value (section 7), so without it the
+  comparison would measure nothing.

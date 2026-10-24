@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the conformance suite (tests/conformance) and the examples against the
 compiled `nexo` binary. Usage: conformance.py [--nexo=path] [-v] [filter]"""
+import os
 import shutil
 import subprocess
 import sys
@@ -18,7 +19,9 @@ flt = args[0] if args else ""
 
 
 def run(cmd, cwd, stdin=b""):
-    p = subprocess.run(cmd, cwd=cwd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120)
+    # compiled programs report the values they did not free (D76)
+    env = dict(os.environ, NEXO_LEAKCHECK="1")
+    p = subprocess.run(cmd, cwd=cwd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120, env=env)
     return p.returncode, p.stdout.decode("utf-8", "replace")
 
 

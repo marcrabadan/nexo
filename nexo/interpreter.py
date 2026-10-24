@@ -6,9 +6,11 @@ call is silently ignored. Diagnostics (`NexoError`) are never caught.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import itertools
 import sys
+import threading
 import time
 from decimal import Decimal
 from typing import Any
@@ -20,22 +22,43 @@ from .errors import NexoError, Span, suggest
 from .parser import parse, source_text
 from .types import (
     AliasType, Builtin, BuiltinType, Currency, EnumType, ErrorKind, ErrorValue, Function,
-    INT_MIN, Lazy, LambdaFn, LitFloat, Money, NexoFailure, NexoSet, Quantity, Range, Record,
-    RecordType, Symbol, TraitType, Variant, VariantValue, check_int, failure, hashable, plain,
+    INT_MIN, Lazy, LambdaFn, LitFloat, Money, NexoFailure, NexoSet, NList, NMap, Quantity, Range, Record,
+    RecordType, Symbol, TraitType, Variant, VariantValue, check_int, copy_collection, failure, hashable,
+    is_collection, plain, share, unique, WeakRef, field_value,
     repr_value, show, to_decimal, type_name,
 )
 
 MISSING = object()
 
+class _TaskState(threading.local):
+    """What belongs to the running task (the program, a task of
+    `parallel`, or a spawned task with its own thread)."""
+
+    def __init__(self):
+        # the stamp of the task (see Interpreter.check_write): bindings and
+        # records created by the task carry it
+        self.stamp = 0
+        self.isolated = False  # a spawned task (nexo.sync)
+        self.in_task = 0  # tasks of `parallel` running
+        self.deadlines: list = []
+        self.old_stack: list = []
+        self.task_env = None
+        self.task_outputs: list[str] = []
+
+
+_TASK = _TaskState()
+
 
 class Binding:
-    __slots__ = ("value", "mutable", "type", "type_env")
+    __slots__ = ("value", "mutable", "type", "type_env", "birth", "shared")
 
     def __init__(self, value, mutable, type_=None, type_env=None):
         self.value = value
         self.mutable = mutable
         self.type = type_
         self.type_env = type_env
+        self.birth = _TASK.stamp
+        self.shared = False
 
 
 class Env:
@@ -98,7 +121,7 @@ class RowEnv(Env):
     def __init__(self, parent: Env, item: Any):
         super().__init__(parent)
         self.item = item
-        self.vars["it"] = Binding(item, False)
+        self.vars["it"] = Binding(share(item), False)
 
     def lookup(self, name: str) -> Any:
         if name != "it":
@@ -106,7 +129,7 @@ class RowEnv(Env):
             if isinstance(item, dict) and name in item:
                 return item[name]
             if isinstance(item, Record) and name in item.fields:
-                return item.fields[name]
+                return field_value(item.fields[name])
             if isinstance(item, VariantValue) and name in item.fields:
                 return item.fields[name]
         return super().lookup(name)
@@ -141,10 +164,25 @@ class Interpreter:
         self.checker_fns: dict[str, bool] = {}
         self.checker_methods: dict[str, bool] = {}
         self.handlers: dict[str, list] = {}
-        self.old_stack: list[dict] = []
-        self.deadlines: list[tuple[float, Any]] = []
         self.tests: list[A.TestDef] = []
         self.contracts: dict[int, tuple[list, list]] = {}
+        # tasks of `parallel` (sequential in phase 0, D52) and of spawn
+        self.stamps = itertools.count(1)
+        self.sync = False
+        self.shared_names: set[str] = set()
+        self.shared_uses: dict[int, bool] = {}
+        _TASK.__init__()
+        from .stdlib import sync
+        sync.reset()
+
+    # what belongs to the running task
+    deadlines = property(lambda self: _TASK.deadlines, lambda self, v: setattr(_TASK, "deadlines", v))
+    old_stack = property(lambda self: _TASK.old_stack, lambda self, v: setattr(_TASK, "old_stack", v))
+    task_env = property(lambda self: _TASK.task_env, lambda self, v: setattr(_TASK, "task_env", v))
+    task_outputs = property(lambda self: _TASK.task_outputs, lambda self, v: setattr(_TASK, "task_outputs", v))
+
+    def new_stamp(self) -> int:
+        return next(self.stamps)
 
     # ----------------------------------------------------------- running
     def load(self, source: str, file: str) -> A.Program:
@@ -170,7 +208,63 @@ class Interpreter:
         if self.deadlines:
             self.check_deadline()
         method = getattr(self, "exec_" + type(s).__name__)
+        if self.shared_names and self.uses_shared(s):
+            # a statement that uses a shared variable holds its lock
+            from .stdlib.sync import SharedLock
+            with SharedLock():
+                method(s, env)
+            return
         method(s, env)
+
+    def uses_shared(self, s: A.Stmt) -> bool:
+        """Does the statement use a shared variable in its own expressions
+        (not in the statements of its blocks)?"""
+        key = id(s)
+        if key not in self.shared_uses:
+            from .checker import expr_names
+            exprs: list = []
+            if isinstance(s, (A.ExprStmt, A.Expect, A.Assert)):
+                exprs = [s.expr]
+            elif isinstance(s, A.Return) and s.value is not None:
+                exprs = [s.value]
+            elif isinstance(s, A.Assign):
+                exprs = [s.target, s.value]
+            elif isinstance(s, (A.VarDecl, A.SharedDecl)):
+                exprs = [s.value]
+            elif isinstance(s, A.If):
+                exprs = [c for c, _ in s.branches]
+            elif isinstance(s, A.For):
+                exprs = [s.iterable]
+            elif isinstance(s, A.While):
+                exprs = [s.cond]
+            elif isinstance(s, A.Repeat):
+                exprs = [s.count]
+            elif isinstance(s, A.Match):
+                exprs = [s.subject]
+            elif isinstance(s, A.Spawn):
+                exprs = [s.call]
+            elif isinstance(s, A.Emit):
+                exprs = [a.value for a in s.call.args]
+            elif isinstance(s, A.Select):
+                exprs = [a.channel or a.after for a in s.arms if (a.channel or a.after) is not None]
+            names: list = []
+            for e in exprs:
+                expr_names(e, names, names)
+            if isinstance(s, A.Assign) and isinstance(s.target, A.Name):
+                names.append((s.target.name, None))
+            self.shared_uses[key] = any(n in self.shared_names for n, _ in names)
+        return self.shared_uses[key]
+
+    def lock_for(self, e: A.Expr):
+        """The lock of shared variables when the expression reads one."""
+        if self.shared_names:
+            from .checker import expr_names
+            names: list = []
+            expr_names(e, names, names)
+            if any(n in self.shared_names for n, _ in names):
+                from .stdlib.sync import SharedLock
+                return SharedLock()
+        return contextlib.nullcontext()
 
     def exec_ExprStmt(self, s: A.ExprStmt, env: Env) -> None:
         self.eval(s.expr, env)
@@ -185,7 +279,7 @@ class Interpreter:
             if s.op == "=":
                 value = self.eval(s.value, env)
                 if s.type is not None:
-                    value = self.bind_value(self.conform(value, s.type, env, name, s.value.span))
+                    value = self.store_value(self.conform(value, s.type, env, name, s.value.span))
                     self.declare(env, name, value, target.span, s.type)
                 else:
                     self.assign_name(env, name, value, target.span, s.value.span)
@@ -194,7 +288,11 @@ class Interpreter:
             value = self.binop(s.op[0], current, self.eval(s.value, env), s.span.to(s.value.span), s.value.span)
             self.assign_name(env, name, value, target.span, s.value.span)
             return
-        obj = self.eval(target.obj, env)
+        if isinstance(target, A.Index):
+            # a change through a place (copy-on-write)
+            obj = self.place_parts(target.obj, env)
+        else:
+            obj = self.eval(target.obj, env)
         if isinstance(target, A.Attr):
             value = self.eval(s.value, env)
             if s.op != "=":
@@ -203,11 +301,12 @@ class Interpreter:
             self.set_attr(obj, target.name, value, target.name_span, s.value.span)
             return
         index = self.eval(target.index, env)
-        value = self.eval(s.value, env)
+        value = self.into_shared(obj, self.eval(s.value, env))
+        container = self.place_resolve(obj)
         if s.op != "=":
-            value = self.binop(s.op[0], self.get_index(obj, index, target.span), value,
+            value = self.binop(s.op[0], self.get_index(container, index, target.span), value,
                                s.span.to(s.value.span), s.value.span)
-        self.set_index(obj, index, value, target.span)
+        self.set_index(container, index, value, target.span)
 
     def declare(self, env: Env, name: str, value: Any, span: Span, type_=None) -> None:
         target = env.target()
@@ -224,27 +323,31 @@ class Interpreter:
                     if crossed_fn:
                         break
                     raise NexoError("immutable", span, name=name)
+                self.check_var_write(b, name, env, span)
                 if b.type is not None:
                     value = self.conform(value, b.type, b.type_env, name, value_span)
-                b.value = self.bind_value(value)
+                b.value = self.store_value(value)
+                if b.shared:
+                    from .stdlib.sync import shared_store
+                    b.value = shared_store(b.value)
                 return
             if e.is_fn:
                 crossed_fn = True
             e = e.parent
-        env.define(name, self.bind_value(value))
+        env.define(name, self.store_value(value))
 
     def exec_VarDecl(self, s: A.VarDecl, env: Env) -> None:
         value = self.eval(s.value, env)
         if s.type is not None:
             value = self.conform(value, s.type, env, s.name, s.value.span)
-        value = self.bind_value(value)
+        value = self.store_value(value)
         target = env.target()
         if s.name in target.vars:
             raise NexoError("already_declared", s.name_span, name=s.name)
         target.define(s.name, value, True, s.type, env)
 
     def exec_Return(self, s: A.Return, env: Env) -> None:
-        value = None if s.value is None else self.bind_value(self.eval(s.value, env))
+        value = None if s.value is None else self.store_value(self.eval(s.value, env))
         raise ReturnSignal(value)
 
     def exec_FnDef(self, s: A.FnDef, env: Env) -> None:
@@ -300,7 +403,7 @@ class Interpreter:
     def exec_For(self, s: A.For, env: Env) -> None:
         for item in self.iterate(self.eval(s.iterable, env), s.iterable.span):
             loop_env = Env(env)
-            loop_env.vars[s.var] = Binding(plain(item), False)
+            loop_env.vars[s.var] = Binding(self.store_value(item), False)
             self.exec_block(s.body, loop_env)
 
     def exec_While(self, s: A.While, env: Env) -> None:
@@ -324,7 +427,7 @@ class Interpreter:
                     continue
                 arm_env = Env(env, transparent=True)
                 for k, v in bindings.items():
-                    arm_env.vars[k] = Binding(v, False)
+                    arm_env.vars[k] = Binding(share(v), False)
                 if arm.guard is not None and not self.truth(self.eval(arm.guard, arm_env), arm.guard.span, "if"):
                     continue
                 self.exec_block(arm.body, arm_env)
@@ -357,7 +460,7 @@ class Interpreter:
             elif isinstance(ctor, RecordType):
                 if not (isinstance(value, Record) and value.type is ctor):
                     return None
-                fields = list(value.fields.values())
+                fields = [field_value(v) for v in value.fields.values()]
             elif ctor is MISSING:
                 raise self.name_error(p.name, p.span, env)
             else:
@@ -365,8 +468,8 @@ class Interpreter:
             if len(fields) != len(p.args):
                 raise NexoError("variant_fields", p.span, name=p.name, n=len(fields), m=len(p.args))
             result: dict = {}
-            for sub, field_value in zip(p.args, fields):
-                b = self.match(sub, field_value, env)
+            for sub, sub_value in zip(p.args, fields):
+                b = self.match(sub, sub_value, env)
                 if b is None:
                     return None
                 result.update(b)
@@ -410,8 +513,11 @@ class Interpreter:
 
     def exec_ParallelBlock(self, s: A.ParallelBlock, env: Env) -> None:
         # Sequential in phase 0: same error semantics, the first failure
-        # stops the remaining tasks and propagates.
-        self.exec_block(s.body, Env(env, transparent=True))
+        # stops the remaining tasks and propagates. Each statement is a task.
+        from .checker import assigned_names
+        for stmt in s.body:
+            task_env = Env(env, transparent=True)
+            self.run_task(lambda: self.exec(stmt, task_env), assigned_names([stmt]), task_env)
 
     def exec_TestDef(self, s: A.TestDef, env: Env) -> None:
         self.tests.append(s)
@@ -445,8 +551,51 @@ class Interpreter:
             raise NexoError("assert_failed", e.span, expr=text, detail=detail)
 
     def exec_Use(self, s: A.Use, env: Env) -> None:
+        if s.lang is None and s.name == "nexo.sync":
+            from .stdlib.sync import ChannelMaker
+            self.sync = True
+            self.builtins.define("channel", ChannelMaker())
+            return
         name = f"{s.lang} {s.name}" if s.lang else s.name
         raise NexoError("not_supported", s.span, what=f'"use {name}"')
+
+    # ------------------------------------------------------ nexo.sync
+
+    def exec_Spawn(self, s: A.Spawn, env: Env) -> None:
+        from .stdlib.sync import spawn
+        func = self.eval(s.call.func, env)
+        args = self.eval_args(s.call.args, env)
+        spawn(self, func, args, s.call)
+
+    def exec_SharedDecl(self, s: A.SharedDecl, env: Env) -> None:
+        from .stdlib.sync import shared_store
+        value = shared_store(self.store_value(self.eval(s.value, env)))
+        target = env.target()
+        if s.name in target.vars:
+            raise NexoError("already_declared", s.name_span, name=s.name)
+        target.define(s.name, value, True)
+        target.vars[s.name].shared = True
+        self.shared_names.add(s.name)
+
+    def exec_Select(self, s: A.Select, env: Env) -> None:
+        from .stdlib.sync import select
+        channels = [self.eval(a.channel, env) for a in s.arms if a.channel is not None]
+        limit = None
+        for a in s.arms:
+            if a.after is not None:
+                limit = self.eval(a.after, env)
+        k, value = select(self, channels, limit, s.span)
+        i = 0
+        for arm in s.arms:
+            want = i if arm.channel is not None else len(channels)
+            if arm.channel is not None:
+                i += 1
+            if k == want:
+                arm_env = Env(env, transparent=True)
+                if arm.var is not None:
+                    arm_env.vars[arm.var] = Binding(self.store_value(value), False)
+                self.exec_block(arm.body, arm_env)
+                return
 
     def exec_ConfigBlock(self, s: A.ConfigBlock, env: Env) -> None:
         raise NexoError("not_supported", s.span, what=f'"{s.word}:"')
@@ -466,13 +615,13 @@ class Interpreter:
 
     def exec_Emit(self, s: A.Emit, env: Env) -> None:
         name = getattr(s.call.func, "name", "")
-        args = [self.bind_value(self.eval(a.value, env)) for a in s.call.args]
+        args = [self.store_value(self.eval(a.value, env)) for a in s.call.args]
         for params, body, henv in self.handlers.get(name, []):
             if len(params) != len(args):
                 raise NexoError("arg_too_many", s.call.span, fn=name, n=len(params), m=len(args))
             local = Env(henv, is_fn=True)
             for p, v in zip(params, args):
-                local.vars[p] = Binding(v, False)
+                local.vars[p] = Binding(share(v), False)
             try:
                 self.exec_block(body, local)
             except ReturnSignal:
@@ -512,6 +661,15 @@ class Interpreter:
         value = env.lookup(name)
         if value is MISSING:
             raise self.name_error(name, span, env)
+        if self.sync:
+            b = env.find(name)
+            if b is not None and b.value is value:
+                if b.shared:
+                    from .stdlib.sync import shared_read
+                    return shared_read(value)
+                if _TASK.isolated and b.birth < _TASK.stamp:
+                    from .stdlib.sync import isolated_read
+                    isolated_read(b, name, span)
         return value
 
     def name_error(self, name: str, span: Span, env: Env) -> NexoError:
@@ -521,22 +679,22 @@ class Interpreter:
         return NexoError("name_not_found", span, name=name)
 
     def eval_ListLit(self, e: A.ListLit, env: Env) -> list:
-        return [self.bind_value(self.eval(i, env)) for i in e.items]
+        return NList(self.store_value(self.eval(i, env)) for i in e.items)
 
     def eval_MapLit(self, e: A.MapLit, env: Env) -> dict:
-        out = {}
+        out = NMap()
         for k, v in e.pairs:
-            out[hashable(self.eval(k, env), k.span)] = self.bind_value(self.eval(v, env))
+            out[hashable(self.eval(k, env), k.span)] = self.store_value(self.eval(v, env))
         return out
 
     def eval_Comprehension(self, e: A.Comprehension, env: Env) -> list:
-        out = []
+        out = NList()
         for item in self.iterate(self.eval(e.iterable, env), e.iterable.span):
             inner = Env(env)
-            inner.vars[e.var] = Binding(plain(item), False)
+            inner.vars[e.var] = Binding(self.store_value(item), False)
             if e.condition is not None and not self.truth(self.eval(e.condition, inner), e.condition.span, "if"):
                 continue
-            out.append(self.bind_value(self.eval(e.element, inner)))
+            out.append(self.store_value(self.eval(e.element, inner)))
         return out
 
     def eval_Attr(self, e: A.Attr, env: Env) -> Any:
@@ -554,9 +712,138 @@ class Interpreter:
             values = self.old_stack[-1]
             if id(e) in values:
                 return values[id(e)]
+        if isinstance(e.func, A.Attr) and e.func.name == "add" and isinstance(e.func.obj, (A.Name, A.Attr, A.Index)):
+            # `place.add(x)` changes the collection in its place
+            parts = self.place_parts(e.func.obj, env)
+            args = [(n, self.into_shared(parts, v)) for n, v in self.eval_args(e.args, env)]
+            obj = self.place_resolve(parts)
+            func = self.get_attr(obj, "add", e.func.name_span)
+            return self.call_at(func, args, e)
         func = self.eval(e.func, env)
         args = self.eval_args(e.args, env)
         return self.call_at(func, args, e)
+
+    # ------------------------------------------------------------ places
+    # A collection changed through a place (`xs[i] = v`, `order.items.add(x)`)
+    # is made unique first: if another place holds it, the place gets a copy
+    # (section 7, rule 2). The parts of the place are evaluated before the
+    # rest of the statement, then each step is made unique.
+
+    def place_parts(self, e: A.Expr, env: Env) -> tuple:
+        if isinstance(e, A.Name):
+            b = env.find(e.name)
+            if b is not None and env.lookup(e.name) is b.value:
+                return ("var", b, e.name, env, e.span)
+            return ("value", self.eval(e, env))
+        if isinstance(e, A.Attr):
+            return ("field", self.eval(e.obj, env), e.name, e.name_span)
+        if isinstance(e, A.Index):
+            return ("index", self.place_parts(e.obj, env), self.eval(e.index, env), e.span)
+        if isinstance(e, A.Propagate):
+            return self.place_parts(e.expr, env)
+        return ("value", self.eval(e, env))
+
+    def place_resolve(self, parts: tuple) -> Any:
+        kind = parts[0]
+        if kind == "var":
+            b = parts[1]
+            self.check_var_write(b, parts[2], parts[3], parts[4])
+            u = unique(b.value)
+            if u is not b.value:
+                b.value = u
+            return u
+        if kind == "field":
+            _, obj, name, span = parts
+            if isinstance(obj, Record) and name in obj.fields and not self.is_weak_field(obj, name):
+                self.check_write(obj, span)
+                u = unique(obj.fields[name])
+                if u is not obj.fields[name]:
+                    obj.fields[name] = u
+                return u
+            return self.temp_copy(self.get_attr(obj, name, span))
+        if kind == "index":
+            _, inner, index, span = parts
+            container = self.place_resolve(inner)
+            if isinstance(container, Lazy):
+                container = self.bind_value(container)
+            if isinstance(container, dict):
+                key = hashable(index, span)
+                if key in container:
+                    u = unique(container[key])
+                    if u is not container[key]:
+                        container[key] = u
+                    return u
+                return None
+            if isinstance(container, list):
+                if not isinstance(index, int) or isinstance(index, bool):
+                    raise NexoError("bad_index", span, vtype=type_name(container), itype=type_name(index))
+                if not 0 <= index < len(container):
+                    raise failure("OutOfRange", span, index=index, size=len(container))
+                u = unique(container[index])
+                if u is not container[index]:
+                    container[index] = u
+                return u
+            return self.temp_copy(self.get_index(container, index, span))
+        return self.temp_copy(parts[1])
+
+    def into_shared(self, parts: tuple, value: Any) -> Any:
+        """A value stored inside a shared variable is a copy of its own."""
+        while parts[0] == "index":
+            parts = parts[1]
+        if parts[0] == "var" and parts[1].shared:
+            from .stdlib.sync import shared_store
+            return shared_store(self.bind_value(value))
+        return value
+
+    def is_weak_field(self, obj: Record, name: str) -> bool:
+        return type(obj.fields.get(name)) is WeakRef or any(
+            f.name == name and getattr(f.type, "weak", False) for f in obj.type.fields)
+
+    @staticmethod
+    def field_store(f: A.FieldDef, value: Any) -> Any:
+        """What a field stores: a weak field keeps a weak reference."""
+        if getattr(f.type, "weak", False) and isinstance(value, Record):
+            return WeakRef(value)
+        return value
+
+    @property
+    def stamp(self) -> int:
+        return _TASK.stamp
+
+    def check_write(self, record: Record, span: Span) -> None:
+        """A task may only change records created after it started: the
+        others can be read by several tasks at once (section 5)."""
+        if record.birth < _TASK.stamp:
+            raise NexoError("record_shared", span, type=record.type.name)
+
+    def check_var_write(self, b: Binding, name: str, env: Env, span: Span) -> None:
+        """Nor variables that existed before it, except the names a
+        `parallel:` task computes."""
+        if b.birth >= _TASK.stamp or b.shared:
+            return
+        if name in self.task_outputs:
+            e = env
+            while e is not None and e is not self.task_env and not e.is_fn:
+                e = e.parent
+            if e is self.task_env:
+                return
+        raise NexoError("task_write_var", span, name=name)
+
+    def run_task(self, run, outputs: list[str], env: Env | None):
+        """Run one task with a new stamp."""
+        saved = (_TASK.stamp, self.task_outputs, self.task_env)
+        _TASK.stamp = self.new_stamp()
+        _TASK.in_task += 1
+        self.task_outputs, self.task_env = outputs, env
+        try:
+            return run()
+        finally:
+            _TASK.stamp, self.task_outputs, self.task_env = saved
+            _TASK.in_task -= 1
+
+    def temp_copy(self, value: Any) -> Any:
+        """A value that is not in a place: a change to it is seen by nobody."""
+        return copy_collection(value) if is_collection(value) else value
 
     def eval_args(self, args: list[A.Arg], env: Env) -> list[tuple[str | None, Any]]:
         out = []
@@ -642,15 +929,19 @@ class Interpreter:
             if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
                 raise NexoError("type_mismatch", a.value.span, name="max", type="int",
                                 value=repr_value(limit), vtype=type_name(limit))
-        results = []
-        for item in self.iterate(self.eval(e.iterable, env), e.iterable.span):
+        results = NList()
+
+        def task(item):
             task_env = Env(env)
-            task_env.vars[e.var] = Binding(plain(item), False)
+            task_env.vars[e.var] = Binding(self.store_value(item), False)
             try:
                 self.exec_block(e.body, task_env)
-                results.append(None)
+                return None
             except ReturnSignal as r:
-                results.append(r.value)
+                return r.value
+
+        for item in list(self.iterate(self.eval(e.iterable, env), e.iterable.span)):
+            results.append(self.run_task(lambda: task(item), [], None))
         return results
 
     def eval_Pipeline(self, e: A.Pipeline, env: Env) -> Any:
@@ -681,7 +972,7 @@ class Interpreter:
         if kind == "map":
             def mapper():
                 for item in self.iterate(source, span):
-                    yield self.bind_value(self.apply_expr(step.expr, item, env))
+                    yield self.store_value(self.apply_expr(step.expr, item, env))
             return Lazy(mapper)
         if kind == "pick":
             names = []
@@ -775,12 +1066,16 @@ class Interpreter:
             env = Env(func.env, is_fn=True)
             params = [func.node.param]
             bound = self.bind_args("lambda", params, args, node)
-            env.vars[func.node.param] = Binding(self.bind_value(bound[func.node.param]), False)
-            return self.bind_value(self.eval(func.node.body, env))
+            env.vars[func.node.param] = Binding(self.store_value(bound[func.node.param]), False)
+            return self.store_value(self.eval(func.node.body, env))
         if isinstance(func, RecordType):
             return self.construct(func, args, node)
         if isinstance(func, Variant) and func.params:
             return self.construct_variant(func, args, node)
+        if type(func).__name__ == "ChannelMaker":
+            from .stdlib.sync import new_channel
+            bound = self.bind_args("channel", ["size"], args, node, lambda n: True)
+            return new_channel(Call(self, node), func, bound.get("size"))
         if isinstance(func, BuiltinType):
             conv = self.builtins.lookup("__convert_" + func.name)
             if conv is not MISSING:
@@ -833,13 +1128,14 @@ class Interpreter:
                 value = None
             if p.type is not None:
                 value = self.conform(value, p.type, fn.env, p.name, node.span)
-            env.vars[p.name] = Binding(self.bind_value(value), False)
+            env.vars[p.name] = Binding(self.store_value(value), False)
         ensures, olds = self.contracts_of(decl)
         old_values = {}
         for call_node in olds:
             if not call_node.args:
                 continue
-            old_values[id(call_node)] = copy.deepcopy(self.bind_value(self.eval(call_node.args[0].value, env)))
+            with self.lock_for(call_node.args[0].value):
+                old_values[id(call_node)] = copy.deepcopy(self.bind_value(self.eval(call_node.args[0].value, env)))
         try:
             self.exec_block(decl.body, env)
             result = None
@@ -849,8 +1145,11 @@ class Interpreter:
             self.old_stack.append(old_values)
             try:
                 for ens in ensures:
-                    if not self.truth(self.eval(ens.expr, env), ens.expr.span, "ensure"):
-                        raise self.contract_broken("ensure", ens.expr, env)
+                    # like a statement, a contract that reads a shared
+                    # variable holds its lock
+                    with self.lock_for(ens.expr):
+                        if not self.truth(self.eval(ens.expr, env), ens.expr.span, "ensure"):
+                            raise self.contract_broken("ensure", ens.expr, env)
             finally:
                 self.old_stack.pop()
         if decl.ret is not None:
@@ -920,8 +1219,8 @@ class Interpreter:
                 value = self.eval(f.default, rtype.env)
             else:
                 value = None
-            values[f.name] = self.bind_value(self.conform(value, f.type, rtype.env, f.name, node.span))
-        return Record(rtype, values)
+            values[f.name] = self.field_store(f, self.store_value(self.conform(value, f.type, rtype.env, f.name, node.span)))
+        return Record(rtype, values, self.stamp)
 
     def construct_variant(self, variant: Variant, args: list, node: A.Node) -> VariantValue:
         params = variant.params
@@ -932,14 +1231,14 @@ class Interpreter:
             value = bound[p.name]
             if p.type is not None:
                 value = self.conform(value, p.type, self.globals, p.name, node.span)
-            values[p.name] = self.bind_value(value)
+            values[p.name] = self.store_value(value)
         return VariantValue(variant, values)
 
     # ------------------------------------------------------- attributes
     def get_attr(self, obj: Any, name: str, span: Span) -> Any:
         if isinstance(obj, Record):
             if name in obj.fields:
-                return obj.fields[name]
+                return field_value(obj.fields[name])
             method = obj.type.methods.get(name)
             if method is not None:
                 return method.bind(obj)
@@ -982,7 +1281,8 @@ class Interpreter:
             field = next((f for f in obj.type.fields if f.name == name), None)
             if field is None:
                 raise self.member_error(obj, name, span, list(obj.fields))
-            obj.fields[name] = self.bind_value(self.conform(value, field.type, obj.type.env, name, value_span))
+            self.check_write(obj, span)
+            obj.fields[name] = self.field_store(field, self.store_value(self.conform(value, field.type, obj.type.env, name, value_span)))
             return
         if obj is None:
             raise NexoError("none_member", span, name=name)
@@ -991,6 +1291,8 @@ class Interpreter:
     def get_index(self, obj: Any, index: Any, span: Span) -> Any:
         if isinstance(obj, Lazy):
             obj = list(obj)
+        if type(obj).__name__ == "ChannelMaker" and obj.elem is None:
+            return obj[index]
         if isinstance(obj, dict):
             return obj.get(hashable(index, span))
         if isinstance(obj, (list, str)):
@@ -1004,7 +1306,9 @@ class Interpreter:
         raise NexoError("not_indexable", span, vtype=type_name(obj))
 
     def set_index(self, obj: Any, index: Any, value: Any, span: Span) -> None:
-        value = self.bind_value(value)
+        value = self.store_value(value)
+        if value is obj:
+            value = copy_collection(value)
         if isinstance(obj, dict):
             obj[hashable(index, span)] = value
             return
@@ -1018,18 +1322,33 @@ class Interpreter:
         raise NexoError("not_indexable", span, vtype=type_name(obj))
 
     # ------------------------------------------------------------ values
+    def store_value(self, value: Any) -> Any:
+        """A value that is stored in a place (section 7, rule 2): a
+        collection gets one more owner, so changing it copies it."""
+        return share(self.bind_value(value))
+
     def bind_value(self, value: Any) -> Any:
-        """A value that is stored somewhere: lazy pipelines are read and
-        float literals become ordinary floats."""
+        """A value that is read whole: lazy pipelines are read and float
+        literals become ordinary floats."""
         if isinstance(value, Lazy):
-            return [plain(v) for v in value]
+            return NList(plain(v) for v in value)
         if isinstance(value, Grouped):
             raise NexoError("pipe_group_next", None)
         return plain(value)
 
     def iterate(self, value: Any, span: Span):
-        if isinstance(value, (list, Lazy, NexoSet, Range)):
+        if isinstance(value, (list, NexoSet)):
+            # the loop holds the collection: changing it copies it, and
+            # the loop sees the value it started with
+            if type(value) is list:
+                return iter(list(value))
+            share(value)
+            return iter(value) if isinstance(value, list) else iter(list(value))
+        if isinstance(value, (Lazy, Range)):
             return iter(value)
+        if type(value).__name__ == "Channel":
+            from .stdlib.sync import iterate
+            return iterate(value, span)
         if isinstance(value, dict):
             return iter(list(value))
         if isinstance(value, str):
@@ -1152,7 +1471,7 @@ class Interpreter:
             if type(value) is LitFloat or (isinstance(value, int) and not isinstance(value, bool)):
                 return True, to_decimal(value)
             return False, value
-        if name in ("str", "bool", "money", "map", "set"):
+        if name in ("str", "bool", "money", "map", "set", "channel"):
             if not builtin_is(value, name):
                 return False, value
             if name == "map" and len(t.params) == 2:
@@ -1255,6 +1574,8 @@ def builtin_is(value: Any, name: str) -> bool:
         return isinstance(value, dict)
     if name == "set":
         return isinstance(value, NexoSet)
+    if name == "channel":
+        return type(value).__name__ == "Channel"
     return False
 
 

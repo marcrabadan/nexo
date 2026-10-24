@@ -239,6 +239,118 @@ MESSAGES: dict[str, dict[str, str]] = {
     # runtime diagnostics
     "name_not_found": {"es": '"{name}" no existe.', "en": '"{name}" does not exist.'},
     "fix.name_not_found": {"es": "Defínelo antes de usarlo.", "en": "Define it before using it."},
+    "task_write_var": {
+        "es": 'Una tarea no puede cambiar "{name}": es de fuera de la tarea, y otras tareas pueden usarla a la vez.',
+        "en": 'A task cannot change "{name}": it belongs outside the task, and other tasks may use it at the same time.',
+    },
+    "fix.task_write_var": {
+        "es": 'Devuelve el resultado con return (en parallel) o envíalo por un channel (en spawn).',
+        "en": 'Return the result with return (in parallel) or send it through a channel (in spawn).',
+    },
+    "record_shared": {
+        "es": 'Una tarea no puede cambiar un {type} creado antes de que empezara: otras tareas pueden estar leyéndolo.',
+        "en": 'A task cannot change a {type} created before it started: other tasks may be reading it.',
+    },
+    "fix.record_shared": {
+        "es": 'Crea el {type} dentro de la tarea, o devuelve el cambio con return y aplícalo cuando termine el parallel.',
+        "en": 'Create the {type} inside the task, or return the change and apply it when the parallel ends.',
+    },
+    "parallel_sibling": {
+        "es": '"{name}" lo calcula otra tarea de este parallel, y las tareas se ejecutan a la vez.',
+        "en": '"{name}" is computed by another task of this parallel, and the tasks run at the same time.',
+    },
+    "fix.parallel_sibling": {
+        "es": 'Usa "{name}" después del bloque parallel.',
+        "en": 'Use "{name}" after the parallel block.',
+    },
+    "parallel_twice": {
+        "es": 'Dos tareas de este parallel calculan "{name}".',
+        "en": 'Two tasks of this parallel compute "{name}".',
+    },
+    "fix.parallel_twice": {
+        "es": 'Cada tarea debe calcular un nombre distinto.',
+        "en": 'Each task must compute a different name.',
+    },
+    "parallel_return": {
+        "es": 'return no puede usarse dentro de un bloque parallel:.',
+        "en": 'return cannot be used inside a parallel: block.',
+    },
+    "fix.parallel_return": {
+        "es": 'Asigna el resultado a un nombre y úsalo después del bloque.',
+        "en": 'Assign the result to a name and use it after the block.',
+    },
+    "channel_closed": {
+        "es": 'No se puede enviar por un channel cerrado.',
+        "en": 'You cannot send through a closed channel.',
+    },
+    "fix.channel_closed": {
+        "es": 'Envía todos los valores antes de cerrarlo con close().',
+        "en": 'Send every value before closing it with close().',
+    },
+    "deadlock": {
+        "es": 'Todas las tareas están esperando en un channel y ninguna puede continuar.',
+        "en": 'Every task is waiting on a channel and none can go on.',
+    },
+    "fix.deadlock": {
+        "es": 'Cierra el channel con close() cuando no haya nada más que enviar, o envía lo que otra tarea espera.',
+        "en": 'Close the channel with close() when there is nothing more to send, or send what another task waits for.',
+    },
+    "spawn_read": {
+        "es": 'Una tarea de spawn no puede leer "{name}": es una variable del programa que otras tareas pueden cambiar.',
+        "en": 'A spawned task cannot read "{name}": it is a variable of the program that other tasks may change.',
+    },
+    "fix.spawn_read": {
+        "es": 'Pásale el valor como argumento o por un channel, o usa shared.',
+        "en": 'Pass the value as an argument or through a channel, or use shared.',
+    },
+    "not_a_channel": {
+        "es": 'select espera channels, no un valor de tipo {vtype}.',
+        "en": 'select waits on channels, not on a value of type {vtype}.',
+    },
+    "fix.not_a_channel": {
+        "es": 'Escribe nombre from canal, donde canal es un channel(...).',
+        "en": 'Write name from c, where c is a channel(...).',
+    },
+    "spawn_failed": {
+        "es": 'No se pudo iniciar la tarea.',
+        "en": 'The task could not be started.',
+    },
+    "fix.spawn_failed": {
+        "es": 'Hay demasiadas tareas a la vez; espera a que terminen algunas.',
+        "en": 'There are too many tasks at once; wait for some of them to end.',
+    },
+    "weak_place": {
+        "es": "weak solo puede marcar un campo de un type.",
+        "en": "weak can only mark a field of a type.",
+    },
+    "fix.weak_place": {
+        "es": "Escribe weak en el tipo de un campo, por ejemplo parent: weak Node?",
+        "en": "Write weak in the type of a field, for example parent: weak Node?",
+    },
+    "weak_optional": {
+        "es": "Un campo weak se queda sin valor cuando su destino se libera.",
+        "en": "A weak field loses its value when its target is freed.",
+    },
+    "fix.weak_optional": {
+        "es": "Escríbelo como opcional: {name}: weak {type}?",
+        "en": "Make it optional: {name}: weak {type}?",
+    },
+    "weak_target": {
+        "es": '"{type}" no es un type con campos: weak solo se usa con registros.',
+        "en": '"{type}" is not a type with fields: weak only applies to records.',
+    },
+    "fix.weak_target": {
+        "es": "Quita weak: esos valores no forman ciclos.",
+        "en": "Remove weak: those values cannot form cycles.",
+    },
+    "type_cycle": {
+        "es": "Los types {cycle} se refieren unos a otros: forman un ciclo de referencias que nunca se liberaría.",
+        "en": "The types {cycle} refer to each other: they form a reference cycle that would never be freed.",
+    },
+    "fix.type_cycle": {
+        "es": "Marca uno de los campos como weak, por ejemplo {field}: weak {type}?",
+        "en": "Mark one of the fields as weak, for example {field}: weak {type}?",
+    },
     "immutable": {
         "es": '"{name}" es inmutable y no se puede cambiar.',
         "en": '"{name}" is immutable and cannot be changed.',

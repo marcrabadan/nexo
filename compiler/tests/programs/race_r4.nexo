@@ -1,0 +1,9 @@
+type Account:
+    balance: int
+accounts = parallel for x in [1, 2]:
+    a = Account(x)
+    a.balance += 10
+    return a
+print(accounts)
+accounts[0].balance = 99
+print(accounts[0])

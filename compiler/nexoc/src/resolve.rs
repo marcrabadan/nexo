@@ -54,6 +54,8 @@ pub struct Binding {
     pub captured: bool,
     /// bound before its scope runs (parameters, loop and pattern variables)
     pub entry: bool,
+    /// a `shared` variable (nexo.sync): used under a lock, read as a copy
+    pub shared: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +88,8 @@ pub enum FrameKind {
     Default,
     Test,
     Handler,
+    /// a task of `parallel for` or `parallel:` (run on another thread)
+    Task,
 }
 
 #[derive(Debug)]
@@ -108,6 +112,10 @@ pub enum Node {
     Step(u32, usize),
     Column(u32, usize, usize),
     Field(u32, usize),
+    /// statement i of a `parallel:` block
+    Task(u32, usize),
+    /// arm i of a `select:`
+    SelectArm(u32, usize),
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +166,17 @@ pub struct Resolution {
     pub type_ids: HashMap<u32, u32>,
     pub types: HashMap<usize, TypeRes>,
     pub next_type_id: u32,
+    /// calls of a function to itself by name: they use the function's own
+    /// closure, so it does not capture itself (a reference cycle)
+    pub self_calls: std::collections::HashSet<u32>,
+    /// the names each task of a `parallel:` block computes (it may assign
+    /// them although they belong outside the task)
+    pub task_outputs: HashMap<FrameId, Vec<BindingId>>,
+    /// the program has `use nexo.sync`
+    pub sync: bool,
+    /// top-level names no function, lambda, task or test uses: they are
+    /// locals of the main program (kept in registers) instead of statics
+    pub main_local: std::collections::HashSet<BindingId>,
 }
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
@@ -195,12 +214,22 @@ pub fn is_builtin(name: &str) -> bool {
     builtin_names().contains(&name)
 }
 
-pub const BUILTIN_TYPES: &[&str] = &["int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "any"];
+pub const BUILTIN_TYPES: &[&str] =
+    &["int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "any", "channel"];
 
 type RResult<T> = Result<T, Diagnostic>;
 
 struct Resolver {
     r: Resolution,
+    /// the function being resolved and the binding of its name
+    self_fn: Vec<(FrameId, Option<BindingId>)>,
+    self_fn_binding: Option<BindingId>,
+    /// calls to the function's own name: (call expr, scope, binding)
+    pending_self: Vec<(u32, ScopeId, BindingId)>,
+    /// the tasks being resolved: (frame, true for `parallel for`)
+    tasks: Vec<(FrameId, bool)>,
+    /// top-level names used from another frame
+    used_outside: std::collections::HashSet<BindingId>,
 }
 
 impl Resolution {
@@ -208,10 +237,11 @@ impl Resolution {
         &self.bindings[id]
     }
 
-    /// Names of the top level of the program live in static storage; every
-    /// other binding belongs to the frame (function) that runs its scope.
+    /// Names of the top level of the program that a function uses live in
+    /// static storage; every other binding belongs to the frame (function)
+    /// that runs its scope.
     pub fn is_static(&self, b: BindingId) -> bool {
-        self.bindings[b].scope == self.frames[GLOBAL_FRAME].root
+        self.bindings[b].scope == self.frames[GLOBAL_FRAME].root && !self.main_local.contains(&b)
     }
 }
 
@@ -234,13 +264,28 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             type_ids: HashMap::new(),
             types: HashMap::new(),
             next_type_id: 1,
+            self_calls: std::collections::HashSet::new(),
+            task_outputs: HashMap::new(),
+            sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what } if what == "nexo.sync")),
+            main_local: std::collections::HashSet::new(),
         },
+        used_outside: std::collections::HashSet::new(),
+        tasks: Vec::new(),
+        self_fn: Vec::new(),
+        self_fn_binding: None,
+        pending_self: Vec::new(),
     };
     let root = res.new_scope(None, SKind::Normal, GLOBAL_FRAME, true);
     res.r.frames.push(Frame { parent: None, kind: FrameKind::Global, root, free: Vec::new(), params: Vec::new() });
     res.assign_type_ids(&program.body);
     res.declare_block(root, &program.body);
     res.block(root, &program.body)?;
+    res.finish_self_calls(program);
+    let global_root = res.r.frames[GLOBAL_FRAME].root;
+    let main_local = (0..res.r.bindings.len())
+        .filter(|b| res.r.bindings[*b].scope == global_root && !res.used_outside.contains(b))
+        .collect();
+    res.r.main_local = main_local;
     Ok(res.r)
 }
 
@@ -258,6 +303,64 @@ impl Resolver {
         self.r.frame_of.insert(node, id);
         self.r.scope_of.insert(node, root);
         (id, root)
+    }
+
+    /// A task frame. The root of a `parallel:` task is transparent: the
+    /// names it assigns belong to the enclosing scope (D25).
+    fn new_task_frame(&mut self, parent_scope: ScopeId, node: Node, transparent: bool) -> (FrameId, ScopeId) {
+        let parent_frame = self.r.scopes[parent_scope].frame;
+        let id = self.r.frames.len();
+        let kind = if transparent { SKind::Transparent } else { SKind::Normal };
+        let root = self.new_scope(Some(parent_scope), kind, id, true);
+        self.r.frames.push(Frame { parent: Some(parent_frame), kind: FrameKind::Task, root, free: Vec::new(), params: Vec::new() });
+        self.r.frame_of.insert(node, id);
+        self.r.scope_of.insert(node, root);
+        (id, root)
+    }
+
+    /// Inside a task of `parallel for`, a variable of outside the task
+    /// cannot be changed: the tasks run at the same time (section 5).
+    fn check_task_write(&self, scope: ScopeId, cands: &[BindingId], name: &str, span: nexo_diag::Span, any: bool) -> RResult<()> {
+        let Some((frame, true)) = self.tasks.last().copied() else { return Ok(()) };
+        if self.r.scopes[scope].frame != frame {
+            return Ok(());
+        }
+        let outside = cands.iter().any(|b| {
+            let binding = &self.r.bindings[*b];
+            binding.frame != frame && (any || binding.kind == BKind::Var)
+        });
+        if outside {
+            return Err(Diagnostic::new("task_write_var", span).arg("name", name));
+        }
+        Ok(())
+    }
+
+    /// The variable a place starts from (`xs` in `xs[0].add(1)`).
+    fn place_root(e: &Expr) -> Option<&Expr> {
+        match &e.kind {
+            ExprKind::Name(_) => Some(e),
+            ExprKind::Index { obj, .. } | ExprKind::Attr { obj, .. } | ExprKind::Propagate(obj) => Self::place_root(obj),
+            _ => None,
+        }
+    }
+
+    /// `place.add(x)` or `place[i] = x` inside a `parallel for` task.
+    fn check_task_change(&mut self, scope: ScopeId, place: &Expr) -> RResult<()> {
+        let Some(root) = Self::place_root(place) else { return Ok(()) };
+        let ExprKind::Name(n) = &root.kind else { return Ok(()) };
+        // records are shared: changing their fields is checked when it runs
+        if !matches!(place.kind, ExprKind::Name(_) | ExprKind::Index { .. }) {
+            return Ok(());
+        }
+        let mut cands = Vec::new();
+        let mut s = Some(scope);
+        while let Some(id) = s {
+            if let Some(b) = self.lookup_local(id, n) {
+                cands.push(b);
+            }
+            s = self.r.scopes[id].parent;
+        }
+        self.check_task_write(scope, &cands, n, root.span, true)
     }
 
     fn lookup_local(&self, scope: ScopeId, name: &str) -> Option<BindingId> {
@@ -281,7 +384,17 @@ impl Resolver {
         }
         let frame = self.r.scopes[scope].frame;
         let entry = origin == Origin::Param;
-        self.r.bindings.push(Binding { name: name.to_string(), kind, ty, origin, scope, frame, captured: false, entry });
+        self.r.bindings.push(Binding {
+            name: name.to_string(),
+            kind,
+            ty,
+            origin,
+            scope,
+            frame,
+            captured: false,
+            entry,
+            shared: false,
+        });
         let id = self.r.bindings.len() - 1;
         self.r.scopes[scope].names.push((name.to_string(), id));
         id
@@ -367,6 +480,15 @@ impl Resolver {
                     }
                 }
                 StmtKind::Parallel(body) => self.declare_block(scope, body),
+                StmtKind::Shared { name, .. } => {
+                    let b = self.declare(scope, name, BKind::Var, None, Origin::Plain);
+                    self.r.bindings[b].shared = true;
+                }
+                StmtKind::Select { arms } => {
+                    for a in arms {
+                        self.declare_block(scope, &a.body);
+                    }
+                }
                 _ => {}
             }
         }
@@ -385,6 +507,9 @@ impl Resolver {
             }
         }
         out.extend(builtin_names().into_iter().map(String::from));
+        if self.r.sync {
+            out.push("channel".into());
+        }
         out
     }
 
@@ -393,6 +518,9 @@ impl Resolver {
     fn note_use(&mut self, scope: ScopeId, b: BindingId) {
         let bf = self.r.bindings[b].frame;
         let mut f = self.r.scopes[scope].frame;
+        if self.r.is_static(b) && f != GLOBAL_FRAME {
+            self.used_outside.insert(b);
+        }
         if bf == f || self.r.is_static(b) {
             return;
         }
@@ -421,7 +549,7 @@ impl Resolver {
             }
             s = self.r.scopes[id].parent;
         }
-        if cands.is_empty() && row.is_none() && is_builtin(name) {
+        if cands.is_empty() && row.is_none() && (is_builtin(name) || (self.r.sync && name == "channel")) {
             return NameRes::Builtin(name.to_string());
         }
         for b in &cands {
@@ -475,6 +603,63 @@ impl Resolver {
         AssignRes { cands, target }
     }
 
+    /// `f(...)` inside `fn f`, when the name is the function itself: no
+    /// capture yet (decided in finish_self_calls).
+    fn self_call(&mut self, scope: ScopeId, func: &Expr) -> bool {
+        let ExprKind::Name(n) = &func.kind else { return false };
+        let Some((frame, Some(own))) = self.self_fn.last().copied() else { return false };
+        if self.r.scopes[scope].frame != frame {
+            return false;
+        }
+        let mut s = Some(scope);
+        let mut found = None;
+        while let Some(id) = s {
+            if let Some(b) = self.lookup_local(id, n) {
+                found = Some(b);
+                break;
+            }
+            if self.r.scopes[id].kind == SKind::Row {
+                return false;
+            }
+            s = self.r.scopes[id].parent;
+        }
+        if found != Some(own) || self.r.is_static(own) {
+            return false;
+        }
+        let visible = self.visible(scope);
+        let suggestion = suggest(n, visible.iter().map(|s| s.as_str()));
+        self.r.names.insert(func.id, NameRes::Bindings { cands: vec![own], row: None, builtin: false, suggestion });
+        self.pending_self.push((func.id, scope, own));
+        true
+    }
+
+    /// A function defined once calls itself through its own closure; any
+    /// other name use is an ordinary capture.
+    fn finish_self_calls(&mut self, program: &Program) {
+        let mut defs: HashMap<BindingId, usize> = HashMap::new();
+        let r = &self.r;
+        crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
+            StmtKind::Fn(_) => {
+                if let Some(b) = r.decl.get(&Node::Stmt(s.id)) {
+                    *defs.entry(*b).or_default() += 1;
+                }
+            }
+            StmtKind::Assign { .. } | StmtKind::VarDecl { .. } => {
+                if let Some(a) = r.assigns.get(&s.id) {
+                    *defs.entry(a.target).or_default() += 1;
+                }
+            }
+            _ => {}
+        });
+        for (id, scope, b) in std::mem::take(&mut self.pending_self) {
+            if defs.get(&b) == Some(&1) {
+                self.r.self_calls.insert(id);
+            } else {
+                self.note_use(scope, b);
+            }
+        }
+    }
+
     // ------------------------------------------------------------ walking
 
     fn block(&mut self, scope: ScopeId, body: &[Stmt]) -> RResult<()> {
@@ -493,7 +678,15 @@ impl Resolver {
     }
 
     fn function(&mut self, scope: ScopeId, f: &FnDef, kind: FrameKind) -> RResult<()> {
+        let own = self.self_fn_binding.take();
         let (frame, root) = self.new_frame(scope, kind, Node::Fn(f.id));
+        self.self_fn.push((frame, own));
+        let r = self.function_body(scope, root, frame, f);
+        self.self_fn.pop();
+        r
+    }
+
+    fn function_body(&mut self, scope: ScopeId, root: ScopeId, frame: FrameId, f: &FnDef) -> RResult<()> {
         for p in &f.params {
             let b = self.declare(root, &p.name, BKind::Const, None, Origin::Param);
             self.r.frames[frame].params.push(b);
@@ -527,11 +720,13 @@ impl Resolver {
                         let res = self.lookup(scope, n);
                         self.r.names.insert(target.id, res);
                         let a = self.assign_res(scope, n);
+                        let cands: Vec<BindingId> = a.cands.iter().map(|(b, _)| *b).collect();
                         self.r.assigns.insert(s.id, a);
-                        Ok(())
+                        self.check_task_write(scope, &cands, n, target.span, false)
                     }
                     ExprKind::Attr { obj, .. } => self.expr(scope, obj),
                     ExprKind::Index { obj, index } => {
+                        self.check_task_change(scope, obj)?;
                         self.expr(scope, obj)?;
                         self.expr(scope, index)
                     }
@@ -555,7 +750,11 @@ impl Resolver {
                 }
                 Ok(())
             }
-            StmtKind::Fn(f) => self.function(scope, f, FrameKind::Function),
+            StmtKind::Fn(f) => {
+                let b = self.r.decl.get(&Node::Stmt(s.id)).copied();
+                self.self_fn_binding = b;
+                self.function(scope, f, FrameKind::Function)
+            }
             StmtKind::Type(t) => {
                 if let Some(tr) = &t.trait_name {
                     let res = self.lookup(scope, tr);
@@ -652,7 +851,48 @@ impl Resolver {
                 }
                 Ok(())
             }
-            StmtKind::Parallel(body) => self.block(scope, body),
+            StmtKind::Spawn { call } => self.expr(scope, call),
+            StmtKind::Shared { name, value, .. } => {
+                self.expr(scope, value)?;
+                let a = self.assign_res(scope, name);
+                self.r.assigns.insert(s.id, a);
+                Ok(())
+            }
+            StmtKind::Select { arms } => {
+                for (i, arm) in arms.iter().enumerate() {
+                    if let Some(c) = arm.channel.as_ref().or(arm.after.as_ref()) {
+                        self.expr(scope, c)?;
+                    }
+                    let frame = self.r.scopes[scope].frame;
+                    let arm_scope = self.new_scope(Some(scope), SKind::Transparent, frame, false);
+                    self.r.scope_of.insert(Node::SelectArm(s.id, i), arm_scope);
+                    if let Some(v) = &arm.var {
+                        let b = self.declare(arm_scope, v, BKind::Const, None, Origin::Plain);
+                        self.r.bindings[b].entry = true;
+                        self.r.decl.insert(Node::SelectArm(s.id, i), b);
+                    }
+                    self.block(arm_scope, &arm.body)?;
+                }
+                Ok(())
+            }
+            StmtKind::Parallel(body) => {
+                // each statement is a task (section 5)
+                for (i, st) in body.iter().enumerate() {
+                    let (frame, root) = self.new_task_frame(scope, Node::Task(s.id, i), true);
+                    self.tasks.push((frame, false));
+                    let r = self.stmt(root, st);
+                    self.tasks.pop();
+                    r?;
+                    let mut outputs = Vec::new();
+                    for name in crate::checker::assigned_names(std::slice::from_ref(st)) {
+                        if let Some(b) = self.lookup_local(self.target(root), &name) {
+                            outputs.push(b);
+                        }
+                    }
+                    self.r.task_outputs.insert(frame, outputs);
+                }
+                Ok(())
+            }
             StmtKind::Test { body, .. } => {
                 let global_root = self.r.frames[GLOBAL_FRAME].root;
                 let (_, root) = self.new_frame(global_root, FrameKind::Test, Node::Stmt(s.id));
@@ -825,8 +1065,13 @@ impl Resolver {
                 self.expr(scope, index)
             }
             ExprKind::Call { func, args } => {
+                if let ExprKind::Attr { obj, name, .. } = &func.kind {
+                    if name == "add" {
+                        self.check_task_change(scope, obj)?;
+                    }
+                }
                 // old(...) inside ensure is not a name (D53)
-                if !matches!(&func.kind, ExprKind::Name(n) if n == "old") {
+                if !matches!(&func.kind, ExprKind::Name(n) if n == "old") && !self.self_call(scope, func) {
                     self.expr(scope, func)?;
                 }
                 for a in args {
@@ -886,11 +1131,17 @@ impl Resolver {
                 for a in args {
                     self.expr(scope, &a.value)?;
                 }
-                let inner = self.new_block_scope(scope, Node::Expr(e.id), body);
-                let b = self.declare(inner, var, BKind::Const, None, Origin::Plain);
+                // the body is a task: a frame of its own, run for each element
+                let (frame, root) = self.new_task_frame(scope, Node::Expr(e.id), false);
+                self.declare_block(root, body);
+                let b = self.declare(root, var, BKind::Const, None, Origin::Param);
                 self.r.bindings[b].entry = true;
+                self.r.frames[frame].params.push(b);
                 self.r.decl.insert(Node::Expr(e.id), b);
-                self.block(inner, body)
+                self.tasks.push((frame, true));
+                let r = self.block(root, body);
+                self.tasks.pop();
+                r
             }
             _ => Ok(()),
         }

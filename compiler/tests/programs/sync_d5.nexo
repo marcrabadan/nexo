@@ -1,0 +1,4 @@
+use nexo.sync
+c = channel(size: 1)
+c.close()
+c.send(1)

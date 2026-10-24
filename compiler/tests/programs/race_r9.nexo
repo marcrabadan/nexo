@@ -1,0 +1,6 @@
+var log = []
+fn note(x):
+    log.add(x)
+print("start")
+parallel for x in [1, 2]:
+    note(x)

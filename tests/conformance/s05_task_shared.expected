@@ -1,0 +1,5 @@
+start
+Error en s05_task_shared.nexo, línea 8:
+  counter.value += n
+          ^^^^^
+Una tarea no puede cambiar un Counter creado antes de que empezara: otras tareas pueden estar leyéndolo. Crea el Counter dentro de la tarea, o devuelve el cambio con return y aplícalo cuando termine el parallel.

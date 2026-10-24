@@ -60,6 +60,8 @@ class Parser:
         self.p = 0
         self.file = file
         self.block_end = -1  # token index right after an expression that ended in a block
+        # after `use nexo.sync`, spawn, select and shared start statements
+        self.sync = False
 
     # -- token helpers ---------------------------------------------------
     def peek(self, k: int = 0) -> Token:
@@ -195,6 +197,8 @@ class Parser:
                 return A.TestDef(tok.span, name, self.block())
             if kw in ("on", "when", "every", "lifecycle"):
                 return self.event_stmt()
+        if self.sync and tok.kind == "NAME" and tok.value == "select" and self.peek(1).is_op(":"):
+            return self.select_stmt()
         stmt = self.simple_stmt()
         self.expect_newline()
         return stmt
@@ -222,6 +226,18 @@ class Parser:
             return A.Return(self.span_from(tok), value)
         if tok.is_kw("use"):
             return self.use_stmt()
+        if self.sync and tok.kind == "NAME" and tok.value == "spawn" and self.peek(1).kind == "NAME":
+            self.advance()
+            call = self.postfix()
+            if not isinstance(call, A.Call):
+                raise self.error(word("call"), tok)
+            return A.Spawn(self.span_from(tok), call)
+        if (self.sync and tok.kind == "NAME" and tok.value == "shared" and self.peek(1).kind == "NAME"
+                and self.peek(2).is_op("=")):
+            self.advance()
+            name = self.expect_name()
+            self.expect_op("=")
+            return A.SharedDecl(self.span_from(tok), name.value, name.span, self.expr())
         if tok.is_kw("emit"):
             self.advance()
             call = self.postfix()
@@ -321,7 +337,40 @@ class Parser:
         if self.at_kw("as"):
             self.advance()
             alias = self.expect_name().value
+        if lang is None and name == "nexo.sync":
+            self.sync = True
         return A.Use(self.span_from(tok), lang, name, alias)
+
+    def select_stmt(self) -> A.Select:
+        """select: arms `NAME from expr: ...` and `after expr: ...` (nexo.sync)"""
+        start = self.advance()
+        self.expect_op(":")
+        self.expect_newline_raw()
+        if self.peek().kind != "INDENT":
+            raise self.error(word("indented"))
+        self.advance()
+        arms = []
+        while self.peek().kind != "DEDENT":
+            tok = self.peek()
+            var = channel = after = None
+            if tok.kind == "NAME" and tok.value == "after" and not (self.peek(1).kind == "NAME" and self.peek(1).value == "from"):
+                self.advance()
+                after = self.expr()
+            else:
+                var = self.expect_name().value
+                if not self.at_name("from"):
+                    raise self.error('"from"')
+                self.advance()
+                channel = self.expr()
+            self.expect_op(":")
+            if self.peek().kind == "NEWLINE":
+                body = self.indented_body()
+            else:
+                body = [self.simple_stmt()]
+                self.expect_newline()
+            arms.append(A.SelectArm(tok.span, var, channel, after, body))
+        self.advance()
+        return A.Select(start.span, arms)
 
     def dotted_name(self) -> str:
         name = self.expect_name().value

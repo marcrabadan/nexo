@@ -1,0 +1,12 @@
+var xs = []
+parallel:
+    xs.add(1)
+    ys = [2]
+print(xs, ys)
+fn work():
+    var acc = 0
+    parallel:
+        acc = 5
+        other = 6
+    return acc + other
+print(work())

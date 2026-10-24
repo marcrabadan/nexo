@@ -1,0 +1,5 @@
+var counts = {}
+for i in 1..1_000_000:
+    k = i % 1000
+    counts[k] = (counts[k] ?? 0) + 1
+print(len(counts), counts[7])

@@ -1,0 +1,32 @@
+use nexo.sync
+
+type B:
+    n: int
+
+fn mutate(b: B) -> bool:
+    b.n += 1
+    return true
+
+fn f(b: B):
+    expect mutate(b)
+    ensure b.n == old(b.n)
+    pass
+
+b = B(1)
+try:
+    f(b)
+else e:
+    print(e.kind, b)
+
+shared xs = [1, 2]
+
+fn shrink():
+    ensure len(xs) >= old(len(xs))
+    xs = [1]
+
+try:
+    shrink()
+else e:
+    print(e.kind)
+xs = xs + [5]
+print(xs)

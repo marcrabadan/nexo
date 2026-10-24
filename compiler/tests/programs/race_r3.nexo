@@ -1,0 +1,6 @@
+type Account:
+    balance: int
+acc = Account(0)
+print("start")
+parallel for x in [1, 2]:
+    acc.balance += x

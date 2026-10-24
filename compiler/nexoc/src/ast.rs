@@ -234,6 +234,16 @@ impl Pattern {
 }
 
 #[derive(Clone, Debug)]
+pub struct SelectArm {
+    pub span: Span,
+    /// the name of the received value; None for `after`
+    pub var: Option<String>,
+    pub channel: Option<Expr>,
+    pub after: Option<Expr>,
+    pub body: Vec<Stmt>,
+}
+
+#[derive(Clone, Debug)]
 pub struct MatchArm {
     pub span: Span,
     pub patterns: Vec<Pattern>,
@@ -265,6 +275,12 @@ pub enum StmtKind {
     Return(Option<Expr>),
     Pass,
     Use { what: String },
+    /// `spawn f(x)` (nexo.sync)
+    Spawn { call: Expr },
+    /// `select:` with `msg from channel:` and `after limit:` arms (nexo.sync)
+    Select { arms: Vec<SelectArm> },
+    /// `shared name = value` (nexo.sync)
+    Shared { name: String, name_span: Span, value: Expr },
     Emit { name: String, args: Vec<Arg>, call_span: Span },
     Expect(Expr),
     Ensure(Expr),

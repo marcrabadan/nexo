@@ -218,3 +218,5 @@ footer a { color: var(--muted); }
   .rules, .grid { grid-template-columns: 1fr; }
   .code pre { font-size: 13px; }
 }
+
+.perf-title { margin: 40px 0 8px; }

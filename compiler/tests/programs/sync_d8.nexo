@@ -1,0 +1,35 @@
+use nexo.sync
+fn producer(c, n):
+    for i in 1..n:
+        c.send(i)
+    c.close()
+fn squarer(inp, out):
+    for x in inp:
+        out.send(x * x)
+    out.close()
+a = channel()
+b = channel()
+spawn producer(a, 5)
+spawn squarer(a, b)
+var total = 0
+for y in b:
+    total += y
+print(total)
+shared hits = {"a": 0}
+fn hit(k):
+    hits[k] = hits[k] + 1
+parallel for i in 1..10:
+    hit("a")
+print(hits)
+x = channel(size: 3)
+y = channel(size: 3)
+y.send("from y")
+select:
+    m from x: print("x", m)
+    m from y: print("y", m)
+x.close()
+y.close()
+select:
+    m from x: print("x", m)
+    m from y: print("y", m)
+print("end")

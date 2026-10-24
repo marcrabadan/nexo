@@ -1,0 +1,7 @@
+use nexo.sync
+var counter = 0
+fn bad(c):
+    c.send(counter)
+out = channel(size: 1)
+spawn bad(out)
+print(out.receive())

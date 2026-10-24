@@ -3,9 +3,16 @@
 //!
 //! Every value is `%V = { i64 tag, i64 bits }`. Each function, lambda,
 //! pipeline step, field default, test and event handler becomes an LLVM
-//! function `%V (ptr closure, ptr args, i32 call_span)`. Errors are values
-//! (section 3): after every call that can fail the code checks
-//! `nx_failing` and jumps to the nearest `try`, or returns to its caller.
+//! function `%V (ptr tls, ptr closure, ptr args, i32 call_span)`, where
+//! `tls` is the state of the running thread. Errors are values (section
+//! 3): after every call that can fail the code checks the thread's
+//! `failing` flag and jumps to the nearest `try`, or returns to its caller.
+//!
+//! Memory (section 7): heap values are reference counted. Runtime
+//! functions borrow their arguments and return owned values. Every frame
+//! owns the values in its slots and releases them when it ends; the owned
+//! temporaries of the expression being computed are kept in `live`, and a
+//! failure releases them on its way to the handler.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -20,6 +27,8 @@ pub struct Options {
     pub file: String,
     pub lang: u32,
     pub test_mode: bool,
+    /// `--trust-ensure`: unproven `ensure` checks are not compiled
+    pub trust_ensure: bool,
 }
 
 pub type GResult<T> = Result<T, Diagnostic>;
@@ -28,6 +37,7 @@ const T_NONE: u64 = 0;
 const T_BOOL: u64 = 1;
 const T_INT: u64 = 2;
 const T_FLOAT: u64 = 3;
+const T_OBJ: u64 = 4;
 const T_LITFLOAT: u64 = 5;
 const T_UNDEF: u64 = 6;
 const T_MISSING: u64 = 7;
@@ -51,6 +61,15 @@ fn none() -> Val {
     lit(T_NONE, "0")
 }
 
+/// A place that is changed (`xs[i] = v`, `order.items.add(x)`): its
+/// root variable, record values in slots and indexes in slots.
+enum Place<'e> {
+    Var(&'e Expr, Vec<BindingId>),
+    Field(String, String, Span),
+    Index(Box<Place<'e>>, String, Span),
+    Value(Val),
+}
+
 #[derive(Clone)]
 enum Slot {
     /// an alloca holding the value
@@ -62,7 +81,21 @@ enum Slot {
 enum RetCtx {
     Function,
     /// `return` inside a `parallel for` gives the value of the task
-    Task { slot: String, cont: String },
+    Task { slot: String, cont: String, live: usize },
+}
+
+/// An owned temporary that must be released if the code fails before it
+/// is used.
+#[derive(Clone, Debug, PartialEq)]
+enum Live {
+    /// a register of type %V
+    Reg(String),
+    /// an alloca holding an owned %V
+    Slot(String),
+    /// an iterator (nx_iter)
+    Iter(String),
+    /// the lock of `shared` variables
+    Lock,
 }
 
 struct FnState {
@@ -70,7 +103,13 @@ struct FnState {
     allocas: String,
     body: String,
     terminated: bool,
-    unwind: Vec<String>,
+    /// where a failure goes, and how many live temporaries it leaves alone
+    unwind: Vec<(String, usize)>,
+    live: Vec<Live>,
+    /// allocas holding owned values released when the frame ends
+    owned_slots: Vec<String>,
+    /// blocks that release temporaries on the way to a handler
+    pads: String,
     returns: Vec<RetCtx>,
     slots: HashMap<BindingId, Slot>,
     env: Option<String>,
@@ -78,6 +117,11 @@ struct FnState {
     old_slots: HashMap<u32, String>,
     ret_slot: String,
     ret_label: String,
+    /// the register holding the call depth of this frame (D73)
+    depth: Option<String>,
+    /// an int-only function's body: the caller's depth is the argument
+    /// %depth, and the depth in the thread state is only written
+    int_params: bool,
 }
 
 /// What a frame compiles from.
@@ -89,6 +133,10 @@ enum FrameSrc<'a> {
     Default(&'a Expr),
     Test(&'a [Stmt]),
     Handler(&'a [Stmt]),
+    /// the body of a `parallel for` (one call per element)
+    Task(&'a [Stmt]),
+    /// a statement of a `parallel:` block
+    TaskStmt(&'a Stmt),
 }
 
 pub struct Gen<'a> {
@@ -109,10 +157,21 @@ pub struct Gen<'a> {
     spans: Vec<Span>,
     span_ids: HashMap<(u32, u32, u32), u32>,
     frame_fns: HashMap<FrameId, (String, String)>,
+    /// functions on ints only: the version that takes the numbers directly
+    int_workers: HashMap<FrameId, String>,
+    /// set while compiling such a version
+    int_params: bool,
     fs: Vec<FnState>,
     /// functions defined exactly once (called directly, without binding
     /// their arguments at run time)
     known_fns: HashMap<BindingId, &'a FnDef>,
+    /// record types defined once (D84)
+    known_types: HashMap<BindingId, &'a TypeDef>,
+    /// what the contract prover knows, and the type each method belongs to
+    prover: Option<crate::prove::Types>,
+    method_of: HashMap<u32, String>,
+    /// values that are certainly ints (no type checks at run time)
+    ints: Option<crate::narrow::Ints<'a>>,
 }
 
 fn op_code(op: &str) -> u32 {
@@ -246,20 +305,36 @@ impl<'a> Gen<'a> {
             spans: Vec::new(),
             span_ids: HashMap::new(),
             frame_fns: HashMap::new(),
+            int_workers: HashMap::new(),
+            int_params: false,
             fs: Vec::new(),
             known_fns: HashMap::new(),
+            known_types: HashMap::new(),
+            prover: None,
+            method_of: HashMap::new(),
+            ints: None,
         }
     }
 
     fn find_known_fns(&mut self, program: &'a Program) {
         let mut defs: HashMap<BindingId, usize> = HashMap::new();
         let mut fns: HashMap<BindingId, &'a FnDef> = HashMap::new();
+        let mut types: HashMap<BindingId, &'a TypeDef> = HashMap::new();
         let res = self.res;
         crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
             StmtKind::Fn(f) => {
                 if let Some(b) = res.decl.get(&Node::Stmt(s.id)) {
                     *defs.entry(*b).or_default() += 1;
                     fns.insert(*b, f);
+                }
+            }
+            StmtKind::Type(t) => {
+                if let Some(b) = res.decl.get(&Node::Stmt(s.id)) {
+                    *defs.entry(*b).or_default() += 1;
+                    let record = t.alias.is_none() && t.variants.is_empty() && !t.fields.is_empty();
+                    if record && t.settings.is_empty() && t.annotations.is_empty() {
+                        types.insert(*b, t);
+                    }
                 }
             }
             StmtKind::Assign { .. } | StmtKind::VarDecl { .. } => {
@@ -270,7 +345,9 @@ impl<'a> Gen<'a> {
             _ => {}
         });
         fns.retain(|b, f| defs.get(b) == Some(&1) && f.annotations.is_empty());
+        types.retain(|b, _| defs.get(b) == Some(&1));
         self.known_fns = fns;
+        self.known_types = types;
     }
 
     fn next(&mut self) -> usize {
@@ -302,6 +379,14 @@ impl<'a> Gen<'a> {
     }
 
     /// `ptr @c.N, i64 len`
+    /// A word where a field access or method call remembers where it
+    /// found the member of the last record it saw.
+    fn inline_cache(&mut self) -> String {
+        let n = self.next();
+        let _ = writeln!(self.consts, "@ic.{n} = internal global i64 0");
+        format!("@ic.{n}")
+    }
+
     fn strarg(&mut self, s: &str) -> String {
         let c = self.cstr(s);
         format!("ptr {c}, i64 {}", s.len())
@@ -447,18 +532,97 @@ impl<'a> Gen<'a> {
         format!("{}:{}{}", display.len(), display, body)
     }
 
-    /// `ptr @d.N, i64 len` for a declared type.
+    /// `ptr desc, i64 0` for a declared type: the descriptor is decoded
+    /// once when the program starts (a length of 0 marks it decoded).
     fn desc_arg(&mut self, t: &TypeExpr) -> String {
         let text = self.desc_text(t);
         let name = match self.descs.get(&text) {
             Some(n) => n.clone(),
             None => {
                 let c = self.cstr(&text);
-                self.descs.insert(text.clone(), c.clone());
-                c
+                let g = format!("@dd.{}", self.next());
+                let _ = writeln!(self.globals, "{g} = internal global ptr null");
+                let r = format!("%i{}", self.next());
+                let _ = writeln!(self.init, "  {r} = call ptr @nx_desc(ptr {c}, i64 {})\n  store ptr {r}, ptr {g}", text.len());
+                self.descs.insert(text.clone(), g.clone());
+                g
             }
         };
-        format!("ptr {name}, i64 {}", text.len())
+        let d = self.reg();
+        self.emit(&format!("{d} = load ptr, ptr {name}"));
+        format!("ptr {d}, i64 0")
+    }
+
+    /// The tags a value of a builtin scalar type has when it needs no
+    /// conversion: the check is done inline and the runtime is called only
+    /// for anything else.
+    fn fast_tags(t: &TypeExpr) -> Option<Vec<u64>> {
+        let TypeExpr::Name(tn) = t else { return None };
+        if !tn.params.is_empty() || tn.fallible || tn.weak {
+            return None;
+        }
+        let mut tags = match tn.name.as_str() {
+            "int" => vec![T_INT],
+            "float" => vec![T_FLOAT],
+            "bool" => vec![T_BOOL],
+            _ => return None,
+        };
+        if tn.optional {
+            tags.push(T_NONE);
+        }
+        Some(tags)
+    }
+
+    /// i1: the value has one of the tags.
+    fn has_tag(&mut self, v: &Val, tags: &[u64]) -> String {
+        let mut acc = "false".to_string();
+        for t in tags {
+            let c = self.is_tag(v, *t);
+            let o = self.reg();
+            self.emit(&format!("{o} = or i1 {acc}, {c}"));
+            acc = o;
+        }
+        acc
+    }
+
+    /// `nx_conform` (or `nx_conform_return`) with the inline fast path; the
+    /// result is owned and `v` is used up.
+    fn conform_with(&mut self, v: Val, t: &TypeExpr, func: &str, name: &str, span: &str) -> Val {
+        let Some(tags) = Self::fast_tags(t) else {
+            let tb = self.tb(&v);
+            let d = self.desc_arg(t);
+            let n = self.strarg(name);
+            let r = self.call_v(func, &format!("{tb}, {d}, {n}, i32 {span}"));
+            self.check();
+            self.drop_val(&v);
+            return self.owned(r);
+        };
+        let slot = self.alloca("%V");
+        let ok = self.has_tag(&v, &tags);
+        let fast = self.label();
+        let slow = self.label();
+        let done = self.label();
+        self.cond_br(&ok, &fast, &slow);
+        self.place(&fast);
+        self.store(&slot, &v);
+        self.br(&done);
+        self.place(&slow);
+        let tb = self.tb(&v);
+        let d = self.desc_arg(t);
+        let n = self.strarg(name);
+        let r = self.call_v(func, &format!("{tb}, {d}, {n}, i32 {span}"));
+        self.check();
+        self.store(&slot, &r);
+        // the value is released on this path (on the other it is a scalar)
+        self.rc_dec(&v);
+        self.br(&done);
+        self.place(&done);
+        self.unlive(&Live::Reg(match &v {
+            Val::Reg(r) => r.clone(),
+            Val::Lit(..) => String::new(),
+        }));
+        let x = self.load(&slot);
+        self.owned(x)
     }
 
     // ------------------------------------------------------ instructions
@@ -469,6 +633,14 @@ impl<'a> Gen<'a> {
             let f = self.f();
             let _ = writeln!(f.body, "{l}:");
             f.terminated = false;
+        }
+        // an int-only function keeps its depth in a register: the thread
+        // state gets it before any call that may run other code (D84)
+        if self.f().int_params && is_foreign_call(line) {
+            let n = self.next();
+            let d = self.f().depth.clone().unwrap();
+            let f = self.f();
+            let _ = writeln!(f.body, "  %dp{n} = getelementptr inbounds i8, ptr %tls, i64 8\n  store i64 {d}, ptr %dp{n}");
         }
         let f = self.f();
         f.body.push_str("  ");
@@ -573,14 +745,46 @@ impl<'a> Gen<'a> {
         c
     }
 
-    fn unwind_label(&self) -> String {
-        self.fs.last().unwrap().unwind.last().unwrap().clone()
+    /// The nearest handler, through a block that releases the live
+    /// temporaries it does not keep.
+    fn unwind_label(&mut self) -> String {
+        let (label, keep) = self.fs.last().unwrap().unwind.last().unwrap().clone();
+        let extra: Vec<Live> = self.f().live[keep..].to_vec();
+        if extra.is_empty() {
+            return label;
+        }
+        let pad = format!("PAD{}", self.next());
+        let mut text = format!("{pad}:\n");
+        for l in extra.iter().rev() {
+            text.push_str(&self.release_text(l));
+        }
+        let _ = writeln!(text, "  br label %{label}");
+        self.f().pads.push_str(&text);
+        pad
+    }
+
+    /// IR that releases a live temporary (for blocks written apart).
+    fn release_text(&mut self, l: &Live) -> String {
+        match l {
+            Live::Reg(r) => format!("  call void @rc_dec(%V {r})\n"),
+            Live::Slot(a) => {
+                let x = self.reg();
+                format!("  {x} = load %V, ptr {a}\n  call void @rc_dec(%V {x})\n")
+            }
+            Live::Iter(i) => format!("  call void @nx_iter_free(ptr {i})\n"),
+            Live::Lock => "  call void @nx_shared_unlock()\n".to_string(),
+        }
+    }
+
+    fn failing_flag(&mut self) -> String {
+        let f = self.reg();
+        self.emit(&format!("{f} = load i8, ptr %tls"));
+        f
     }
 
     /// After a call that can fail: go to the nearest handler.
     fn check(&mut self) {
-        let f = self.reg();
-        self.emit(&format!("{f} = load i8, ptr @nx_failing"));
+        let f = self.failing_flag();
         let c = self.reg();
         self.emit(&format!("{c} = icmp ne i8 {f}, 0"));
         let ok = self.label();
@@ -593,6 +797,127 @@ impl<'a> Gen<'a> {
     fn fail_here(&mut self) {
         let unwind = self.unwind_label();
         self.br(&unwind);
+    }
+
+    // ------------------------------------------------------- ownership
+
+    fn is_live(&self, v: &Val) -> bool {
+        match v {
+            Val::Reg(r) => self.fs.last().unwrap().live.contains(&Live::Reg(r.clone())),
+            Val::Lit(..) => false,
+        }
+    }
+
+    fn unlive(&mut self, l: &Live) -> bool {
+        let live = &mut self.f().live;
+        match live.iter().rposition(|x| x == l) {
+            Some(i) => {
+                live.remove(i);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A value the runtime returned: owned by this code until used.
+    fn owned(&mut self, v: Val) -> Val {
+        if let Val::Reg(r) = &v {
+            self.f().live.push(Live::Reg(r.clone()));
+        }
+        v
+    }
+
+    fn rc_inc(&mut self, v: &Val) {
+        if let Val::Lit(t, _) = v {
+            if *t != T_OBJ {
+                return;
+            }
+        }
+        let x = self.agg(v);
+        self.emit(&format!("call void @rc_inc(%V {x})"));
+    }
+
+    fn rc_dec(&mut self, v: &Val) {
+        if let Val::Lit(t, _) = v {
+            if *t != T_OBJ {
+                return;
+            }
+        }
+        let x = self.agg(v);
+        self.emit(&format!("call void @rc_dec(%V {x})"));
+    }
+
+    /// Take ownership of a value to store it: an owned temporary is moved,
+    /// a borrowed value gets a new reference.
+    fn own(&mut self, v: &Val) {
+        let moved = match v {
+            Val::Reg(r) => self.unlive(&Live::Reg(r.clone())),
+            Val::Lit(..) => false,
+        };
+        if !moved {
+            self.rc_inc(v);
+        }
+    }
+
+    /// The value is no longer needed.
+    fn drop_val(&mut self, v: &Val) {
+        if let Val::Reg(r) = v {
+            if self.unlive(&Live::Reg(r.clone())) {
+                self.rc_dec(v);
+            }
+        }
+    }
+
+    /// Keep a value in a stack slot across control flow. An owned value
+    /// stays owned by the slot (released by `drop_slot`); a borrowed one
+    /// stays borrowed.
+    fn spill(&mut self, v: &Val) -> String {
+        let a = self.alloca("%V");
+        self.store(&a, v);
+        if let Val::Reg(r) = v {
+            if self.unlive(&Live::Reg(r.clone())) {
+                self.f().live.push(Live::Slot(a.clone()));
+            }
+        }
+        a
+    }
+
+    /// An owned value in a slot (taking a reference if it was borrowed).
+    fn spill_owned(&mut self, v: &Val) -> String {
+        self.own(v);
+        let a = self.alloca("%V");
+        self.store(&a, v);
+        self.f().live.push(Live::Slot(a.clone()));
+        a
+    }
+
+    /// Release what a slot made by `spill` owns.
+    fn drop_slot(&mut self, a: &str) {
+        if self.unlive(&Live::Slot(a.to_string())) {
+            let x = self.load(a);
+            self.rc_dec(&x);
+        }
+    }
+
+    /// The owned value of a slot becomes an owned temporary again.
+    fn unspill(&mut self, a: &str) -> Val {
+        let x = self.load(a);
+        if self.unlive(&Live::Slot(a.to_string())) {
+            return self.owned(x);
+        }
+        x
+    }
+
+    /// Release every live temporary above `keep` on this path (a `return`),
+    /// leaving the list as it is for the code that follows.
+    fn release_live_from(&mut self, keep: usize) {
+        let extra: Vec<Live> = self.f().live[keep..].to_vec();
+        for l in extra.iter().rev() {
+            let text = self.release_text(l);
+            for line in text.lines() {
+                self.emit(line.trim());
+            }
+        }
     }
 
     fn load_global(&mut self, g: &str) -> Val {
@@ -680,6 +1005,8 @@ impl<'a> Gen<'a> {
         let bits = self.bits_of(v);
         let c = self.reg();
         self.emit(&format!("{c} = icmp ne i64 {bits}, 0"));
+        // the condition uses the value up
+        self.drop_val(v);
         c
     }
 
@@ -700,19 +1027,22 @@ impl<'a> Gen<'a> {
         let tb = self.tb(&v);
         let r = self.call_v("nx_bind", &tb);
         self.check();
-        r
+        self.drop_val(&v);
+        self.owned(r)
     }
 
+    /// Drop the literal tag of a float (no heap value changes, so the
+    /// result has the same owner as `v`).
     fn plain(&mut self, v: Val) -> Val {
         match &v {
-            Val::Lit(T_LITFLOAT, _) => {
-                // a float literal in a place without a declared type
-                v
-            }
             Val::Lit(..) => v,
-            Val::Reg(_) => {
-                let tb = self.tb(&v);
-                self.call_v("nx_plain", &tb)
+            Val::Reg(r) => {
+                let x = self.reg();
+                self.emit(&format!("{x} = call %V @nx_plainv(%V {r})"));
+                if self.unlive(&Live::Reg(r.clone())) {
+                    self.f().live.push(Live::Reg(x.clone()));
+                }
+                Val::Reg(x)
             }
         }
     }
@@ -754,9 +1084,22 @@ impl<'a> Gen<'a> {
         self.load(&p)
     }
 
-    fn store_binding(&mut self, b: BindingId, v: &Val) {
+    /// Store into a binding a value that is already owned for it.
+    fn store_binding_raw(&mut self, b: BindingId, v: &Val) {
         let p = self.binding_ptr(b);
+        let old = self.load(&p);
         self.store(&p, v);
+        self.rc_dec(&old);
+    }
+
+    /// Store into a binding, which takes ownership of `v`; the old value
+    /// is released.
+    fn store_binding(&mut self, b: BindingId, v: &Val) {
+        self.own(v);
+        let p = self.binding_ptr(b);
+        let old = self.load(&p);
+        self.store(&p, v);
+        self.rc_dec(&old);
     }
 
     /// Cell pointer of a captured binding, to build a closure.
@@ -795,15 +1138,64 @@ impl<'a> Gen<'a> {
         }
         match self.slot_of(b) {
             Some(Slot::Cell(a)) => {
+                let old = self.reg();
+                self.emit(&format!("{old} = load ptr, ptr {a}"));
                 let c = self.reg();
                 self.emit(&format!("{c} = call ptr @nx_cell()"));
                 self.emit(&format!("store ptr {c}, ptr {a}"));
+                self.emit(&format!("call void @nx_cell_release(ptr {old})"));
             }
             Some(Slot::Value(a)) => {
+                let old = self.load(&a);
                 self.emit(&format!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {a}"));
+                self.rc_dec(&old);
             }
             None => {}
         }
+    }
+
+    /// IR that releases every slot of the current frame (its end).
+    fn frame_release_text(&mut self) -> String {
+        let mut slots: Vec<(BindingId, Slot)> = self.f().slots.iter().map(|(b, s)| (*b, s.clone())).collect();
+        slots.sort_by_key(|(b, _)| *b);
+        let mut text = String::new();
+        for (_, s) in slots {
+            match s {
+                Slot::Value(a) => text.push_str(&self.release_text(&Live::Slot(a))),
+                Slot::Cell(a) => {
+                    let c = self.reg();
+                    let _ = writeln!(text, "  {c} = load ptr, ptr {a}\n  call void @nx_cell_release(ptr {c})");
+                }
+            }
+        }
+        let owned: Vec<String> = self.f().owned_slots.clone();
+        for a in owned {
+            text.push_str(&self.release_text(&Live::Slot(a)));
+        }
+        text
+    }
+
+    /// Every slot starts empty, so the end of the frame can release them
+    /// all whatever path it took.
+    fn init_frame_slots(&mut self) {
+        let mut slots: Vec<(BindingId, Slot)> = self.f().slots.iter().map(|(b, s)| (*b, s.clone())).collect();
+        slots.sort_by_key(|(b, _)| *b);
+        for (_, s) in slots {
+            match s {
+                Slot::Value(a) => self.emit(&format!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {a}")),
+                Slot::Cell(a) => self.emit(&format!("store ptr null, ptr {a}")),
+            }
+        }
+    }
+
+    /// An alloca owned by the frame (released when it ends).
+    fn frame_owned_slot(&mut self) -> String {
+        let a = self.alloca("%V");
+        // initialised in the entry block, before any path can end the frame
+        let f = self.f();
+        let _ = writeln!(f.allocas, "  store %V {{ i64 0, i64 0 }}, ptr {a}");
+        f.owned_slots.push(a.clone());
+        a
     }
 
     /// Is the binding assigned? (an i1)
@@ -848,6 +1240,11 @@ impl<'a> Gen<'a> {
                     self.res.frames[frame].params.iter().map(|b| (self.res.bindings[*b].name.clone(), false)).collect();
                 ("on".into(), names)
             }
+            FrameSrc::Task(_) => {
+                let p = &self.res.bindings[self.res.frames[frame].params[0]].name;
+                ("task".into(), vec![(p.clone(), false)])
+            }
+            FrameSrc::TaskStmt(_) => ("task".into(), vec![]),
         };
         let fn_c = self.cstr(&fname);
         let mut pitems = Vec::new();
@@ -868,8 +1265,98 @@ impl<'a> Gen<'a> {
             fname.len(),
             params.len()
         );
+        if let FrameSrc::Fn(f) = src {
+            if self.int_only(f) {
+                // the body takes the numbers in registers; the usual entry
+                // checks the arguments and calls it
+                let worker = format!("@fw.{n}");
+                self.int_workers.insert(frame, worker.clone());
+                self.int_params = true;
+                self.compile_frame(frame, src, &worker)?;
+                self.int_wrapper(frame, f, &name, &worker);
+                return Ok((name, info));
+            }
+        }
         self.compile_frame(frame, src, &name)?;
         Ok((name, info))
+    }
+
+    /// A function whose parameters and result are all `int`.
+    fn int_only(&self, f: &FnDef) -> bool {
+        !f.params.is_empty()
+            && f.params.iter().all(|p| p.default.is_none() && p.ty.as_ref().is_some_and(crate::narrow::is_int_type))
+            && f.ret.as_ref().is_some_and(crate::narrow::is_int_type)
+            && f.annotations.is_empty()
+            && !self.method_of.contains_key(&f.id)
+    }
+
+    fn int_wrapper(&mut self, frame: FrameId, f: &'a FnDef, name: &str, worker: &str) {
+        let st = self.new_fn_state(frame);
+        self.fs.push(st);
+        let mut payloads = Vec::new();
+        for (i, p) in f.params.iter().enumerate() {
+            let a = self.reg();
+            self.emit(&format!("{a} = getelementptr inbounds %V, ptr %args, i64 {i}"));
+            let v = self.load(&a);
+            let t = self.tag_of(&v);
+            let is_int = self.reg();
+            self.emit(&format!("{is_int} = icmp eq i64 {t}, {T_INT}"));
+            let fast = self.label();
+            let slow = self.label();
+            let done = self.label();
+            let bad = self.label();
+            self.cond_br(&is_int, &fast, &slow);
+            self.place(&fast);
+            let slot = self.alloca("i64");
+            let x = self.reg();
+            let av = self.agg(&v);
+            self.emit(&format!("{x} = extractvalue %V {av}, 1"));
+            self.emit(&format!("store i64 {x}, ptr {slot}"));
+            self.br(&done);
+            self.place(&slow);
+            // a missing argument is none, as in param_value
+            let missing = self.reg();
+            self.emit(&format!("{missing} = icmp eq i64 {t}, {T_MISSING}"));
+            let given = self.reg();
+            self.emit(&format!("{given} = select i1 {missing}, %V {{ i64 0, i64 0 }}, %V {av}"));
+            let tb = self.tb(&Val::Reg(given));
+            let d = self.desc_arg(p.ty.as_ref().unwrap());
+            let nm = self.strarg(&p.name);
+            let r = self.call_v("nx_conform", &format!("{tb}, {d}, {nm}, i32 %span"));
+            let fl = self.reg();
+            self.emit(&format!("{fl} = load i8, ptr %tls"));
+            let failed = self.reg();
+            self.emit(&format!("{failed} = icmp ne i8 {fl}, 0"));
+            let conformed = self.label();
+            self.cond_br(&failed, &bad, &conformed);
+            self.place(&bad);
+            self.emit("ret %V { i64 0, i64 0 }");
+            self.place(&conformed);
+            let y = self.reg();
+            let ar = self.agg(&r);
+            self.emit(&format!("{y} = extractvalue %V {ar}, 1"));
+            self.emit(&format!("store i64 {y}, ptr {slot}"));
+            self.br(&done);
+            self.place(&done);
+            let z = self.reg();
+            self.emit(&format!("{z} = load i64, ptr {slot}"));
+            payloads.push(format!("i64 {z}"));
+        }
+        let dp = self.reg();
+        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+        let d = self.reg();
+        self.emit(&format!("{d} = load i64, ptr {dp}"));
+        let r = self.reg();
+        self.emit(&format!("{r} = call %V {worker}(ptr %tls, ptr %clo, i64 {d}, {}, i32 %span)", payloads.join(", ")));
+        self.emit(&format!("store i64 {d}, ptr {dp}"));
+        self.emit(&format!("ret %V {r}"));
+        self.f().terminated = true;
+        let st = self.fs.pop().unwrap();
+        let mut text = format!("define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span) {{\nentry:\n");
+        text.push_str(&st.allocas);
+        text.push_str(&st.body);
+        text.push_str("}\n\n");
+        self.funcs.push_str(&text);
     }
 
     fn new_fn_state(&mut self, frame: FrameId) -> FnState {
@@ -879,7 +1366,10 @@ impl<'a> Gen<'a> {
             allocas: String::new(),
             body: String::new(),
             terminated: false,
-            unwind: vec![format!("UNWIND{n}")],
+            unwind: vec![(format!("UNWIND{n}"), 0)],
+            live: Vec::new(),
+            owned_slots: Vec::new(),
+            pads: String::new(),
             returns: vec![RetCtx::Function],
             slots: HashMap::new(),
             env: None,
@@ -887,6 +1377,8 @@ impl<'a> Gen<'a> {
             old_slots: HashMap::new(),
             ret_slot: String::new(),
             ret_label: format!("RET{n}"),
+            depth: None,
+            int_params: false,
         }
     }
 
@@ -906,15 +1398,31 @@ impl<'a> Gen<'a> {
     }
 
     fn compile_frame(&mut self, frame: FrameId, src: FrameSrc<'a>, name: &str) -> GResult<()> {
+        let int_params = std::mem::take(&mut self.int_params);
         let st = self.new_fn_state(frame);
         self.fs.push(st);
         self.frame_slots(frame);
+        self.init_frame_slots();
+        let ret_slot = self.alloca("%V");
+        self.emit(&format!("store %V {{ i64 0, i64 0 }}, ptr {ret_slot}"));
+        self.f().ret_slot = ret_slot.clone();
         // count nested calls (D73)
-        let d = self.reg();
-        self.emit(&format!("{d} = load i64, ptr @nx_depth"));
+        let dp = self.reg();
+        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+        let d = if int_params {
+            "%depth".to_string()
+        } else {
+            let d = self.reg();
+            self.emit(&format!("{d} = load i64, ptr {dp}"));
+            d
+        };
+        self.f().int_params = int_params;
         let d1 = self.reg();
+        self.f().depth = Some(d1.clone());
         self.emit(&format!("{d1} = add i64 {d}, 1"));
-        self.emit(&format!("store i64 {d1}, ptr @nx_depth"));
+        if !int_params {
+            self.emit(&format!("store i64 {d1}, ptr {dp}"));
+        }
         let deep = self.reg();
         self.emit(&format!("{deep} = icmp ugt i64 {d1}, {MAX_DEPTH}"));
         let too = self.label();
@@ -935,13 +1443,17 @@ impl<'a> Gen<'a> {
                 self.f().free_index.insert(*b, i);
             }
         }
-        let ret_slot = self.alloca("%V");
-        self.f().ret_slot = ret_slot.clone();
         let root = self.res.frames[frame].root;
         self.enter_scope(root);
-        // parameters
+        // parameters: the arguments are borrowed, the slots own them
         let params = self.res.frames[frame].params.clone();
         for (i, b) in params.iter().enumerate() {
+            if int_params {
+                let v = self.reg();
+                self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 %p{i}, 1"));
+                self.store_binding(*b, &Val::Reg(v));
+                continue;
+            }
             let p = self.reg();
             self.emit(&format!("{p} = getelementptr inbounds %V, ptr %args, i64 {i}"));
             let v = self.load(&p);
@@ -954,117 +1466,176 @@ impl<'a> Gen<'a> {
         let mut ensures: Vec<&Expr> = Vec::new();
         match src {
             FrameSrc::Fn(f) => {
+                // a contract the compiler proves costs nothing at run time;
+                // `--trust-ensure` leaves out the others too
+                let self_type = self.method_of.get(&f.id).cloned();
+                let proven = crate::prove::ensures(f, self_type.as_deref(), self.prover.as_ref().unwrap());
+                let mut k = 0;
                 for s in &f.body {
                     if let StmtKind::Ensure(e) = &s.kind {
-                        ensures.push(e);
+                        if !proven[k] {
+                            ensures.push(e);
+                        }
+                        k += 1;
                     }
                 }
                 // old() values are taken when the function is entered
-                for e in &ensures {
-                    for call in find_old_calls(e) {
-                        let ExprKind::Call { args, .. } = &call.kind else { continue };
-                        let Some(arg) = args.first() else { continue };
-                        let v = self.expr(&arg.value, false)?;
-                        let v = self.bind(v, &arg.value);
-                        let tb = self.tb(&v);
-                        let c = self.call_v("nx_deep_copy", &tb);
-                        let slot = self.temp(&c);
-                        self.f().old_slots.insert(call.id, slot);
+                if !self.opts.trust_ensure {
+                    for e in &ensures {
+                        for call in find_old_calls(e) {
+                            let ExprKind::Call { args, .. } = &call.kind else { continue };
+                            let Some(arg) = args.first() else { continue };
+                            let locked = self.lock_for(&arg.value);
+                            let v = self.expr(&arg.value, false)?;
+                            let v = self.bind(v, &arg.value);
+                            let tb = self.tb(&v);
+                            let c = self.call_v("nx_deep_copy", &tb);
+                            self.drop_val(&v);
+                            self.unlock_if(locked);
+                            let slot = self.frame_owned_slot();
+                            self.store(&slot, &c);
+                            self.f().old_slots.insert(call.id, slot);
+                        }
                     }
                 }
                 self.block(&f.body)?;
-                self.store(&ret_slot, &none());
             }
             FrameSrc::Lambda(body) => {
                 let v = self.expr(body, false)?;
                 let v = self.bind(v, body);
+                self.own(&v);
                 self.store(&ret_slot, &v);
             }
             FrameSrc::Step(e) | FrameSrc::Default(e) => {
                 let v = self.expr(e, true)?;
+                self.own(&v);
                 self.store(&ret_slot, &v);
             }
-            FrameSrc::Test(body) | FrameSrc::Handler(body) => {
+            FrameSrc::Test(body) | FrameSrc::Handler(body) | FrameSrc::Task(body) => {
                 self.block(body)?;
-                self.store(&ret_slot, &none());
+            }
+            FrameSrc::TaskStmt(st) => {
+                self.block(std::slice::from_ref(st))?;
             }
         }
+        debug_assert!(self.f().live.is_empty(), "live temporaries at the end of a frame");
         let ret_label = self.f().ret_label.clone();
         self.br(&ret_label);
         self.place(&ret_label);
         let mut result = self.load(&ret_slot);
         if let FrameSrc::Fn(f) = src {
-            for e in &ensures {
-                let v = self.expr(e, false)?;
-                let c = self.truth(&v, e.span, "ensure");
-                let ok = self.label();
-                let bad = self.label();
-                self.cond_br(&c, &ok, &bad);
-                self.place(&bad);
-                self.contract_broken("ensure", e)?;
-                self.place(&ok);
+            if !self.opts.trust_ensure {
+                for e in &ensures {
+                    // like a statement, a contract that reads a shared
+                    // variable holds its lock (a failure releases it)
+                    let locked = self.lock_for(e);
+                    let v = self.expr(e, false)?;
+                    let c = self.truth(&v, e.span, "ensure");
+                    let ok = self.label();
+                    let bad = self.label();
+                    self.cond_br(&c, &ok, &bad);
+                    self.place(&bad);
+                    self.contract_broken("ensure", e)?;
+                    self.place(&ok);
+                    self.unlock_if(locked);
+                }
             }
             if let Some(ret) = &f.ret {
-                let tb = self.tb(&result);
-                let d = self.desc_arg(ret);
-                let n = self.strarg(&f.name);
-                let sp = self.span_id(f.name_span);
-                result = self.call_v("nx_conform_return", &format!("{tb}, {d}, {n}, i32 {sp}"));
-                self.check();
+                // the slot keeps the value before the check; the result is
+                // owned on its own (the conversion may make a new value)
+                self.rc_inc(&result);
+                let owned = self.owned(result.clone());
+                let sp = self.span_id(f.name_span).to_string();
+                let r = self.conform_with(owned, ret, "nx_conform_return", &f.name, &sp);
+                self.unlive(&Live::Reg(match &r {
+                    Val::Reg(x) => x.clone(),
+                    Val::Lit(..) => String::new(),
+                }));
+                let old = self.load(&ret_slot);
+                self.rc_dec(&old);
+                result = r;
             }
         }
         let r = self.agg(&result);
+        // the slots are released; the result goes to the caller
+        let mut text = String::new();
+        if let (true, FrameSrc::Fn(f)) = (int_params, src) {
+            let ps: Vec<String> = (0..f.params.len()).map(|i| format!("i64 %p{i}")).collect();
+            let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, i64 %depth, {}, i32 %span) {{\nentry:", ps.join(", "));
+        } else {
+            let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span) {{\nentry:");
+        }
+        let release = self.frame_release_text();
+        for line in release.lines() {
+            self.emit(line.trim());
+        }
         self.leave_depth();
         self.emit(&format!("ret %V {r}"));
         self.f().terminated = true;
+        let unwinds: Vec<String> = self.f().unwind.iter().map(|(u, _)| u.clone()).collect();
+        let mut tail = String::new();
+        for u in &unwinds {
+            let release = self.frame_release_text();
+            let ret_release = self.release_text(&Live::Slot(ret_slot.clone()));
+            let n = self.next();
+            let depth = if int_params {
+                String::new()
+            } else {
+                format!("  %ud{n}p = getelementptr inbounds i8, ptr %tls, i64 8\n  %ud{n} = load i64, ptr %ud{n}p\n  %ud{n}x = sub i64 %ud{n}, 1\n  store i64 %ud{n}x, ptr %ud{n}p\n")
+            };
+            let _ = writeln!(tail, "{u}:\n{release}{ret_release}{depth}  ret %V {{ i64 0, i64 0 }}");
+        }
         let st = self.fs.pop().unwrap();
-        let mut text = String::new();
-        let _ = writeln!(text, "define internal %V {name}(ptr %clo, ptr %args, i32 %span) {{\nentry:");
         text.push_str(&st.allocas);
         text.push_str(&st.body);
-        for (i, u) in st.unwind.iter().enumerate() {
-            let _ = writeln!(
-                text,
-                "{u}:\n  %ud{i} = load i64, ptr @nx_depth\n  %ud{i}x = sub i64 %ud{i}, 1\n  store i64 %ud{i}x, ptr @nx_depth\n  ret %V {{ i64 0, i64 0 }}"
-            );
-        }
+        text.push_str(&tail);
+        text.push_str(&st.pads);
         text.push_str("}\n\n");
         self.funcs.push_str(&text);
         Ok(())
     }
 
     fn leave_depth(&mut self) {
+        if self.f().int_params {
+            // its caller puts its own depth back (D84)
+            return;
+        }
+        let dp = self.reg();
+        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
         let d = self.reg();
-        self.emit(&format!("{d} = load i64, ptr @nx_depth"));
+        self.emit(&format!("{d} = load i64, ptr {dp}"));
         let d1 = self.reg();
         self.emit(&format!("{d1} = sub i64 {d}, 1"));
-        self.emit(&format!("store i64 {d1}, ptr @nx_depth"));
+        self.emit(&format!("store i64 {d1}, ptr {dp}"));
     }
 
-    /// The value of parameter i on entry: its default when it was not
-    /// passed, checked against its declared type.
+    /// The value of parameter i on entry (owned): its default when it was
+    /// not passed, checked against its declared type.
     fn param_value(&mut self, f: &'a FnDef, i: usize, v: Val) -> GResult<Val> {
         let p = &f.params[i];
-        let slot = self.temp(&v);
+        let slot = self.alloca("%V");
         let missing = self.is_tag(&v, T_MISSING);
         let yes = self.label();
+        let no = self.label();
         let done = self.label();
-        self.cond_br(&missing, &yes, &done);
+        self.cond_br(&missing, &yes, &no);
         self.place(&yes);
         let d = match &p.default {
             Some(d) => self.expr(d, true)?,
             None => none(),
         };
+        self.own(&d);
         self.store(&slot, &d);
         self.br(&done);
+        self.place(&no);
+        self.rc_inc(&v);
+        self.store(&slot, &v);
+        self.br(&done);
         self.place(&done);
-        let mut v = self.load(&slot);
+        self.f().live.push(Live::Slot(slot.clone()));
+        let mut v = self.unspill(&slot);
         if let Some(t) = &p.ty {
-            let tb = self.tb(&v);
-            let d = self.desc_arg(t);
-            let n = self.strarg(&p.name);
-            v = self.call_v("nx_conform", &format!("{tb}, {d}, {n}, i32 %span"));
-            self.check();
+            v = self.conform_with(v, t, "nx_conform", &p.name, "%span");
         }
         Ok(self.plain(v))
     }
@@ -1085,15 +1656,25 @@ impl<'a> Gen<'a> {
             }
             a
         };
-        Ok(self.call_v("nx_closure", &format!("ptr {name}, ptr {info}, ptr {cells}, i64 {}", free.len())))
+        let r = self.call_v("nx_closure", &format!("ptr {name}, ptr {info}, ptr {cells}, i64 {}", free.len()));
+        Ok(self.owned(r))
     }
 
     // ------------------------------------------------------------ module
 
     pub fn program(mut self, program: &'a Program) -> GResult<String> {
         self.find_known_fns(program);
+        self.prover = Some(crate::prove::Types::new(program));
+        self.ints = Some(crate::narrow::Ints::new(program, self.res, &self.known_fns));
+        crate::checker::walk_stmts(&program.body, true, &mut |s| {
+            if let StmtKind::Type(t) = &s.kind {
+                for m in &t.methods {
+                    self.method_of.insert(m.id, t.name.clone());
+                }
+            }
+        });
         let mut st = self.new_fn_state(GLOBAL_FRAME);
-        st.unwind = vec!["UNHANDLED".into()];
+        st.unwind = vec![("UNHANDLED".into(), 0)];
         self.fs.push(st);
         self.frame_slots(GLOBAL_FRAME);
         let src_c = self.cstr(self.src);
@@ -1101,19 +1682,30 @@ impl<'a> Gen<'a> {
         let file_len = self.opts.file.len();
         let src_len = self.src.len();
         self.emit(&format!(
-            "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, i32 {})",
+            "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, i32 {}, ptr @nexo_cleanup)",
             self.opts.lang
         ));
         self.emit("call void @nx_module_init()");
+        self.init_frame_slots();
         // every top-level name starts unassigned
+        let mut cleanup = String::new();
         for b in 0..self.res.bindings.len() {
             if self.res.is_static(b) {
                 let _ = writeln!(self.globals, "@g.{b} = internal global %V {{ i64 {T_UNDEF}, i64 0 }}");
+                let _ = writeln!(
+                    cleanup,
+                    "  %c{b} = load %V, ptr @g.{b}\n  store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr @g.{b}\n  call void @rc_dec(%V %c{b})"
+                );
             }
         }
         let root = self.res.frames[GLOBAL_FRAME].root;
         self.enter_scope(root);
         self.block(&program.body)?;
+        // the program's own loop variables and cells
+        let release = self.frame_release_text();
+        for line in release.lines() {
+            self.emit(line.trim());
+        }
         if self.opts.test_mode {
             self.emit("call void @nx_run_tests()");
         } else {
@@ -1123,10 +1715,14 @@ impl<'a> Gen<'a> {
         self.f().terminated = true;
         let st = self.fs.pop().unwrap();
         let mut main = String::new();
-        main.push_str("define internal void @nexo_main() {\nentry:\n");
+        main.push_str("define internal void @nexo_main(ptr %tls) {\nentry:\n");
         main.push_str(&st.allocas);
         main.push_str(&st.body);
+        main.push_str(&st.pads);
         main.push_str("UNHANDLED:\n  call void @nx_unhandled()\n  unreachable\n}\n\n");
+        main.push_str("define internal void @nexo_cleanup(ptr %tls) {\nentry:\n");
+        main.push_str(&cleanup);
+        main.push_str("  ret void\n}\n\n");
         main.push_str("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  call void @nx_start(ptr @nexo_main)\n  unreachable\n}\n\n");
 
         let mut out = String::new();
@@ -1165,7 +1761,19 @@ impl<'a> Gen<'a> {
         for s in body {
             self.static_assign_check(s, &mut assigned)?;
             self.deadline_tick();
+            let before = self.f().live.len();
+            // a statement that uses a shared variable holds its lock
+            let locked = self.uses_shared(s);
+            if locked {
+                self.call_void("nx_shared_lock", "");
+                self.f().live.push(Live::Lock);
+            }
             self.stmt(s)?;
+            if locked {
+                self.unlive(&Live::Lock);
+                self.call_void("nx_shared_unlock", "");
+            }
+            debug_assert_eq!(self.f().live.len(), before, "temporaries left by a statement at line {}", s.span.line);
         }
         Ok(())
     }
@@ -1197,10 +1805,12 @@ impl<'a> Gen<'a> {
 
     /// `try within` checks the clock between statements (D58).
     fn deadline_tick(&mut self) {
+        // the thread's own flag is only read when some thread has a limit
+        // (its own one is counted before this code runs)
         let d = self.reg();
-        self.emit(&format!("{d} = load i8, ptr @nx_deadline_active"));
+        self.emit(&format!("{d} = load atomic i32, ptr @nx_any_deadline unordered, align 4"));
         let c = self.reg();
-        self.emit(&format!("{c} = icmp ne i8 {d}, 0"));
+        self.emit(&format!("{c} = icmp ne i32 {d}, 0"));
         let yes = self.label();
         let done = self.label();
         self.cond_br(&c, &yes, &done);
@@ -1214,7 +1824,8 @@ impl<'a> Gen<'a> {
     fn stmt(&mut self, s: &'a Stmt) -> GResult<()> {
         match &s.kind {
             StmtKind::Expr(e) => {
-                self.expr(e, false)?;
+                let v = self.expr(e, false)?;
+                self.drop_val(&v);
             }
             StmtKind::Pass | StmtKind::Ensure(_) => {}
             StmtKind::Assign { target, op, value, ty } => self.assign(s, target, op, value, ty.as_ref())?,
@@ -1250,17 +1861,58 @@ impl<'a> Gen<'a> {
                     RetCtx::Function => {
                         let slot = self.f().ret_slot.clone();
                         let l = self.f().ret_label.clone();
+                        self.own(&v);
                         self.store(&slot, &v);
+                        // a return leaves every temporary of the frame
+                        self.release_live_from(0);
                         self.br(&l);
+                        if let Val::Reg(r) = &v {
+                            // the compile-time list stays as it was for the code after
+                            let _ = r;
+                        }
                     }
-                    RetCtx::Task { slot, cont } => {
-                        let (slot, cont) = (slot.clone(), cont.clone());
+                    RetCtx::Task { slot, cont, live } => {
+                        let (slot, cont, keep) = (slot.clone(), cont.clone(), *live);
+                        self.own(&v);
+                        let old = self.load(&slot);
                         self.store(&slot, &v);
+                        self.rc_dec(&old);
+                        self.release_live_from(keep);
                         self.br(&cont);
                     }
                 }
             }
+            StmtKind::Use { what } if what == "nexo.sync" => {}
             StmtKind::Use { what } => return Err(not_supported(format!("\"use {what}\""), s.span)),
+            StmtKind::Spawn { call } => {
+                let ExprKind::Call { func, args } = &call.kind else { unreachable!() };
+                let f = self.expr(func, false)?;
+                let mut vals = Vec::new();
+                let mut names: Vec<Option<&str>> = Vec::new();
+                for a in args {
+                    vals.push(self.expr(&a.value, true)?);
+                    names.push(a.name.as_deref());
+                }
+                let arr = self.values_array(&vals);
+                let nm = self.names_array(&names);
+                let tf = self.tb(&f);
+                let sp = self.span_id(call.span);
+                self.call_void("nx_spawn", &format!("{tf}, ptr {arr}, ptr {nm}, i64 {}, i32 {sp}", vals.len()));
+                self.check();
+                self.drop_all(&vals);
+                self.drop_val(&f);
+            }
+            StmtKind::Shared { value, .. } => {
+                let v = self.expr(value, false)?;
+                let v = self.bind(v, value);
+                let tv = self.tb(&v);
+                let c = self.call_v("nx_shared_store", &tv);
+                self.drop_val(&v);
+                let c = self.owned(c);
+                let target = self.res.assigns[&s.id].target;
+                self.store_binding(target, &c);
+            }
+            StmtKind::Select { arms } => self.select_stmt(s, arms)?,
             StmtKind::Config { word } => return Err(not_supported(format!("\"{word}:\""), s.span)),
             StmtKind::Event { kind, name, body, .. } => {
                 if *kind != "on" {
@@ -1271,6 +1923,7 @@ impl<'a> Gen<'a> {
                 let n = self.strarg(name);
                 let tb = self.tb(&clo);
                 self.call_void("nx_on", &format!("{n}, {tb}"));
+                self.drop_val(&clo);
             }
             StmtKind::Emit { name, args, call_span } => {
                 let mut vals = Vec::new();
@@ -1283,7 +1936,12 @@ impl<'a> Gen<'a> {
                 let sp = self.span_id(*call_span);
                 self.call_void("nx_emit", &format!("{n}, ptr {arr}, i64 {}, i32 {sp}", vals.len()));
                 self.check();
+                for v in vals.iter().rev() {
+                    self.drop_val(v);
+                }
             }
+            // an expect that always holds is not checked
+            StmtKind::Expect(e) if crate::prove::expect_holds(e) => {}
             StmtKind::Expect(e) => {
                 let v = self.expr(e, false)?;
                 let c = self.truth(&v, e.span, "expect");
@@ -1367,6 +2025,7 @@ impl<'a> Gen<'a> {
                 let n = self.reg();
                 self.emit(&format!("{n} = call i64 @nx_repeat_count({tb}, i32 {sp})"));
                 self.check();
+                self.drop_val(&v);
                 let i = self.alloca("i64");
                 self.emit(&format!("store i64 0, ptr {i}"));
                 let head = self.label();
@@ -1390,7 +2049,19 @@ impl<'a> Gen<'a> {
             }
             StmtKind::Match { subject, arms } => self.match_stmt(s, subject, arms)?,
             StmtKind::Try { within, body, handlers } => self.try_stmt(s, within.as_ref(), body, handlers)?,
-            StmtKind::Parallel(body) => self.block(body)?,
+            StmtKind::Parallel(body) => {
+                // each statement is a task; they run at the same time
+                let mut clos = Vec::new();
+                for (i, st) in body.iter().enumerate() {
+                    let frame = self.res.frame_of[&Node::Task(s.id, i)];
+                    clos.push(self.closure(frame, FrameSrc::TaskStmt(st))?);
+                }
+                let arr = self.values_array(&clos);
+                let sp = self.span_id(s.span);
+                self.call_void("nx_parallel_block", &format!("ptr {arr}, i64 {}, i32 {sp}", clos.len()));
+                self.check();
+                self.drop_all(&clos);
+            }
             StmtKind::Test { name, body } => {
                 if self.opts.test_mode {
                     let frame = self.res.frame_of[&Node::Stmt(s.id)];
@@ -1398,13 +2069,15 @@ impl<'a> Gen<'a> {
                     let n = self.strarg(name);
                     let tb = self.tb(&clo);
                     self.call_void("nx_test_register", &format!("{n}, {tb}"));
+                    self.drop_val(&clo);
                 }
             }
         }
         Ok(())
     }
 
-    /// Iterate over a value; `body` gets each element.
+    /// Iterate over a value; `body` gets each element (owned: storing it
+    /// moves it). The iterator holds its own reference to the value.
     fn for_each(
         &mut self,
         iterable: &Val,
@@ -1416,6 +2089,8 @@ impl<'a> Gen<'a> {
         let it = self.reg();
         self.emit(&format!("{it} = call ptr @nx_iter({tb}, i32 {sp})"));
         self.check();
+        self.drop_val(iterable);
+        self.f().live.push(Live::Iter(it.clone()));
         let item = self.alloca("%V");
         let head = self.label();
         let yes = self.label();
@@ -1423,31 +2098,25 @@ impl<'a> Gen<'a> {
         self.br(&head);
         self.place(&head);
         let ok = self.call_flag("nx_iter_next", &format!("ptr {it}, ptr {item}"));
-        let f = self.reg();
-        self.emit(&format!("{f} = load i8, ptr @nx_failing"));
-        let failed = self.reg();
-        self.emit(&format!("{failed} = icmp ne i8 {f}, 0"));
-        let cont = self.label();
-        let unwind = self.unwind_label();
-        self.cond_br(&failed, &unwind, &cont);
-        self.place(&cont);
+        self.check();
         self.cond_br(&ok, &yes, &end);
         self.place(&yes);
         let v = self.load(&item);
+        let v = self.owned(v);
         body(self, &v)?;
+        self.drop_val(&v);
         self.br(&head);
         self.place(&end);
+        self.unlive(&Live::Iter(it.clone()));
+        self.emit(&format!("call void @nx_iter_free(ptr {it})"));
         Ok(())
     }
 
+    /// Check a value against a declared type; the result is owned and the
+    /// value is used up.
     fn conform(&mut self, v: Val, t: &TypeExpr, name: &str, span: Span) -> GResult<Val> {
-        let tb = self.tb(&v);
-        let d = self.desc_arg(t);
-        let n = self.strarg(name);
-        let sp = self.span_id(span);
-        let r = self.call_v("nx_conform", &format!("{tb}, {d}, {n}, i32 {sp}"));
-        self.check();
-        Ok(r)
+        let sp = self.span_id(span).to_string();
+        Ok(self.conform_with(v, t, "nx_conform", name, &sp))
     }
 
     fn name_error(&mut self, name: &str, suggestion: Option<&str>, span: Span) {
@@ -1494,10 +2163,28 @@ impl<'a> Gen<'a> {
                 });
                 let mut v = self.expr(value, typed_var)?;
                 if aug {
-                    let cur = self.name_read(target, name)?;
-                    v = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
+                    // `x += v` reads x first (as an expression, so an int is known)
+                    let cur = self.expr(target, true)?;
+                    let int_op = matches!(&op[..1], "+" | "-" | "*") && self.certain_int(target) && self.certain_int(value);
+                    let r = if int_op {
+                        self.binop_int(&op[..1], &cur, &v, s.span.to(value.span))?
+                    } else {
+                        self.binop(&op[..1], &cur, &v, s.span.to(value.span))?
+                    };
+                    self.drop_val(&v);
+                    self.drop_val(&cur);
+                    v = r;
                 }
-                let v = self.bind(v, value);
+                let mut v = self.bind(v, value);
+                if a.cands.iter().any(|(b, _)| self.res.bindings[*b].shared) {
+                    // a shared variable keeps a copy of its own
+                    let tv = self.tb(&v);
+                    let c = self.call_v("nx_shared_store", &tv);
+                    self.drop_val(&v);
+                    v = self.owned(c);
+                }
+                // the value waits in a slot; each path moves it out
+                let slot = self.spill_owned(&v);
                 let done = self.label();
                 let define = self.label();
                 for (b, crossed) in &a.cands {
@@ -1510,9 +2197,24 @@ impl<'a> Gen<'a> {
                     self.cond_br(&def, &yes, &next);
                     self.place(&yes);
                     if kind == BKind::Var {
+                        self.task_write_check(*b, name, target.span);
+                        let cur = self.load(&slot);
                         let v2 = match &bty {
-                            Some(t) => self.conform(v.clone(), t, name, value.span)?,
-                            None => self.plain(v.clone()),
+                            Some(t) => {
+                                let c = self.conform(cur, t, name, value.span)?;
+                                // the value before the conversion stays in the slot
+                                self.move_out(&slot, true);
+                                c
+                            }
+                            None => {
+                                self.move_out(&slot, false);
+                                let c = self.plain(cur);
+                                self.f().live.push(Live::Reg(match &c {
+                                    Val::Reg(r) => r.clone(),
+                                    Val::Lit(..) => unreachable!(),
+                                }));
+                                c
+                            }
                         };
                         self.store_binding(*b, &v2);
                         self.br(&done);
@@ -1525,10 +2227,17 @@ impl<'a> Gen<'a> {
                 }
                 self.br(&define);
                 self.place(&define);
-                let v = self.plain(v);
+                let cur = self.load(&slot);
+                self.move_out(&slot, false);
+                let v = self.plain(cur);
+                self.f().live.push(Live::Reg(match &v {
+                    Val::Reg(r) => r.clone(),
+                    Val::Lit(..) => unreachable!(),
+                }));
                 self.store_binding(a.target, &v);
                 self.br(&done);
                 self.place(&done);
+                self.unlive(&Live::Slot(slot));
             }
             ExprKind::Attr { obj, name, name_span } => {
                 let o = self.expr(obj, false)?;
@@ -1539,7 +2248,11 @@ impl<'a> Gen<'a> {
                     let nsp = self.span_id(*name_span);
                     let cur = self.call_v("nx_attr", &format!("{to}, {n}, i32 {nsp}"));
                     self.check();
-                    v = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
+                    let cur = self.owned(cur);
+                    let r = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
+                    self.drop_val(&cur);
+                    self.drop_val(&v);
+                    v = r;
                 }
                 let to = self.tb(&o);
                 let tv = self.tb(&v);
@@ -1548,28 +2261,178 @@ impl<'a> Gen<'a> {
                 let vsp = self.span_id(value.span);
                 self.call_void("nx_set_attr", &format!("{to}, {n}, {tv}, i32 {nsp}, i32 {vsp}"));
                 self.check();
+                self.drop_val(&v);
+                self.drop_val(&o);
             }
             ExprKind::Index { obj, index } => {
-                let o = self.expr(obj, false)?;
+                // a change through a place (copy-on-write)
+                let place = self.place_parts(obj)?;
                 let i = self.expr(index, false)?;
-                let mut v = self.expr(value, false)?;
+                let v = self.expr(value, false)?;
+                let v = self.into_shared(&place, v);
                 let sp = self.span_id(target.span);
-                if aug {
-                    let to = self.tb(&o);
-                    let ti = self.tb(&i);
-                    let cur = self.call_v("nx_index", &format!("{to}, {ti}, i32 {sp}"));
+                let ptr = self.place_ptr(&place)?;
+                let ti = self.tb(&i);
+                let v = if aug {
+                    let cur = self.call_v("nx_index_at", &format!("ptr {ptr}, {ti}, i32 {sp}"));
                     self.check();
-                    v = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
-                }
-                let to = self.tb(&o);
+                    let cur = self.owned(cur);
+                    let r = self.binop(&op[..1], &cur, &v, s.span.to(value.span))?;
+                    self.drop_val(&cur);
+                    self.drop_val(&v);
+                    r
+                } else {
+                    v
+                };
                 let ti = self.tb(&i);
                 let tv = self.tb(&v);
-                self.call_void("nx_set_index", &format!("{to}, {ti}, {tv}, i32 {sp}"));
+                self.call_void("nx_set_index_at", &format!("ptr {ptr}, {ti}, {tv}, i32 {sp}"));
                 self.check();
+                self.drop_val(&v);
+                self.drop_val(&i);
+                self.drop_place(place);
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// The value of `slot` was moved out; `release` gives back the
+    /// reference the slot held.
+    fn move_out(&mut self, slot: &str, release: bool) {
+        if release {
+            let x = self.load(slot);
+            self.rc_dec(&x);
+        }
+        self.emit(&format!("store %V {{ i64 0, i64 0 }}, ptr {slot}"));
+    }
+
+    /// The parts of a place that are evaluated before the change: the
+    /// variable at its root, record values and indexes.
+    fn place_parts(&mut self, e: &'a Expr) -> GResult<Place<'a>> {
+        Ok(match &e.kind {
+            ExprKind::Name(_) => match self.res.names.get(&e.id) {
+                Some(NameRes::Bindings { cands, row: None, .. }) if !cands.is_empty() => {
+                    Place::Var(e, cands.clone())
+                }
+                _ => Place::Value(self.expr(e, false)?),
+            },
+            ExprKind::Attr { obj, name, name_span } => {
+                let o = self.expr(obj, false)?;
+                let slot = self.spill(&o);
+                Place::Field(slot, name.clone(), *name_span)
+            }
+            ExprKind::Index { obj, index } => {
+                let inner = self.place_parts(obj)?;
+                let i = self.expr(index, false)?;
+                let slot = self.spill(&i);
+                Place::Index(Box::new(inner), slot, e.span)
+            }
+            ExprKind::Propagate(x) => self.place_parts(x)?,
+            _ => {
+                let v = self.expr(e, false)?;
+                Place::Value(v)
+            }
+        })
+    }
+
+    /// A pointer to the place, each step made unique.
+    fn place_ptr(&mut self, p: &Place<'a>) -> GResult<String> {
+        Ok(match p {
+            Place::Var(e, cands) => {
+                if let (ExprKind::Name(n), [b]) = (&e.kind, cands.as_slice()) {
+                    self.task_write_check(*b, n, e.span);
+                }
+                let ptr = self.binding_ptr_any(e, cands)?;
+                self.emit(&format!("call void @nx_unique_slot(ptr {ptr})"));
+                ptr
+            }
+            Place::Field(slot, name, span) => {
+                let o = self.load(slot);
+                let to = self.tb(&o);
+                let n = self.strarg(name);
+                let sp = self.span_id(*span);
+                let ptr = self.reg();
+                self.emit(&format!("{ptr} = call ptr @nx_field_slot({to}, {n}, i32 {sp})"));
+                self.check();
+                ptr
+            }
+            Place::Index(inner, slot, span) => {
+                let base = self.place_ptr(inner)?;
+                let i = self.load(slot);
+                let ti = self.tb(&i);
+                let sp = self.span_id(*span);
+                let ptr = self.reg();
+                self.emit(&format!("{ptr} = call ptr @nx_index_slot(ptr {base}, {ti}, i32 {sp})"));
+                self.check();
+                ptr
+            }
+            Place::Value(v) => {
+                // not a place: the change goes to a copy nobody sees
+                let a = self.alloca("%V");
+                self.store(&a, v);
+                a
+            }
+        })
+    }
+
+    /// A value stored inside a shared variable is a copy of its own.
+    fn into_shared(&mut self, p: &Place<'a>, v: Val) -> Val {
+        let mut root = p;
+        while let Place::Index(inner, ..) = root {
+            root = inner;
+        }
+        let Place::Var(_, cands) = root else { return v };
+        if !cands.iter().any(|b| self.res.bindings[*b].shared) {
+            return v;
+        }
+        let tv = self.tb(&v);
+        let c = self.call_v("nx_shared_store", &tv);
+        self.drop_val(&v);
+        self.owned(c)
+    }
+
+    fn drop_place(&mut self, p: Place<'a>) {
+        match p {
+            Place::Var(..) => {}
+            Place::Field(slot, ..) => self.drop_slot(&slot),
+            Place::Index(inner, slot, _) => {
+                self.drop_slot(&slot);
+                self.drop_place(*inner);
+            }
+            Place::Value(v) => self.drop_val(&v),
+        }
+    }
+
+    /// The storage of the first candidate binding that is assigned (a name
+    /// that is changed through a place).
+    fn binding_ptr_any(&mut self, e: &'a Expr, cands: &[BindingId]) -> GResult<String> {
+        if cands.len() == 1 && self.res.bindings[cands[0]].entry {
+            return Ok(self.binding_ptr(cands[0]));
+        }
+        let out = self.alloca("ptr");
+        let done = self.label();
+        for b in cands {
+            let p = self.binding_ptr(*b);
+            self.emit(&format!("store ptr {p}, ptr {out}"));
+            let v = self.load(&p);
+            let t = self.tag_of(&v);
+            let c = self.reg();
+            self.emit(&format!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
+            let next = self.label();
+            self.cond_br(&c, &done, &next);
+            self.place(&next);
+        }
+        let ExprKind::Name(name) = &e.kind else { unreachable!() };
+        let sugg = match self.res.names.get(&e.id) {
+            Some(NameRes::Bindings { suggestion, .. }) => suggestion.clone(),
+            _ => None,
+        };
+        self.name_error(name, sugg.as_deref(), e.span);
+        self.place(&done);
+        let r = self.reg();
+        self.emit(&format!("{r} = load ptr, ptr {out}"));
+        Ok(r)
     }
 
     fn type_def(&mut self, s: &'a Stmt, t: &'a TypeDef) -> GResult<()> {
@@ -1585,6 +2448,7 @@ impl<'a> Gen<'a> {
         if let Some(alias) = &t.alias {
             let d = self.desc_arg(alias);
             let v = self.call_v("nx_define_alias", &format!("i32 {id}, {name_arg}, {d}"));
+            let v = self.owned(v);
             self.store_binding(b, &v);
             return Ok(());
         }
@@ -1636,6 +2500,7 @@ impl<'a> Gen<'a> {
             let vbs = self.res.variant_bindings[&s.id].clone();
             for (i, vb) in vbs.iter().enumerate() {
                 let tb = self.tb(&v);
+                // variants are constants of the program (never freed)
                 let var = self.call_v("nx_enum_variant", &format!("{tb}, i64 {i}"));
                 self.store_binding(*vb, &var);
             }
@@ -1655,11 +2520,16 @@ impl<'a> Gen<'a> {
                 }
             }
             let darr = if any_default { self.values_array(&defaults) } else { "null".into() };
-            self.call_v(
+            let v = self.call_v(
                 "nx_define_record",
                 &format!("i32 {id}, {name_arg}, i64 {}, ptr {fields}, ptr {darr}", t.fields.len()),
-            )
+            );
+            for d in defaults.iter().rev() {
+                self.drop_val(d);
+            }
+            v
         };
+        // types are constants of the program (never freed)
         let tmp = self.temp(&v);
         for m in &t.methods {
             if let Some(a) = m.annotations.first() {
@@ -1672,6 +2542,7 @@ impl<'a> Gen<'a> {
             let tc = self.tb(&clo);
             let n = self.strarg(&m.name);
             self.call_void("nx_add_method", &format!("{tt}, {n}, {tc}"));
+            self.drop_val(&clo);
         }
         if let Some(tb) = trait_value {
             let trv = self.load_binding(tb);
@@ -1696,7 +2567,9 @@ impl<'a> Gen<'a> {
                 Some(t) => {
                     let text = self.desc_text(t);
                     let dc = self.cstr(&text);
-                    (dc, text.len(), t.optional() as u8)
+                    // bit 1: optional; bit 2: a weak field
+                    let weak = matches!(t, TypeExpr::Name(tn) if tn.weak);
+                    (dc, text.len(), t.optional() as u8 | (weak as u8) << 1)
                 }
                 None => ("null".to_string(), 0, 0),
             };
@@ -1717,7 +2590,7 @@ impl<'a> Gen<'a> {
 
     fn contract_broken(&mut self, kw: &str, e: &'a Expr) -> GResult<()> {
         let mut texts: Vec<String> = Vec::new();
-        let mut vals = Vec::new();
+        let mut slots = Vec::new();
         for op in contract_operands(e) {
             let text = source_text(self.src, op.span);
             if text.is_empty() || texts.contains(&text) {
@@ -1727,9 +2600,11 @@ impl<'a> Gen<'a> {
             let slot = self.alloca("%V");
             let skip = self.label();
             let done = self.label();
-            self.f().unwind.push(skip.clone());
+            let keep = self.f().live.len();
+            self.f().unwind.push((skip.clone(), keep));
             let v = self.expr(op, false)?;
             self.f().unwind.pop();
+            self.own(&v);
             self.store(&slot, &v);
             self.br(&done);
             self.place(&skip);
@@ -1737,10 +2612,11 @@ impl<'a> Gen<'a> {
             self.emit(&format!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {slot}"));
             self.br(&done);
             self.place(&done);
-            let v = self.load(&slot);
+            self.f().live.push(Live::Slot(slot.clone()));
             texts.push(text);
-            vals.push(v);
+            slots.push(slot);
         }
+        let vals: Vec<Val> = slots.iter().map(|s| self.load(s)).collect();
         let names: Vec<Option<&str>> = texts.iter().map(|t| Some(t.as_str())).collect();
         let narr = self.names_array(&names);
         let varr = self.values_array(&vals);
@@ -1751,7 +2627,11 @@ impl<'a> Gen<'a> {
             "nx_contract_broken",
             &format!("{k}, {x}, ptr {narr}, ptr {varr}, i64 {}, i32 {sp}", vals.len()),
         );
+        // the error is on its way: the values are released on the way out
         self.fail_here();
+        for s in slots.iter().rev() {
+            self.unlive(&Live::Slot(s.clone()));
+        }
         Ok(())
     }
 
@@ -1760,15 +2640,16 @@ impl<'a> Gen<'a> {
         let sp = self.span_id(e.span);
         if fails {
             let caught = self.label();
-            self.f().unwind.push(caught.clone());
-            self.expr(e, false)?;
+            let keep = self.f().live.len();
+            self.f().unwind.push((caught.clone(), keep));
+            let v = self.expr(e, false)?;
             self.f().unwind.pop();
+            self.drop_val(&v);
             let x = self.strarg(&text);
             self.call_void("nx_assert_not_failed", &format!("{x}, i32 {sp}"));
             self.fail_here();
             self.place(&caught);
-            let f = self.reg();
-            self.emit(&format!("{f} = load i8, ptr @nx_failing"));
+            let f = self.failing_flag();
             let is_error = self.reg();
             self.emit(&format!("{is_error} = icmp eq i8 {f}, 1"));
             let ok = self.label();
@@ -1794,6 +2675,8 @@ impl<'a> Gen<'a> {
                 self.call_void("nx_assert_cmp_failed", &format!("{x}, {o}, {tl}, {tr}, i32 {sp}"));
                 self.fail_here();
                 self.place(&ok);
+                self.drop_val(&r);
+                self.drop_val(&l);
                 return Ok(());
             }
         }
@@ -1818,10 +2701,12 @@ impl<'a> Gen<'a> {
             let tsp = self.span_id(s.span);
             self.call_void("nx_deadline_push", &format!("{tb}, i32 {wsp}, i32 {tsp}"));
             self.check();
+            self.drop_val(&v);
         }
         let catch = self.label();
         let end = self.label();
-        self.f().unwind.push(catch.clone());
+        let keep = self.f().live.len();
+        self.f().unwind.push((catch.clone(), keep));
         self.block(body)?;
         self.f().unwind.pop();
         if within.is_some() {
@@ -1832,8 +2717,7 @@ impl<'a> Gen<'a> {
         if within.is_some() {
             self.call_void("nx_deadline_pop", "");
         }
-        let f = self.reg();
-        self.emit(&format!("{f} = load i8, ptr @nx_failing"));
+        let f = self.failing_flag();
         let is_error = self.reg();
         self.emit(&format!("{is_error} = icmp eq i8 {f}, 1"));
         let handle = self.label();
@@ -1841,7 +2725,8 @@ impl<'a> Gen<'a> {
         self.cond_br(&is_error, &handle, &outer);
         self.place(&handle);
         let err = self.call_v("nx_take_error", "");
-        let err_slot = self.temp(&err);
+        let err = self.owned(err);
+        let err_slot = self.spill(&err);
         for (i, h) in handlers.iter().enumerate() {
             let next = self.label();
             if let Some(k) = &h.kind {
@@ -1859,6 +2744,9 @@ impl<'a> Gen<'a> {
             let e = self.load(&err_slot);
             self.store_binding(b, &e);
             self.block(&h.body)?;
+            // handled: the error value is no longer needed here
+            let e = self.load(&err_slot);
+            self.rc_dec(&e);
             self.br(&end);
             self.place(&next);
         }
@@ -1866,13 +2754,14 @@ impl<'a> Gen<'a> {
         let tb = self.tb(&e);
         self.call_void("nx_reraise", &tb);
         self.fail_here();
+        self.unlive(&Live::Slot(err_slot));
         self.place(&end);
         Ok(())
     }
 
     fn match_stmt(&mut self, s: &'a Stmt, subject: &'a Expr, arms: &'a [MatchArm]) -> GResult<()> {
         let v = self.expr(subject, false)?;
-        let subj = self.temp(&v);
+        let subj = self.spill(&v);
         let end = self.label();
         for (ai, arm) in arms.iter().enumerate() {
             let scope = self.res.scope_of[&Node::Arm(s.id, ai)];
@@ -1899,6 +2788,8 @@ impl<'a> Gen<'a> {
         self.call_void("nx_no_match", &format!("{tb}, i32 {sp}"));
         self.fail_here();
         self.place(&end);
+        self.drop_slot(&subj);
+        self.call_void("nx_scratch_clear", "");
         Ok(())
     }
 
@@ -1910,6 +2801,7 @@ impl<'a> Gen<'a> {
             Pattern::Lit(span, l) => {
                 let lv = self.expr(l, false)?;
                 let c = self.eq(&lv, value, *span);
+                self.drop_val(&lv);
                 let yes = self.label();
                 self.cond_br(&c, &yes, fail);
                 self.place(&yes);
@@ -1935,6 +2827,7 @@ impl<'a> Gen<'a> {
                                 c
                             }
                         };
+                        self.drop_val(&known);
                         let yes = self.label();
                         self.cond_br(&c, &yes, fail);
                         self.place(&yes);
@@ -1955,6 +2848,7 @@ impl<'a> Gen<'a> {
                 let sp = self.span_id(*span);
                 let c = self.call_flag("nx_match_ctor", &format!("{tv}, {tc}, i64 {}, {n}, i32 {sp}", args.len()));
                 self.check();
+                self.drop_val(&ctor);
                 let yes = self.label();
                 self.cond_br(&c, &yes, fail);
                 self.place(&yes);
@@ -1962,6 +2856,7 @@ impl<'a> Gen<'a> {
                 for (i, a) in args.iter().enumerate() {
                     let v = self.load(&vslot);
                     let tv = self.tb(&v);
+                    // borrowed from the value being matched
                     let field = self.call_v("nx_field_at", &format!("{tv}, i64 {i}"));
                     let mut sub = path.clone();
                     sub.push(i);
@@ -1979,8 +2874,30 @@ impl<'a> Gen<'a> {
 
     /// Generate an expression. `lit_ok`: a float literal may stay a
     /// literal (it is an operand or an argument, where section 17 rule 1
-    /// can read it as a decimal).
+    /// can read it as a decimal). The result is owned when it is in
+    /// `live`, borrowed otherwise.
     pub(crate) fn expr(&mut self, e: &'a Expr, lit_ok: bool) -> GResult<Val> {
+        let v = self.expr_any(e, lit_ok)?;
+        // a value that is certainly an int: its tag is a constant, so the
+        // checks that follow fold away
+        if let Val::Reg(r) = &v {
+            if !matches!(e.kind, ExprKind::BinOp { .. } | ExprKind::Num { .. }) && self.certain_int(e) {
+                let bits = self.reg();
+                self.emit(&format!("{bits} = extractvalue %V {r}, 1"));
+                let n = self.reg();
+                self.emit(&format!("{n} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {bits}, 1"));
+                self.unlive(&Live::Reg(r.clone()));
+                return Ok(Val::Reg(n));
+            }
+        }
+        Ok(v)
+    }
+
+    fn certain_int(&self, e: &Expr) -> bool {
+        self.ints.as_ref().is_some_and(|i| i.certain(e))
+    }
+
+    fn expr_any(&mut self, e: &'a Expr, lit_ok: bool) -> GResult<Val> {
         Ok(match &e.kind {
             ExprKind::Num { text, is_float: false } => match text.parse::<i64>() {
                 Ok(n) => lit(T_INT, n.to_string()),
@@ -2020,7 +2937,8 @@ impl<'a> Gen<'a> {
                     let arr = self.values_array(&vals);
                     let r = self.call_v("nx_interp", &format!("ptr {arr}, i64 {}", vals.len()));
                     self.check();
-                    r
+                    self.drop_all(&vals);
+                    self.owned(r)
                 }
             }
             ExprKind::Bool(b) => lit(T_BOOL, if *b { "1" } else { "0" }),
@@ -2034,7 +2952,8 @@ impl<'a> Gen<'a> {
                 let arr = self.values_array(&vals);
                 let r = self.call_v("nx_list", &format!("ptr {arr}, i64 {}", vals.len()));
                 self.check();
-                r
+                self.drop_all(&vals);
+                self.owned(r)
             }
             ExprKind::Map(pairs) => {
                 let mut keys = Vec::new();
@@ -2057,11 +2976,14 @@ impl<'a> Gen<'a> {
                 };
                 let r = self.call_v("nx_map", &format!("ptr {ka}, ptr {va}, ptr {sa}, i64 {}", pairs.len()));
                 self.check();
-                r
+                self.drop_all(&vals);
+                self.drop_all(&keys);
+                self.owned(r)
             }
             ExprKind::Comprehension { element, iterable, condition, .. } => {
                 let out = self.call_v("nx_list", "ptr null, i64 0");
-                let slot = self.temp(&out);
+                let out = self.owned(out);
+                let slot = self.spill(&out);
                 let scope = self.res.scope_of[&Node::Expr(e.id)];
                 let var = self.res.decl[&Node::Expr(e.id)];
                 let it = self.expr(iterable, false)?;
@@ -2082,20 +3004,23 @@ impl<'a> Gen<'a> {
                     let tv = g.tb(&v);
                     g.call_void("nx_list_push", &format!("{tl}, {tv}"));
                     g.check();
+                    g.drop_val(&v);
                     g.br(&skip);
                     g.place(&skip);
                     Ok(())
                 })?;
-                self.load(&slot)
+                self.unspill(&slot)
             }
             ExprKind::Attr { obj, name, name_span } => {
                 let o = self.expr(obj, false)?;
                 let to = self.tb(&o);
                 let n = self.strarg(name);
                 let sp = self.span_id(*name_span);
-                let r = self.call_v("nx_attr", &format!("{to}, {n}, i32 {sp}"));
+                let ic = self.inline_cache();
+                let r = self.call_v("nx_attr_ic", &format!("{to}, {n}, i32 {sp}, ptr {ic}"));
                 self.check();
-                r
+                self.drop_val(&o);
+                self.owned(r)
             }
             ExprKind::Index { obj, index } => {
                 let o = self.expr(obj, false)?;
@@ -2105,7 +3030,9 @@ impl<'a> Gen<'a> {
                 let sp = self.span_id(e.span);
                 let r = self.call_v("nx_index", &format!("{to}, {ti}, i32 {sp}"));
                 self.check();
-                r
+                self.drop_val(&i);
+                self.drop_val(&o);
+                self.owned(r)
             }
             ExprKind::Call { func, args } => self.call_expr(e, func, args, None, e.span)?,
             ExprKind::Propagate(x) => self.expr(x, lit_ok)?,
@@ -2124,7 +3051,8 @@ impl<'a> Gen<'a> {
                 let sp = self.span_id(e.span);
                 let r = self.call_v("nx_neg", &format!("{tv}, i32 {sp}"));
                 self.check();
-                r
+                self.drop_val(&v);
+                self.owned(r)
             }
             ExprKind::Unary { operand, .. } => {
                 let v = self.expr(operand, false)?;
@@ -2136,7 +3064,13 @@ impl<'a> Gen<'a> {
             ExprKind::BinOp { op, left, right } => {
                 let l = self.expr(left, true)?;
                 let r = self.expr(right, true)?;
-                self.binop(op, &l, &r, e.span)?
+                if matches!(*op, "+" | "-" | "*" | "//" | "%") && self.certain_int(left) && self.certain_int(right) {
+                    return self.binop_int(op, &l, &r, e.span);
+                }
+                let v = self.binop(op, &l, &r, e.span)?;
+                self.drop_val(&r);
+                self.drop_val(&l);
+                v
             }
             ExprKind::BoolOp { op, left, right } => {
                 let slot = self.alloca("%V");
@@ -2168,14 +3102,32 @@ impl<'a> Gen<'a> {
                 let end = self.label();
                 let fail = self.label();
                 let mut left = self.expr(&operands[0], true)?;
+                let mut left_int = self.certain_int(&operands[0]);
                 for (op, operand) in ops.iter().zip(&operands[1..]) {
                     let right = self.expr(operand, true)?;
-                    let c = self.compare_op(op, &left, &right, e.span)?;
+                    let right_int = self.certain_int(operand);
+                    let c = if left_int && right_int && *op != "in" && *op != "is" {
+                        self.compare_int(op, &left, &right)
+                    } else {
+                        self.compare_op(op, &left, &right, e.span)?
+                    };
+                    left_int = right_int;
+                    self.drop_val(&left);
                     let next = self.label();
-                    self.cond_br(&c, &next, &fail);
+                    if self.is_live(&right) {
+                        // the right operand is released on the way out
+                        let no = self.label();
+                        self.cond_br(&c, &next, &no);
+                        self.place(&no);
+                        self.rc_dec(&right);
+                        self.br(&fail);
+                    } else {
+                        self.cond_br(&c, &next, &fail);
+                    }
                     self.place(&next);
                     left = right;
                 }
+                self.drop_val(&left);
                 self.store(&slot, &lit(T_BOOL, "1"));
                 self.br(&end);
                 self.place(&fail);
@@ -2186,17 +3138,19 @@ impl<'a> Gen<'a> {
             }
             ExprKind::Coalesce { left, right } => {
                 let l = self.expr(left, lit_ok)?;
-                let slot = self.temp(&l);
+                let slot = self.spill_owned(&l);
                 let isn = self.is_tag(&l, T_NONE);
                 let yes = self.label();
                 let end = self.label();
                 self.cond_br(&isn, &yes, &end);
                 self.place(&yes);
+                // the left value was none: nothing to release
                 let r = self.expr(right, lit_ok)?;
+                self.own(&r);
                 self.store(&slot, &r);
                 self.br(&end);
                 self.place(&end);
-                self.load(&slot)
+                self.unspill(&slot)
             }
             ExprKind::Range { start, end } => {
                 let a = self.expr(start, false)?;
@@ -2206,7 +3160,9 @@ impl<'a> Gen<'a> {
                 let sp = self.span_id(e.span);
                 let r = self.call_v("nx_range", &format!("{ta}, {tb}, i32 {sp}"));
                 self.check();
-                r
+                self.drop_val(&b);
+                self.drop_val(&a);
+                self.owned(r)
             }
             ExprKind::Lambda { body, .. } => {
                 let frame = self.res.frame_of[&Node::Expr(e.id)];
@@ -2217,12 +3173,19 @@ impl<'a> Gen<'a> {
         })
     }
 
+    fn drop_all(&mut self, vals: &[Val]) {
+        for v in vals.iter().rev() {
+            self.drop_val(v);
+        }
+    }
+
     fn binop(&mut self, op: &str, l: &Val, r: &Val, span: Span) -> GResult<Val> {
         // ints are computed inline; anything else (or an overflow) goes to
         // the runtime, which applies the rules of section 17
         let fast = matches!(op, "+" | "-" | "*" | "//" | "%");
         if !fast || matches!(l, Val::Lit(t, _) if *t != T_INT) || matches!(r, Val::Lit(t, _) if *t != T_INT) {
-            return self.binop_slow(op, l, r, span);
+            let v = self.binop_slow(op, l, r, span)?;
+            return Ok(self.owned(v));
         }
         let slot = self.alloca("%V");
         let slow = self.label();
@@ -2304,7 +3267,123 @@ impl<'a> Gen<'a> {
         self.store(&slot, &sv);
         self.br(&done);
         self.place(&done);
-        Ok(self.load(&slot))
+        // an int, or a value the runtime made: owned either way
+        let v = self.load(&slot);
+        Ok(self.owned(v))
+    }
+
+    /// `+ - * // %` on two values that are certainly ints: only the
+    /// overflow and the division by zero go to the runtime (which reports
+    /// them).
+    fn binop_int(&mut self, op: &str, l: &Val, r: &Val, span: Span) -> GResult<Val> {
+        let a = self.bits_of(l);
+        let b = self.bits_of(r);
+        let fail = self.label();
+        let res = match op {
+            "+" | "-" | "*" => {
+                let f = match op {
+                    "+" => "sadd",
+                    "-" => "ssub",
+                    _ => "smul",
+                };
+                let pair = self.reg();
+                self.emit(&format!("{pair} = call {{ i64, i1 }} @llvm.{f}.with.overflow.i64(i64 {a}, i64 {b})"));
+                let ovf = self.reg();
+                self.emit(&format!("{ovf} = extractvalue {{ i64, i1 }} {pair}, 1"));
+                let ok = self.label();
+                self.cond_br(&ovf, &fail, &ok);
+                self.place(&ok);
+                let v = self.reg();
+                self.emit(&format!("{v} = extractvalue {{ i64, i1 }} {pair}, 0"));
+                v
+            }
+            _ => {
+                let zero = self.reg();
+                self.emit(&format!("{zero} = icmp eq i64 {b}, 0"));
+                let m1 = self.reg();
+                self.emit(&format!("{m1} = icmp eq i64 {b}, -1"));
+                let bad = if op == "//" {
+                    // MIN // -1 does not fit
+                    let min = self.reg();
+                    self.emit(&format!("{min} = icmp eq i64 {a}, -9223372036854775808"));
+                    let both = self.reg();
+                    self.emit(&format!("{both} = and i1 {m1}, {min}"));
+                    let bad = self.reg();
+                    self.emit(&format!("{bad} = or i1 {zero}, {both}"));
+                    bad
+                } else {
+                    zero
+                };
+                let ok = self.label();
+                self.cond_br(&bad, &fail, &ok);
+                self.place(&ok);
+                // x % -1 is 0 (and srem would trap on MIN % -1)
+                let bsafe = self.reg();
+                self.emit(&format!("{bsafe} = select i1 {m1}, i64 1, i64 {b}"));
+                let q = self.reg();
+                self.emit(&format!("{q} = sdiv i64 {a}, {bsafe}"));
+                let rem = self.reg();
+                self.emit(&format!("{rem} = srem i64 {a}, {bsafe}"));
+                let nz = self.reg();
+                self.emit(&format!("{nz} = icmp ne i64 {rem}, 0"));
+                let x = self.reg();
+                self.emit(&format!("{x} = xor i64 {rem}, {bsafe}"));
+                let neg = self.reg();
+                self.emit(&format!("{neg} = icmp slt i64 {x}, 0"));
+                let adj = self.reg();
+                self.emit(&format!("{adj} = and i1 {nz}, {neg}"));
+                if op == "//" {
+                    let q1 = self.reg();
+                    self.emit(&format!("{q1} = sub i64 {q}, 1"));
+                    let v = self.reg();
+                    self.emit(&format!("{v} = select i1 {adj}, i64 {q1}, i64 {q}"));
+                    // x // -1 is -x (MIN was sent to the runtime)
+                    let neg_a = self.reg();
+                    self.emit(&format!("{neg_a} = sub i64 0, {a}"));
+                    let v2 = self.reg();
+                    self.emit(&format!("{v2} = select i1 {m1}, i64 {neg_a}, i64 {v}"));
+                    v2
+                } else {
+                    let r1 = self.reg();
+                    self.emit(&format!("{r1} = add i64 {rem}, {bsafe}"));
+                    let v = self.reg();
+                    self.emit(&format!("{v} = select i1 {adj}, i64 {r1}, i64 {rem}"));
+                    let v2 = self.reg();
+                    self.emit(&format!("{v2} = select i1 {m1}, i64 0, i64 {v}"));
+                    v2
+                }
+            }
+        };
+        let v = self.reg();
+        self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
+        let done = self.label();
+        self.br(&done);
+        // the runtime reports the error (it always fails here)
+        self.place(&fail);
+        let tl = self.tb(l);
+        let tr = self.tb(r);
+        let sp = self.span_id(span);
+        self.call_v("nx_binop", &format!("i32 {}, {tl}, {tr}, i32 {sp}", op_code(op)));
+        self.fail_here();
+        self.place(&done);
+        Ok(Val::Reg(v))
+    }
+
+    /// A comparison of two values that are certainly ints.
+    fn compare_int(&mut self, op: &str, l: &Val, r: &Val) -> String {
+        let pred = match op {
+            "==" => "eq",
+            "!=" => "ne",
+            "<" => "slt",
+            ">" => "sgt",
+            "<=" => "sle",
+            _ => "sge",
+        };
+        let a = self.bits_of(l);
+        let b = self.bits_of(r);
+        let c = self.reg();
+        self.emit(&format!("{c} = icmp {pred} i64 {a}, {b}"));
+        c
     }
 
     /// Both values have this tag (an i1).
@@ -2420,7 +3499,215 @@ impl<'a> Gen<'a> {
 
     fn name_read(&mut self, e: &'a Expr, name: &str) -> GResult<Val> {
         let res = self.res.names.get(&e.id).cloned().unwrap_or_else(|| panic!("unresolved name {name}"));
-        self.resolved(&res, name, e.span)
+        let v = self.resolved(&res, name, e.span)?;
+        let NameRes::Bindings { cands, row: None, .. } = &res else { return Ok(v) };
+        if cands.iter().any(|b| self.res.bindings[*b].shared) {
+            // a shared variable is read as a copy (nexo.sync)
+            let tv = self.tb(&v);
+            let c = self.call_v("nx_shared_read", &tv);
+            self.drop_val(&v);
+            return Ok(self.owned(c));
+        }
+        if let [b] = cands.as_slice() {
+            self.isolated_check(*b, &v, name, e.span);
+        }
+        Ok(v)
+    }
+
+    /// A spawned task cannot read a variable of the program that others
+    /// may change (a `var`, or a list, map, set or record).
+    fn isolated_check(&mut self, b: BindingId, v: &Val, name: &str, span: Span) {
+        let binding = &self.res.bindings[b];
+        if !matches!(binding.origin, Origin::Plain | Origin::Param) {
+            return;
+        }
+        let is_var = binding.kind == BKind::Var;
+        let cell_birth = if self.res.is_static(b) {
+            None
+        } else {
+            match self.slot_of(b) {
+                Some(Slot::Value(_)) => return,
+                _ => Some(self.cell_ptr(b)),
+            }
+        };
+        let ip = self.reg();
+        self.emit(&format!("{ip} = getelementptr inbounds i8, ptr %tls, i64 24"));
+        let iso = self.reg();
+        self.emit(&format!("{iso} = load i64, ptr {ip}"));
+        let mut c = self.reg();
+        self.emit(&format!("{c} = icmp ne i64 {iso}, 0"));
+        if let Some(cell) = cell_birth {
+            // a cell made by the task itself is its own
+            let bp = self.reg();
+            self.emit(&format!("{bp} = getelementptr inbounds i8, ptr {cell}, i64 24"));
+            let birth = self.reg();
+            self.emit(&format!("{birth} = load i64, ptr {bp}"));
+            let sp_ptr = self.reg();
+            self.emit(&format!("{sp_ptr} = getelementptr inbounds i8, ptr %tls, i64 16"));
+            let stamp = self.reg();
+            self.emit(&format!("{stamp} = load i64, ptr {sp_ptr}"));
+            let old = self.reg();
+            self.emit(&format!("{old} = icmp ult i64 {birth}, {stamp}"));
+            let both = self.reg();
+            self.emit(&format!("{both} = and i1 {c}, {old}"));
+            c = both;
+        }
+        let bad = self.label();
+        let ok = self.label();
+        self.cond_br(&c, &bad, &ok);
+        self.place(&bad);
+        let tv = self.tb(v);
+        let n = self.strarg(name);
+        let sp = self.span_id(span);
+        self.call_void("nx_isolated_read", &format!("{tv}, {n}, i32 {}, i32 {sp}", is_var as u32));
+        self.check();
+        self.br(&ok);
+        self.place(&ok);
+    }
+
+    /// Does a statement use a shared variable (in its own expressions, not
+    /// in the statements of its blocks)?
+    fn uses_shared(&self, s: &Stmt) -> bool {
+        if !self.res.sync {
+            return false;
+        }
+        let mut exprs: Vec<&Expr> = Vec::new();
+        match &s.kind {
+            StmtKind::Expr(e) | StmtKind::Expect(e) | StmtKind::Return(Some(e)) => exprs.push(e),
+            StmtKind::Assert { expr, .. } => exprs.push(expr),
+            StmtKind::Assign { target, value, .. } => {
+                exprs.push(target);
+                exprs.push(value);
+            }
+            StmtKind::VarDecl { value, .. } | StmtKind::Shared { value, .. } => exprs.push(value),
+            StmtKind::If { branches, .. } => exprs.extend(branches.iter().map(|(c, _)| c)),
+            StmtKind::For { iterable: e, .. } | StmtKind::While { cond: e, .. } | StmtKind::Repeat { count: e, .. } => {
+                exprs.push(e)
+            }
+            StmtKind::Match { subject, .. } => exprs.push(subject),
+            StmtKind::Spawn { call } => exprs.push(call),
+            StmtKind::Emit { args, .. } => exprs.extend(args.iter().map(|a| &a.value)),
+            StmtKind::Select { arms } => exprs.extend(arms.iter().filter_map(|a| a.channel.as_ref().or(a.after.as_ref()))),
+            _ => {}
+        }
+        if let StmtKind::Assign { .. } = &s.kind {
+            if let Some(a) = self.res.assigns.get(&s.id) {
+                if a.cands.iter().any(|(b, _)| self.res.bindings[*b].shared) {
+                    return true;
+                }
+            }
+        }
+        exprs.iter().any(|e| self.expr_uses_shared(e))
+    }
+
+    /// Take the lock of shared variables when `e` reads one.
+    fn lock_for(&mut self, e: &Expr) -> bool {
+        let locked = self.res.sync && self.expr_uses_shared(e);
+        if locked {
+            self.call_void("nx_shared_lock", "");
+            self.f().live.push(Live::Lock);
+        }
+        locked
+    }
+
+    fn unlock_if(&mut self, locked: bool) {
+        if locked {
+            self.unlive(&Live::Lock);
+            self.call_void("nx_shared_unlock", "");
+        }
+    }
+
+    fn expr_uses_shared(&self, e: &Expr) -> bool {
+        if let ExprKind::Name(_) = &e.kind {
+            if let Some(NameRes::Bindings { cands, .. }) = self.res.names.get(&e.id) {
+                return cands.iter().any(|b| self.res.bindings[*b].shared);
+            }
+            return false;
+        }
+        let mut found = false;
+        let mut visit = |x: &Expr| found |= self.expr_uses_shared(x);
+        match &e.kind {
+            ExprKind::Call { func, args } => {
+                visit(func);
+                for a in args {
+                    visit(&a.value);
+                }
+            }
+            ExprKind::Propagate(x) => visit(x),
+            ExprKind::Coalesce { left, right } => {
+                visit(left);
+                visit(right);
+            }
+            ExprKind::Pipeline { source, steps } => {
+                visit(source);
+                for st in steps {
+                    for x in st.expr.iter().chain(st.columns.iter()) {
+                        visit(x);
+                    }
+                }
+            }
+            ExprKind::ParallelFor { iterable, .. } => visit(iterable),
+            ExprKind::Lambda { .. } => {}
+            _ => {
+                for c in crate::checker::children(e) {
+                    visit(c);
+                }
+            }
+        }
+        found
+    }
+
+    fn select_stmt(&mut self, s: &'a Stmt, arms: &'a [SelectArm]) -> GResult<()> {
+        let mut chans = Vec::new();
+        let mut limit = none();
+        for a in arms {
+            if let Some(c) = &a.channel {
+                chans.push(self.expr(c, false)?);
+            } else if let Some(x) = &a.after {
+                limit = self.expr(x, false)?;
+            }
+        }
+        let arr = self.values_array(&chans);
+        let out = self.alloca("%V");
+        let tl = self.tb(&limit);
+        let sp = self.span_id(s.span);
+        let idx = self.reg();
+        self.emit(&format!("{idx} = call i64 @nx_select(ptr {arr}, i64 {}, {tl}, ptr {out}, i32 {sp})", chans.len()));
+        self.check();
+        self.drop_all(&chans);
+        self.drop_val(&limit);
+        let value = self.load(&out);
+        let value = self.owned(value);
+        let end = self.label();
+        let mut k = 0;
+        for (i, a) in arms.iter().enumerate() {
+            let want = if a.channel.is_some() {
+                k += 1;
+                k - 1
+            } else {
+                chans.len()
+            };
+            let c = self.reg();
+            self.emit(&format!("{c} = icmp eq i64 {idx}, {want}"));
+            let yes = self.label();
+            let next = self.label();
+            self.cond_br(&c, &yes, &next);
+            self.place(&yes);
+            let scope = self.res.scope_of[&Node::SelectArm(s.id, i)];
+            self.enter_scope(scope);
+            if a.var.is_some() {
+                let b = self.res.decl[&Node::SelectArm(s.id, i)];
+                self.rc_inc(&value);
+                self.store_binding_raw(b, &value);
+            }
+            self.block(&a.body)?;
+            self.br(&end);
+            self.place(&next);
+        }
+        self.br(&end);
+        self.place(&end);
+        self.drop_val(&value);
+        Ok(())
     }
 
     fn builtin_value(&mut self, name: &str) -> Val {
@@ -2446,13 +3733,21 @@ impl<'a> Gen<'a> {
     }
 
     /// The value of a resolved name: the first binding that is assigned.
+    /// A plain local is borrowed; anything else (a top-level variable or a
+    /// captured one, which a call could change) is read with a reference.
     fn resolved(&mut self, res: &NameRes, name: &str, span: Span) -> GResult<Val> {
         let (cands, row, builtin, suggestion) = match res {
             NameRes::Builtin(n) => return Ok(self.builtin_value(n)),
             NameRes::Bindings { cands, row, builtin, suggestion } => (cands.clone(), *row, *builtin, suggestion.clone()),
         };
         if row.is_none() && cands.len() == 1 && self.res.bindings[cands[0]].entry {
-            return Ok(self.load_binding(cands[0]));
+            let b = cands[0];
+            let v = self.load_binding(b);
+            if self.res.is_static(b) || matches!(self.slot_of(b), Some(Slot::Cell(_)) | None) {
+                self.rc_inc(&v);
+                return Ok(self.owned(v));
+            }
+            return Ok(v);
         }
         let slot = self.alloca("%V");
         let done = self.label();
@@ -2481,7 +3776,11 @@ impl<'a> Gen<'a> {
             let c = self.reg();
             self.emit(&format!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
             let next = self.label();
-            self.cond_br(&c, &done, &next);
+            let yes = self.label();
+            self.cond_br(&c, &yes, &next);
+            self.place(&yes);
+            self.rc_inc(&v);
+            self.br(&done);
             self.place(&next);
         }
         match item_slot {
@@ -2505,10 +3804,13 @@ impl<'a> Gen<'a> {
             None => self.name_error(name, suggestion.as_deref(), span),
         }
         self.place(&done);
-        Ok(self.load(&slot))
+        // owned on every path (builtin values are constants)
+        let v = self.load(&slot);
+        Ok(self.owned(v))
     }
 
-    /// A call. `first` is the value a pipeline passes as first argument.
+    /// A call. `first` is the value a pipeline passes as first argument
+    /// (the caller keeps ownership of it).
     fn call_expr(&mut self, e: &'a Expr, func: &'a Expr, args: &'a [Arg], first: Option<Val>, span: Span) -> GResult<Val> {
         if let ExprKind::Name(n) = &func.kind {
             if n == "old" {
@@ -2526,12 +3828,17 @@ impl<'a> Gen<'a> {
         }
         let sp = self.span_id(span);
         // the function itself is evaluated before the arguments
-        enum Target {
+        enum Target<'p> {
             Builtin(u32),
-            Method(Val, String, Span),
-            Value(Val),
+            Method(String, String, Span),
+            /// a method that changes its receiver: `xs.add(x)`
+            Place(Place<'p>, String, Span),
+            Value(String),
         }
         if let Some(v) = self.direct_call(func, args, &first, span)? {
+            return Ok(v);
+        }
+        if let Some(v) = self.direct_construct(func, args, &first, span)? {
             return Ok(v);
         }
         let target = match &func.kind {
@@ -2539,57 +3846,160 @@ impl<'a> Gen<'a> {
                 Some(NameRes::Builtin(b)) if DIRECT_BUILTINS.contains(&b.as_str()) || matches!(b.as_str(), "decimal" | "float" | "int" | "str") => {
                     Target::Builtin(builtin_id(b).unwrap())
                 }
-                _ => Target::Value(self.name_read(func, n)?),
+                _ => {
+                    let v = self.name_read(func, n)?;
+                    Target::Value(self.spill(&v))
+                }
             },
+            ExprKind::Attr { obj, name, name_span }
+                if name == "add" && matches!(obj.kind, ExprKind::Name(_) | ExprKind::Attr { .. } | ExprKind::Index { .. }) =>
+            {
+                let p = self.place_parts(obj)?;
+                Target::Place(p, name.clone(), *name_span)
+            }
             ExprKind::Attr { obj, name, name_span } => {
                 let o = self.expr(obj, false)?;
-                let slot = self.temp(&o);
-                Target::Method(Val::Reg(slot), name.clone(), *name_span)
+                let slot = self.spill(&o);
+                Target::Method(slot, name.clone(), *name_span)
             }
-            _ => Target::Value(self.expr(func, false)?),
-        };
-        let target = match target {
-            Target::Value(v) => {
-                let slot = self.temp(&v);
-                Target::Value(Val::Reg(slot))
+            _ => {
+                let v = self.expr(func, false)?;
+                Target::Value(self.spill(&v))
             }
-            t => t,
         };
         let mut vals = Vec::new();
         let mut names: Vec<Option<&str>> = Vec::new();
-        if let Some(f) = first {
-            vals.push(f);
+        if let Some(f) = &first {
+            vals.push(f.clone());
             names.push(None);
         }
+        let mut own_args = Vec::new();
         for a in args {
-            vals.push(self.expr(&a.value, true)?);
+            let mut v = self.expr(&a.value, true)?;
+            if let Target::Place(p, ..) = &target {
+                v = self.into_shared(p, v);
+            }
+            vals.push(v.clone());
+            own_args.push(v);
             names.push(a.name.as_deref());
         }
-        let arr = self.values_array(&vals);
-        let nm = self.names_array(&names);
         let n = vals.len();
         let r = match target {
-            Target::Builtin(id) => self.call_v("nx_builtin_call", &format!("i32 {id}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}")),
-            Target::Method(Val::Reg(slot), name, name_span) => {
+            Target::Builtin(id) => {
+                let arr = self.values_array(&vals);
+                let nm = self.names_array(&names);
+                let r = self.call_v("nx_builtin_call", &format!("i32 {id}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}"));
+                self.check();
+                self.drop_all(&own_args);
+                r
+            }
+            Target::Method(slot, name, name_span) => {
+                let arr = self.values_array(&vals);
+                let nm = self.names_array(&names);
                 let o = self.load(&slot);
                 let to = self.tb(&o);
                 let na = self.strarg(&name);
                 let nsp = self.span_id(name_span);
-                self.call_v("nx_call_method", &format!("{to}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"))
+                let ic = self.inline_cache();
+                let r = self.call_v(
+                    "nx_call_method_ic",
+                    &format!("{to}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}, ptr {ic}"),
+                );
+                self.check();
+                self.drop_all(&own_args);
+                self.drop_slot(&slot);
+                r
             }
-            Target::Value(Val::Reg(slot)) => {
+            Target::Place(place, name, name_span) => {
+                // the arguments are evaluated first; then the place is made
+                // unique and changed (copy-on-write)
+                let ptr = self.place_ptr(&place)?;
+                let arr = self.values_array(&vals);
+                let nm = self.names_array(&names);
+                let na = self.strarg(&name);
+                let nsp = self.span_id(name_span);
+                let r = self.call_v("nx_call_method_at", &format!("ptr {ptr}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
+                self.check();
+                self.drop_all(&own_args);
+                self.drop_place(place);
+                r
+            }
+            Target::Value(slot) => {
+                let arr = self.values_array(&vals);
+                let nm = self.names_array(&names);
                 let f = self.load(&slot);
                 let tf = self.tb(&f);
-                self.call_v("nx_call", &format!("{tf}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}"))
+                let r = self.call_v("nx_call", &format!("{tf}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}"));
+                self.check();
+                self.drop_all(&own_args);
+                self.drop_slot(&slot);
+                r
             }
-            _ => unreachable!(),
         };
-        self.check();
-        Ok(r)
+        Ok(self.owned(r))
     }
 
     /// A call to a function defined once, with its arguments bound when
     /// compiling: the LLVM function is called directly.
+    /// `P(a, b)` for a record type defined once, with one positional
+    /// argument per field: the fields are checked here and the record is
+    /// built in one call (D84).
+    fn direct_construct(&mut self, func: &'a Expr, args: &'a [Arg], first: &Option<Val>, span: Span) -> GResult<Option<Val>> {
+        let ExprKind::Name(name) = &func.kind else { return Ok(None) };
+        let Some(NameRes::Bindings { cands, row: None, suggestion, .. }) = self.res.names.get(&func.id) else {
+            return Ok(None);
+        };
+        if cands.len() != 1 || first.is_some() {
+            return Ok(None);
+        }
+        let Some(t) = self.known_types.get(&cands[0]).copied() else { return Ok(None) };
+        if args.len() != t.fields.len() || args.iter().any(|a| a.name.is_some() || may_be_lazy(&a.value)) {
+            return Ok(None);
+        }
+        let suggestion = suggestion.clone();
+        let tv = self.load_binding(cands[0]);
+        let tslot = self.temp(&tv);
+        let tag = self.tag_of(&tv);
+        let undef = self.reg();
+        self.emit(&format!("{undef} = icmp eq i64 {tag}, {T_UNDEF}"));
+        let bad = self.label();
+        let ok = self.label();
+        self.cond_br(&undef, &bad, &ok);
+        self.place(&bad);
+        self.name_error(name, suggestion.as_deref(), func.span);
+        self.place(&ok);
+        let mut vals = Vec::new();
+        for a in args {
+            let v = self.expr(&a.value, true)?;
+            // each value is owned here until the record takes it
+            let v = if self.is_live(&v) {
+                v
+            } else {
+                self.rc_inc(&v);
+                self.owned(v)
+            };
+            vals.push(v);
+        }
+        let sp = self.span_id(span);
+        let sps = sp.to_string();
+        let mut checked = Vec::new();
+        for (v, f) in vals.into_iter().zip(&t.fields) {
+            checked.push(self.conform_with(v, &f.ty, "nx_conform", &f.name, &sps));
+        }
+        // the record takes the values
+        for v in &checked {
+            if let Val::Reg(r) = v {
+                self.unlive(&Live::Reg(r.clone()));
+            }
+        }
+        let arr = self.values_array(&checked);
+        let tv = self.load(&tslot);
+        let tb = self.tb(&tv);
+        let r = self.call_v("nx_record_new", &format!("{tb}, ptr {arr}, i64 {}, i32 {sp}", checked.len()));
+        self.check();
+        Ok(Some(self.owned(r)))
+    }
+
     fn direct_call(&mut self, func: &'a Expr, args: &'a [Arg], first: &Option<Val>, span: Span) -> GResult<Option<Val>> {
         let ExprKind::Name(name) = &func.kind else { return Ok(None) };
         let Some(NameRes::Bindings { cands, row: None, .. }) = self.res.names.get(&func.id) else { return Ok(None) };
@@ -2625,10 +4035,25 @@ impl<'a> Gen<'a> {
                 return Ok(None);
             }
         }
-        // the function must have been defined when the call runs (D29)
-        let fv = self.load_binding(b);
+        let own_call = self.res.self_calls.contains(&func.id);
+        // the function must have been defined when the call runs (D29);
+        // a function defined once is never replaced, so it is only looked at
+        // (a function calling itself uses its own closure)
+        // the same holds for a call made while the function runs (from its
+        // own body or a function inside it)
+        let frame = self.res.frame_of[&Node::Fn(f.id)];
+        let mut inside = Some(self.fs.last().unwrap().frame);
+        while let Some(fr) = inside {
+            if fr == frame {
+                break;
+            }
+            inside = self.res.frames[fr].parent;
+        }
+        let defined = own_call || inside.is_some();
+        let needs_value = !own_call && !self.res.frames[frame].free.is_empty();
+        let fv = if defined && !needs_value { lit(T_OBJ, "0") } else { self.load_binding(b) };
         let fslot = self.temp(&fv);
-        let t = self.tag_of(&fv);
+        let t = if defined { T_OBJ.to_string() } else { self.tag_of(&fv) };
         let undef = self.reg();
         self.emit(&format!("{undef} = icmp eq i64 {t}, {T_UNDEF}"));
         let bad = self.label();
@@ -2651,8 +4076,10 @@ impl<'a> Gen<'a> {
             let mut v = self.expr(&a.value, true)?;
             if may_be_lazy(&a.value) {
                 let tb = self.tb(&v);
-                v = self.call_v("nx_force", &tb);
+                let forced = self.call_v("nx_force", &tb);
                 self.check();
+                self.drop_val(&v);
+                v = self.owned(forced);
             }
             evaluated.push((ai, v));
         }
@@ -2661,10 +4088,11 @@ impl<'a> Gen<'a> {
                 vals[i] = evaluated.iter().find(|(x, _)| x == ai).unwrap().1.clone();
             }
         }
-        let frame = self.res.frame_of[&Node::Fn(f.id)];
         let (fname, _) = self.frame_fn(frame, FrameSrc::Fn(f))?;
         let clo = if self.res.frames[frame].free.is_empty() {
             "null".to_string()
+        } else if own_call {
+            "%clo".to_string()
         } else {
             let fv = self.load(&fslot);
             let tb = self.tb(&fv);
@@ -2672,12 +4100,60 @@ impl<'a> Gen<'a> {
             self.emit(&format!("{p} = call ptr @nx_func_ptr({tb})"));
             p
         };
-        let arr = self.values_array(&vals);
         let sp = self.span_id(span);
         let r = self.reg();
-        self.emit(&format!("{r} = call %V {fname}(ptr {clo}, ptr {arr}, i32 {sp})"));
-        self.check();
-        Ok(Some(Val::Reg(r)))
+        let ints = first.is_none()
+            && slots.iter().all(|s| s.is_some_and(|ai| self.certain_int(&args[ai].value)));
+        match self.int_workers.get(&frame).cloned() {
+            Some(worker) if ints => {
+                let mut ps = Vec::new();
+                for v in &vals {
+                    ps.push(match v {
+                        Val::Lit(_, x) => format!("i64 {x}"),
+                        Val::Reg(x) => {
+                            let p = self.reg();
+                            self.emit(&format!("{p} = extractvalue %V {x}, 1"));
+                            format!("i64 {p}")
+                        }
+                    });
+                }
+                let d = match self.f().depth.clone() {
+                    Some(d) => d,
+                    None => {
+                        let dp = self.reg();
+                        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+                        let d = self.reg();
+                        self.emit(&format!("{d} = load i64, ptr {dp}"));
+                        d
+                    }
+                };
+                self.emit(&format!("{r} = call %V {worker}(ptr %tls, ptr {clo}, i64 {d}, {}, i32 {sp})", ps.join(", ")));
+                if !self.f().int_params {
+                    // the worker leaves its own depth in the thread state
+                    let dp = self.reg();
+                    self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+                    self.emit(&format!("store i64 {d}, ptr {dp}"));
+                }
+                // it returns an int unless it failed
+                let t = self.reg();
+                self.emit(&format!("{t} = extractvalue %V {r}, 0"));
+                let c = self.reg();
+                self.emit(&format!("{c} = icmp ne i64 {t}, {T_INT}"));
+                let ok = self.label();
+                let unwind = self.unwind_label();
+                self.cond_br(&c, &unwind, &ok);
+                self.place(&ok);
+            }
+            _ => {
+                let arr = self.values_array(&vals);
+                self.emit(&format!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {sp})"));
+                self.check();
+            }
+        }
+        for (_, v) in evaluated.iter().rev() {
+            self.drop_val(v);
+        }
+        Ok(Some(self.owned(Val::Reg(r))))
     }
 
     fn step_closure(&mut self, node: Node, e: &'a Expr) -> GResult<Val> {
@@ -2691,8 +4167,8 @@ impl<'a> Gen<'a> {
         for (i, step) in steps.iter().enumerate() {
             let ssp = self.span_id(step.span);
             let node = Node::Step(e.id, i);
-            let slot = self.temp(&v);
-            v = match step.kind {
+            let slot = self.spill(&v);
+            let r = match step.kind {
                 StepKind::Call => {
                     let x = step.expr.as_ref().unwrap();
                     let cur = self.load(&slot);
@@ -2705,7 +4181,8 @@ impl<'a> Gen<'a> {
                             let tf = self.tb(&f);
                             let r = self.call_v("nx_call", &format!("{tf}, ptr {arr}, ptr null, i64 1, i32 {ssp}"));
                             self.check();
-                            r
+                            self.drop_val(&f);
+                            self.owned(r)
                         }
                     }
                 }
@@ -2718,7 +4195,8 @@ impl<'a> Gen<'a> {
                     let nsp = self.span_id(x.span);
                     let r = self.call_v("nx_pipe_take", &format!("{ts}, {tn}, i32 {ssp}, i32 {nsp}"));
                     self.check();
-                    r
+                    self.drop_val(&n);
+                    self.owned(r)
                 }
                 StepKind::Pick => {
                     let mut fns = Vec::new();
@@ -2740,7 +4218,9 @@ impl<'a> Gen<'a> {
                     let cur = self.load(&slot);
                     let ts = self.tb(&cur);
                     let esp = self.span_id(step.columns[0].span);
-                    self.call_v("nx_pipe_pick", &format!("{ts}, ptr {farr}, ptr {narr}, i64 {}, i32 {ssp}, i32 {esp}", fns.len()))
+                    let r = self.call_v("nx_pipe_pick", &format!("{ts}, ptr {farr}, ptr {narr}, i64 {}, i32 {ssp}, i32 {esp}", fns.len()));
+                    self.drop_all(&fns);
+                    self.owned(r)
                 }
                 StepKind::Count | StepKind::Sum | StepKind::Avg if grouped => {
                     grouped = false;
@@ -2762,7 +4242,8 @@ impl<'a> Gen<'a> {
                     let c = self.strarg(&col);
                     let r = self.call_v("nx_pipe_agg", &format!("{ts}, i32 {kind}, {tf}, {c}, i32 {ssp}, i32 {esp}"));
                     self.check();
-                    r
+                    self.drop_val(&f);
+                    self.owned(r)
                 }
                 StepKind::Count | StepKind::Sum | StepKind::Avg => {
                     let f = match step.kind {
@@ -2774,7 +4255,7 @@ impl<'a> Gen<'a> {
                     let ts = self.tb(&cur);
                     let r = self.call_v(f, &format!("{ts}, i32 {ssp}"));
                     self.check();
-                    r
+                    self.owned(r)
                 }
                 StepKind::Where | StepKind::Map | StepKind::Sort | StepKind::Group | StepKind::Each => {
                     let x = step.expr.as_ref().unwrap();
@@ -2801,14 +4282,18 @@ impl<'a> Gen<'a> {
                         }
                     };
                     self.check();
-                    r
+                    self.drop_val(&f);
+                    self.owned(r)
                 }
             };
+            self.drop_slot(&slot);
+            v = r;
         }
         Ok(v)
     }
 
     fn parallel_for(&mut self, e: &'a Expr, iterable: &'a Expr, args: &'a [Arg], body: &'a [Stmt]) -> GResult<Val> {
+        let mut max = none();
         for a in args {
             if a.name.as_deref() != Some("max") {
                 return Err(Diagnostic::new("arg_unknown", a.span)
@@ -2821,45 +4306,149 @@ impl<'a> Gen<'a> {
             let sp = self.span_id(a.value.span);
             self.call_void("nx_parallel_max", &format!("{tv}, i32 {sp}"));
             self.check();
+            max = v;
         }
-        let out = self.call_v("nx_list", "ptr null, i64 0");
-        let results = self.temp(&out);
-        let scope = self.res.scope_of[&Node::Expr(e.id)];
-        let var = self.res.decl[&Node::Expr(e.id)];
         let it = self.expr(iterable, false)?;
-        // phase 1 runs the tasks one after the other (D52): same results in
-        // order, and the first failure stops the rest
-        self.for_each(&it, iterable.span, |g, item| {
-            g.enter_scope(scope);
-            g.store_binding(var, item);
-            let task = g.temp(&none());
-            let cont = g.label();
-            g.f().returns.push(RetCtx::Task { slot: task.clone(), cont: cont.clone() });
-            g.block(body)?;
-            g.f().returns.pop();
-            g.br(&cont);
-            g.place(&cont);
-            let r = g.load(&task);
-            let l = g.load(&results);
-            let tl = g.tb(&l);
-            let tr = g.tb(&r);
-            g.call_void("nx_list_push", &format!("{tl}, {tr}"));
-            g.check();
-            Ok(())
-        })?;
-        Ok(self.load(&results))
+        // the body is a task: a function called for each element, on as
+        // many threads as there are processors (or `max`)
+        let frame = self.res.frame_of[&Node::Expr(e.id)];
+        let clo = self.closure(frame, FrameSrc::Task(body))?;
+        let ti = self.tb(&it);
+        let tc = self.tb(&clo);
+        let tm = self.tb(&max);
+        let sp = self.span_id(iterable.span);
+        let r = self.call_v("nx_parallel_for", &format!("{ti}, {tc}, {tm}, i32 {sp}"));
+        self.check();
+        self.drop_val(&clo);
+        self.drop_val(&it);
+        self.drop_val(&max);
+        Ok(self.owned(r))
+    }
+
+    /// A task cannot change a variable that existed before it started
+    /// (section 5): checked when the variable is a top-level one or a
+    /// captured one, unless the task is the `parallel:` statement that
+    /// computes it.
+    fn task_write_check(&mut self, b: BindingId, name: &str, span: Span) {
+        if self.res.bindings[b].shared {
+            return;
+        }
+        let frame = self.fs.last().unwrap().frame;
+        if self.res.task_outputs.get(&frame).is_some_and(|o| o.contains(&b)) {
+            return;
+        }
+        let birth = if self.res.is_static(b) {
+            None
+        } else {
+            match self.slot_of(b) {
+                Some(Slot::Value(_)) => return,
+                _ => {
+                    let c = self.cell_ptr(b);
+                    let p = self.reg();
+                    self.emit(&format!("{p} = getelementptr inbounds i8, ptr {c}, i64 24"));
+                    let x = self.reg();
+                    self.emit(&format!("{x} = load i64, ptr {p}"));
+                    Some(x)
+                }
+            }
+        };
+        let sp_ptr = self.reg();
+        self.emit(&format!("{sp_ptr} = getelementptr inbounds i8, ptr %tls, i64 16"));
+        let stamp = self.reg();
+        self.emit(&format!("{stamp} = load i64, ptr {sp_ptr}"));
+        let c = self.reg();
+        match birth {
+            None => self.emit(&format!("{c} = icmp ne i64 {stamp}, 0")),
+            Some(x) => self.emit(&format!("{c} = icmp ult i64 {x}, {stamp}")),
+        }
+        let bad = self.label();
+        let ok = self.label();
+        self.cond_br(&c, &bad, &ok);
+        self.place(&bad);
+        let n = self.strarg(name);
+        let sp = self.span_id(span);
+        self.call_void("nx_task_write", &format!("{n}, i32 {sp}"));
+        self.fail_here();
+        self.place(&ok);
     }
 }
 
-pub const RUNTIME_DECLS: &str = r#"@nx_failing = external global i8
-@nx_deadline_active = external global i8
-@nx_depth = external global i64
+pub const RUNTIME_DECLS: &str = r#"attributes #0 = { alwaysinline }
+
+; reference counts (section 7): the count is the first word of a heap value
+define internal void @rc_inc(%V %v) #0 {
+  %t = extractvalue %V %v, 0
+  %o = icmp eq i64 %t, 4
+  br i1 %o, label %yes, label %no
+yes:
+  %b = extractvalue %V %v, 1
+  %p = inttoptr i64 %b to ptr
+  %x = atomicrmw add ptr %p, i64 1 monotonic
+  ret void
+no:
+  ret void
+}
+
+define internal void @rc_dec(%V %v) #0 {
+  %t = extractvalue %V %v, 0
+  %o = icmp eq i64 %t, 4
+  br i1 %o, label %yes, label %no
+yes:
+  %b = extractvalue %V %v, 1
+  %p = inttoptr i64 %b to ptr
+  %x = atomicrmw sub ptr %p, i64 1 release
+  %last = icmp eq i64 %x, 1
+  br i1 %last, label %free, label %no
+free:
+  fence acquire
+  call void @nx_destroy(ptr %p)
+  ret void
+no:
+  ret void
+}
+
+; a float literal becomes an ordinary float
+define internal %V @nx_plainv(%V %v) #0 {
+  %t = extractvalue %V %v, 0
+  %l = icmp eq i64 %t, 5
+  br i1 %l, label %yes, label %no
+yes:
+  %b = extractvalue %V %v, 1
+  %p = inttoptr i64 %b to ptr
+  %f = load i64, ptr %p
+  %r = insertvalue %V { i64 3, i64 0 }, i64 %f, 1
+  ret %V %r
+no:
+  ret %V %v
+}
+
+declare void @nx_destroy(ptr)
+declare ptr @nx_desc(ptr, i64)
+declare %V @nx_parallel_for(i64, i64, i64, i64, i64, i64, i32)
+declare void @nx_parallel_block(ptr, i64, i32)
+declare void @nx_task_write(ptr, i64, i32)
+declare void @nx_spawn(i64, i64, ptr, ptr, i64, i32)
+declare i64 @nx_select(ptr, i64, i64, i64, ptr, i32)
+declare void @nx_shared_lock()
+declare void @nx_shared_unlock()
+declare %V @nx_shared_read(i64, i64)
+declare %V @nx_shared_store(i64, i64)
+declare void @nx_isolated_read(i64, i64, ptr, i64, i32, i32)
+declare void @nx_cell_release(ptr)
+declare void @nx_iter_free(ptr)
+declare void @nx_scratch_clear()
+declare void @nx_unique_slot(ptr)
+declare ptr @nx_field_slot(i64, i64, ptr, i64, i32)
+declare ptr @nx_index_slot(ptr, i64, i64, i32)
+declare void @nx_set_index_at(ptr, i64, i64, i64, i64, i32)
+declare %V @nx_index_at(ptr, i64, i64, i32)
+declare %V @nx_call_method_at(ptr, ptr, i64, ptr, ptr, i64, i32, i32)
 declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
 declare void @nx_too_deep()
-declare void @nx_init(ptr, i64, ptr, i64, ptr, i64, i32)
+declare void @nx_init(ptr, i64, ptr, i64, ptr, i64, i32, ptr)
 declare void @nx_exit(i32) noreturn
 declare void @nx_unhandled() noreturn
 declare void @nx_run_tests() noreturn
@@ -2894,11 +4483,13 @@ declare %V @nx_interp(ptr, i64)
 declare %V @nx_bind(i64, i64)
 declare %V @nx_force(i64, i64)
 declare ptr @nx_func_ptr(i64, i64)
-declare %V @nx_plain(i64, i64)
 declare %V @nx_conform(i64, i64, ptr, i64, ptr, i64, i32)
 declare %V @nx_conform_return(i64, i64, ptr, i64, ptr, i64, i32)
 declare %V @nx_call(i64, i64, ptr, ptr, i64, i32)
 declare %V @nx_call_method(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32)
+declare %V @nx_call_method_ic(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32, ptr)
+declare %V @nx_attr_ic(i64, i64, ptr, i64, i32, ptr)
+declare %V @nx_record_new(i64, i64, ptr, i64, i32)
 declare %V @nx_builtin_call(i32, ptr, ptr, i64, i32)
 declare %V @nx_closure(ptr, ptr, ptr, i64)
 declare ptr @nx_cell()
@@ -2940,6 +4531,16 @@ declare void @nx_emit(ptr, i64, ptr, i64, i32)
 declare void @nx_deadline_push(i64, i64, i32, i32)
 declare void @nx_deadline_pop()
 declare void @nx_check_deadline()
+@nx_any_deadline = external global i32
 declare void @nx_fail_overflow(i32)
 declare void @nx_test_register(ptr, i64, i64, i64)
 "#;
+
+/// A call to code that may read the call depth from the thread state.
+fn is_foreign_call(line: &str) -> bool {
+    let Some(i) = line.find("call ") else { return false };
+    let callee = &line[i..];
+    let Some(at) = callee.find('@') else { return false };
+    let name = &callee[at..];
+    !(name.starts_with("@fw.") || name.starts_with("@llvm.") || name.starts_with("@rc_") || name.starts_with("@nx_plainv"))
+}

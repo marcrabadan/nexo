@@ -103,7 +103,423 @@ type CResult = Result<(), Diagnostic>;
 pub fn check(program: &Program) -> CResult {
     let mut c = Checker { fns: HashMap::new(), methods: HashMap::new() };
     c.collect(&program.body);
+    check_memory(&program.body)?;
     c.stmts(&program.body, Ctx::top())
+}
+
+// -- section 5: the tasks of a `parallel:` block ------------------------------
+
+/// The tasks of a `parallel:` block run at the same time: a task cannot
+/// use a name another task computes, two tasks cannot compute the same
+/// name, and `return` would leave only one task.
+fn check_parallel_block(body: &[Stmt]) -> CResult {
+    let mut assigned: Vec<(String, usize)> = Vec::new();
+    for (i, st) in body.iter().enumerate() {
+        let mut writes = Vec::new();
+        stmt_names(st, &mut Vec::new(), &mut writes, true)?;
+        for (n, span) in writes {
+            if assigned.iter().any(|(m, j)| *m == n && *j != i) {
+                return Err(Diagnostic::new("parallel_twice", span).arg("name", n));
+            }
+            if !assigned.iter().any(|(m, _)| *m == n) {
+                assigned.push((n, i));
+            }
+        }
+    }
+    for (i, st) in body.iter().enumerate() {
+        let mut reads = Vec::new();
+        stmt_names(st, &mut reads, &mut Vec::new(), true)?;
+        for (n, span) in reads {
+            if assigned.iter().any(|(m, j)| *m == n && *j != i) {
+                return Err(Diagnostic::new("parallel_sibling", span).arg("name", n));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The names a statement list assigns (outside nested functions).
+pub fn assigned_names(body: &[Stmt]) -> Vec<String> {
+    let mut writes = Vec::new();
+    for s in body {
+        let _ = stmt_names(s, &mut Vec::new(), &mut writes, false);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for (n, _) in writes {
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+fn root_name(e: &Expr) -> Option<(&str, Span)> {
+    match &e.kind {
+        ExprKind::Name(n) => Some((n.as_str(), e.span)),
+        ExprKind::Index { obj, .. } | ExprKind::Attr { obj, .. } | ExprKind::Propagate(obj) => root_name(obj),
+        _ => None,
+    }
+}
+
+/// Names read and assigned by a statement; a change through a place
+/// (`xs.add(x)`, `xs[i] = v`) assigns its variable.
+fn stmt_names(s: &Stmt, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>, top: bool) -> CResult {
+    // `top`: inside a task of `parallel:`, where `return` is not allowed
+    let block = |b: &[Stmt], reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>| -> CResult {
+        for x in b {
+            stmt_names(x, reads, writes, top)?;
+        }
+        Ok(())
+    };
+    match &s.kind {
+        StmtKind::Expr(e) => expr_names(e, reads, writes),
+        StmtKind::Assign { target, op, value, .. } => {
+            expr_names(value, reads, writes);
+            match &target.kind {
+                ExprKind::Name(n) => {
+                    if *op != "=" {
+                        reads.push((n.clone(), target.span));
+                    }
+                    writes.push((n.clone(), target.span));
+                }
+                ExprKind::Index { obj, index } => {
+                    if let Some((n, sp)) = root_name(obj) {
+                        if matches!(obj.kind, ExprKind::Name(_) | ExprKind::Index { .. }) {
+                            writes.push((n.to_string(), sp));
+                        }
+                    }
+                    expr_names(obj, reads, writes);
+                    expr_names(index, reads, writes);
+                }
+                _ => expr_names(target, reads, writes),
+            }
+        }
+        StmtKind::VarDecl { name, name_span, value, .. } => {
+            expr_names(value, reads, writes);
+            writes.push((name.clone(), *name_span));
+        }
+        StmtKind::Return(v) => {
+            if top {
+                return Err(Diagnostic::new("parallel_return", s.span));
+            }
+            if let Some(v) = v {
+                expr_names(v, reads, writes);
+            }
+        }
+        StmtKind::Expect(e) | StmtKind::Ensure(e) | StmtKind::Assert { expr: e, .. } => expr_names(e, reads, writes),
+        StmtKind::Emit { args, .. } => {
+            for a in args {
+                expr_names(&a.value, reads, writes);
+            }
+        }
+        StmtKind::If { branches, orelse } => {
+            for (c, b) in branches {
+                expr_names(c, reads, writes);
+                block(b, reads, writes)?;
+            }
+            if let Some(b) = orelse {
+                block(b, reads, writes)?;
+            }
+        }
+        StmtKind::For { iterable, body, .. } => {
+            expr_names(iterable, reads, writes);
+            block(body, reads, writes)?;
+        }
+        StmtKind::While { cond: e, body } | StmtKind::Repeat { count: e, body } => {
+            expr_names(e, reads, writes);
+            block(body, reads, writes)?;
+        }
+        StmtKind::Match { subject, arms } => {
+            expr_names(subject, reads, writes);
+            for a in arms {
+                if let Some(g) = &a.guard {
+                    expr_names(g, reads, writes);
+                }
+                block(&a.body, reads, writes)?;
+            }
+        }
+        StmtKind::Try { within, body, handlers } => {
+            if let Some(w) = within {
+                expr_names(w, reads, writes);
+            }
+            block(body, reads, writes)?;
+            for h in handlers {
+                block(&h.body, reads, writes)?;
+            }
+        }
+        StmtKind::Parallel(body) => block(body, reads, writes)?,
+        StmtKind::Fn(f) => writes.push((f.name.clone(), f.name_span)),
+        StmtKind::Spawn { call } => expr_names(call, reads, writes),
+        StmtKind::Shared { name, name_span, value } => {
+            expr_names(value, reads, writes);
+            writes.push((name.clone(), *name_span));
+        }
+        StmtKind::Select { arms } => {
+            for a in arms {
+                if let Some(c) = a.channel.as_ref().or(a.after.as_ref()) {
+                    expr_names(c, reads, writes);
+                }
+                block(&a.body, reads, writes)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn expr_names(e: &Expr, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>) {
+    match &e.kind {
+        ExprKind::Name(n) => reads.push((n.clone(), e.span)),
+        ExprKind::Call { func, args } => {
+            if let ExprKind::Attr { obj, name, .. } = &func.kind {
+                if name == "add" && matches!(obj.kind, ExprKind::Name(_) | ExprKind::Index { .. }) {
+                    if let Some((n, sp)) = root_name(obj) {
+                        writes.push((n.to_string(), sp));
+                    }
+                }
+            }
+            if !matches!(&func.kind, ExprKind::Name(n) if n == "old") {
+                expr_names(func, reads, writes);
+            }
+            for a in args {
+                expr_names(&a.value, reads, writes);
+            }
+        }
+        ExprKind::Propagate(x) => expr_names(x, reads, writes),
+        ExprKind::Coalesce { left, right } => {
+            expr_names(left, reads, writes);
+            expr_names(right, reads, writes);
+        }
+        ExprKind::Lambda { body, .. } => expr_names(body, reads, writes),
+        ExprKind::Pipeline { source, steps } => {
+            expr_names(source, reads, writes);
+            for s in steps {
+                for x in s.expr.iter().chain(s.columns.iter()) {
+                    expr_names(x, reads, writes);
+                }
+            }
+        }
+        ExprKind::ParallelFor { iterable, args, body, .. } => {
+            expr_names(iterable, reads, writes);
+            for a in args {
+                expr_names(&a.value, reads, writes);
+            }
+            for s in body {
+                let _ = stmt_names(s, reads, &mut Vec::new(), false);
+            }
+        }
+        _ => {
+            for c in children(e) {
+                expr_names(c, reads, writes);
+            }
+        }
+    }
+}
+
+// -- section 7, rule 4: weak fields and reference cycles --------------------
+
+fn type_names<'a>(t: Option<&'a TypeExpr>, out: &mut Vec<&'a TypeName>) {
+    if let Some(TypeExpr::Name(tn)) = t {
+        out.push(tn);
+        for p in &tn.params {
+            type_names(Some(p), out);
+        }
+    }
+}
+
+/// `weak` only marks a field of a record, as `weak T?` with T a record;
+/// two or more types that refer to each other through fields that are not
+/// weak form a reference cycle, which is a compile error.
+fn check_memory(body: &[Stmt]) -> CResult {
+    let mut types: Vec<&TypeDef> = Vec::new();
+    walk_stmts(body, true, &mut |s| {
+        if let StmtKind::Type(t) = &s.kind {
+            types.push(t);
+        }
+    });
+    let records: Vec<&str> =
+        types.iter().filter(|t| t.alias.is_none() && t.variants.is_empty()).map(|t| t.name.as_str()).collect();
+    let mut places: Vec<&TypeName> = Vec::new();
+    let mut first_err: Option<Diagnostic> = None;
+    let mut fns: Vec<&FnDef> = Vec::new();
+    walk_stmts(body, true, &mut |s| match &s.kind {
+        StmtKind::Assign { ty, .. } | StmtKind::VarDecl { ty, .. } => type_names(ty.as_ref(), &mut places),
+        StmtKind::Fn(f) => fns.push(f),
+        StmtKind::Type(t) => {
+            type_names(t.alias.as_ref(), &mut places);
+            for v in &t.variants {
+                for p in &v.params {
+                    type_names(p.ty.as_ref(), &mut places);
+                }
+            }
+            for m in &t.methods {
+                fns.push(m);
+            }
+            for f in &t.fields {
+                if let TypeExpr::Name(tn) = &f.ty {
+                    for p in &tn.params {
+                        type_names(Some(p), &mut places);
+                    }
+                    if tn.weak && first_err.is_none() {
+                        if !records.contains(&tn.name.as_str()) {
+                            first_err = Some(Diagnostic::new("weak_target", tn.span).arg("type", tn.name.clone()));
+                        } else if !tn.optional {
+                            first_err = Some(
+                                Diagnostic::new("weak_optional", tn.span)
+                                    .arg("name", f.name.clone())
+                                    .arg("type", tn.name.clone()),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    });
+    if let Some(e) = first_err {
+        return Err(e);
+    }
+    for f in fns {
+        for p in &f.params {
+            type_names(p.ty.as_ref(), &mut places);
+        }
+        type_names(f.ret.as_ref(), &mut places);
+    }
+    if let Some(tn) = places.iter().find(|t| t.weak) {
+        return Err(Diagnostic::new("weak_place", tn.span));
+    }
+    check_cycles(&types)
+}
+
+fn check_cycles(types: &[&TypeDef]) -> CResult {
+    let order: HashMap<&str, usize> = types.iter().enumerate().map(|(i, t)| (t.name.as_str(), i)).collect();
+    let aliases: HashMap<&str, &TypeExpr> =
+        types.iter().filter_map(|t| t.alias.as_ref().map(|a| (t.name.as_str(), a))).collect();
+    fn targets<'a>(
+        t: Option<&'a TypeExpr>,
+        order: &HashMap<&str, usize>,
+        aliases: &HashMap<&'a str, &'a TypeExpr>,
+        seen: &mut Vec<&'a str>,
+        out: &mut Vec<String>,
+    ) {
+        let mut names = Vec::new();
+        type_names(t, &mut names);
+        for tn in names {
+            let n = tn.name.as_str();
+            if let Some(a) = aliases.get(n) {
+                if !seen.contains(&n) {
+                    seen.push(n);
+                    targets(Some(a), order, aliases, seen, out);
+                }
+            } else if order.contains_key(n) {
+                out.push(n.to_string());
+            }
+        }
+    }
+    // the fields of each type that keep other values alive
+    let mut edges: Vec<(&str, Vec<(&str, Span, Vec<String>)>)> = Vec::new();
+    for t in types {
+        if t.alias.is_some() {
+            continue;
+        }
+        let mut refs = Vec::new();
+        for f in &t.fields {
+            if matches!(&f.ty, TypeExpr::Name(tn) if tn.weak) {
+                continue;
+            }
+            let mut out = Vec::new();
+            targets(Some(&f.ty), &order, &aliases, &mut Vec::new(), &mut out);
+            refs.push((f.name.as_str(), f.ty.span(), out));
+        }
+        for v in &t.variants {
+            for p in &v.params {
+                let mut out = Vec::new();
+                targets(p.ty.as_ref(), &order, &aliases, &mut Vec::new(), &mut out);
+                let span = p.ty.as_ref().map(|t| t.span()).unwrap_or(p.span);
+                refs.push((p.name.as_str(), span, out));
+            }
+        }
+        edges.push((t.name.as_str(), refs));
+    }
+    let graph: Vec<(String, Vec<String>)> = edges
+        .iter()
+        .map(|(n, refs)| (n.to_string(), refs.iter().flat_map(|(_, _, ts)| ts.iter().cloned()).collect()))
+        .collect();
+    let comp = strongly_connected(&graph);
+    for (name, refs) in &edges {
+        let members = &comp[*name];
+        if members.len() < 2 {
+            continue;
+        }
+        for (field, span, ts) in refs {
+            for target in ts {
+                if target != name && members.contains(target) && order[target.as_str()] < order[name] {
+                    let mut cycle: Vec<&String> = members.iter().collect();
+                    cycle.sort_by_key(|n| order[n.as_str()]);
+                    let cycle: Vec<&str> = cycle.iter().map(|s| s.as_str()).collect();
+                    return Err(Diagnostic::new("type_cycle", *span)
+                        .arg("cycle", cycle.join(", "))
+                        .arg("field", field.to_string())
+                        .arg("type", target.clone()));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The strongly connected component of each node (Tarjan).
+fn strongly_connected(graph: &[(String, Vec<String>)]) -> HashMap<String, Vec<String>> {
+    struct T<'g> {
+        graph: &'g [(String, Vec<String>)],
+        index: HashMap<&'g str, usize>,
+        low: HashMap<&'g str, usize>,
+        stack: Vec<&'g str>,
+        comp: HashMap<String, Vec<String>>,
+        counter: usize,
+    }
+    fn visit<'g>(t: &mut T<'g>, v: &'g str) {
+        t.index.insert(v, t.counter);
+        t.low.insert(v, t.counter);
+        t.counter += 1;
+        t.stack.push(v);
+        let succ: Vec<&'g str> = t.graph.iter().find(|(n, _)| n == v).map(|(_, s)| s.iter().map(|x| x.as_str()).collect()).unwrap_or_default();
+        for w in succ {
+            if !t.graph.iter().any(|(n, _)| n == w) {
+                continue;
+            }
+            if !t.index.contains_key(w) {
+                visit(t, w);
+                let lw = t.low[w];
+                let lv = t.low[v];
+                t.low.insert(v, lv.min(lw));
+            } else if t.stack.contains(&w) {
+                let iw = t.index[w];
+                let lv = t.low[v];
+                t.low.insert(v, lv.min(iw));
+            }
+        }
+        if t.low[v] == t.index[v] {
+            let mut members = Vec::new();
+            loop {
+                let w = t.stack.pop().unwrap();
+                members.push(w.to_string());
+                if w == v {
+                    break;
+                }
+            }
+            for w in &members {
+                t.comp.insert(w.clone(), members.clone());
+            }
+        }
+    }
+    let mut t = T { graph, index: HashMap::new(), low: HashMap::new(), stack: Vec::new(), comp: HashMap::new(), counter: 0 };
+    for (v, _) in graph {
+        if !t.index.contains_key(v.as_str()) {
+            visit(&mut t, v.as_str());
+        }
+    }
+    t.comp
 }
 
 impl Checker {
@@ -241,7 +657,28 @@ impl Checker {
                 }
                 Ok(())
             }
-            StmtKind::Parallel(body) => self.stmts(body, ctx),
+            StmtKind::Parallel(body) => {
+                check_parallel_block(body)?;
+                self.stmts(body, ctx)
+            }
+            // an error nobody handles in a spawned task ends the program
+            StmtKind::Spawn { call: Expr { kind: ExprKind::Call { func, args }, .. } } => {
+                self.expr(func, ctx, false)?;
+                for a in args {
+                    self.expr(&a.value, ctx, false)?;
+                }
+                Ok(())
+            }
+            StmtKind::Shared { value, .. } => self.expr(value, ctx, false),
+            StmtKind::Select { arms } => {
+                for a in arms {
+                    if let Some(c) = a.channel.as_ref().or(a.after.as_ref()) {
+                        self.expr(c, ctx, false)?;
+                    }
+                    self.stmts(&a.body, ctx)?;
+                }
+                Ok(())
+            }
             StmtKind::Event { body, .. } => self.stmts(body, Ctx::top()),
             _ => Ok(()),
         }
@@ -442,6 +879,7 @@ pub fn walk_stmts<'a>(body: &'a [Stmt], into_fns: bool, f: &mut dyn FnMut(&'a St
                 blocks.push(body);
                 blocks.extend(handlers.iter().map(|h| h.body.as_slice()));
             }
+            StmtKind::Select { arms } => blocks.extend(arms.iter().map(|a| a.body.as_slice())),
             _ => {}
         }
         for b in blocks {
@@ -499,6 +937,12 @@ fn body_fails(body: &[Stmt], in_try: bool) -> bool {
                 }
             }
             StmtKind::Parallel(body) => nested.push(body),
+            StmtKind::Select { arms } => {
+                for a in arms {
+                    nested.push(&a.body);
+                }
+            }
+            StmtKind::Shared { value, .. } => exprs.push(value),
             StmtKind::Expr(e) => exprs.push(e),
             StmtKind::Assign { target, value, .. } => {
                 exprs.push(target);

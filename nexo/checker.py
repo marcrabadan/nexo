@@ -86,6 +86,7 @@ class Checker:
     # -- pass 2 ---------------------------------------------------------
     def check(self, program: A.Program) -> None:
         self.collect(program.body)
+        check_memory(program.body)
         self.stmts(program.body, Ctx(None))
 
     def stmts(self, body: list[A.Stmt], ctx: Ctx) -> None:
@@ -150,6 +151,7 @@ class Checker:
             for h in s.handlers:
                 self.stmts(h.body, ctx)
         elif isinstance(s, A.ParallelBlock):
+            check_parallel_block(s.body)
             self.stmts(s.body, ctx)
         elif isinstance(s, A.EventStmt):
             self.stmts(s.body, Ctx(None))
@@ -360,3 +362,277 @@ def _expr_fails(e: A.Expr) -> bool:
         parts = [e.source] + [x for s in e.steps for x in [s.expr, *s.columns] if x is not None]
         return any(_expr_fails(x) for x in parts)
     return any(_expr_fails(c) for c in children(e))
+
+
+# -- section 5: the tasks of a `parallel:` block -----------------------------
+
+def check_parallel_block(body: list[A.Stmt]) -> None:
+    """The tasks of a `parallel:` block run at the same time: a task cannot
+    use a name another task computes, two tasks cannot compute the same
+    name, and `return` would leave only one task."""
+    assigned: dict[str, int] = {}
+    for i, st in enumerate(body):
+        writes: list = []
+        stmt_names(st, [], writes, True)
+        for name, span in writes:
+            if name in assigned and assigned[name] != i:
+                raise NexoError("parallel_twice", span, name=name)
+            assigned.setdefault(name, i)
+    for i, st in enumerate(body):
+        reads: list = []
+        stmt_names(st, reads, [], True)
+        for name, span in reads:
+            if name in assigned and assigned[name] != i:
+                raise NexoError("parallel_sibling", span, name=name)
+
+
+def assigned_names(body: list[A.Stmt]) -> list[str]:
+    """The names a statement list assigns (outside nested functions)."""
+    writes: list = []
+    for s in body:
+        try:
+            stmt_names(s, [], writes, False)
+        except NexoError:
+            pass
+    out: list[str] = []
+    for name, _ in writes:
+        if name not in out:
+            out.append(name)
+    return out
+
+
+def root_name(e: A.Expr):
+    if isinstance(e, A.Name):
+        return e
+    if isinstance(e, (A.Index, A.Attr)):
+        return root_name(e.obj)
+    if isinstance(e, A.Propagate):
+        return root_name(e.expr)
+    return None
+
+
+def stmt_names(s: A.Stmt, reads: list, writes: list, top: bool) -> None:
+    """Names read and assigned by a statement; a change through a place
+    (`xs.add(x)`, `xs[i] = v`) assigns its variable. `top`: inside a task of
+    `parallel:`, where `return` is not allowed."""
+    def block(b):
+        for x in b:
+            stmt_names(x, reads, writes, top)
+
+    if isinstance(s, A.ExprStmt):
+        expr_names(s.expr, reads, writes)
+    elif isinstance(s, A.Assign):
+        expr_names(s.value, reads, writes)
+        t = s.target
+        if isinstance(t, A.Name):
+            if s.op != "=":
+                reads.append((t.name, t.span))
+            writes.append((t.name, t.span))
+        elif isinstance(t, A.Index):
+            root = root_name(t.obj)
+            if root is not None and isinstance(t.obj, (A.Name, A.Index)):
+                writes.append((root.name, root.span))
+            expr_names(t.obj, reads, writes)
+            expr_names(t.index, reads, writes)
+        else:
+            expr_names(t, reads, writes)
+    elif isinstance(s, A.VarDecl):
+        expr_names(s.value, reads, writes)
+        writes.append((s.name, s.name_span))
+    elif isinstance(s, A.Return):
+        if top:
+            raise NexoError("parallel_return", s.span)
+        if s.value is not None:
+            expr_names(s.value, reads, writes)
+    elif isinstance(s, (A.Expect, A.Ensure, A.Assert)):
+        expr_names(s.expr, reads, writes)
+    elif isinstance(s, A.Emit):
+        for a in s.call.args:
+            expr_names(a.value, reads, writes)
+    elif isinstance(s, A.If):
+        for cond, b in s.branches:
+            expr_names(cond, reads, writes)
+            block(b)
+        if s.orelse:
+            block(s.orelse)
+    elif isinstance(s, A.For):
+        expr_names(s.iterable, reads, writes)
+        block(s.body)
+    elif isinstance(s, (A.While, A.Repeat)):
+        expr_names(s.cond if isinstance(s, A.While) else s.count, reads, writes)
+        block(s.body)
+    elif isinstance(s, A.Match):
+        expr_names(s.subject, reads, writes)
+        for arm in s.arms:
+            if arm.guard is not None:
+                expr_names(arm.guard, reads, writes)
+            block(arm.body)
+    elif isinstance(s, A.TryStmt):
+        if s.within is not None:
+            expr_names(s.within, reads, writes)
+        block(s.body)
+        for h in s.handlers:
+            block(h.body)
+    elif isinstance(s, A.ParallelBlock):
+        block(s.body)
+    elif isinstance(s, A.FnDef):
+        writes.append((s.name, s.name_span))
+
+
+def expr_names(e: A.Expr, reads: list, writes: list) -> None:
+    if isinstance(e, A.Name):
+        reads.append((e.name, e.span))
+    elif isinstance(e, A.Call):
+        f = e.func
+        if isinstance(f, A.Attr) and f.name == "add" and isinstance(f.obj, (A.Name, A.Index)):
+            root = root_name(f.obj)
+            if root is not None:
+                writes.append((root.name, root.span))
+        if not (isinstance(f, A.Name) and f.name == "old"):
+            expr_names(f, reads, writes)
+        for a in e.args:
+            expr_names(a.value, reads, writes)
+    elif isinstance(e, A.Propagate):
+        expr_names(e.expr, reads, writes)
+    elif isinstance(e, A.Coalesce):
+        expr_names(e.left, reads, writes)
+        expr_names(e.right, reads, writes)
+    elif isinstance(e, A.Lambda):
+        expr_names(e.body, reads, writes)
+    elif isinstance(e, A.Pipeline):
+        expr_names(e.source, reads, writes)
+        for step in e.steps:
+            for x in ([step.expr] if step.expr is not None else []) + list(step.columns):
+                expr_names(x, reads, writes)
+    elif isinstance(e, A.ParallelFor):
+        expr_names(e.iterable, reads, writes)
+        for a in e.args:
+            expr_names(a.value, reads, writes)
+        for s in e.body:
+            stmt_names(s, reads, [], False)
+    else:
+        for c in children(e):
+            expr_names(c, reads, writes)
+
+
+# -- section 7, rule 4: weak fields and reference cycles --------------------
+
+def type_exprs(t: A.TypeExpr | None):
+    """Every TypeName inside a type expression."""
+    if isinstance(t, A.TypeName):
+        yield t
+        for p in t.params:
+            yield from type_exprs(p)
+
+
+def check_memory(body: list[A.Stmt]) -> None:
+    """`weak` only marks a field of a record, as `weak T?` with T a record;
+    two or more types that refer to each other through fields that are not
+    weak form a reference cycle, which is a compile error."""
+    types = [s for s in walk_stmts(body) if isinstance(s, A.TypeDef)]
+    records = {t.name for t in types if t.alias is None and not t.variants}
+    for s in walk_stmts(body):
+        places: list = []
+        if isinstance(s, (A.Assign, A.VarDecl)):
+            places.append(s.type)
+        elif isinstance(s, A.FnDef):
+            places.extend(p.type for p in s.params)
+            places.append(s.ret)
+        elif isinstance(s, A.TypeDef):
+            places.append(s.alias)
+            for v in s.variants:
+                places.extend(p.type for p in v.params)
+            for f in s.fields:
+                if isinstance(f.type, A.TypeName):
+                    places.extend(f.type.params)
+                    if f.type.weak:
+                        check_weak_field(f, records)
+        for t in places:
+            for tn in type_exprs(t):
+                if tn.weak:
+                    raise NexoError("weak_place", tn.span)
+    check_cycles(types)
+
+
+def check_weak_field(f: A.FieldDef, records: set[str]) -> None:
+    t = f.type
+    if t.name not in records:
+        raise NexoError("weak_target", t.span, type=t.name)
+    if not t.optional:
+        raise NexoError("weak_optional", t.span, name=f.name, type=t.name)
+
+
+def check_cycles(types: list[A.TypeDef]) -> None:
+    order = {t.name: i for i, t in enumerate(types)}
+    aliases = {t.name: t.alias for t in types if t.alias is not None}
+
+    def targets(t: A.TypeExpr | None, seen: frozenset = frozenset()) -> list[str]:
+        out = []
+        for tn in type_exprs(t):
+            if tn.name in aliases and tn.name not in seen:
+                out.extend(targets(aliases[tn.name], seen | {tn.name}))
+            elif tn.name in order and tn.name not in aliases:
+                out.append(tn.name)
+        return out
+
+    # the fields of each type that keep other values alive
+    edges: dict[str, list[tuple[str, A.Node, list[str]]]] = {}
+    for t in types:
+        if t.alias is not None:
+            continue
+        refs = []
+        for f in t.fields:
+            if not (isinstance(f.type, A.TypeName) and f.type.weak):
+                refs.append((f.name, f.type, targets(f.type)))
+        for v in t.variants:
+            for p in v.params:
+                refs.append((p.name, p.type, targets(p.type)))
+        edges[t.name] = refs
+    comp = strongly_connected({n: [x for _, _, ts in refs for x in ts] for n, refs in edges.items()})
+    for t in types:
+        if t.alias is not None or len(comp[t.name]) < 2:
+            continue
+        for name, texpr, ts in edges[t.name]:
+            for target in ts:
+                if target != t.name and target in comp[t.name] and order[target] < order[t.name]:
+                    cycle = ", ".join(sorted(comp[t.name], key=lambda n: order[n]))
+                    raise NexoError("type_cycle", texpr.span, cycle=cycle, field=name, type=target)
+
+
+def strongly_connected(graph: dict[str, list[str]]) -> dict[str, set[str]]:
+    """The strongly connected component of each node (Tarjan)."""
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    comp: dict[str, set[str]] = {}
+    counter = [0]
+
+    def visit(v: str) -> None:
+        index[v] = low[v] = counter[0]
+        counter[0] += 1
+        stack.append(v)
+        on_stack.add(v)
+        for w in graph.get(v, []):
+            if w not in graph:
+                continue
+            if w not in index:
+                visit(w)
+                low[v] = min(low[v], low[w])
+            elif w in on_stack:
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            members = set()
+            while True:
+                w = stack.pop()
+                on_stack.discard(w)
+                members.add(w)
+                if w == v:
+                    break
+            for w in members:
+                comp[w] = members
+
+    for v in graph:
+        if v not in index:
+            visit(v)
+    return comp

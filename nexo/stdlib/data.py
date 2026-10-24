@@ -17,7 +17,7 @@ from .. import ast as A
 from .. import errors
 from ..errors import NexoError
 from ..types import (
-    INT_MAX, INT_MIN, Builtin, BuiltinType, Money, Quantity, Record, RecordType, VariantValue,
+    INT_MAX, INT_MIN, Builtin, BuiltinType, Money, Quantity, Record, RecordType, VariantValue, WeakRef,
     failure, repr_value, show, type_name,
 )
 
@@ -63,7 +63,7 @@ def to_csv(call, value: Any) -> str:
     columns: list[str] = []
     for item in value:
         if isinstance(item, Record):
-            row = item.fields
+            row = {k: (None if type(v) is WeakRef else v) for k, v in item.fields.items()}
         elif isinstance(item, dict):
             row = item
         else:
@@ -124,7 +124,7 @@ def as_type(call, value: Any, t: Any, type_expr: A.TypeExpr | None = None) -> An
                 if inner is not None and raw is not None:
                     raw = as_type(call, raw, inner, f.type)
                 try:
-                    fields[f.name] = interp.conform(raw, f.type, t.env, f.name, call.span)
+                    fields[f.name] = interp.field_store(f, interp.conform(raw, f.type, t.env, f.name, call.span))
                 except NexoError:
                     raise invalid(call, "detail.field_type", field=f.name,
                                   type=interp.type_text(f.type), vtype=type_name(raw))
@@ -134,7 +134,7 @@ def as_type(call, value: Any, t: Any, type_expr: A.TypeExpr | None = None) -> An
                 fields[f.name] = None
             else:
                 raise invalid(call, "detail.missing_field", field=f.name, type=t.name)
-        return Record(t, fields)
+        return Record(t, fields, interp.stamp)
     if isinstance(t, BuiltinType) and type_expr is not None and t.name == "list" and type_expr.params:
         if not isinstance(value, list):
             raise invalid(call, "detail.expected", type="list", vtype=type_name(value))
@@ -188,7 +188,7 @@ def to_json(value: Any, level: int = 0) -> str:
     pad = "  " * (level + 1)
     close = "  " * level
     if isinstance(value, Record):
-        value = value.fields
+        value = {k: (None if type(v) is WeakRef else v) for k, v in value.fields.items()}
     elif isinstance(value, VariantValue):
         value = {"variant": value.variant.name, **value.fields}
     if isinstance(value, dict):

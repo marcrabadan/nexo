@@ -1,0 +1,5 @@
+use nexo.sync
+type Order:
+    id: int
+c = channel[Order](size: 1)
+c.send("hello")

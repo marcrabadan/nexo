@@ -1,4 +1,4 @@
-# Nexo — phases 0 and 1
+# Nexo — phases 0, 1 and 2
 
 The core of Nexo, a new programming language, in two implementations
 (section 25 of the specification):
@@ -6,7 +6,10 @@ The core of Nexo, a new programming language, in two implementations
 - phase 0: a Python 3.12 tree-walking interpreter (`nexo/`);
 - phase 1: a compiler written in Rust that generates native code with
   LLVM (`compiler/`). Both must give the same output on every program,
-  except for the differences recorded in docs/decisions.md (D67-D75).
+  except for the differences recorded in docs/decisions.md (D67-D75);
+- phase 2, in both: the memory model of section 7 (reference counting,
+  copy-on-write, `weak`), real `parallel`, `nexo.sync` and contracts the
+  compiler proves (D76-D84).
 
 ## Source of truth
 
@@ -28,7 +31,7 @@ nexo/
   numbers.py      section 17 arithmetic: int overflow, float/decimal, money, units
   types.py        runtime values: decimal/money/units, records, enums, errors
   errors.py       error type + section 14 renderer + i18n (es default, en)
-  stdlib/         builtins, io, data (JSON/CSV)
+  stdlib/         builtins, io, data (JSON/CSV), sync (nexo.sync)
   cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text)
@@ -40,7 +43,7 @@ compiler/
   runtime/        static library linked into every compiled program
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py
-  bench/          benchmarks (run.sh)
+  bench/          benchmarks (run.sh; compare.py against rust/*.rs)
 examples/         real programs; NAME.expected (and NAME.stdin) checked by
                   tests/test_examples.py
 docs/decisions.md every ambiguity found and the choice made
@@ -77,7 +80,7 @@ in Spanish (the default); a `NAME.args` file holds extra CLI arguments
 placed before the file name, such as `--lang en` (see `tests/conformance/en/`)
 or `test`.
 
-## Scope (phases 0 and 1)
+## Scope (phases 0, 1 and 2)
 
 Included: lexer/parser per section 24; constants and `var`; `type`
 (records, unions, enums with data, methods); `trait`; `fn` with named and
@@ -85,13 +88,20 @@ default args; lambdas; if/elif/else, for, while, repeat, match with guards;
 comprehensions; errors (`T!`, `?`, `try`/`else e`, `fail()`, ignoring a `T!`
 is an error); `T?` and `??`; int (overflow detected), float, decimal, money;
 pipelines (`where map pick group by sum count avg sort by take each save`,
-`it`, bare column names); `parallel for` / `parallel:` (sequential, same
-error semantics and result order); `expect`/`ensure`/`old()`; `test` and
+`it`, bare column names); `expect`/`ensure`/`old()`; `test` and
 `assert`; stdlib print, input, read, write, read_lines, len, range, and
 JSON/CSV.
 
+Phase 2: reference counting with a leak checker (`NEXO_LEAKCHECK=1`,
+on in every suite); lists, maps and sets copied on write, records
+shared; `weak T?` fields and the type-cycle error; `parallel for` /
+`parallel:` on threads (results and output in task order, the race
+rules of D80-D81); `use nexo.sync` with `spawn`, `channel`, `select`,
+`shared` (D82); proven contracts and `--trust-ensure` (D83); the fast
+paths of D84 (`compiler/bench/compare.py`).
+
 Excluded (do not implement yet): ask, infra, CI pipelines, server, db,
-stream, ml, policy, native performance.
+stream, ml, policy.
 
 ## Rules
 

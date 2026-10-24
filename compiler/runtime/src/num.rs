@@ -67,20 +67,17 @@ pub fn currency_places(code: &str) -> i64 {
 }
 
 pub fn intern(s: &str) -> &'static str {
-    use std::cell::RefCell;
     use std::collections::HashSet;
-    thread_local! {
-        static NAMES: RefCell<HashSet<&'static str>> = RefCell::new(HashSet::new());
+    use std::sync::Mutex;
+    static NAMES: Mutex<Option<HashSet<&'static str>>> = Mutex::new(None);
+    let mut guard = NAMES.lock().unwrap();
+    let n = guard.get_or_insert_with(HashSet::new);
+    if let Some(s) = n.get(s) {
+        return s;
     }
-    NAMES.with(|n| {
-        let mut n = n.borrow_mut();
-        if let Some(s) = n.get(s) {
-            return *s;
-        }
-        let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
-        n.insert(leaked);
-        leaked
-    })
+    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+    n.insert(leaked);
+    leaked
 }
 
 pub fn is_currency(code: &str) -> bool {
@@ -92,21 +89,21 @@ pub fn is_currency(code: &str) -> bool {
 }
 
 /// Money keeps the minor units of its currency (D37).
-pub fn money_of(amount: Dec, currency: &'static str, span: u32) -> R<V> {
+pub fn money_of(amount: Dec, currency: &'static str, span: u32) -> R<Val> {
     match amount.quantize(-currency_places(currency), Rounding::HalfEven) {
-        Some(d) => Ok(V::obj(Obj::Money(d, currency))),
+        Some(d) => Ok(Val::new(Obj::Money(d, currency))),
         None => Err(failure("InvalidValue", span, &[("detail", amount.py_str())])),
     }
 }
 
-pub fn unit_literal(text: &str, unit: &str) -> V {
+pub fn unit_literal(text: &str, unit: &str) -> Val {
     let d = Dec::parse(text).unwrap();
     let unit = intern(unit);
     if is_currency(unit) {
         let q = d.quantize(-currency_places(unit), Rounding::HalfEven).unwrap_or(d);
-        V::obj(Obj::Money(q, unit))
+        Val::new(Obj::Money(q, unit))
     } else {
-        V::obj(Obj::Quantity(d, unit))
+        Val::new(Obj::Quantity(d, unit))
     }
 }
 
@@ -183,16 +180,16 @@ fn is_exact_kind(v: V) -> bool {
 
 /// Section 17, rule 1: a float literal next to a decimal, money or unit
 /// quantity is read as an exact decimal.
-pub fn exact_literals(a: V, b: V) -> (V, V) {
-    let mut a = a;
-    let mut b = b;
+pub fn exact_literals(a: V, b: V) -> (Val, Val) {
+    let mut x = Val::from(a.plain());
+    let mut y = Val::from(b.plain());
     if a.tag == T_LITFLOAT && is_exact_kind(b) {
-        a = decimal(Dec::parse(a.litfloat().text()).unwrap());
+        x = decimal(Dec::parse(a.litfloat().text()).unwrap());
     }
     if b.tag == T_LITFLOAT && is_exact_kind(a) {
-        b = decimal(Dec::parse(b.litfloat().text()).unwrap());
+        y = decimal(Dec::parse(b.litfloat().text()).unwrap());
     }
-    (a.plain(), b.plain())
+    (x, y)
 }
 
 fn is_num(v: V) -> bool {
@@ -220,8 +217,9 @@ fn div_zero(span: u32) -> crate::state::Fail {
 
 // ------------------------------------------------------------ arithmetic
 
-pub fn arith(op: Op, a: V, b: V, span: u32) -> R<V> {
-    let (a, b) = exact_literals(a, b);
+pub fn arith(op: Op, a: V, b: V, span: u32) -> R<Val> {
+    let (oa, ob) = exact_literals(a, b);
+    let (a, b) = (oa.v(), ob.v());
     if a.tag == T_BOOL || b.tag == T_BOOL {
         return Err(bad(op.text(), a, b, span));
     }
@@ -236,13 +234,13 @@ pub fn arith(op: Op, a: V, b: V, span: u32) -> R<V> {
             let mut s = String::with_capacity(x.len() + y.len());
             s.push_str(x);
             s.push_str(y);
-            return Ok(V::str(s));
+            return Ok(Val::str(s));
         }
-        let a = crate::pipe::force(a)?;
-        let b = crate::pipe::force(b)?;
-        if let (Some(Obj::List(x)), Some(Obj::List(y))) = (a.get(), b.get()) {
+        let fa = crate::pipe::force(a)?;
+        let fb = crate::pipe::force(b)?;
+        if let (Some(Obj::List(x)), Some(Obj::List(y))) = (fa.get(), fb.get()) {
             let mut items = x.borrow().clone();
-            items.extend(y.borrow().iter().copied());
+            items.extend(y.borrow().iter().cloned());
             return Ok(list(items));
         }
     }
@@ -268,7 +266,7 @@ pub fn arith(op: Op, a: V, b: V, span: u32) -> R<V> {
     float_op(op, x, y, span)
 }
 
-pub fn int_op(op: Op, a: i64, b: i64, span: u32) -> R<V> {
+pub fn int_op(op: Op, a: i64, b: i64, span: u32) -> R<Val> {
     let r = match op {
         Op::Add => a.checked_add(b),
         Op::Sub => a.checked_sub(b),
@@ -277,7 +275,7 @@ pub fn int_op(op: Op, a: i64, b: i64, span: u32) -> R<V> {
             if b == 0 {
                 return Err(div_zero(span));
             }
-            return Ok(V::float(int_true_div(a, b)));
+            return Ok(Val::float(int_true_div(a, b)));
         }
         Op::IDiv => {
             if b == 0 {
@@ -314,7 +312,7 @@ pub fn int_op(op: Op, a: i64, b: i64, span: u32) -> R<V> {
             }
         }
     };
-    r.map(V::int).ok_or_else(|| overflow(span))
+    r.map(Val::int).ok_or_else(|| overflow(span))
 }
 
 /// Correctly rounded `a / b` for 64-bit integers.
@@ -340,8 +338,8 @@ fn py_float_mod(a: f64, b: f64) -> f64 {
     }
 }
 
-pub fn float_op(op: Op, a: f64, b: f64, span: u32) -> R<V> {
-    Ok(V::float(match op {
+pub fn float_op(op: Op, a: f64, b: f64, span: u32) -> R<Val> {
+    Ok(Val::float(match op {
         Op::Add => a + b,
         Op::Sub => a - b,
         Op::Mul => a * b,
@@ -372,7 +370,7 @@ pub fn float_op(op: Op, a: f64, b: f64, span: u32) -> R<V> {
     }))
 }
 
-pub fn decimal_op(op: Op, a: &Dec, b: &Dec, span: u32) -> R<V> {
+pub fn decimal_op(op: Op, a: &Dec, b: &Dec, span: u32) -> R<Val> {
     if matches!(op, Op::Div | Op::IDiv | Op::Mod) && b.is_zero() {
         return Err(div_zero(span));
     }
@@ -420,7 +418,7 @@ fn as_factor(v: V, other: V, span: u32, op: Op) -> R<Dec> {
     Err(bad(op.text(), other, v, span))
 }
 
-fn money_op(op: Op, a: V, b: V, span: u32) -> R<V> {
+fn money_op(op: Op, a: V, b: V, span: u32) -> R<Val> {
     if let (Some(Obj::Money(x, cx)), Some(Obj::Money(y, cy))) = (a.get(), b.get()) {
         if cx != cy {
             if matches!(op, Op::Add | Op::Sub | Op::Div) {
@@ -466,7 +464,7 @@ fn scalar(v: V) -> Option<Dec> {
     }
 }
 
-fn quantity_op(op: Op, a: V, b: V, span: u32) -> R<V> {
+fn quantity_op(op: Op, a: V, b: V, span: u32) -> R<Val> {
     if let (Some(Obj::Quantity(x, ux)), Some(Obj::Quantity(y, uy))) = (a.get(), b.get()) {
         let (dx, fx) = unit_dimension(ux);
         let (dy, fy) = unit_dimension(uy);
@@ -476,7 +474,7 @@ fn quantity_op(op: Op, a: V, b: V, span: u32) -> R<V> {
             }
             if op == Op::Mul && (dx == "percent" || dy == "percent") {
                 let (q, qu, p) = if *uy == "%" { (x, ux, y) } else { (y, uy, x) };
-                return Ok(V::obj(Obj::Quantity(q.mul(&fraction(p)), qu)));
+                return Ok(Val::new(Obj::Quantity(q.mul(&fraction(p)), qu)));
             }
             return Err(bad(op.text(), a, b, span));
         }
@@ -486,7 +484,7 @@ fn quantity_op(op: Op, a: V, b: V, span: u32) -> R<V> {
                 let bx = x.mul(&fx);
                 let by = y.mul(&fy);
                 let total = if op == Op::Add { bx.add(&by) } else { bx.sub(&by) };
-                Ok(V::obj(Obj::Quantity(normalize(total.div(small_f)), small_u)))
+                Ok(Val::new(Obj::Quantity(normalize(total.div(small_f)), small_u)))
             }
             Op::Div => {
                 if y.is_zero() {
@@ -502,33 +500,33 @@ fn quantity_op(op: Op, a: V, b: V, span: u32) -> R<V> {
     if *qu == "%" && op == Op::Mul {
         if other.tag == T_FLOAT {
             let frac = fraction(qv).to_f64();
-            return Ok(V::float(f64::from_bits(other.bits) * frac));
+            return Ok(Val::float(f64::from_bits(other.bits) * frac));
         }
         let Some(s) = scalar(other) else { return Err(bad(op.text(), a, b, span)) };
         return Ok(decimal(normalize(s.mul(&fraction(qv)))));
     }
     let Some(s) = scalar(other) else { return Err(bad(op.text(), a, b, span)) };
     if op == Op::Mul {
-        return Ok(V::obj(Obj::Quantity(normalize(qv.mul(&s)), qu)));
+        return Ok(Val::new(Obj::Quantity(normalize(qv.mul(&s)), qu)));
     }
     if op == Op::Div && matches!(a.get(), Some(Obj::Quantity(..))) {
         if s.is_zero() {
             return Err(div_zero(span));
         }
-        return Ok(V::obj(Obj::Quantity(normalize(qv.div(&s)), qu)));
+        return Ok(Val::new(Obj::Quantity(normalize(qv.div(&s)), qu)));
     }
     Err(bad(op.text(), a, b, span))
 }
 
-pub fn negate(v: V, span: u32) -> R<V> {
+pub fn negate(v: V, span: u32) -> R<Val> {
     match v.tag {
-        T_LITFLOAT => Ok(V::float(-v.litfloat().value)),
-        T_INT => (v.bits as i64).checked_neg().map(V::int).ok_or_else(|| overflow(span)),
-        T_FLOAT => Ok(V::float(-f64::from_bits(v.bits))),
+        T_LITFLOAT => Ok(Val::float(-v.litfloat().value)),
+        T_INT => (v.bits as i64).checked_neg().map(Val::int).ok_or_else(|| overflow(span)),
+        T_FLOAT => Ok(Val::float(-f64::from_bits(v.bits))),
         _ => match v.get() {
             Some(Obj::Decimal(d)) => Ok(decimal(d.neg())),
-            Some(Obj::Money(d, c)) => Ok(V::obj(Obj::Money(d.neg(), c))),
-            Some(Obj::Quantity(d, u)) => Ok(V::obj(Obj::Quantity(d.neg(), u))),
+            Some(Obj::Money(d, c)) => Ok(Val::new(Obj::Money(d.neg(), c))),
+            Some(Obj::Quantity(d, u)) => Ok(Val::new(Obj::Quantity(d.neg(), u))),
             _ => Err(diag(Diagnostic::new_spanless("bad_operand").arg("op", "-").arg("a", type_name(v)), span)),
         },
     }
@@ -580,7 +578,8 @@ fn is_dec_float_mix(a: V, b: V) -> bool {
 /// `==` (D34): values of different types are not equal, except int and
 /// float, which compare by value; float with decimal is an error.
 pub fn equals(a: V, b: V, span: u32) -> R<bool> {
-    let (a, b) = exact_literals(a, b);
+    let (oa, ob) = exact_literals(a, b);
+    let (a, b) = (oa.v(), ob.v());
     if a.is_none() || b.is_none() {
         return Ok(a.is_none() && b.is_none());
     }
@@ -600,7 +599,7 @@ pub fn equals(a: V, b: V, span: u32) -> R<bool> {
     }
     let a = crate::pipe::force(a)?;
     let b = crate::pipe::force(b)?;
-    Ok(py_eq(a, b))
+    Ok(py_eq(a.v(), b.v()))
 }
 
 /// Structural equality used inside collections (Python `==` on values).
@@ -621,13 +620,13 @@ pub fn py_eq(a: V, b: V) -> bool {
         (Obj::Quantity(x, ux), Obj::Quantity(y, uy)) => ux == uy && x.eq(y),
         (Obj::List(x), Obj::List(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
-            x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| py_eq(*p, *q))
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| py_eq(p.v(), q.v()))
         }
         (Obj::Map(x), Obj::Map(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
             x.entries.len() == y.entries.len()
                 && x.index.iter().all(|(k, i)| match y.index.get(k) {
-                    Some(j) => py_eq(x.entries[*i].1, y.entries[*j].1),
+                    Some(j) => py_eq(x.entries[*i].1.v(), y.entries[*j].1.v()),
                     None => false,
                 })
         }
@@ -639,11 +638,11 @@ pub fn py_eq(a: V, b: V) -> bool {
         (Obj::Record(x), Obj::Record(y)) => {
             std::ptr::eq(x.ty, y.ty) && {
                 let (fx, fy) = (x.fields.borrow(), y.fields.borrow());
-                fx.iter().zip(fy.iter()).all(|(p, q)| py_eq(*p, *q))
+                fx.iter().zip(fy.iter()).all(|(p, q)| if p.tag == T_WEAK || q.tag == T_WEAK { p.same(q.v()) } else { py_eq(p.v(), q.v()) })
             }
         }
         (Obj::VariantValue(x), Obj::VariantValue(y)) => {
-            std::ptr::eq(x.variant, y.variant) && x.fields.iter().zip(y.fields.iter()).all(|(p, q)| py_eq(*p, *q))
+            std::ptr::eq(x.variant, y.variant) && x.fields.iter().zip(y.fields.iter()).all(|(p, q)| py_eq(p.v(), q.v()))
         }
         (Obj::Type(x), Obj::Type(y)) => crate::fmt::type_ref_name(x) == crate::fmt::type_ref_name(y),
         (Obj::Currency(x), Obj::Currency(y)) => x == y,
@@ -655,7 +654,8 @@ pub fn py_eq(a: V, b: V) -> bool {
 
 /// `< > <= >=`
 pub fn order(op: &str, a: V, b: V, span: u32) -> R<bool> {
-    let (a, b) = exact_literals(a, b);
+    let (oa, ob) = exact_literals(a, b);
+    let (a, b) = (oa.v(), ob.v());
     let ord = if is_num(a) && is_num(b) {
         if is_dec_float_mix(a, b) {
             return Err(mix(a, b, span));

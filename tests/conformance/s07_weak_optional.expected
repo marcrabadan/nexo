@@ -1,0 +1,4 @@
+Error en s07_weak_optional.nexo, línea 3:
+  parent: weak Node
+          ^^^^^^^^^
+Un campo weak se queda sin valor cuando su destino se libera. Escríbelo como opcional: parent: weak Node?

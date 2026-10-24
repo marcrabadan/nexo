@@ -1,0 +1,4 @@
+var total = 0
+parallel for n in [1, 2, 3]:
+    total += n
+print(total)

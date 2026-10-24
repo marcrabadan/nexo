@@ -1,0 +1,49 @@
+# Section 5, nexo.sync: workers fed through a channel, results through another
+use nexo.sync
+
+type Order:
+    id: int
+    amount: int
+
+fn producer(c: channel[Order], n: int):
+    for i in 1..n:
+        c.send(Order(i, i * 10))
+    c.close()
+
+fn worker(c: channel[Order], done: channel[int]):
+    var total = 0
+    for o in c:
+        o.amount += 1          # the worker received its own copy
+        total += o.amount
+    done.send(total)
+
+queue = channel[Order](size: 100)
+done = channel[int](size: 8)
+spawn producer(queue, 40)
+repeat 8:
+    spawn worker(queue, done)
+
+var total = 0
+repeat 8:
+    total += done.receive()
+print("total", total)
+
+# select waits on several channels at once
+input = channel(size: 1)
+errors = channel(size: 1)
+errors.send("disk full")
+select:
+    msg from input:     print("message", msg)
+    err from errors:    print("error", err)
+    after 5s:           print("idle")
+select:
+    msg from input:     print("message", msg)
+    after 10ms:         print("idle")
+
+# shared: the compiler adds the necessary locking
+shared cache = {}
+fn remember(k, v):
+    cache[k] = v
+parallel for n in 1..20:
+    remember(n, n * n)
+print(len(cache), cache[7])

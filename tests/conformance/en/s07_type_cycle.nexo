@@ -1,0 +1,10 @@
+# Section 7, rule 4: a reference cycle between types is a compile error
+type Department:
+    name: str
+    employees: list[Employee] = []
+
+type Employee:
+    name: str
+    department: Department?
+
+print("never runs")

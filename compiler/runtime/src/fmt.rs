@@ -30,6 +30,7 @@ pub fn type_name(v: V) -> String {
             Obj::Currency(_) => "currency".into(),
             Obj::Symbol(_) => "Symbol".into(),
             Obj::Namespace(_) => "Namespace".into(),
+            Obj::Channel(_) | Obj::ChannelType(_) => "channel".into(),
         },
         _ => "none".into(),
     }
@@ -119,23 +120,35 @@ pub fn repr(v: V) -> String {
     out
 }
 
-fn join(items: &[V], out: &mut String) {
+fn join(items: &[Val], out: &mut String) {
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
-        repr_into(*item, out);
+        repr_into(item.v(), out);
     }
 }
 
-fn fields_into(names: &[String], values: &[V], out: &mut String) {
+fn fields_into(names: &[String], values: &[Val], out: &mut String) {
     for (i, (n, v)) in names.iter().zip(values).enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
         out.push_str(n);
         out.push_str(": ");
-        repr_into(*v, out);
+        if v.tag == T_WEAK {
+            // a weak field points back (to a parent): only its type is shown
+            let target = upgrade(v.v());
+            match target.get() {
+                Some(Obj::Record(r)) => {
+                    out.push_str(&r.ty.name);
+                    out.push_str("(...)");
+                }
+                _ => out.push_str("none"),
+            }
+            continue;
+        }
+        repr_into(v.v(), out);
     }
 }
 
@@ -172,9 +185,9 @@ pub fn repr_into(v: V, out: &mut String) {
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    repr_into(*k, out);
+                    repr_into(k.v(), out);
                     out.push_str(": ");
-                    repr_into(*val, out);
+                    repr_into(val.v(), out);
                 }
                 out.push('}');
             }
@@ -210,7 +223,7 @@ pub fn repr_into(v: V, out: &mut String) {
                 out.push_str("fn ");
                 out.push_str(f.info.name());
             }
-            Obj::Bound(_, m) => repr_into(*m, out),
+            Obj::Bound(_, m) => repr_into(m.v(), out),
             Obj::BuiltinMethod(_, name) => {
                 out.push_str("fn ");
                 out.push_str(name);
@@ -223,6 +236,8 @@ pub fn repr_into(v: V, out: &mut String) {
             Obj::Currency(c) => out.push_str(c),
             Obj::Symbol(s) => out.push_str(s),
             Obj::Namespace(n) => out.push_str(n),
+            Obj::Channel(_) => out.push_str("channel"),
+            Obj::ChannelType(_) => out.push_str("channel"),
         },
         _ => out.push_str("none"),
     }

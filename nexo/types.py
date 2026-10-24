@@ -11,6 +11,7 @@ Mapping to Python:
 from __future__ import annotations
 
 import decimal
+import weakref
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Callable
@@ -118,11 +119,34 @@ class Quantity:
 
 # ----------------------------------------------------------- collections
 
+class NList(list):
+    """A list (section 7, rule 2): a value that is copied when it is
+    changed while another place holds it. `owners` counts the places that
+    hold it: 0 (a new value), 1, or 2 meaning two or more."""
+
+    __slots__ = ("owners",)
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.owners = 0
+
+
+class NMap(dict):
+    """A map; copied on write like NList."""
+
+    __slots__ = ("owners",)
+
+    def __init__(self, items=()):
+        super().__init__(items)
+        self.owners = 0
+
+
 class NexoSet:
-    """An insertion-ordered set."""
+    """An insertion-ordered set; copied on write like NList."""
 
     def __init__(self, items=()):
         self.items: dict = {}
+        self.owners = 0
         for item in items:
             self.items[item] = True
 
@@ -140,6 +164,64 @@ class NexoSet:
 
     def add(self, item):
         self.items[item] = True
+
+
+def weak_repr(w: "WeakRef") -> str:
+    """A weak field points back (to a parent): only its type is shown."""
+    target = w.get()
+    return "none" if target is None else f"{target.type.name}(...)"
+
+
+def share(value: Any) -> Any:
+    """A collection stored in one more place (a variable, a field, an
+    element, a parameter...). Plain Python lists and maps come from the
+    library; they become Nexo values here."""
+    t = type(value)
+    if t is list:
+        value = NList(value)
+    elif t is dict:
+        value = NMap(value)
+    elif t is not NList and t is not NMap and t is not NexoSet:
+        return value
+    if value.owners < 2:
+        value.owners += 1
+    return value
+
+
+def copy_collection(value: Any) -> Any:
+    """A copy that shares the elements (which are then held twice)."""
+    if isinstance(value, NexoSet):
+        out = NexoSet()
+        out.items = dict(value.items)
+    elif isinstance(value, dict):
+        out = NMap(value)
+        for v in out.values():
+            if is_collection(v):
+                mark_shared(v)
+    else:
+        out = NList(value)
+        for v in out:
+            if is_collection(v):
+                mark_shared(v)
+    out.owners = 1
+    return out
+
+
+def is_collection(value: Any) -> bool:
+    return isinstance(value, (list, dict, NexoSet))
+
+
+def mark_shared(value: Any) -> None:
+    if type(value) in (NList, NMap, NexoSet):
+        value.owners = 2
+
+
+def unique(value: Any) -> Any:
+    """The collection to change in a place: a copy if another place holds it."""
+    t = type(value)
+    if t is list or t is dict or ((t is NList or t is NMap or t is NexoSet) and value.owners >= 2):
+        return copy_collection(value)
+    return value
 
 
 @dataclass
@@ -185,10 +267,36 @@ class RecordType:
     env: Any = None
 
 
+class WeakRef:
+    """The value of a `weak` field (section 7, rule 4): it does not keep
+    its target alive; reading it gives none once the target is freed."""
+
+    __slots__ = ("ref",)
+
+    def __init__(self, target: Any):
+        self.ref = weakref.ref(target)
+
+    def get(self) -> Any:
+        return self.ref()
+
+    def __eq__(self, other):
+        return isinstance(other, WeakRef) and other.ref() is self.ref()
+
+    def __hash__(self):
+        return id(self)
+
+
+def field_value(value: Any) -> Any:
+    """What reading a field gives (the target of a weak field)."""
+    return value.get() if type(value) is WeakRef else value
+
+
 @dataclass(eq=False)
 class Record:
     type: RecordType
     fields: dict[str, Any]
+    # the task that created it may change it (see Interpreter.check_write)
+    birth: int = 0
 
     def __eq__(self, other):
         return isinstance(other, Record) and other.type is self.type and other.fields == self.fields
@@ -341,6 +449,8 @@ def type_name(value: Any) -> str:
         return "map"
     if isinstance(value, NexoSet):
         return "set"
+    if type(value).__name__ in ("Channel", "ChannelMaker"):
+        return "channel"
     if isinstance(value, Range):
         return "range"
     if isinstance(value, Lazy):
@@ -422,7 +532,7 @@ def repr_value(value: Any) -> str:
     if isinstance(value, Range):
         return f"{value.start}..{value.end}"
     if isinstance(value, Record):
-        inner = ", ".join(f"{k}: {repr_value(v)}" for k, v in value.fields.items())
+        inner = ", ".join(f"{k}: {weak_repr(v) if type(v) is WeakRef else repr_value(v)}" for k, v in value.fields.items())
         return f"{value.type.name}({inner})"
     if isinstance(value, VariantValue):
         inner = ", ".join(f"{k}: {repr_value(v)}" for k, v in value.fields.items())
@@ -439,6 +549,8 @@ def repr_value(value: Any) -> str:
         return value.code
     if isinstance(value, Symbol):
         return value.name
+    if type(value).__name__ in ("Channel", "ChannelMaker"):
+        return "channel"
     return str(value)
 
 

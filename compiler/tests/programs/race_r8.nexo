@@ -1,0 +1,3 @@
+var seen = []
+parallel for x in [1, 2]:
+    seen.add(x)

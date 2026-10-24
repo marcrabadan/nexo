@@ -1,0 +1,7 @@
+var total = 0
+fn bump(x):
+    total += x
+print("start")
+parallel for x in [1, 2, 3]:
+    bump(x)
+print(total)

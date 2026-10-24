@@ -1,0 +1,13 @@
+use nexo.sync
+type Order:
+    id: int
+fn modify(o: Order, done):
+    o.id = 99
+    done.send(o)
+o = Order(1)
+done = channel(size: 1)
+spawn modify(o, done)
+back = done.receive()
+print(o, back)
+back.id = 5
+print(back)

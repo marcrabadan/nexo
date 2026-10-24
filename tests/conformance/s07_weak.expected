@@ -1,0 +1,4 @@
+1
+Node(value: 1, children: [Node(value: 2, children: [], parent: Node(...))], parent: none)
+none
+the parent was freed

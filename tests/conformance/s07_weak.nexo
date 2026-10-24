@@ -1,0 +1,19 @@
+# Section 7, rule 4: a weak field breaks the parent-child cycle
+type Node:
+    value: int
+    children: list[Node]
+    parent: weak Node?       # breaks the parent-child cycle
+
+root = Node(1, [])
+child = Node(2, [], parent: root)
+root.children.add(child)
+print(child.parent.value)
+print(root)
+
+# a weak field does not keep its target alive
+fn orphan():
+    p = Node(10, [])
+    return Node(11, [], parent: p)
+o = orphan()
+print(o.parent)
+print(o.parent ?? "the parent was freed")

@@ -1,0 +1,4 @@
+Error en s07_type_cycle.nexo, línea 8:
+  department: Department?
+              ^^^^^^^^^^^
+Los types Department, Employee se refieren unos a otros: forman un ciclo de referencias que nunca se liberaría. Marca uno de los campos como weak, por ejemplo department: weak Department?
