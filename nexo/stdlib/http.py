@@ -142,7 +142,11 @@ def once(call, method, url, data, content_type, extra, limit) -> Response:
             status = exc.code
             body = exc.read() if exc.fp is not None else b""
             if status in (301, 302, 303, 307, 308) and method == "GET" and exc.headers.get("Location"):
-                current = urllib.parse.urljoin(current, exc.headers["Location"])
+                target = urllib.parse.urljoin(current, exc.headers["Location"])
+                if origin(target) != origin(current):
+                    # credentials are for the origin they were given to
+                    extra = {k: v for k, v in extra.items() if k.lower() not in SENSITIVE}
+                current = target
                 continue
             if status < 400:
                 return Response(status, body, lower(exc.headers), current)
@@ -153,6 +157,20 @@ def once(call, method, url, data, content_type, extra, limit) -> Response:
         except (urllib.error.URLError, socket.timeout, TimeoutError, ConnectionError, OSError) as exc:
             raise _Retry(failure("NetworkError", call.span, url=current, reason=network_reason(exc)))
     raise failure("NetworkError", call.span, url=url, reason=errors.msg("detail.redirects"))
+
+
+SENSITIVE = ("authorization", "cookie", "proxy-authorization")
+
+
+def origin(url: str) -> tuple:
+    """(scheme, host, port) of an address."""
+    u = urllib.parse.urlsplit(url)
+    scheme = u.scheme.lower()
+    try:
+        port = u.port
+    except ValueError:
+        port = None
+    return scheme, (u.hostname or "").lower(), port or (443 if scheme == "https" else 80)
 
 
 def lower(headers) -> dict:

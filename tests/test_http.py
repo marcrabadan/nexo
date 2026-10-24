@@ -21,6 +21,8 @@ print(p.status, p.json())
 print(http.post("{base}/echo", "plain").json()["type"])
 token = secret("NEXO_TEST_TOKEN")
 print(http.get("{base}/auth", headers: {{"Authorization": token}}).json())
+print(http.get("{base}/hop", headers: {{"Authorization": token}}).json())
+print(http.get("{base}/away", headers: {{"Authorization": token, "Cookie": "s=1", "X-Trace": "7"}}).json())
 print(http.get("{base}/flaky").text)
 try:
     http.get("{base}/missing")
@@ -52,6 +54,8 @@ Rate(usd: 1.08, day: 2026-10-24)
 201 {{"got": "{{\\"name\\":\\"Ana\\",\\"n\\":2}}", "type": "application/json"}}
 text/plain; charset=utf-8
 {{"auth": "Bearer t0k3n"}}
+{{"auth": "Bearer t0k3n", "cookie": none, "trace": none}}
+{{"auth": none, "cookie": none, "trace": "7"}}
 ok at last
 GET {base}/missing respondió 404 Not Found
 POST {base}/fail respondió 503 Service Unavailable
@@ -85,6 +89,14 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(301, "", extra=[("Location", "/rate")])
         elif self.path == "/auth":
             self.reply(200, json.dumps({"auth": self.headers.get("Authorization")}))
+        elif self.path in ("/hop", "/away"):
+            # the same origin, or another one (localhost is not 127.0.0.1)
+            host = "127.0.0.1" if self.path == "/hop" else "localhost"
+            self.reply(302, "", extra=[("Location", f"http://{host}:{self.server.server_address[1]}/auth2")])
+        elif self.path == "/auth2":
+            self.reply(200, json.dumps({"auth": self.headers.get("Authorization"),
+                                        "cookie": self.headers.get("Cookie"),
+                                        "trace": self.headers.get("X-Trace")}))
         elif self.path == "/flaky":
             # fails twice, then answers: the default retries of a GET
             Handler.flaky["n"] += 1

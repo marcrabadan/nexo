@@ -116,6 +116,7 @@ enum Outcome {
 
 fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(String, String)], limit: f64, span: u32) -> R<Outcome> {
     let mut current = url.to_string();
+    let mut headers: Vec<(String, String)> = headers.to_vec();
     for _ in 0..=MAX_REDIRECTS {
         let mut b = ureq::AgentBuilder::new()
             .redirects(0)
@@ -129,7 +130,7 @@ fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(Str
         if let Some((_, ctype)) = body {
             req = req.set("Content-Type", ctype);
         }
-        for (k, v) in headers {
+        for (k, v) in &headers {
             req = req.set(k, v);
         }
         let result = match body {
@@ -183,7 +184,12 @@ fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(Str
         }
         if matches!(status, 301 | 302 | 303 | 307 | 308) && method == "GET" {
             if let Some(loc) = location {
-                current = join_url(&current, &loc);
+                let target = join_url(&current, &loc);
+                if origin(&target) != origin(&current) {
+                    // credentials are for the origin they were given to
+                    headers.retain(|(k, _)| !SENSITIVE.contains(&k.to_lowercase().as_str()));
+                }
+                current = target;
                 continue;
             }
         }
@@ -198,6 +204,27 @@ fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(Str
         return Ok(Outcome::Done(Response { status, body: data, headers: hs }));
     }
     Err(network(url, "detail.redirects", span))
+}
+
+const SENSITIVE: &[&str] = &["authorization", "cookie", "proxy-authorization"];
+
+/// (scheme, host, port) of an address, as phase 0 reads it.
+fn origin(url: &str) -> (String, String, u16) {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let scheme = scheme.to_lowercase();
+    let netloc = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let hostport = netloc.rsplit_once('@').map(|x| x.1).unwrap_or(netloc);
+    let (host, port) = if let Some(r) = hostport.strip_prefix('[') {
+        let (h, after) = r.split_once(']').unwrap_or((r, ""));
+        (h.to_string(), after.strip_prefix(':').and_then(|p| p.parse().ok()))
+    } else {
+        match hostport.rsplit_once(':') {
+            Some((h, p)) => (h.to_string(), p.parse().ok()),
+            None => (hostport.to_string(), None),
+        }
+    };
+    let default = if scheme == "https" { 443 } else { 80 };
+    (scheme, host.to_lowercase(), port.filter(|p| *p != 0).unwrap_or(default))
 }
 
 /// A Location relative to the address it came from.

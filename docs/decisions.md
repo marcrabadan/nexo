@@ -876,7 +876,10 @@ more, so `http.get(url)?.json()?` never reads an error page as data. GET,
 PUT and DELETE are retried twice by default (POST and PATCH never are,
 since repeating them may repeat their effect) after a network error or a
 502, 503 or 504, waiting 0.25 s, then 0.5 s...; a GET follows up to 5
-redirects; other 3xx answers are returned as they are. The proxy of the
+redirects (a redirect to another origin, scheme, host or port, drops the
+`Authorization`, `Cookie` and `Proxy-Authorization` headers, which belong
+to the origin they were given to); other 3xx answers are returned as they
+are. The proxy of the
 environment (`HTTPS_PROXY`, `NO_PROXY`) is used. `.usd` on the parsed
 JSON is not allowed (a map is read with `["usd"]`, D44); `json(as: T)`
 gives a record. `validate(x, as: email)` (section 9) accepts a text with
