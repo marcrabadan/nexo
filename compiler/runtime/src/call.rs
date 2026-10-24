@@ -121,7 +121,13 @@ pub fn call(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
             "float" => crate::stdlib::call(crate::stdlib::B_FLOAT, args, names, span),
             "int" => crate::stdlib::call(crate::stdlib::B_INT, args, names, span),
             "str" => crate::stdlib::call(crate::stdlib::B_STR, args, names, span),
+            "date" => crate::time::make_date(args, names, span),
+            "time" => crate::time::make_time(args, names, span),
             _ => Err(not_callable(f, span)),
+        },
+        Some(Obj::Native(n)) => match n.call(f, args, names, span) {
+            Some(r) => r,
+            None => Err(not_callable(f, span)),
         },
         _ => Err(not_callable(f, span)),
     }

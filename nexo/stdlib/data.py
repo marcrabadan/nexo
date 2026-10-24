@@ -142,6 +142,12 @@ def as_type(call, value: Any, t: Any, type_expr: A.TypeExpr | None = None) -> An
         if inner is None:
             return value
         return [as_type(call, v, inner, type_expr.params[0]) for v in value]
+    if isinstance(t, BuiltinType) and t.name in ("date", "time") and isinstance(value, str):
+        from .clock import parse_date, parse_time
+        parsed = parse_date(value) if t.name == "date" else parse_time(value)
+        if parsed is None:
+            raise invalid(call, "detail.expected", type=t.name, vtype="str")
+        return parsed
     if isinstance(t, BuiltinType):
         if t.name == "float" and isinstance(value, int) and not isinstance(value, bool):
             return float(value)
@@ -159,7 +165,7 @@ def field_type(interp, t: A.TypeExpr, env) -> Any:
         return None
     if t.name == "list" and t.params:
         return BuiltinType("list")
-    if t.name in ("float", "decimal"):
+    if t.name in ("float", "decimal", "date", "time"):
         return BuiltinType(t.name)
     kind = env.lookup(t.name) if env is not None else None
     if isinstance(kind, RecordType):

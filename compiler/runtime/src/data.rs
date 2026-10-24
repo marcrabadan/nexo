@@ -619,7 +619,7 @@ fn field_target(t: &'static TypeDesc) -> Option<Target> {
     match t {
         TypeDesc::Named { name, params, .. } => match name.as_str() {
             "list" if !params.is_empty() => Some(Target::List(Some(params[0]))),
-            "float" | "decimal" => Some(Target::Builtin(if name == "float" { "float" } else { "decimal" })),
+            "float" | "decimal" | "date" | "time" => Some(Target::Builtin(crate::num::intern(name))),
             _ => None,
         },
         TypeDesc::User { id, .. } => match lookup(*id) {
@@ -688,6 +688,14 @@ fn as_type(value: V, t: Target, span: u32) -> R<Val> {
             }
             if name == "float" && value.tag == T_INT {
                 return Ok(Val::float(value.bits as i64 as f64));
+            }
+            if name == "date" || name == "time" {
+                if let Some(t) = value.as_str() {
+                    let parsed = if name == "date" { crate::time::parse_date(t) } else { crate::time::parse_time(t) };
+                    return parsed.ok_or_else(|| {
+                        invalid(span, "detail.expected", &[("type", name.to_string()), ("vtype", "str".into())])
+                    });
+                }
             }
             if name == "decimal" && (value.tag == T_INT || value.tag == T_FLOAT) {
                 let text = if value.tag == T_INT { (value.bits as i64).to_string() } else { format_float(f64::from_bits(value.bits)) };

@@ -21,12 +21,14 @@ from .checker import Checker
 from .errors import NexoError, Span, suggest
 from .parser import parse, source_text
 from .types import (
-    AliasType, Builtin, BuiltinType, Currency, EnumType, ErrorKind, ErrorValue, Function,
+    AliasType, Builtin, BuiltinType, Native, Currency, EnumType, ErrorKind, ErrorValue, Function,
     INT_MIN, Lazy, LambdaFn, LitFloat, Money, NexoFailure, NexoSet, NList, NMap, Quantity, Range, Record,
     RecordType, Symbol, TraitType, Variant, VariantValue, check_int, copy_collection, failure, hashable,
     is_collection, plain, share, unique, WeakRef, field_value,
     repr_value, show, to_decimal, type_name,
 )
+
+from .stdlib.clock import Clock
 
 MISSING = object()
 
@@ -663,6 +665,8 @@ class Interpreter:
         value = env.lookup(name)
         if value is MISSING:
             raise self.name_error(name, span, env)
+        if type(value) is Clock:
+            return value.read()
         if self.sync:
             b = env.find(name)
             if b is not None and b.value is value:
@@ -1481,7 +1485,7 @@ class Interpreter:
             if type(value) is LitFloat or (isinstance(value, int) and not isinstance(value, bool)):
                 return True, to_decimal(value)
             return False, value
-        if name in ("str", "bool", "money", "map", "set", "channel"):
+        if name in ("str", "bool", "money", "map", "set", "channel", "date", "time"):
             if not builtin_is(value, name):
                 return False, value
             if name == "map" and len(t.params) == 2:
@@ -1586,6 +1590,8 @@ def builtin_is(value: Any, name: str) -> bool:
         return isinstance(value, NexoSet)
     if name == "channel":
         return type(value).__name__ == "Channel"
+    if isinstance(value, Native):
+        return value.type_name == name
     return False
 
 

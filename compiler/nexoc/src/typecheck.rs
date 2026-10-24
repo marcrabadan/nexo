@@ -508,6 +508,7 @@ impl<'a> TypeChecker<'a> {
                 | "read" | "write" | "read_lines" | "save" => Ty::Callable(Callee::Builtin),
                 "json" | "csv" => Ty::Unknown,
                 "half_up" | "half_even" => Ty::Unknown,
+                _ if crate::resolve::LIBRARY_FUNCTIONS.contains(&n.as_str()) => Ty::Unknown,
                 _ if crate::lexer::is_currency(n) => Ty::Unknown,
                 _ => Ty::TypeValue,
             },

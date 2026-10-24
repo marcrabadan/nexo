@@ -16,6 +16,7 @@ from typing import Any
 
 from .errors import NexoError, Span
 from .types import LitFloat, Money, Quantity, check_int, failure, plain, type_name
+from .stdlib.clock import Date, Time, date_time_op
 
 NUMERIC = (int, float, Decimal)
 
@@ -51,6 +52,8 @@ def arith(op: str, a: Any, b: Any, span: Span, right_span: Span | None = None) -
         return a + b
     if op == "+" and isinstance(a, list) and isinstance(b, list):
         return a + b
+    if isinstance(a, (Date, Time)) or isinstance(b, (Date, Time)):
+        return date_time_op(op, a, b, span)
     if isinstance(a, Money) or isinstance(b, Money):
         return money_op(op, a, b, span)
     if isinstance(a, Quantity) or isinstance(b, Quantity):
@@ -269,6 +272,10 @@ def order(op: str, a: Any, b: Any, span: Span) -> bool:
         x, y = a.amount, b.amount
     elif isinstance(a, Quantity) and isinstance(b, Quantity) and a.dimension == b.dimension:
         x, y = a.base(), b.base()
+    elif isinstance(a, Date) and isinstance(b, Date):
+        x, y = a.key(), b.key()
+    elif isinstance(a, Time) and isinstance(b, Time):
+        x, y = a.ms, b.ms
     else:
         raise NexoError("compare", span, a=type_name(a), b=type_name(b))
     if op == "<":

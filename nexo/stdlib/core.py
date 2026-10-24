@@ -223,6 +223,11 @@ def b_validate(call, value, as_, range=None):
             result = text == "true"
         elif target.name == "str":
             result = value
+        elif target.name in ("date", "time"):
+            from .clock import parse_date, parse_time
+            result = parse_date(text) if target.name == "date" else parse_time(text)
+            if result is None:
+                raise invalid()
         else:
             raise invalid()
     elif isinstance(target, (BuiltinType, RecordType)) or hasattr(target, "name"):

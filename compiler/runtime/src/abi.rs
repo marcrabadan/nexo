@@ -241,6 +241,12 @@ pub unsafe extern "C" fn nx_named(ptr: *const u8, len: usize) -> V {
     }
 }
 
+/// `now` and `today`, read from the clock each time.
+#[no_mangle]
+pub unsafe extern "C" fn nx_clock(ptr: *const u8, len: usize) -> V {
+    crate::time::clock(text(ptr, len)).into_raw()
+}
+
 /// Decode a type descriptor (when the program starts).
 #[no_mangle]
 pub unsafe extern "C" fn nx_desc(ptr: *const u8, len: usize) -> *const types::TypeDesc {

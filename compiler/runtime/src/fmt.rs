@@ -31,6 +31,7 @@ pub fn type_name(v: V) -> String {
             Obj::Symbol(_) => "Symbol".into(),
             Obj::Namespace(_) => "Namespace".into(),
             Obj::Channel(_) | Obj::ChannelType(_) => "channel".into(),
+            Obj::Native(n) => n.type_name().to_string(),
         },
         _ => "none".into(),
     }
@@ -103,6 +104,21 @@ pub fn quote(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+thread_local! {
+    static SECRET_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `show`, for the places a secret must not reach (print, str(),
+/// interpolation, files): showing one is an error (section 9).
+pub fn show_checked(v: V, span: u32) -> crate::state::R<String> {
+    SECRET_SHOWN.with(|s| s.set(false));
+    let text = show(v);
+    if SECRET_SHOWN.with(|s| s.replace(false)) {
+        return Err(crate::state::diag(nexo_diag::Diagnostic::new_spanless("secret_shown"), span));
+    }
+    Ok(text)
 }
 
 /// Text of a value as `print` and interpolation show it.
@@ -238,6 +254,12 @@ pub fn repr_into(v: V, out: &mut String) {
             Obj::Namespace(n) => out.push_str(n),
             Obj::Channel(_) => out.push_str("channel"),
             Obj::ChannelType(_) => out.push_str("channel"),
+            Obj::Native(n) => {
+                if n.is_secret() {
+                    SECRET_SHOWN.with(|s| s.set(true));
+                }
+                out.push_str(&n.repr())
+            }
         },
         _ => out.push_str("none"),
     }

@@ -206,16 +206,25 @@ pub fn builtin_names() -> Vec<&'static str> {
     ];
     v.extend(ERROR_KINDS);
     v.extend(crate::lexer::CURRENCIES.iter().map(|(c, _)| *c));
-    v.extend(["read", "write", "read_lines", "save", "json", "csv"]);
+    v.extend(["read", "write", "read_lines", "save"]);
+    v.extend(LIBRARY_NAMES);
+    v.extend(["json", "csv"]);
     v
 }
+
+/// Names of the standard library added in phase 4, in the order phase 0
+/// defines them.
+pub const LIBRARY_NAMES: &[&str] = &["now", "today", "date", "time"];
+
+/// Library names that are functions or namespaces (not types).
+pub const LIBRARY_FUNCTIONS: &[&str] = &["now", "today"];
 
 pub fn is_builtin(name: &str) -> bool {
     builtin_names().contains(&name)
 }
 
 pub const BUILTIN_TYPES: &[&str] =
-    &["int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "any", "channel"];
+    &["int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "any", "channel", "date", "time"];
 
 type RResult<T> = Result<T, Diagnostic>;
 

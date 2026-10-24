@@ -770,3 +770,40 @@ accepts the examples:
 - `words` and `tokens` are units (for `max:` of `ask`), written after a
   space (`200 words`).
 - `X.transaction:` followed by a block is a statement.
+
+**D92. Values of the library.** Dates, times, secrets, keys, regular
+expressions, HTTP responses, databases, servers and the other values the
+library adds are values like any other: `x is date` checks their type,
+they are compared, used as map keys (dates and times) and passed around.
+They print as they are written in data files (a date as `2026-10-24`, a
+time in ISO 8601), without quotes even inside a collection, like money
+(D30); values that are a handle to something (a database, a server)
+print as their type and name.
+
+**D93. Rates.** `10 per minute per ip` (section 15) and `5 EUR per day`
+(section 8) have no rule in the grammar; `per` is read as a contextual
+word only in annotation arguments and the values of module blocks, where
+it builds a rate: an amount, the unit of time (`second`, `minute`,
+`hour`, `day`) and what it is counted per (`ip`, `user`).
+
+**D94. `time`.** Section 15 names `now`, `today`, durations and time
+zones. `today` is a `date` and `now` a `time`; section 6 writes
+`date: date = today` without parentheses, so both are names whose value
+is read from the clock each time they are used (not functions). A `date`
+is a day of the calendar (years 1 to 9999); `date(2026, 10, 24)` builds
+one and `date(t)` takes the day of a time. A `time` is an instant, with
+the zone it is shown in; `time(2026, 10, 24, 9, 30, zone: "Europe/Madrid")`
+builds one (hour, minute and second default to 0 and the zone to the
+machine's: `TZ`, then `/etc/localtime`, then UTC). Zones are the IANA
+names of the system's time zone files, `"UTC"` or a fixed offset
+(`"+05:30"`); `t.to_zone(z)` shows the same instant elsewhere (`in` is a
+reserved word). A wall clock time that a change of offset skips or
+repeats takes the offset in effect before the change. Members: `year`,
+`month`, `day`, `weekday` (1 is Monday) and, for times, `hour`, `minute`,
+`second`, `date`, `zone`. Arithmetic uses the durations of D39: a date
+moves by whole days (`d + 3h` is an error), a time by milliseconds;
+`date - date` is a number of `days` and `time - time` of `s`. Times are
+kept to the millisecond and print as `2026-10-24T09:30:00+02:00`
+(`Z` for UTC, `.250` when there are milliseconds); `validate(x, as: date)`
+and `as: time` read that form (a time needs its offset), and JSON and CSV
+write it. `1 year` is 365 days (D2).

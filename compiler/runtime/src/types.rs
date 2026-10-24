@@ -432,6 +432,7 @@ pub fn builtin_is(v: V, name: &str) -> bool {
             ("map", Some(Obj::Map(_))) => true,
             ("set", Some(Obj::Set(_))) => true,
             ("channel", Some(Obj::Channel(_))) => true,
+            (_, Some(Obj::Native(n))) => n.type_name() == name,
             _ => false,
         },
     }
@@ -471,7 +472,7 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<Val>> {
                     T_OBJ if matches!(v.get(), Some(Obj::Decimal(_))) => Some(Val::from(v)),
                     _ => None,
                 }),
-                "str" | "bool" | "money" | "map" | "set" | "channel" => {
+                "str" | "bool" | "money" | "map" | "set" | "channel" | "date" | "time" => {
                     if !builtin_is(v, name) {
                         return Ok(None);
                     }

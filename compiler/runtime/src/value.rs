@@ -635,6 +635,7 @@ pub enum Key {
     Money(String, &'static str),
     Qty(String, &'static str),
     Variant(usize),
+    Native(String),
 }
 
 pub struct Record {
@@ -685,6 +686,62 @@ pub enum Obj {
     Channel(crate::sync::Channel),
     /// `channel` and `channel[T]`: make channels
     ChannelType(Option<Val>),
+    /// a value of the standard library or a module (date, time, secret,
+    /// regex, database...), see `Native`
+    Native(Box<dyn Native>),
+}
+
+/// A value of the standard library or of a module: it names its type,
+/// shows itself and answers its members. Methods are returned as
+/// `BuiltinMethod(value, name)` and run by `call_method`.
+pub trait Native: Send + Sync + 'static {
+    fn type_name(&self) -> &str;
+    fn repr(&self) -> String;
+    /// a field, or a method as `BuiltinMethod`
+    fn member(&self, me: V, name: &str, span: u32) -> crate::state::R<Val> {
+        let _ = me;
+        Err(crate::stdlib::missing_member(self.type_name(), name, &[], span))
+    }
+    fn call_method(&self, me: V, name: &str, args: &[V], names: &[Option<&str>], span: u32) -> crate::state::R<Val> {
+        let _ = (me, args, names);
+        Err(crate::stdlib::missing_member(self.type_name(), name, &[], span))
+    }
+    /// called like a function (`log(x)`)
+    fn call(&self, me: V, args: &[V], names: &[Option<&str>], span: u32) -> Option<crate::state::R<Val>> {
+        let _ = (me, args, names, span);
+        None
+    }
+    /// identity as a map key or set element
+    fn key(&self) -> Option<String> {
+        None
+    }
+    fn equals(&self, other: &dyn Native) -> bool {
+        let _ = other;
+        false
+    }
+    fn order(&self, other: &dyn Native) -> Option<std::cmp::Ordering> {
+        let _ = other;
+        None
+    }
+    /// a secret: it cannot be shown or turned into text (section 9)
+    fn is_secret(&self) -> bool {
+        false
+    }
+    fn as_any(&self) -> &dyn std::any::Any;
+}
+
+pub fn native(n: impl Native) -> Val {
+    Val::new(Obj::Native(Box::new(n)))
+}
+
+impl V {
+    /// The library value of type T behind this value.
+    pub fn native<T: 'static>(self) -> Option<&'static T> {
+        match self.get() {
+            Some(Obj::Native(n)) => n.as_any().downcast_ref::<T>(),
+            _ => None,
+        }
+    }
 }
 
 pub fn list(items: Vec<Val>) -> Val {

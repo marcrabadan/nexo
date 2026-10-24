@@ -1,0 +1,37 @@
+# time: dates, instants, durations and time zones (section 15, D94)
+d = date(2026, 10, 24)
+print(d, d.year, d.month, d.day, d.weekday)
+print(d + 7 days, d - 30 days, d + 1 year)
+print(date(2026, 12, 25) - d, date(2024, 2, 29) + 365 days)
+print(d < date(2027, 1, 1), d == date(2026, 10, 24), d is date)
+
+t = time(2026, 3, 29, 1, 30, zone: "Europe/Madrid")
+print(t, t + 1h, (t + 1h).hour, t.zone)
+print(t.to_zone("UTC"), t.to_zone("America/New_York"), t.to_zone("+05:30"))
+print(time(2026, 3, 29, 2, 30, zone: "Europe/Madrid"))
+print(time(2026, 10, 25, 2, 30, zone: "Europe/Madrid"))
+print(time(2040, 7, 1, 12, 0, zone: "Europe/Madrid"))
+print(time(1990, 7, 1, 12, 0, zone: "Asia/Tokyo"))
+
+u = time(2026, 1, 1, zone: "UTC")
+print(u, u + 1500ms, (u + 90s) - u, u + 2 days - u, u.date)
+print([d, u], {d: "launch"}[date(2026, 10, 24)])
+
+type Event:
+    name: str
+    day: date
+    starts: time?
+
+e = json.parse("{{\"name\": \"launch\", \"day\": \"2026-10-24\", \"starts\": \"2026-10-24T09:30:00+02:00\"}", as: Event)
+print(e, e.starts.hour, e.day.weekday)
+try:
+    validate("2026-02-30", as: date)
+else err:
+    print(err.message)
+try:
+    time(2026, 1, 1, zone: "Mars/Olympus")
+else err:
+    print(err.message)
+print(validate("2026-02-28", as: date), validate("2026-01-01T10:00Z", as: time))
+print(now is time, today is date, today == now.date)
+print(d + 3h)

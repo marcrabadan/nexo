@@ -564,6 +564,8 @@ fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
                     _ => return Err(invalid()),
                 },
                 "str" => owned.clone(),
+                "date" => crate::time::parse_date(text).ok_or_else(invalid)?,
+                "time" => crate::time::parse_time(text).ok_or_else(invalid)?,
                 _ => return Err(invalid()),
             };
         }
@@ -599,6 +601,10 @@ fn table(v: V) -> Option<(&'static str, &'static [&'static str])> {
     })
 }
 
+pub fn missing_member(vtype: &str, name: &str, candidates: &[&str], span: u32) -> crate::state::Fail {
+    missing(vtype, name, candidates, span)
+}
+
 fn missing(vtype: &str, name: &str, candidates: &[&str], span: u32) -> crate::state::Fail {
     let d = match suggest(name, candidates.iter().copied()) {
         Some(s) => {
@@ -622,6 +628,9 @@ pub fn method_name(obj: V, name: &str, span: u32) -> R<&'static str> {
 }
 
 pub fn member(obj: V, name: &str, span: u32) -> R<Val> {
+    if let Some(Obj::Native(n)) = obj.get() {
+        return n.member(obj, name, span);
+    }
     if let Some(Obj::Namespace(ns)) = obj.get() {
         return match (*ns, name) {
             ("json", "parse") => Ok(Val::new(Obj::Builtin(B_JSON_PARSE))),
@@ -636,6 +645,63 @@ pub fn member(obj: V, name: &str, span: u32) -> R<Val> {
         Some((_, names)) => Err(missing(&type_name(obj), name, names, span)),
         None => Err(missing(&type_name(obj), name, &[], span)),
     }
+}
+
+/// Arguments of a library function or method checked against its
+/// parameters (the first `required` must be given): one slot per
+/// parameter, MISSING when absent. The errors come in the order phase 0
+/// checks them.
+pub fn method_args(fname: &str, params: &[&str], required: usize, args: &[V], names: &[Option<&str>], span: u32) -> R<Vec<V>> {
+    let mut slots = vec![MISSING; params.len()];
+    let mut seen: Vec<&str> = Vec::new();
+    for n in names.iter().flatten() {
+        if seen.contains(n) {
+            return Err(diag(Diagnostic::new_spanless("arg_twice").arg("param", *n), span));
+        }
+        seen.push(n);
+    }
+    for n in names.iter().flatten() {
+        if !params.contains(n) {
+            let d = match suggest(n, params.iter().copied()) {
+                Some(s) => Diagnostic::new_spanless("arg_unknown")
+                    .fix("suggest")
+                    .arg("fn", fname)
+                    .arg("param", *n)
+                    .arg("suggestion", s),
+                None => Diagnostic::new_spanless("arg_unknown").arg("fn", fname).arg("param", *n).arg(
+                    "params",
+                    if params.is_empty() { "-".to_string() } else { params.join(", ") },
+                ),
+            };
+            return Err(diag(d, span));
+        }
+    }
+    let positional: Vec<V> = args.iter().zip(names).filter(|(_, n)| n.is_none()).map(|(v, _)| *v).collect();
+    if positional.len() > params.len() {
+        return Err(diag(
+            Diagnostic::new_spanless("arg_too_many")
+                .arg("fn", fname)
+                .arg("n", params.len().to_string())
+                .arg("m", positional.len().to_string()),
+            span,
+        ));
+    }
+    slots[..positional.len()].copy_from_slice(&positional);
+    for (v, n) in args.iter().zip(names) {
+        if let Some(n) = n {
+            let i = params.iter().position(|p| p == n).unwrap();
+            if slots[i].tag != T_MISSING {
+                return Err(diag(Diagnostic::new_spanless("arg_twice").arg("param", *n), span));
+            }
+            slots[i] = *v;
+        }
+    }
+    for (i, p) in params.iter().enumerate().take(required) {
+        if slots[i].tag == T_MISSING {
+            return Err(diag(Diagnostic::new_spanless("arg_missing").arg("param", *p).arg("fn", fname), span));
+        }
+    }
+    Ok(slots)
 }
 
 fn arity(name: &str, args: &[V], names: &[Option<&str>], n: usize, span: u32) -> R<()> {
@@ -658,6 +724,9 @@ fn arity(name: &str, args: &[V], names: &[Option<&str>], n: usize, span: u32) ->
 }
 
 pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    if let Some(Obj::Native(n)) = obj.get() {
+        return n.call_method(obj, name, args, names, span);
+    }
     if let Some(Obj::Channel(c)) = obj.get() {
         return crate::sync::call_method(c, obj, name, args, names, span);
     }
@@ -733,6 +802,7 @@ pub fn named_value(name: &str) -> Option<Val> {
         "int" | "float" | "decimal" | "money" | "str" | "bool" | "list" | "map" => {
             Obj::Type(TypeRef::Builtin(crate::num::intern(name)))
         }
+        "date" | "time" => Obj::Type(TypeRef::Builtin(crate::num::intern(name))),
         "half_up" | "half_even" => Obj::Symbol(crate::num::intern(name)),
         "json" | "csv" => Obj::Namespace(crate::num::intern(name)),
         "channel" => Obj::ChannelType(None),

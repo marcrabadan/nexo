@@ -16,5 +16,6 @@ pub mod repl;
 pub mod state;
 pub mod stdlib;
 pub mod sync;
+pub mod time;
 pub mod types;
 pub mod value;

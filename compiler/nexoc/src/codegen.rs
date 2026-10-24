@@ -3754,6 +3754,12 @@ impl<'a> Gen<'a> {
         if name == "PI" {
             return lit(T_FLOAT, float_bits(std::f64::consts::PI));
         }
+        if name == "now" || name == "today" {
+            // read from the clock each time (D94)
+            let a = self.strarg(name);
+            let v = self.call_v("nx_clock", &a);
+            return self.owned(v);
+        }
         if DIRECT_BUILTINS.contains(&name) {
             let key = format!("builtin {name}");
             let slot = match self.named_slots.get(&key) {
@@ -4507,6 +4513,7 @@ declare %V @nx_str(ptr, i64)
 declare %V @nx_unit(ptr, i64, ptr, i64)
 declare %V @nx_builtin(i32)
 declare %V @nx_named(ptr, i64)
+declare %V @nx_clock(ptr, i64)
 declare %V @nx_list(ptr, i64)
 declare void @nx_list_push(i64, i64, i64, i64)
 declare %V @nx_map(ptr, ptr, ptr, i64)

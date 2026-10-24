@@ -7,8 +7,8 @@ import inspect
 from typing import Any
 
 from ..errors import NexoError, Span, suggest
-from ..types import Builtin, Lazy, NexoSet, plain, type_name
-from . import core, data, io
+from ..types import At, Builtin, Lazy, Native, NexoSet, plain, type_name
+from . import clock, core, data, io
 
 
 class Namespace:
@@ -24,7 +24,7 @@ class Namespace:
 
 def install(interp) -> None:
     env = interp.builtins
-    for module in (core, io, data):
+    for module in (core, io, data, clock):
         for name, value in module.exports().items():
             env.define(name, value)
     env.define("json", Namespace("json", data.json_exports()))
@@ -33,6 +33,8 @@ def install(interp) -> None:
 
 def members(interp, obj: Any, name: str, span: Span) -> Any:
     """Methods of builtin values: list.sum(), text.upper(), ..."""
+    if isinstance(obj, Native):
+        return obj.member(At(interp, span), name)
     if isinstance(obj, Namespace):
         if name in obj.attrs:
             return obj.attrs[name]

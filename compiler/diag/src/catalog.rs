@@ -243,6 +243,11 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("too_deep", "Demasiadas llamadas anidadas (recursión infinita).", "Too many nested calls (infinite recursion)."),
     ("fix.too_deep", "Comprueba que la recursión tenga un caso base que la detenga.", "Check that the recursion has a base case that stops it."),
     // phase 4 (D89-)
+    ("date_days", "Una fecha solo avanza días enteros, y {value} no lo es.", "A date only moves by whole days, and {value} is not."),
+    ("fix.date_days", "Suma días (2 days) a una fecha, o usa un time (now + 3h) para horas y minutos.", "Add days (2 days) to a date, or use a time (now + 3h) for hours and minutes."),
+    ("detail.zone", "\"{zone}\" no es una zona horaria conocida", "\"{zone}\" is not a known time zone"),
+    ("detail.date_range", "la fecha queda fuera de los años 1 a 9999", "the date falls outside the years 1 to 9999"),
+    ("detail.bad_date", "{value} no es una fecha válida", "{value} is not a valid date"),
     ("not_supported", "{what} no está disponible en la fase 4 de Nexo.", "{what} is not available in phase 4 of Nexo."),
     ("fix.not_supported", "Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web y nexo.db; quítalo para ejecutar el programa.", "This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web and nexo.db; remove it to run the program."),
     ("use_needs_as", "\"{name}\" no es un nombre válido para usarlo en el código.", "\"{name}\" is not a valid name to use in the code."),

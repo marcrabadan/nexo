@@ -393,6 +393,47 @@ def failure(kind: str, span: Span | None = None, cause: Any = None, **args) -> N
     return NexoFailure(ErrorValue(kind, message, cause, span, fix))
 
 
+# ------------------------------------------------------- library values
+
+class At:
+    """Where a member of a library value is used: the interpreter and the
+    span (what builtins receive as `call`)."""
+
+    __slots__ = ("interp", "span", "node")
+
+    def __init__(self, interp, span, node=None):
+        self.interp, self.span, self.node = interp, span, node
+
+
+class Native:
+    """A value of the standard library or a module (date, time, regex,
+    secret, database...): it names its type, shows itself and answers
+    its members."""
+
+    __slots__ = ()
+    type_name = "native"
+
+    def repr(self) -> str:
+        return self.type_name
+
+    def show(self) -> str:
+        return self.repr()
+
+    def member(self, call, name: str) -> Any:
+        return self.missing(call, name, [])
+
+    def missing(self, call, name: str, candidates: list[str]):
+        s = errors_suggest(name, candidates)
+        if s:
+            raise NexoError("no_member", call.span, fix="suggest", vtype=self.type_name, name=name, suggestion=s)
+        raise NexoError("no_member", call.span, vtype=self.type_name, name=name)
+
+
+def errors_suggest(name, candidates):
+    from .errors import suggest
+    return suggest(name, candidates)
+
+
 # ------------------------------------------------------------- callables
 
 @dataclass(eq=False)
@@ -429,6 +470,8 @@ class Builtin:
 def type_name(value: Any) -> str:
     if value is None:
         return "none"
+    if isinstance(value, Native):
+        return value.type_name
     if isinstance(value, bool):
         return "bool"
     if isinstance(value, int):
@@ -500,6 +543,8 @@ def show(value: Any) -> str:
     """Text of a value as `print` and interpolation show it."""
     if isinstance(value, str):
         return value
+    if isinstance(value, Native):
+        return value.show()
     return repr_value(value)
 
 
@@ -513,6 +558,8 @@ def repr_value(value: Any) -> str:
         return "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, Native):
+        return value.repr()
     if isinstance(value, float):
         return format_float(value)
     if isinstance(value, Decimal):
@@ -565,5 +612,7 @@ def hashable(value: Any, span: Span | None) -> Any:
     quantities and enum variants without data."""
     value = plain(value)
     if value is None or isinstance(value, (str, int, float, Decimal, Money, Quantity, Variant)):
+        return value
+    if isinstance(value, Native) and type(value).__hash__ is not object.__hash__ and value.type_name in ("date", "time"):
         return value
     raise NexoError("unhashable", span, vtype=type_name(value))
