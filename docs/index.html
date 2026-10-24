@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexo programming language</title>
-<meta name="description" content="Nexo is a small, readable programming language with one way to do each thing: errors as values, exact money, data pipelines and contracts. It runs today with a Python interpreter and a native LLVM compiler.">
+<meta name="description" content="Nexo is a small, readable programming language with one way to do each thing: errors as values, exact money, data pipelines and contracts. It runs today with a Python interpreter and a native LLVM compiler, with real parallelism and no garbage collector.">
 <meta property="og:title" content="Nexo programming language">
 <meta property="og:description" content="One way to do each thing. Errors as values, exact money, data pipelines and contracts.">
 <meta name="color-scheme" content="light dark">
@@ -31,7 +31,7 @@
 <div class="hero">
   <div class="wrap">
     <div>
-      <span class="badge">Edition 0.1 · early prototype</span>
+      <span class="badge">Edition 0.1 · phase 2</span>
       <h1>One way to do <em>each thing</em>.</h1>
       <p class="lede">Nexo is a small programming language you can understand by reading it. Errors are values, money is exact, data flows through pipelines and functions state their contracts. It runs today as a Python interpreter and as a native compiler built on LLVM.</p>
       <div class="actions">
@@ -185,6 +185,50 @@ print(nmae)</code></pre><div class="out"><div class="out-label">$ nexo typo.nexo
 &quot;nmae&quot; no existe. ¿Quisiste decir &quot;name&quot;?</code></pre></div></div>
     </div>
 
+    <div class="feature">
+      <div>
+        <h3>Concurrency without data races</h3>
+        <p><code>parallel for</code> runs its tasks on threads and still gives the results, and any output, in the order of the list. <code>use nexo.sync</code> adds <code>spawn</code>, typed channels, <code>select</code> and <code>shared</code> variables. If every task ends up waiting, Nexo reports a deadlock instead of hanging.</p>
+        <p>A task may only change records it created itself, so two tasks never write to the same value.</p>
+      </div>
+      <div class="code"><div class="code-bar"><span>tasks.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.sync
+
+fn produce(out: channel[int], n: int):
+    for i in 1..n:
+        out.send(i * i)
+    out.close()
+
+squares = channel[int](size: 2)
+spawn produce(squares, 5)
+
+var total = 0
+for x in squares:
+    total += x
+print(&quot;sum of squares: {total}&quot;)
+
+sizes = parallel for word in [&quot;one&quot;, &quot;three&quot;, &quot;seven&quot;]:
+    return len(word)
+print(sizes)</code></pre><div class="out"><div class="out-label">$ nexo --lang en tasks.nexo</div><pre><code>sum of squares: 55
+[3, 5, 5]</code></pre></div></div>
+    </div>
+
+    <div class="feature flip">
+      <div>
+        <h3>Memory without a garbage collector</h3>
+        <p>Compiled programs free each value as soon as its last owner lets go of it. Lists, maps and sets are values: assigning one never lets two variables see each other's changes. Records are shared, and a <code>weak</code> field breaks a parent-child cycle. A cycle of ordinary fields between types is a compile error.</p>
+        <p>The race rule is checked as the program runs, and the message says what to do instead:</p>
+      </div>
+      <div class="code"><div class="code-bar"><span>race.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Counter:
+    n: int
+
+counters = [Counter(1), Counter(2)]
+parallel for c in counters:
+    c.n += 1</code></pre><div class="out"><div class="out-label">$ nexo --lang en race.nexo</div><pre><code>Error in race.nexo, line 6:
+  c.n += 1
+    ^
+A task cannot change a Counter created before it started: other tasks may be reading it. Create the Counter inside the task, or return the change and apply it when the parallel ends.</code></pre></div></div>
+    </div>
+
     <div class="grid">
       <div class="card">
         <h3>Tests built in</h3>
@@ -203,8 +247,8 @@ print(nmae)</code></pre><div class="out"><div class="out-label">$ nexo typo.nexo
         <p><code>[x * x for x in range(1, 8) if x % 2 == 1]</code> builds a list in one line, and lambdas work wherever a function does.</p>
       </div>
       <div class="card">
-        <h3>parallel, with simple semantics</h3>
-        <p><code>parallel for</code> and <code>parallel:</code> keep the order of results and the error semantics of their sequential versions.</p>
+        <h3>Contracts the compiler proves</h3>
+        <p>When the compiler can prove an <code>ensure</code>, it costs nothing at run time. <code>nexo build --release --trust-ensure</code> also drops the checks it could not prove.</p>
       </div>
       <div class="card">
         <h3>Two implementations, one output</h3>
@@ -437,7 +481,7 @@ print(&quot;Hello, {name}!&quot;)</code></pre><div class="out"><div class="out-l
       </div>
       <div class="step">
         <h3><span>4</span>Compile to native code</h3>
-        <p>The phase 1 compiler generates LLVM IR and links it with a small runtime library.</p>
+        <p>The compiler generates LLVM IR and links it with a small runtime library that frees memory by reference counting and runs <code>parallel</code> on threads.</p>
         <div class="code"><div class="code-bar"><span>shell</span><button class="copy" type="button">Copy</button></div><pre><code>cd compiler &amp;&amp; cargo build --release &amp;&amp; cd ..
 compiler/target/release/nexo examples/invoice.nexo
 compiler/target/release/nexo build --release app.nexo -o app
@@ -458,12 +502,28 @@ compiler/target/release/nexo build --release app.nexo -o app
         <tbody>
           <tr><td>0. Prototype</td><td>Python tree-walking interpreter for the core</td><td><span class="status done">Done</span></td></tr>
           <tr><td>1. Base compiler</td><td>Rust compiler: lexer, parser, gradual type checking, LLVM code generation</td><td><span class="status done">Done</span></td></tr>
-          <tr><td>2. Memory and concurrency</td><td>Memory model, real <code>parallel</code>, <code>nexo.sync</code></td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>2. Memory and concurrency</td><td>Memory model, real <code>parallel</code>, <code>nexo.sync</code>, contracts the compiler proves</td><td><span class="status done">Done</span></td></tr>
           <tr><td>3. Tooling</td><td><code>nexo fmt</code>, <code>lint</code>, <code>lsp</code>, editor extension</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>4. Library and modules</td><td>Standard library, <code>nexo.ai</code>, <code>nexo.web</code>, <code>nexo.db</code>, C and Python interop</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>5. Cloud and operations</td><td><code>nexo.infra</code>, <code>nexo.ci</code>, <code>nexo.stream</code>, feature flags, privacy</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>6. Optimisation and 1.0</td><td>Performance goals, external audit, user studies</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>7. Self-hosting</td><td>The compiler rewritten in Nexo</td><td><span class="status next">Planned</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3 class="perf-title">How fast is it?</h3>
+    <p class="section-intro">Phase 2 aimed for compiled programs within 2× the time of the same program in Rust. <a href="https://github.com/marcrabadan/nexo/tree/main/compiler/bench"><code>compiler/bench/compare.py</code></a> measures this on each benchmark. Code on integers already meets that goal. Code on lists, maps and records does not yet, because every value there is boxed and reference-counted.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Benchmark</th><th>Nexo time / Rust time</th></tr></thead>
+        <tbody>
+          <tr><td>Integer loop</td><td>1.3×</td></tr>
+          <tr><td><code>parallel for</code></td><td>1.3×</td></tr>
+          <tr><td>Recursive <code>fib</code></td><td>2.0×</td></tr>
+          <tr><td>Strings</td><td>3.5×</td></tr>
+          <tr><td>Lists and pipelines</td><td>7×</td></tr>
+          <tr><td>Maps</td><td>7×</td></tr>
+          <tr><td>Records</td><td>8×</td></tr>
         </tbody>
       </table>
     </div>
