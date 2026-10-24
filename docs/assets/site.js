@@ -5,7 +5,8 @@
   var KEYWORDS = new Set((
     "if elif else for in while repeat match pass fn return type trait is pub use var self weak " +
     "true false none and or not as try unsafe expect ensure parallel on emit when every at lifecycle " +
-    "test assert fails where map pick group by sum count avg sort desc take each it spawn select shared"
+    "test assert fails where map pick group by sum count avg sort desc take each it spawn select shared " +
+    "ai agent models profile server"
   ).split(" "));
 
   var TOKEN = /(#[^\n]*)|("(?:[^"\\\n]|\\.)*")|(\d[\d_]*(?:\.\d+)?(?:%| ?(?:EUR|USD|GBP)\b)?)|([A-Za-z_][A-Za-z0-9_]*[!?]?)|(\|>|->|\?\?|[!?](?=[\s):\],]|$))/g;
