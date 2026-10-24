@@ -178,11 +178,13 @@ def handle(call, fn, key, message: Message) -> None:
     interp = call.interp
     ident = message.stream.ident()
     if key is not None:
-        k = interp.bind_value(interp.call(key, [(None, message)], call.node))
         from ..types import repr_value
-        k = repr_value(k)
-        seen = keys_of(message.stream)
-        if k in seen:
+        try:
+            k = repr_value(interp.bind_value(interp.call(key, [(None, message)], call.node)))
+        except (NexoFailure, NexoError) as exc:
+            dead(call, message, exc)
+            return
+        if k in keys_of(message.stream):
             return
     error = None
     for attempt in range(4):
@@ -307,8 +309,21 @@ class StreamQuery(Native):
     def run(self, call, messages: list) -> None:
         interp = call.interp
         value: Any = [m.value(call) for m in messages]
-        for step, env in self.steps:
-            value = interp.step(step, value, env)
+        try:
+            for i, (step, env) in enumerate(self.steps):
+                if step.kind == "each" and not is_rows(value):
+                    # count, sum or avg give one value: each gets it once
+                    interp.apply_expr(step.expr, value, env)
+                    continue
+                value = interp.step(step, value, env)
+        except (NexoFailure, NexoError) as exc:
+            from ..cli import report
+            report(exc)
+
+
+def is_rows(value) -> bool:
+    from ..types import Lazy
+    return isinstance(value, (list, Lazy))
 
 
 def window_ms(call, step_kind: str, size) -> int:
@@ -331,6 +346,8 @@ def stream_step(interp, step, value, env):
         from ..types import At
         size = interp.eval(step.expr, env)
         return StreamQuery(value.stream, (step.kind, window_ms(At(interp, step.span), step.kind, size)))
+    if step.kind == "call":
+        raise NexoError("stream_call", step.span)
     q = value.with_step(step, env)
     if step.kind == "each":
         QUERIES.append(q)
@@ -406,6 +423,7 @@ def listen_forever(interp, program: str) -> None:
                 for message in new_messages(s, done):
                     idle = False
                     deliver(call, message)
+                    sys.stdout.flush()
                     done = message.id if isinstance(message.id, int) else done + 1
                     save_offset(s, done)
             for q in QUERIES:

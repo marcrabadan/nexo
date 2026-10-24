@@ -1,0 +1,70 @@
+# section 19: when on a stream, at-least-once with retries, keys, windows
+use nexo.stream
+
+type Order:
+    id: int
+    total: int
+
+fn process(o: Order):
+    if o.total < 0:
+        fail("negative total")
+    print("order", o.id, o.total)
+
+when kafka("orders") as msg, key: msg.id:
+    o: Order = validate(msg.json(), as: Order)?
+    process(o)?
+
+fn publish_metrics(row):
+    print("metrics", row)
+
+kafka("clicks")
+  |> window 1m
+  |> group by page
+  |> count
+  |> each publish_metrics
+
+test "orders are processed once":
+    kafka("orders").send({"id": 1, "total": 30})
+    kafka("orders").send({"id": 2, "total": -5})
+    kafka("orders").send("not json")
+
+test "clicks by minute":
+    start = time(2026, 10, 24, 9, 0, zone: "UTC")
+    kafka("clicks").send({"page": "/a"}, at: start)
+    kafka("clicks").send({"page": "/b"}, at: start + 10s)
+    kafka("clicks").send({"page": "/a"}, at: start + 20s)
+    kafka("clicks").send({"page": "/a"}, at: start + 70s)
+
+fn show_total(n):
+    print("in the last 5 minutes:", n)
+
+kafka("payments")
+  |> sliding 5m
+  |> map amount
+  |> sum
+  |> each show_total
+
+fn show_session(pages):
+    print("pages in the session:", pages)
+
+kafka("visits")
+  |> session 30s
+  |> count
+  |> each show_session
+
+when kafka("signups") as msg, key: msg.text():
+    print("welcome", msg.text())
+
+test "sliding and session windows":
+    start = time(2026, 10, 24, 9, 0, zone: "UTC")
+    kafka("payments").send({"amount": 10}, at: start)
+    kafka("payments").send({"amount": 5}, at: start + 2m)
+    kafka("payments").send({"amount": 1}, at: start + 6m)
+    kafka("visits").send({"page": "/"}, at: start)
+    kafka("visits").send({"page": "/cart"}, at: start + 20s)
+    kafka("visits").send({"page": "/"}, at: start + 2m)
+
+test "the same key is processed once":
+    kafka("signups").send("ana@company.com")
+    kafka("signups").send("ana@company.com")
+    kafka("signups").send("luis@company.com")

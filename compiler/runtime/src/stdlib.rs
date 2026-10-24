@@ -604,6 +604,10 @@ pub fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
                 _ => return Err(invalid()),
             };
         }
+        // a map read from outside becomes the record (section 19, D117)
+        (Some(Obj::Type(TypeRef::Record(rt))), None) if matches!(value.get(), Some(Obj::Map(_))) => {
+            result = crate::data::record_from_map(value, rt, span)?;
+        }
         (Some(Obj::Type(_) | Obj::Variant(_) | Obj::Func(_) | Obj::Builtin(_) | Obj::Symbol(_)), _) => {
             if !is_value(value, target, span)? {
                 return Err(invalid());

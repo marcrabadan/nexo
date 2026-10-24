@@ -790,8 +790,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "detail.zone": {"es": "\"{zone}\" no es una zona horaria conocida", "en": "\"{zone}\" is not a known time zone"},
     "detail.date_range": {"es": "la fecha queda fuera de los años 1 a 9999", "en": "the date falls outside the years 1 to 9999"},
     "detail.bad_date": {"es": "{value} no es una fecha válida", "en": "{value} is not a valid date"},
-    "not_supported": {"es": "{what} no está disponible en la fase 4 de Nexo.", "en": "{what} is not available in phase 4 of Nexo."},
-    "fix.not_supported": {"es": "Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web y nexo.db; quítalo para ejecutar el programa.", "en": "This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web and nexo.db; remove it to run the program."},
+    "not_supported": {"es": "{what} no está disponible en la fase 5 de Nexo.", "en": "{what} is not available in phase 5 of Nexo."},
+    "fix.not_supported": {"es": "Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, los flags y la privacidad; quítalo para ejecutar el programa.", "en": "This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, flags and privacy; remove it to run the program."},
     "use_needs_as": {"es": "\"{name}\" no es un nombre válido para usarlo en el código.", "en": "\"{name}\" is not a valid name to use in the code."},
     "fix.use_needs_as": {"es": "Dale un nombre con as, por ejemplo use c \"{name}\" as lib.", "en": "Give it a name with as, for example use c \"{name}\" as lib."},
     "table_only": {"es": "{word} solo se usa en los campos de un type marcado con @table.", "en": "{word} is only used in the fields of a type marked with @table."},
@@ -926,6 +926,16 @@ MESSAGES: dict[str, dict[str, str]] = {
     "info.privacy_program": {"es": "el programa", "en": "the program"},
     "info.privacy_missing": {"es": "(sin declarar)", "en": "(not declared)"},
     "info.privacy_reader": {"es": "{identity} (infra {infra}, database {database})", "en": "{identity} (infra {infra}, database {database})"},
+    "stream_window": {"es": "{step} necesita una duración mayor que cero.", "en": "{step} needs a duration greater than zero."},
+    "fix.stream_window": {"es": "Escríbelo así: |> {step} 1m.", "en": "Write it like this: |> {step} 1m."},
+    "stream_window_source": {"es": "{step} solo sirve en un pipeline que empieza en un stream.", "en": "{step} only works in a pipeline that starts at a stream."},
+    "fix.stream_window_source": {"es": "Empieza el pipeline en una fuente, por ejemplo kafka(\"clicks\") |> {step} 1m.", "en": "Start the pipeline at a source, for example kafka(\"clicks\") |> {step} 1m."},
+    "stream_window_first": {"es": "{step} tiene que ser el primer paso después del stream.", "en": "{step} has to be the first step after the stream."},
+    "fix.stream_window_first": {"es": "Pon la ventana justo después de la fuente y el resto de pasos detrás.", "en": "Put the window right after the source and the other steps after it."},
+    "info.stream_dead": {"es": "{stream}: el mensaje {id} falla tras 4 intentos y pasa a {stream}.dead: {error}", "en": "{stream}: message {id} fails after 4 tries and goes to {stream}.dead: {error}"},
+    "info.stream_listening": {"es": "Escuchando {streams} (Ctrl-C para parar)", "en": "Listening to {streams} (Ctrl-C to stop)"},
+    "stream_call": {"es": "Un pipeline sobre un stream solo admite los pasos de la sección 6 (where, map, pick, group by, sum, count, avg, sort by, take, each).", "en": "A pipeline over a stream only takes the steps of section 6 (where, map, pick, group by, sum, count, avg, sort by, take, each)."},
+    "fix.stream_call": {"es": "Llama a la función dentro de each: |> each f.", "en": "Call the function inside each: |> each f."},
 }
 
 

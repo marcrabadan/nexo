@@ -382,8 +382,8 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("detail.zone", "\"{zone}\" no es una zona horaria conocida", "\"{zone}\" is not a known time zone"),
     ("detail.date_range", "la fecha queda fuera de los años 1 a 9999", "the date falls outside the years 1 to 9999"),
     ("detail.bad_date", "{value} no es una fecha válida", "{value} is not a valid date"),
-    ("not_supported", "{what} no está disponible en la fase 4 de Nexo.", "{what} is not available in phase 4 of Nexo."),
-    ("fix.not_supported", "Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web y nexo.db; quítalo para ejecutar el programa.", "This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web and nexo.db; remove it to run the program."),
+    ("not_supported", "{what} no está disponible en la fase 5 de Nexo.", "{what} is not available in phase 5 of Nexo."),
+    ("fix.not_supported", "Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, los flags y la privacidad; quítalo para ejecutar el programa.", "This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, flags and privacy; remove it to run the program."),
     ("use_needs_as", "\"{name}\" no es un nombre válido para usarlo en el código.", "\"{name}\" is not a valid name to use in the code."),
     ("fix.use_needs_as", "Dale un nombre con as, por ejemplo use c \"{name}\" as lib.", "Give it a name with as, for example use c \"{name}\" as lib."),
     ("table_only", "{word} solo se usa en los campos de un type marcado con @table.", "{word} is only used in the fields of a type marked with @table."),
@@ -443,6 +443,16 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("info.privacy_program", "el programa", "the program"),
     ("info.privacy_missing", "(sin declarar)", "(not declared)"),
     ("info.privacy_reader", "{identity} (infra {infra}, database {database})", "{identity} (infra {infra}, database {database})"),
+    ("stream_window", "{step} necesita una duración mayor que cero.", "{step} needs a duration greater than zero."),
+    ("fix.stream_window", "Escríbelo así: |> {step} 1m.", "Write it like this: |> {step} 1m."),
+    ("stream_window_source", "{step} solo sirve en un pipeline que empieza en un stream.", "{step} only works in a pipeline that starts at a stream."),
+    ("fix.stream_window_source", "Empieza el pipeline en una fuente, por ejemplo kafka(\"clicks\") |> {step} 1m.", "Start the pipeline at a source, for example kafka(\"clicks\") |> {step} 1m."),
+    ("stream_window_first", "{step} tiene que ser el primer paso después del stream.", "{step} has to be the first step after the stream."),
+    ("fix.stream_window_first", "Pon la ventana justo después de la fuente y el resto de pasos detrás.", "Put the window right after the source and the other steps after it."),
+    ("info.stream_dead", "{stream}: el mensaje {id} falla tras 4 intentos y pasa a {stream}.dead: {error}", "{stream}: message {id} fails after 4 tries and goes to {stream}.dead: {error}"),
+    ("info.stream_listening", "Escuchando {streams} (Ctrl-C para parar)", "Listening to {streams} (Ctrl-C to stop)"),
+    ("stream_call", "Un pipeline sobre un stream solo admite los pasos de la sección 6 (where, map, pick, group by, sum, count, avg, sort by, take, each).", "A pipeline over a stream only takes the steps of section 6 (where, map, pick, group by, sum, count, avg, sort by, take, each)."),
+    ("fix.stream_call", "Llama a la función dentro de each: |> each f.", "Call the function inside each: |> each f."),
 ];
 
 pub(crate) static WORDS: &[(&str, &str, &str)] = &[

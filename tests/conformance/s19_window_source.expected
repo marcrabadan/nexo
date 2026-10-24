@@ -1,0 +1,4 @@
+Error en s19_window_source.nexo, línea 1:
+  print([1, 2, 3] |> window 1m |> count)
+                     ^^^^^^^^^
+window solo sirve en un pipeline que empieza en un stream. Empieza el pipeline en una fuente, por ejemplo kafka("clicks") |> window 1m.

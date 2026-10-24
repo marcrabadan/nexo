@@ -1,4 +1,4 @@
 Error en s08_ai_budget.nexo, línea 2:
   ai:
   ^^
-"budget" no está disponible en la fase 4 de Nexo. Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web y nexo.db; quítalo para ejecutar el programa.
+"budget" no está disponible en la fase 5 de Nexo. Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, los flags y la privacidad; quítalo para ejecutar el programa.

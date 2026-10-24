@@ -1338,3 +1338,51 @@ records it as restricted. The table `nexo_privacy (tbl, row, state)`
 holds both, and every query of a table with personal fields leaves its
 rows out; `db.sql` reads them, for legal obligations. `@private` makes a
 `ref` field an error (the data are in the other table).
+
+**D117. nexo.stream.** Section 19 makes a stream "just another source for
+`when` and `|>`". The sources (`kafka`, `rabbit`, `sqs`, `kinesis`,
+`servicebus`, `eventhub`, `pubsub`) take the name of the stream; phase 5
+has one broker, local, so a source with the address of a broker on the
+network (`servers:`, `url:`...) and `websocket(...)` are reported as
+unavailable (D113). Each stream is an append-only file
+`.nexo/streams/<kind>/<name>.log`, one JSON line per message (its number,
+the time in milliseconds and the data), shared by the programs of the
+machine; under `nexo test` the broker lives in memory, starts empty for
+each test, and `send` delivers the message at once to the program's own
+handlers and pipelines. `use nexo.stream` (like `nexo.infra` and
+`nexo.ci`) is accepted and changes nothing: the module is loaded
+implicitly (section 1).
+- `stream.send(value, at: time)` writes a text as it is and any other
+  value as compact JSON; `at:` sets the time the message happened (for
+  windows; the default is now).
+- `when SOURCE as msg[, key: expression]: block` becomes a function and
+  `__stream_when(SOURCE, it, key: (msg) -> expression)` (D90); `when` on
+  anything but a source (email, files, webhooks) stays unavailable. A
+  message has `msg.id` (its number in the stream), `msg.time`,
+  `msg.text()` and `msg.json()`, which fails on data that is not JSON;
+  `validate(map, as: Record)` builds the record as JSON data is read
+  (D47), so section 19's `validate(msg.json(), as: Order)?` works.
+- After the top level (and the spawned tasks), a program with handlers or
+  stream pipelines reads its streams until it is stopped, next to its
+  servers if it has any, as consumer group named after the file: the
+  offset of the last acknowledged message is saved in
+  `<name>.<group>.offset`, and a new group starts at the first message.
+  A message is acknowledged when its block ends without error (at least
+  once). A failing block (an error value or a mistake) is tried 3 more
+  times, 0.1 s, 0.2 s and 0.4 s apart, and then the message goes to the
+  stream `<name>.dead` with a line on the standard error output saying
+  why. With `key:`, the key of each processed message (as `repr` writes
+  it) is kept in `<name>.<group>.keys` and a message with a key already
+  processed is acknowledged without running the block. There is one
+  partition per stream, so order is kept and handlers run one at a time.
+- A pipeline whose source is a stream keeps its steps and runs them over
+  the messages of each window, whose rows are the decoded data (JSON, or
+  the text); it starts when it reaches `each`, which gets each row, or
+  once the value of a final `count`, `sum` or `avg`. Call steps are not
+  allowed on a stream. `window D` is a tumbling window aligned to
+  multiples of D since 1970 (UTC); `session D` ends after D without
+  messages; both close when a message of a later window arrives, when
+  the time passes (while the program runs) or at the end of a test.
+  `sliding D` runs on every message over the messages of the last D.
+  These three are contextual steps after `|>`, must come right after the
+  source, and are errors on anything else.

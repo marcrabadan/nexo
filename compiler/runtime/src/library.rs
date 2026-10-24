@@ -60,6 +60,15 @@ static SIGS: &[Sig] = &[
     Sig { name: "privacy.export", params: &[p("record")] },
     Sig { name: "privacy.erase", params: &[p("record")] },
     Sig { name: "privacy.restrict", params: &[p("record")] },
+    Sig { name: "kafka", params: &[] },
+    Sig { name: "rabbit", params: &[] },
+    Sig { name: "sqs", params: &[] },
+    Sig { name: "kinesis", params: &[] },
+    Sig { name: "servicebus", params: &[] },
+    Sig { name: "eventhub", params: &[] },
+    Sig { name: "pubsub", params: &[] },
+    Sig { name: "websocket", params: &[] },
+    Sig { name: "__stream_when", params: &[p("source"), p("fn"), opt("key")] },
     Sig {
         name: "__web_route",
         params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
@@ -119,6 +128,7 @@ pub fn release_all() {
     crate::ai::release_all();
     crate::flags::release_all();
     crate::privacy::release_all();
+    crate::stream::release_all();
 }
 
 pub fn clear_fakes() {
@@ -141,6 +151,9 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
     }
     if sig.name == "log" {
         return log(args, names, span);
+    }
+    if crate::stream::KINDS.contains(&sig.name) {
+        return crate::stream::source(sig.name, args, names, span);
     }
     match sig.name {
         "__ref" => return crate::cfg::reference(args),
@@ -190,6 +203,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__cfg" => crate::cfg::cfg(x(0), x(1), x(2), x(3), span),
         "__flags" => crate::flags::flags(x(0), span),
         "flag" => crate::flags::flag(x(0), a.get(1), span),
+        "__stream_when" => crate::stream::when(x(0), x(1), a.get(2), span),
         "__privacy_type" => crate::privacy::privacy_type(x(0), x(1), x(2), span),
         "privacy.export" => crate::db::privacy_export(x(0), span),
         "privacy.erase" => crate::db::privacy_erase(x(0), span),

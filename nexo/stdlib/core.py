@@ -246,6 +246,10 @@ def b_validate(call, value, as_, range=None):
                 raise invalid()
         else:
             raise invalid()
+    elif isinstance(target, RecordType) and isinstance(value, dict):
+        # a map read from outside becomes the record (section 19, D117)
+        from .data import as_type
+        result = as_type(call, value, target)
     elif isinstance(target, (BuiltinType, RecordType)) or hasattr(target, "name"):
         if not interp.is_type(value, target, call.span):
             raise invalid()

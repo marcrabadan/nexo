@@ -26,6 +26,7 @@ pub mod pylib;
 pub mod repl;
 pub mod state;
 pub mod stdlib;
+pub mod stream;
 pub mod sync;
 pub mod text;
 pub mod time;

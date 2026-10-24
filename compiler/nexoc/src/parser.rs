@@ -1101,17 +1101,24 @@ impl<'s> Parser<'s> {
         let mut params = Vec::new();
         if kind == "on" || kind == "when" {
             let trigger = self.postfix()?;
-            let ExprKind::Call { func, args } = trigger.kind else {
+            if !matches!(trigger.kind, ExprKind::Call { .. }) {
                 return Err(self.error_at(&word("call"), &tok));
-            };
+            }
+            let mut alias = None;
+            if self.at_kw("as") {
+                self.advance();
+                alias = Some(self.expect_name()?.0);
+            }
+            let is_stream = matches!(&trigger.kind, ExprKind::Call { func, .. }
+                if matches!(&func.kind, ExprKind::Name(n) if STREAM_SOURCES.contains(&n.as_str())));
+            if kind == "when" && is_stream {
+                return self.stream_when(tok.span, trigger, alias);
+            }
+            let ExprKind::Call { func, args } = trigger.kind else { unreachable!() };
             if let ExprKind::Name(n) = func.kind {
                 name = n;
             }
             params = args;
-            if self.at_kw("as") {
-                self.advance();
-                self.expect_name()?;
-            }
         } else if kind == "every" {
             self.expr()?;
             if self.at_kw("at") {
@@ -1617,6 +1624,7 @@ impl<'s> Parser<'s> {
 // builtins whose names start with "__" (D90), so every later pass (the
 // checker, the resolver, the code generator) sees only core constructs.
 
+const STREAM_SOURCES: &[&str] = &["kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket"];
 const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server", "infra", "stage", "pipeline", "flags"];
 /// blocks of phase 5 whose body is read with the rule of D114
 const CFG_BLOCKS: &[&str] = &["infra", "stage", "pipeline", "flags"];
@@ -2211,6 +2219,48 @@ impl<'s> Parser<'s> {
         let st = self.stmt_node(span, StmtKind::Fn(func));
         self.extra.push(st);
         Ok(self.name_expr(span, &fname))
+    }
+
+    /// when kafka("orders") as msg[, key: msg.id]: body (section 19), as a
+    /// function and __stream_when(source, it, key: (msg) -> msg.id).
+    fn stream_when(&mut self, span: Span, source: Expr, alias: Option<String>) -> PResult<Stmt> {
+        let mut key = None;
+        if self.at_op(",") {
+            self.advance();
+            if !self.at_name("key") {
+                return Err(self.error("\"key\""));
+            }
+            self.advance();
+            self.expect_op(":")?;
+            key = Some(self.expr()?);
+        }
+        let param = alias.unwrap_or_else(|| "__msg".to_string());
+        let fname = format!("when {}:{}", span.line, span.col);
+        let body = self.block()?;
+        let id = self.id();
+        let func = FnDef {
+            id,
+            span,
+            name: fname.clone(),
+            name_span: span,
+            params: vec![Param { span, name: param.clone(), ty: None, default: None }],
+            ret: None,
+            body,
+            is_pub: false,
+            annotations: Vec::new(),
+        };
+        let fstmt = self.stmt_node(span, StmtKind::Fn(func));
+        let mut named = Vec::new();
+        if let Some(k) = key {
+            let ks = k.span;
+            let lam = self.expr_node(ks, ExprKind::Lambda { param, body: Box::new(k) });
+            named.push(("key".to_string(), lam));
+        }
+        let fe = self.name_expr(span, &fname);
+        let c = self.call(span, "__stream_when", vec![source, fe], named);
+        let st = self.expr_stmt(c);
+        self.extra.push(st);
+        Ok(fstmt)
     }
 
     /// route = { annotation } METHOD STRING [ "(" params ")" ] block

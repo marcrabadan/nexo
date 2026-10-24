@@ -69,8 +69,16 @@ def run_file(path: str) -> int:
         # the program ends when every spawned task has ended
         from .stdlib.sync import wait_all
         wait_all()
-        # then its servers answer until it is stopped (D102)
-        from .stdlib.web import serve_forever
+        # then its servers answer and its streams are read until it is
+        # stopped (D102, D117)
+        from .stdlib import stream
+        from .stdlib.web import SERVERS, serve_forever
+        if stream.listening():
+            if not SERVERS:
+                stream.listen_forever(interp, path)
+                return 0
+            import threading
+            threading.Thread(target=stream.listen_forever, args=(interp, path), daemon=True).start()
         if not serve_forever(interp):
             return 1
     except (NexoError, NexoFailure) as exc:
@@ -123,6 +131,8 @@ def run_tests(paths: list[str]) -> int:
             continue
         name = str(f) if paths else str(f.relative_to("."))
         interp = Interpreter()
+        from .stdlib import stream
+        stream.TEST_MODE = True
         try:
             interp.run(source, name)
         except (NexoError, NexoFailure) as exc:
@@ -144,8 +154,11 @@ def run_tests(paths: list[str]) -> int:
         for test in interp.tests:
             total += 1
             interp.fakes = {}
+            stream.MEMORY.clear()
+            stream.SEEN_KEYS.clear()
             try:
                 interp.exec_block(test.body, Env(interp.globals))
+                stream.drain(interp)
             except (NexoError, NexoFailure) as exc:
                 print(f"✗ {test.name}")
                 report(exc)

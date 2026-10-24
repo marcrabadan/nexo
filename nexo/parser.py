@@ -11,7 +11,9 @@ from . import errors
 from .errors import NexoError, Span
 from .lexer import Interp, Token, tokenize, tokenize_expr
 
-STEP_WORDS = {"where", "map", "pick", "group", "sum", "count", "avg", "sort", "take", "each"}
+STEP_WORDS = {"where", "map", "pick", "group", "sum", "count", "avg", "sort", "take", "each",
+              "window", "sliding", "session"}  # the last three: streams (section 19)
+STREAM_SOURCES = {"kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket"}
 ASSIGN_OPS = ("=", "+=", "-=", "*=", "/=")
 COMPARE_OPS = ("==", "!=", "<", ">", "<=", ">=")
 
@@ -794,6 +796,9 @@ class Parser:
             if self.at_kw("as"):
                 self.advance()
                 alias = self.expect_name().value
+            if (tok.value == "when" and isinstance(trigger.func, A.Name)
+                    and trigger.func.name in STREAM_SOURCES):
+                return self.stream_when(tok, trigger, alias)
         elif tok.value == "every":
             trigger = self.expr()
             if self.at_kw("at"):
@@ -805,6 +810,25 @@ class Parser:
                 self.advance()
                 self.args(":")
         return A.EventStmt(tok.span, tok.value, trigger, alias, self.block())
+
+    def stream_when(self, tok: Token, source: A.Call, alias) -> A.Stmt:
+        """when kafka("orders") as msg[, key: msg.id]: body (section 19), as a
+        function and __stream_when(source, it, key: (msg) -> msg.id)."""
+        key = None
+        if self.at_op(","):
+            self.advance()
+            if not self.at_name("key"):
+                raise self.error('"key"')
+            self.advance()
+            self.expect_op(":")
+            key = self.expr()
+        param = alias or "__msg"
+        span = tok.span
+        fname = f"when {span.line}:{span.col}"
+        fn = A.FnDef(span, fname, span, [A.Param(span, param, None, None)], None, self.block())
+        named = [("key", A.Lambda(key.span, param, key))] if key is not None else []
+        self.extra.append(A.ExprStmt(span, call(span, "__stream_when", [source, A.Name(span, fname)], named)))
+        return fn
 
     # -- expressions ----------------------------------------------------
     def expr(self) -> A.Expr:

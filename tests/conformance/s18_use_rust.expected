@@ -1,4 +1,4 @@
 Error en s18_use_rust.nexo, línea 2:
   use rust serde_json
   ^^^^^^^^^^^^^^^^^^^
-"use rust serde_json" no está disponible en la fase 4 de Nexo. Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web y nexo.db; quítalo para ejecutar el programa.
+"use rust serde_json" no está disponible en la fase 5 de Nexo. Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, los flags y la privacidad; quítalo para ejecutar el programa.

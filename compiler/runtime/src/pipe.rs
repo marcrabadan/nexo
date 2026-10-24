@@ -147,7 +147,7 @@ fn truth(v: V, span: u32, what: &str) -> R<bool> {
 
 /// Evaluate a step expression for one element. If it names a function
 /// (`each print`, `map double`), call it with the element (D51).
-fn apply(f: V, item: V, span: u32) -> R<Val> {
+pub fn apply(f: V, item: V, span: u32) -> R<Val> {
     let value = call_value(f, &[item], span)?;
     if is_callable(value.v()) {
         return call_value(value.v(), &[item], span);
