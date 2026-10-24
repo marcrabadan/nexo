@@ -1299,3 +1299,42 @@ shows (section 9 calls the audit log signed and append-only; `audit()`
 itself is not part of phase 5). The commands of phase 5 that read a
 program take its file, or else the only `.nexo` file of the current
 directory with that block.
+
+**D116. Privacy.** Section 23 marks fields `@personal` or `@private` and
+adds `keep` and `purpose` to a type. A type with either marks or settings
+is followed by `__privacy_type(T, [settings], {marks})` (D90); its
+settings are read with the rule of D114. `keep` is a duration `after` a
+`date` or `time` field that is not `@private` (`keep = 5 years after
+last_activity`; a year is 365 days, D2), and `purpose` a text; any other
+setting is an error. The rules:
+1. `nexo lint` warns once for each of `keep` and `purpose` that a type
+   with personal fields lacks; `nexo build --release` stops with an error.
+2. In a table, rows whose field is older than the period are erased the
+   first time the table is used through a connection and again whenever
+   it is used 24 hours later: the program that uses the data is the
+   daily task, since `every` is outside phase 5. Dates compare in UTC.
+3. `data_region` is checked by `nexo plan` (D121).
+4. `nexo privacy report [file.nexo]` runs only the types of the program
+   (as `nexo db diff` does) and lists, type by type, its fields with their
+   mark, where the rows live (the table and the database of the first
+   `connect`, or "not stored in a database"), the period, the purpose and
+   who reads it: the program and every `identity` of an infra block with
+   `can read database`.
+Encryption at rest: the `@private` columns of a table are stored as
+`nexo:` and the base64 of a nonce and AES-256-GCM, with the SHA-256 of the
+`key:` given to `connect` (D100) as the key; the nonce is the HMAC-SHA256
+of the text with that key, so equal texts give equal values and
+`find(national_id: x)` still finds the row, while `where`, `sort by` and
+`in` on such a column run in memory. A table with `@private` fields
+opened without a key is an error, as is a wrong key when a value is read.
+`privacy.export(record)` writes `<table>-<id>.json` (as `save` writes
+JSON) with the row and the rows of its `many` fields, whose `ref` fields
+are written as ids, and returns the path; it can fail like any write.
+`privacy.erase(record)` deletes the row; when other rows point to it, it
+is anonymised instead (its personal fields become none, `""`, 0 or the
+first day) and recorded as erased, and the personal fields of the rows
+that point to it are anonymised as well. `privacy.restrict(record)`
+records it as restricted. The table `nexo_privacy (tbl, row, state)`
+holds both, and every query of a table with personal fields leaves its
+rows out; `db.sql` reads them, for legal obligations. `@private` makes a
+`ref` field an error (the data are in the other table).

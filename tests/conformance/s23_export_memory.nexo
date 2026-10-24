@@ -1,0 +1,7 @@
+type Contact:
+    phone: str @personal
+    purpose = "calls"
+
+c = Contact(phone: "600 000 000")
+print(c)
+privacy.export(c)

@@ -1329,7 +1329,7 @@ def _module_methods():
         out = self.table_def_db(node)
         personal = [(f.name, f.span, [m for m in f.marks if m in ("personal", "private")]) for f in node.fields]
         personal = [p for p in personal if p[2]]
-        if False and (node.settings or personal):
+        if node.settings or personal:
             span = node.name_span
             settings = A.ListLit(span, [c for _, c in node.settings])
             marks = A.MapLit(span, [(text(fs, n), A.ListLit(fs, [text(fs, m) for m in ms])) for n, fs, ms in personal])

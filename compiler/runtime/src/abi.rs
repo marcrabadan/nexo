@@ -251,7 +251,8 @@ pub unsafe extern "C" fn nx_named(ptr: *const u8, len: usize) -> V {
 /// with the database and end.
 #[no_mangle]
 pub extern "C" fn nx_db_command() -> ! {
-    let code = crate::db::run_command();
+    // the command of a module that compiled the program alone (D101, D116)
+    let code = if std::env::var_os("NEXO_PRIVACY_FILE").is_some() { crate::privacy::run_command() } else { crate::db::run_command() };
     nx_exit(code)
 }
 

@@ -56,6 +56,10 @@ static SIGS: &[Sig] = &[
     Sig { name: "__cond", params: &[] },
     Sig { name: "__flags", params: &[p("entries")] },
     Sig { name: "flag", params: &[p("name"), opt("user")] },
+    Sig { name: "__privacy_type", params: &[p("type"), p("settings"), p("marks")] },
+    Sig { name: "privacy.export", params: &[p("record")] },
+    Sig { name: "privacy.erase", params: &[p("record")] },
+    Sig { name: "privacy.restrict", params: &[p("record")] },
     Sig {
         name: "__web_route",
         params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
@@ -63,7 +67,7 @@ static SIGS: &[Sig] = &[
 ];
 
 /// Namespaces of the library: their members are the SIGS named "ns.member".
-const NAMESPACES: &[&str] = &["password", "key", "keypair", "http"];
+const NAMESPACES: &[&str] = &["password", "key", "keypair", "http", "privacy"];
 
 fn id_of(name: &str) -> Option<u32> {
     SIGS.iter().position(|s| s.name == name).map(|i| BASE + i as u32)
@@ -114,6 +118,7 @@ pub fn release_all() {
     crate::web::release_all();
     crate::ai::release_all();
     crate::flags::release_all();
+    crate::privacy::release_all();
 }
 
 pub fn clear_fakes() {
@@ -185,6 +190,10 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__cfg" => crate::cfg::cfg(x(0), x(1), x(2), x(3), span),
         "__flags" => crate::flags::flags(x(0), span),
         "flag" => crate::flags::flag(x(0), a.get(1), span),
+        "__privacy_type" => crate::privacy::privacy_type(x(0), x(1), x(2), span),
+        "privacy.export" => crate::db::privacy_export(x(0), span),
+        "privacy.erase" => crate::db::privacy_erase(x(0), span),
+        "privacy.restrict" => crate::db::privacy_restrict(x(0), span),
         "__fake" => {
             let name = x(0).as_str().unwrap_or("").to_string();
             let value = crate::pipe::bind(x(1))?;

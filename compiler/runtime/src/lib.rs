@@ -21,6 +21,7 @@ pub mod library;
 pub mod num;
 pub mod par;
 pub mod pipe;
+pub mod privacy;
 pub mod pylib;
 pub mod repl;
 pub mod state;

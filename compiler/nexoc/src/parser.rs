@@ -788,6 +788,7 @@ impl<'s> Parser<'s> {
             return Err(self.error(&word("indented")));
         }
         self.advance();
+        let mut settings_seen: Vec<String> = Vec::new();
         while self.peek().tok != Tok::Dedent {
             let tok = self.peek().clone();
             if tok.is_op("@") {
@@ -820,11 +821,9 @@ impl<'s> Parser<'s> {
                     self.expect_newline()?;
                     node.fields.push(FieldDef { span: tok.span, name: n, ty, default, marks });
                 } else if self.peek_at(1).is_op("=") {
-                    self.advance();
-                    self.advance();
-                    let e = self.expr()?;
+                    // keep = 5 years after last_activity, purpose = "..." (D116)
+                    let e = self.cfg_entry("type", None, &mut settings_seen)?;
                     node.settings.push((n, e));
-                    self.expect_newline()?;
                 } else {
                     self.advance();
                     let params = if self.at_op("(") { self.params()? } else { Vec::new() };
@@ -2244,8 +2243,41 @@ impl<'s> Parser<'s> {
         Ok(Route { func, method, path, annotations, span: mspan })
     }
 
-    /// @table type T: the type, then __db_table(T, key, many, marks).
-    fn table_def(&mut self, mut st: Stmt) -> PResult<Stmt> {
+    /// @table type T: the type, then __db_table(T, key, many, marks); and
+    /// __privacy_type(T, [settings], {marks}) after a type with personal
+    /// data or settings (D116).
+    fn table_def(&mut self, st: Stmt) -> PResult<Stmt> {
+        let mut st = self.table_def_db(st)?;
+        let StmtKind::Type(node) = &mut st.kind else { return Ok(st) };
+        let personal: Vec<(String, Span, Vec<String>)> = node
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), f.span, f.marks.iter().filter(|m| *m == "personal" || *m == "private").cloned().collect::<Vec<_>>()))
+            .filter(|(_, _, m)| !m.is_empty())
+            .collect();
+        if node.settings.is_empty() && personal.is_empty() {
+            return Ok(st);
+        }
+        let span = node.name_span;
+        let tname = node.name.clone();
+        let settings: Vec<Expr> = std::mem::take(&mut node.settings).into_iter().map(|(_, e)| e).collect();
+        let settings = self.expr_node(span, ExprKind::List(settings));
+        let mut pairs = Vec::new();
+        for (n, fs, ms) in personal {
+            let k = self.text(fs, &n);
+            let items = ms.iter().map(|m| self.text(fs, m)).collect();
+            let v = self.expr_node(fs, ExprKind::List(items));
+            pairs.push((k, v));
+        }
+        let marks = self.expr_node(span, ExprKind::Map(pairs));
+        let t = self.name_expr(span, &tname);
+        let c = self.call(span, "__privacy_type", vec![t, settings, marks], Vec::new());
+        let es = self.expr_stmt(c);
+        self.extra.push(es);
+        Ok(st)
+    }
+
+    fn table_def_db(&mut self, mut st: Stmt) -> PResult<Stmt> {
         let StmtKind::Type(node) = &mut st.kind else { return Ok(st) };
         let table = node.annotations.iter().find(|a| a.name == "table").cloned();
         let rel = node.fields.iter().find_map(|f| match &f.ty {

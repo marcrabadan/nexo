@@ -338,13 +338,13 @@ def split_options(args: list[str], flags: tuple = (), values: tuple = ()):
     return pos, opts
 
 
-def program_file(word: str, given: str | None) -> str | None:
+def program_file(word: str, given: str | None, pattern: str | None = None) -> str | None:
     """The file a phase 5 command reads: the one given, or the only .nexo
     file of the current directory that has a `word` block (D113)."""
     if given is not None:
         return given
     import re
-    pattern = re.compile(rf"^{word}\b", re.M)
+    pattern = re.compile(pattern or rf"^{word}\b", re.M)
     found = []
     for f in sorted(Path(".").glob("*.nexo")):
         try:
@@ -389,6 +389,33 @@ def run_flags(args: list[str]) -> int:
     if read is None:
         return 1
     return flags.set_command(flags.declared(read[1]), pos[0], pos[1], opts.get("--stage"))
+
+
+def run_privacy(args: list[str]) -> int:
+    """`nexo privacy report [file.nexo]` (section 23, rule 4)."""
+    from .stdlib import db, privacy
+    if args[:1] != ["report"] or len(args) > 2 or any(a.startswith("-") for a in args):
+        print(USAGE[errors.LANG], file=sys.stderr)
+        return 2
+    path = program_file("@personal", args[1] if len(args) == 2 else None, r"@personal\b|@private\b")
+    if path is None:
+        return 1
+    interp = Interpreter()
+    try:
+        source = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=path)}.\n")
+        return 1
+    try:
+        program = interp.load(source, path)
+        for stmt in db.schema_program(program):
+            interp.exec(stmt, interp.globals)
+    except (NexoError, NexoFailure) as exc:
+        report(exc)
+        return 1
+    for line in privacy.report_lines(path, db.connect_literal(program), privacy.readers_of_data(program)):
+        print(line)
+    return 0
 
 
 # ----------------------------------------------------------------- REPL
@@ -460,6 +487,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_db(rest[1:])
     if rest[:1] == ["flags"] and lang in ("es", "en"):
         return run_flags(rest[1:])
+    if rest[:1] == ["privacy"] and lang in ("es", "en"):
+        return run_privacy(rest[1:])
     if rest in (["ai", "setup"], ["ai", "usage"]) and lang in ("es", "en"):
         from .stdlib import ai
         return ai.setup_command() if rest[1] == "setup" else ai.usage_command()

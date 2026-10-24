@@ -1,0 +1,4 @@
+# section 23: keep counts from a date field
+type Customer:
+    name: str @personal
+    keep = 5 years

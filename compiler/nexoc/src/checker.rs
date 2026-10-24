@@ -23,6 +23,7 @@ use crate::ast::*;
 const FALLIBLE_BUILTINS: &[&str] =
     &["read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt", "encrypt_file", "decrypt_file", "connect", "ask"];
 const FALLIBLE_MEMBERS: &[(&str, &str)] = &[
+    ("privacy", "export"),
     ("json", "parse"),
     ("csv", "parse"),
     ("http", "get"),

@@ -33,12 +33,14 @@ SQL_LOG = bool(_os.environ.get("NEXO_SQL_LOG"))
 
 
 class Column:
-    __slots__ = ("field", "name", "kind", "optional", "unique", "target", "variants")
+    __slots__ = ("field", "name", "kind", "optional", "unique", "target", "variants", "private", "table")
 
-    def __init__(self, field, name, kind, optional, unique, target=None, variants=None):
+    def __init__(self, field, name, kind, optional, unique, target=None, variants=None, private=False):
         self.field, self.name, self.kind = field, name, kind
         self.optional, self.unique, self.target = optional, unique, target
         self.variants = variants
+        self.private = private  # @private: encrypted at rest (D116)
+        self.table = ""
 
 
 class TableInfo:
@@ -52,6 +54,12 @@ class TableInfo:
 
     def column(self, field: str) -> Column | None:
         return next((c for c in self.columns if c.field == field), None)
+
+
+def personal_table(info: "TableInfo") -> bool:
+    from .privacy import info_of
+    p = info_of(info.rtype)
+    return p is not None and bool(p.marks) and info.key is not None
 
 
 def interp_tables(interp) -> dict:
@@ -104,8 +112,13 @@ def b_db_table(call, rtype, key, many, marks):
         kind, target, variants = column_kind(interp, call, rtype, f, fmarks)
         name = f.name + "_id" if kind == "ref" else f.name
         optional = bool(getattr(f.type, "optional", False)) or f.name == key
-        columns.append(Column(f.name, name, kind, optional, "unique" in fmarks, target, variants))
+        private = "private" in fmarks
+        if private and kind == "ref":
+            raise NexoError("privacy_ref", call.span, field=f.name, type=rtype.name)
+        columns.append(Column(f.name, name, kind, optional, "unique" in fmarks, target, variants, private))
     info = TableInfo(rtype, key, dict(many), {k: list(v) for k, v in marks.items()}, columns)
+    for c in columns:
+        c.table = info.name
     rtype.table = info
     interp_tables(interp)[rtype.name] = info
     return None
@@ -145,6 +158,11 @@ def from_sql(call, db: "Database", raw: Any, col: Column, cache: dict) -> Any:
     if raw is None:
         return None
     kind = col.kind
+    if col.private:
+        from .privacy import unseal
+        raw = unseal(call, db.key, str(raw), col.table)
+        if kind == "bool":
+            raw = raw == "1"
     if kind == "int":
         return int(raw)
     if kind == "float":
@@ -189,7 +207,7 @@ SQL_TYPES = {"int": "INTEGER", "float": "REAL", "bool": "INTEGER", "str": "TEXT"
 def column_sql(info: TableInfo, c: Column, adding: bool = False) -> str:
     if c.field == info.key:
         return f"{quote(c.name)} INTEGER PRIMARY KEY AUTOINCREMENT"
-    text = f"{quote(c.name)} {SQL_TYPES[c.kind]}"
+    text = f"{quote(c.name)} {'TEXT' if c.private else SQL_TYPES[c.kind]}"
     if not c.optional and not adding:
         text += " NOT NULL"
     if c.unique and not adding:
@@ -212,6 +230,16 @@ class Database(Native):
         self.conn = conn
         self.synced: set[str] = set()
         self.depth = 0
+        self.key: bytes | None = None  # encrypts @private columns (D116)
+        self.purged: dict[str, float] = {}
+
+    def cell(self, call, value, col: Column | None):
+        """A value as stored in a column: @private ones encrypted."""
+        raw = to_sql(call, value, col)
+        if col is not None and col.private and raw is not None:
+            from .privacy import seal
+            return seal(self.key, str(raw))
+        return raw
 
     def __eq__(self, other):
         return other is self
@@ -255,6 +283,9 @@ class Database(Native):
         call.interp.db_of_type[info.rtype.name] = self
         if info.name in self.synced:
             return
+        from .privacy import ensure_table, info_of
+        if self.key is None and any(c.private for c in info.columns):
+            raise NexoError("privacy_key", call.span, table=info.name, db=self.path)
         exists = self.execute(call, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
                               [info.name]).fetchone()
         if exists is None:
@@ -265,9 +296,22 @@ class Database(Native):
                 if c.name not in have:
                     self.execute(call, f"ALTER TABLE {quote(info.name)} ADD COLUMN {column_sql(info, c, adding=True)}", [])
         self.synced.add(info.name)
+        if personal_table(info):
+            ensure_table(self, call)
+
+    def guard(self, call, info: TableInfo) -> list[str]:
+        """The rows past their keep period are erased (when due) and the
+        restricted or erased ones left out (D116)."""
+        if not personal_table(info):
+            return []
+        from .privacy import due, hidden_where, purge
+        if due(self, info):
+            purge(self, call, info)
+        return [hidden_where(info)]
 
     def select(self, call, info, wheres, params, order, limit, cache=None, count=False):
         self.sync(call, info)
+        wheres = self.guard(call, info) + list(wheres)
         what = "COUNT(*)" if count else ", ".join(quote(c.name) for c in info.columns)
         sql = f"SELECT {what} FROM {quote(info.name)}"
         if wheres:
@@ -469,7 +513,7 @@ class Query(Lazy, Native):
                 wheres.append(f"{quote(col.name)} IS NULL")
             else:
                 wheres.append(f"{quote(col.name)} = ?")
-                params.append(to_sql(call, value, col))
+                params.append(self.db.cell(call, value, col))
             shown.append(f"{col.field} = {repr_value(plain(value))}")
         rows = self.db.select(call, info, wheres, params, None, 1)
         if not rows:
@@ -488,7 +532,8 @@ class Query(Lazy, Native):
             record = interp.construct(info.rtype, list(fields.items()), call.node)
         self.db.sync(call, info)
         cols = [c for c in info.columns if c.field != info.key or record.fields.get(c.field) is not None]
-        values = [to_sql(call, record.fields[c.field], c) for c in cols]
+        self.db.guard(call, info)
+        values = [self.db.cell(call, record.fields[c.field], c) for c in cols]
         sql = (f"INSERT INTO {quote(info.name)} ({', '.join(quote(c.name) for c in cols)}) "
                f"VALUES ({', '.join('?' for _ in cols)})")
         cur = self.db.execute(call, sql, values, info, record.fields)
@@ -520,7 +565,7 @@ class Query(Lazy, Native):
             interp.set_attr(record, name, value, call.span, call.span)
         self.db.sync(call, info)
         cols = [c for c in info.columns if c.field != info.key]
-        values = [to_sql(call, record.fields[c.field], c) for c in cols]
+        values = [self.db.cell(call, record.fields[c.field], c) for c in cols]
         sets = ", ".join(f"{quote(c.name)} = ?" for c in cols)
         self.db.execute(call, f"UPDATE {quote(info.name)} SET {sets} WHERE {quote(info.key)} = ?", values + [key],
                         info, record.fields)
@@ -612,7 +657,9 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
     def column(i):
         x = leaves[i]
         if isinstance(x, A.Name):
-            return info.column(x.name)
+            col = info.column(x.name)
+            # an encrypted column cannot be compared in SQL (D116)
+            return None if col is not None and col.private else col
         return None
 
     def usable(i):
@@ -723,7 +770,7 @@ def pipe_sort(query: Query, e: A.Expr, desc: bool):
     if query.limit is not None or not isinstance(e, A.Name):
         return None
     col = query.info.column(e.name)
-    if col is None or col.kind in ("decimal", "money", "ref", "variant"):
+    if col is None or col.kind in ("decimal", "money", "ref", "variant") or col.private:
         return None
     key = f"{quote(col.name)} {'DESC' if desc else 'ASC'}"
     return query.derive(order=[key])
@@ -742,14 +789,18 @@ def b_connect(call, url, key=None):
         raise expects(call, "connect", "str", url)
     if "://" in url:
         raise NexoError("not_supported", call.span, what=f'"connect({repr_value(url.split("://")[0] + "://...")})"')
+    secret_text = None
     if key is not None:
         from .crypto import text_or_secret
-        text_or_secret(call, "connect", key)
+        secret_text = text_or_secret(call, "connect", key)
     try:
         conn = sqlite3.connect(url, isolation_level=None, check_same_thread=False)
     except sqlite3.Error as exc:
         raise failure("DatabaseError", call.span, db=url, reason=str(exc))
     db = Database(url, conn)
+    if secret_text is not None:
+        from .privacy import data_key
+        db.key = data_key(secret_text)
     db.execute(call, "PRAGMA foreign_keys = ON", [])
     return db
 
@@ -780,7 +831,7 @@ def schema_program(program: A.Program) -> list:
         if isinstance(s, (A.TypeDef, A.TraitDef, A.Use)):
             keep.append(s)
         elif (isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and isinstance(s.expr.func, A.Name)
-              and s.expr.func.name == "__db_table"):
+              and s.expr.func.name in ("__db_table", "__privacy_type")):
             keep.append(s)
     return keep
 

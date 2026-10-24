@@ -165,6 +165,76 @@ fn run_db(args: &[String]) -> u8 {
     }
 }
 
+/// Compile only the types of a program and the `keep` calls (`__db_table`
+/// and the like), run it with `env` set, and return its exit code: the
+/// runtime carries out the command of a module (D101, D116).
+pub fn module_command(file: &str, env: &[(&str, String)], keep: &[&str]) -> u8 {
+    let source = match read_source(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprint!("{e}");
+            return 1;
+        }
+    };
+    let fail = |d: Diagnostic| render(file, &source, d.span, &d.text());
+    let mut db_path = None;
+    let compiled = (|| {
+        let mut program = parser::parse(&source).map_err(fail)?;
+        checker::check(&program).map_err(fail)?;
+        resolve::resolve(&program).map_err(fail)?;
+        db_path = connect_literal(&program);
+        program.body.retain(|s| match &s.kind {
+            ast::StmtKind::Type(_) | ast::StmtKind::Trait { .. } | ast::StmtKind::Use { .. } => true,
+            ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call { func, .. }, .. }) => {
+                matches!(&func.kind, ast::ExprKind::Name(n) if keep.contains(&n.as_str()))
+            }
+            _ => false,
+        });
+        let res = resolve::resolve(&program).map_err(fail)?;
+        typecheck::check(&program, &res).map_err(fail)?;
+        let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
+        let opts = codegen::Options {
+            file: file.to_string(),
+            lang,
+            test_mode: false,
+            trust_ensure: false,
+            repl_line: 0,
+            shown_source: None,
+            db_command: true,
+        };
+        codegen::Gen::new(&source, &res, &opts).program(&program).map_err(fail)
+    })();
+    let ir = match compiled {
+        Ok(ir) => ir,
+        Err(text) => {
+            eprint!("{text}");
+            return 1;
+        }
+    };
+    let dir = work_dir();
+    let exe = dir.join("module");
+    if let Err(e) = link(&ir, &exe, false) {
+        eprintln!("Error: {e}");
+        return 1;
+    }
+    let mut cmd = Command::new(&exe);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    if let Some(p) = &db_path {
+        cmd.env("NEXO_DB_PATH", p);
+    }
+    let status = cmd.status();
+    let _ = std::fs::remove_dir_all(&dir);
+    match status {
+        Ok(s) => exit_code(s),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
+    }
+}
+
 /// The database of a program: the first connect("...") it writes.
 fn connect_literal(program: &ast::Program) -> Option<String> {
     use ast::{ExprKind, StrPiece};
@@ -519,6 +589,16 @@ fn build(args: &[String]) -> u8 {
             return 1;
         }
     };
+    if release {
+        // personal data without keep or purpose (section 23, rule 1)
+        if let Ok(program) = parser::parse(&source) {
+            if let Some((span, tname, missing)) = phase5::privacy_gaps(&program.body).into_iter().next() {
+                let d = Diagnostic::new("privacy_release", span).arg("type", tname).arg("missing", missing.join(", "));
+                eprint!("{}", render(&file, &source, d.span, &d.text()));
+                return 1;
+            }
+        }
+    }
     let out = out.unwrap_or_else(|| Path::new(&file).with_extension("").to_string_lossy().into_owned());
     if let Err(e) = link(&ir, Path::new(&out), release) {
         eprintln!("Error: {e}");
@@ -838,6 +918,7 @@ fn main() -> ExitCode {
             "check" => run_check(&rest[1..]),
             "db" => run_db(&rest[1..]),
             "flags" => phase5::run_flags(&rest[1..]),
+            "privacy" => phase5::privacy_report(&rest[1..]),
             "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),
             "ai" if rest.len() == 2 && rest[1] == "usage" => ai_cmd::usage(),
             "lsp" if rest.len() == 1 => lsp::serve(lang_given),

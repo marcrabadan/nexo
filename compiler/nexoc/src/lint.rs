@@ -471,6 +471,12 @@ impl<'a> Linter<'a> {
         self.block(&self.program.body, top);
         self.use_lines();
         self.expired_flags();
+        for (span, tname, missing) in crate::phase5::privacy_gaps(&self.program.body) {
+            for key in missing {
+                let rule = if key == "keep" { "privacy_keep" } else { "privacy_purpose" };
+                self.add(rule, span, None, vec![("type", tname.clone())]);
+            }
+        }
         self.findings.sort_by(|a, b| (a.span.line, a.span.col, a.key).cmp(&(b.span.line, b.span.col, b.key)));
         self.findings
     }

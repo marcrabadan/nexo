@@ -1,0 +1,5 @@
+Contact(phone: "600 000 000")
+Error en s23_export_memory.nexo, línea 7:
+  privacy.export(c)
+  ^^^^^^^^^^^^^^^^^
+privacy.export: espera @table, pero recibe Contact. Revisa los argumentos de privacy.export.
