@@ -1,0 +1,11 @@
+# an agent's tools are @tool functions (section 8, D109)
+@tool "Looks up an order by its number"
+fn find_order(id: str) -> str:
+    return "order {id}"
+
+fn send_email(to: str, text: str):
+    print("to {to}: {text}")
+
+agent support:
+    model = "anthropic:claude-opus"
+    tools = [find_order, send_email]

@@ -1,4 +1,4 @@
-# Nexo — phases 0 to 3
+# Nexo — phases 0 to 4
 
 The core of Nexo, a new programming language, in two implementations
 (section 25 of the specification):
@@ -12,7 +12,9 @@ The core of Nexo, a new programming language, in two implementations
   compiler proves (D76-D84);
 - phase 3, in both: the tools of section 14 — `nexo fmt`, `lint`, `fix`,
   `check`, `lsp`, the compiler's REPL — and the VS Code extension in
-  `editors/vscode` (D85-D88).
+  `editors/vscode` (D85-D88);
+- phase 4, in both: the standard library of section 15, `nexo.ai`,
+  `nexo.web`, `nexo.db`, `use c` and `use python` (D89-D112).
 
 ## Source of truth
 
@@ -34,11 +36,14 @@ nexo/
   numbers.py      section 17 arithmetic: int overflow, float/decimal, money, units
   types.py        runtime values: decimal/money/units, records, enums, errors
   errors.py       error type + section 14 renderer + i18n (es default, en)
-  stdlib/         builtins, io, data (JSON/CSV), sync (nexo.sync)
+  stdlib/         builtins, io, data (JSON/CSV), sync (nexo.sync); phase 4:
+                  clock, text, crypto, http, db, web, ai, clib (use c),
+                  pylib (use python)
   fmt.py          `nexo fmt`: token-preserving formatter (D85)
   lint.py         `nexo lint` / `nexo fix`: warnings and safe fixes (D86)
   lsp.py          `nexo lsp`: language server (D87)
-  cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test|fmt|lint|fix|check|lsp`
+  cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test|fmt|lint|fix|check|lsp`,
+                  `nexo db diff|migrate`, `nexo ai setup|usage`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text)
   fmt/            NAME.nexo + NAME.formatted (nexo fmt)
@@ -48,14 +53,18 @@ compiler/
   diag/           es/en message catalog and the section 14 renderer
   nexoc/          the `nexo` driver: lexer, parser, checker, resolve
                   (scopes, closures), typecheck (gradual), codegen (LLVM IR),
-                  fmt, lint, lsp (+ json), the REPL
+                  fmt, lint, lsp (+ json), the REPL, cheader (C headers
+                  read at compile time), ai_cmd
   runtime/        static library linked into every compiled program
-                  (repl.rs: the journal the REPL replays)
+                  (repl.rs: the journal the REPL replays; library.rs: the
+                  builtins of phase 4, ids from 100; time, text, crypto,
+                  http, db, web, ai, clib, pylib)
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py
   bench/          benchmarks (run.sh; compare.py against rust/*.rs)
 examples/         real programs; NAME.expected (and NAME.stdin) checked by
-                  tests/test_examples.py; they are formatted and lint-clean
+                  tests/test_examples.py; they are formatted and lint-clean;
+  shop_api/       the exit criterion of phase 4 (tests/test_exit_criterion.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 ```
@@ -93,7 +102,7 @@ in Spanish (the default); a `NAME.args` file holds extra CLI arguments
 placed before the file name, such as `--lang en` (see `tests/conformance/en/`)
 or `test`.
 
-## Scope (phases 0 to 3)
+## Scope (phases 0 to 4)
 
 Included: lexer/parser per section 24; constants and `var`; `type`
 (records, unions, enums with data, methods); `trait`; `fn` with named and
@@ -121,8 +130,21 @@ in tests/unit/test_errors.py check both catalogs). Both phases format,
 lint and answer LSP requests alike (tests/test_fmt.py, test_lint.py,
 test_lsp.py, test_repl.py).
 
-Excluded (do not implement yet): ask, infra, CI pipelines, server, db,
-stream, ml, policy.
+Phase 4: module blocks and annotations are rewritten by both parsers into
+calls of `__` builtins (D90); library values are `Native` in both
+runtimes (D92). Standard library: time, text (`find`, `regex`, `render`),
+`move_file`, `log` (hides `@private`), `convert(to: json|csv)`, crypto
+and secrets, the `http` client and `fake` (D92-D99, D105, D112).
+`nexo.db` on SQLite with pipelines translated to SQL and migrations
+(D100-D101); `nexo.web` servers (D102-D104); `nexo.ai`: `ask`, blocks,
+tools and agents (D106-D109); `use c` and `use python` (D110-D111).
+Tests that need a network use local servers: tests/test_http.py,
+test_web.py, test_db.py, test_ai.py, test_interop.py,
+test_exit_criterion.py.
+
+Excluded (do not implement yet): infra, CI pipelines, stream, ml, ui,
+notify, policy, when/every/lifecycle, AI budgets and MCP, PostgreSQL,
+use rust/wasm, YAML/XML/Parquet (D89, D112).
 
 ## Rules
 

@@ -778,7 +778,8 @@ impl<'a> Linter<'a> {
         let home = self.target(scope);
         self.declare(home, name, false);
         let area = self.scopes[home].area;
-        if !self.is_read(area, name) {
+        // names the parser makes for module code (D90) are not the author's
+        if !self.is_read(area, name) && !name.starts_with("__") {
             self.add("unused", target.span, None, vec![("name", name.clone())]);
         }
     }
@@ -832,7 +833,7 @@ impl<'a> Linter<'a> {
 
     fn use_lines(&mut self) {
         let uses: Vec<&'a Stmt> =
-            self.program.body.iter().filter(|s| matches!(&s.kind, StmtKind::Use { what } if what == "nexo.sync")).collect();
+            self.program.body.iter().filter(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.sync")).collect();
         if uses.is_empty() {
             return;
         }

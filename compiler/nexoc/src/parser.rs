@@ -25,6 +25,12 @@ pub struct Parser<'s> {
     next_id: u32,
     /// after `use nexo.sync`, spawn, select and shared start statements
     sync: bool,
+    /// `use nexo.db` makes connect and @table available
+    db: bool,
+    /// statements a module block or annotation desugars into, after the
+    /// one `statement` returned (D90)
+    extra: Vec<Stmt>,
+    in_test: bool,
 }
 
 fn describe(tok: &Token) -> String {
@@ -56,7 +62,18 @@ fn is_literal_start(tok: &Token) -> bool {
 
 impl<'s> Parser<'s> {
     pub fn new(toks: Vec<Token>, source: &'s str, in_text: bool, next_id: u32) -> Parser<'s> {
-        Parser { toks, p: 0, source, in_text, block_end: usize::MAX, next_id, sync: false }
+        Parser {
+            toks,
+            p: 0,
+            source,
+            in_text,
+            block_end: usize::MAX,
+            next_id,
+            sync: false,
+            db: false,
+            extra: Vec::new(),
+            in_test: false,
+        }
     }
 
     fn id(&mut self) -> u32 {
@@ -111,6 +128,10 @@ impl<'s> Parser<'s> {
 
     fn is_name(&self) -> bool {
         matches!(self.peek().tok, Tok::Name(_))
+    }
+
+    fn is_name_at(&self, k: usize) -> bool {
+        matches!(self.peek_at(k).tok, Tok::Name(_))
     }
 
     fn error_at(&self, expected: &str, tok: &Token) -> Diagnostic {
@@ -188,9 +209,18 @@ impl<'s> Parser<'s> {
             if self.peek().tok == Tok::Indent {
                 return Err(Diagnostic::new("dedent_mismatch", self.peek().span));
             }
-            body.push(self.statement()?);
+            self.statement_into(&mut body)?;
         }
-        Ok(Program { body })
+        let mut program = Program { body };
+        model_aliases(&mut program, &mut self.next_id);
+        Ok(program)
+    }
+
+    fn statement_into(&mut self, body: &mut Vec<Stmt>) -> PResult<()> {
+        let s = self.statement()?;
+        body.push(s);
+        body.append(&mut self.extra);
+        Ok(())
     }
 
     /// block = ":" NEWLINE INDENT statement { statement } DEDENT
@@ -213,7 +243,7 @@ impl<'s> Parser<'s> {
         self.advance();
         let mut body = Vec::new();
         while self.peek().tok != Tok::Dedent {
-            body.push(self.statement()?);
+            self.statement_into(&mut body)?;
         }
         self.advance();
         Ok(body)
@@ -225,10 +255,18 @@ impl<'s> Parser<'s> {
         if tok.is_op("@") {
             let annotations = self.annotations()?;
             if self.at_kw("type") || (self.at_kw("pub") && self.peek_at(1).is_kw("type")) {
-                return self.type_def(annotations);
+                let t = self.type_def(annotations)?;
+                return self.table_def(t);
             }
             let f = self.fn_def(annotations)?;
-            return Ok(self.stmt_node(f.span, StmtKind::Fn(f)));
+            let s = self.stmt_node(f.span, StmtKind::Fn(f));
+            return self.tool_def(s);
+        }
+        if self.in_test && matches!(&tok.tok, Tok::Name(n) if n == "fake") && self.is_name_at(1) {
+            return self.fake_stmt();
+        }
+        if self.is_name() && self.at_transaction() {
+            return self.transaction();
         }
         if let Tok::Keyword(kw) = tok.tok {
             match kw {
@@ -238,12 +276,16 @@ impl<'s> Parser<'s> {
                 }
                 "pub" => {
                     if self.peek_at(1).is_kw("type") {
-                        return self.type_def(Vec::new());
+                        let t = self.type_def(Vec::new())?;
+                        return self.table_def(t);
                     }
                     let f = self.fn_def(Vec::new())?;
                     return Ok(self.stmt_node(f.span, StmtKind::Fn(f)));
                 }
-                "type" => return self.type_def(Vec::new()),
+                "type" => {
+                    let t = self.type_def(Vec::new())?;
+                    return self.table_def(t);
+                }
                 "trait" => return self.trait_def(),
                 "if" => return self.if_stmt(),
                 "for" => return self.for_stmt(),
@@ -279,7 +321,10 @@ impl<'s> Parser<'s> {
                         _ => return Err(self.error(&word("string"))),
                     };
                     self.advance();
-                    let body = self.block()?;
+                    self.in_test = true;
+                    let body = self.block();
+                    self.in_test = false;
+                    let body = body?;
                     return Ok(self.stmt_node(tok.span, StmtKind::Test { name, body }));
                 }
                 "on" | "when" | "every" | "lifecycle" => return self.event_stmt(),
@@ -419,6 +464,13 @@ impl<'s> Parser<'s> {
         if self.peek_at(1).is_op(":") && self.peek_at(2).tok == Tok::Newline {
             return true;
         }
+        if self.at_name("ai")
+            && matches!(&self.peek_at(1).tok, Tok::Name(n) if n == "profile")
+            && matches!(self.peek_at(2).tok, Tok::Str(_))
+            && self.peek_at(3).is_op(":")
+        {
+            return true;
+        }
         matches!(self.peek_at(1).tok, Tok::Name(_) | Tok::Str(_))
             && self.peek_at(2).is_op(":")
             && self.peek_at(3).tok == Tok::Newline
@@ -431,6 +483,9 @@ impl<'s> Parser<'s> {
     fn config_block(&mut self) -> PResult<Stmt> {
         let tok = self.advance();
         let Tok::Name(word_) = tok.tok.clone() else { unreachable!() };
+        if MODULE_BLOCKS.contains(&word_.as_str()) {
+            return self.module_block(tok);
+        }
         if !self.at_op(":") {
             self.advance();
         }
@@ -458,13 +513,27 @@ impl<'s> Parser<'s> {
         Ok(self.stmt_node(tok.span, StmtKind::Config { word: word_ }))
     }
 
-    /// use_stmt = "use" [ IDENT ] dotted_name [ "as" IDENT ]
+    /// use_stmt = "use" [ IDENT ] dotted_name [ "as" IDENT ], and
+    /// `use c "library"` (section 18, D110)
     fn use_stmt(&mut self) -> PResult<Stmt> {
         let tok = self.advance();
         let (first, _) = self.expect_name()?;
         let mut lang = None;
         let mut name = first.clone();
-        if self.is_name() {
+        if first == "c" && matches!(self.peek().tok, Tok::Str(_)) {
+            lang = Some(first);
+            name = match &self.peek().tok {
+                Tok::Str(parts) if parts.iter().all(|p| matches!(p, StrPart::Lit(_))) => parts
+                    .iter()
+                    .map(|p| match p {
+                        StrPart::Lit(s) => s.as_str(),
+                        _ => "",
+                    })
+                    .collect(),
+                _ => return Err(self.error(&word("string"))),
+            };
+            self.advance();
+        } else if self.is_name() {
             lang = Some(first);
             name = self.dotted_name()?;
         } else {
@@ -474,19 +543,49 @@ impl<'s> Parser<'s> {
                 name.push_str(&self.expect_name()?.0);
             }
         }
+        let mut alias = None;
+        let mut alias_span = None;
         if self.at_kw("as") {
             self.advance();
-            self.expect_name()?;
+            let (a, sp) = self.expect_name()?;
+            alias = Some(a);
+            alias_span = Some(sp);
         }
         if lang.is_none() && name == "nexo.sync" {
             self.sync = true;
         }
-        let what = match lang {
-            Some(l) => format!("{l} {name}"),
-            None => name,
-        };
+        if lang.is_none() && name == "nexo.db" {
+            self.db = true;
+        }
         let span = self.span_from(tok.span);
-        Ok(self.stmt_node(span, StmtKind::Use { what }))
+        if let Some(l) = lang.as_deref().filter(|l| *l == "c" || *l == "python") {
+            let bound = alias.clone().unwrap_or_else(|| {
+                if l == "python" {
+                    name.rsplit('.').next().unwrap().to_string()
+                } else {
+                    name.clone()
+                }
+            });
+            if !is_identifier(&bound) {
+                return Err(Diagnostic::new("use_needs_as", span).arg("name", name.clone()));
+            }
+            let fname = if l == "python" { "__python_import" } else { "__c_library" };
+            let mut args = vec![self.text(span, &name)];
+            if l == "c" {
+                // the name it is used with, for the messages (libz.crc32)
+                args.push(self.text(span, &bound.clone()));
+            }
+            let call = self.call(span, fname, args, Vec::new());
+            let at = alias_span.unwrap_or(span);
+            let target = self.expr_node(at, ExprKind::Name(bound));
+            let st = self.stmt_node(at, StmtKind::Assign { target, op: "=", value: call, ty: None });
+            self.extra.push(st);
+        }
+        let what = match &lang {
+            Some(l) => format!("{l} {name}"),
+            None => name.clone(),
+        };
+        Ok(self.stmt_node(span, StmtKind::Use { what, lang, name, alias }))
     }
 
     /// select: arms `NAME from expr: ...` and `after expr: ...` (nexo.sync)
@@ -544,12 +643,19 @@ impl<'s> Parser<'s> {
         while self.at_op("@") {
             let tok = self.advance();
             let name = self.dotted_name()?;
+            let mut args = Vec::new();
             if self.at_op("(") {
                 self.advance();
-                self.args(")")?;
+                for a in self.args(")")? {
+                    let value = self.rate(a.value)?;
+                    args.push(Arg { span: a.span, name: a.name, value });
+                }
                 self.expect_op(")")?;
+            } else if matches!(self.peek().tok, Tok::Str(_)) {
+                let value = self.primary()?;
+                args.push(Arg { span: value.span, name: None, value });
             }
-            result.push(Annotation { span: self.span_from(tok.span), name });
+            result.push(Annotation { span: self.span_from(tok.span), name, args });
             self.expect_newline()?;
         }
         Ok(result)
@@ -681,16 +787,17 @@ impl<'s> Parser<'s> {
                 if self.peek_at(1).is_op(":") {
                     self.advance();
                     self.advance();
-                    let ty = self.type_()?;
+                    let ty = self.type_field(true)?;
                     let mut default = None;
                     if self.at_op("=") {
                         self.advance();
                         default = Some(self.expr()?);
                     }
                     // annotation_inline, e.g. @private
+                    let mut marks = Vec::new();
                     while self.at_op("@") {
                         self.advance();
-                        self.dotted_name()?;
+                        marks.push(self.dotted_name()?);
                         if self.at_op("(") {
                             self.advance();
                             self.args(")")?;
@@ -698,7 +805,7 @@ impl<'s> Parser<'s> {
                         }
                     }
                     self.expect_newline()?;
-                    node.fields.push(FieldDef { span: tok.span, name: n, ty, default });
+                    node.fields.push(FieldDef { span: tok.span, name: n, ty, default, marks });
                 } else if self.peek_at(1).is_op("=") {
                     self.advance();
                     self.advance();
@@ -757,7 +864,36 @@ impl<'s> Parser<'s> {
 
     /// type = base_type [ "?" | "!" ] | literal { "|" literal }
     fn type_(&mut self) -> PResult<TypeExpr> {
+        self.type_field(false)
+    }
+
+    /// Also `1..5` (an int in a range, section 8) and, in fields, `ref T`
+    /// and `many T` (nexo.db, section 6).
+    fn type_field(&mut self, field: bool) -> PResult<TypeExpr> {
         let tok = self.peek().clone();
+        if let Tok::Int(low) = &tok.tok {
+            if self.peek_at(1).is_op("..") {
+                let low: i64 = low.parse().unwrap_or(0);
+                self.advance();
+                self.advance();
+                let Tok::Int(high) = self.peek().tok.clone() else { return Err(self.error(&word("expr"))) };
+                self.advance();
+                let high: i64 = high.parse().unwrap_or(0);
+                return Ok(TypeExpr::Range { span: self.span_from(tok.span), low, high });
+            }
+        }
+        if field && self.is_name_at(1) {
+            if let Tok::Name(w) = &tok.tok {
+                if w == "ref" || w == "many" {
+                    let rel: &'static str = if w == "ref" { "ref" } else { "many" };
+                    self.advance();
+                    let TypeExpr::Name(mut inner) = self.type_()? else { return Err(self.error(&word("type"))) };
+                    inner.rel = Some(rel);
+                    inner.span = self.span_from(tok.span);
+                    return Ok(TypeExpr::Name(inner));
+                }
+            }
+        }
         if is_literal_start(&tok) {
             let mut literals = vec![self.literal()?];
             while self.at_op("|") {
@@ -792,7 +928,15 @@ impl<'s> Parser<'s> {
         }
         let name = self.dotted_name()?;
         let params = if self.at_op("[") { self.type_params()? } else { Vec::new() };
-        Ok(TypeName { span: self.span_from(tok.span), name, params, optional: false, fallible: false, weak: false })
+        Ok(TypeName {
+            span: self.span_from(tok.span),
+            name,
+            params,
+            optional: false,
+            fallible: false,
+            weak: false,
+            rel: None,
+        })
     }
 
     fn literal(&mut self) -> PResult<Expr> {
@@ -1247,8 +1391,13 @@ impl<'s> Parser<'s> {
                 node = self.expr_node(span, ExprKind::Attr { obj: Box::new(node), name, name_span });
             } else if self.at_op("(") {
                 self.advance();
-                let args = self.args(")")?;
+                let mut args = self.args(")")?;
                 self.expect_op(")")?;
+                let is_sql = matches!(&node.kind, ExprKind::Attr { name, .. } if name == "sql");
+                if self.db && is_sql && args.len() == 1 && args[0].name.is_none() && matches!(args[0].value.kind, ExprKind::Str(_)) {
+                    let value = std::mem::replace(&mut args[0].value, Expr { id: 0, span: start, kind: ExprKind::None });
+                    args[0].value = self.sql_text(value);
+                }
                 let span = self.span_from(start);
                 node = self.expr_node(span, ExprKind::Call { func: Box::new(node), args });
             } else if self.at_op("[") {
@@ -1443,6 +1592,619 @@ impl<'s> Parser<'s> {
     }
 }
 
+// ------------------------------------------------------------------ modules
+// Module blocks and annotations desugar into ordinary statements that call
+// builtins whose names start with "__" (D90), so every later pass (the
+// checker, the resolver, the code generator) sees only core constructs.
+
+const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server"];
+const ROUTE_METHODS: &[&str] = &["get", "post", "put", "patch", "delete"];
+/// keys whose bare names are model aliases (section 8)
+const MODEL_KEYS: &[&str] = &["model", "fallback", "when_over_budget"];
+
+pub fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_alphanumeric() || c == '_') && !crate::lexer::KEYWORDS.contains(&text)
+}
+
+struct Route {
+    func: FnDef,
+    method: String,
+    path: String,
+    annotations: Vec<Annotation>,
+    span: Span,
+}
+
+fn str_text(parts: &[StrPart]) -> String {
+    parts
+        .iter()
+        .map(|p| match p {
+            StrPart::Lit(s) => s.clone(),
+            StrPart::Interp { source, .. } => format!("{{{source}}}"),
+        })
+        .collect()
+}
+
+impl<'s> Parser<'s> {
+    fn text(&mut self, span: Span, value: &str) -> Expr {
+        self.expr_node(span, ExprKind::Str(vec![StrPiece::Lit(value.to_string())]))
+    }
+
+    fn name_expr(&mut self, span: Span, name: &str) -> Expr {
+        self.expr_node(span, ExprKind::Name(name.to_string()))
+    }
+
+    fn call(&mut self, span: Span, fname: &str, args: Vec<Expr>, named: Vec<(String, Expr)>) -> Expr {
+        let func = self.name_expr(span, fname);
+        let mut out: Vec<Arg> = args.into_iter().map(|value| Arg { span, name: None, value }).collect();
+        out.extend(named.into_iter().map(|(n, value)| Arg { span, name: Some(n), value }));
+        self.expr_node(span, ExprKind::Call { func: Box::new(func), args: out })
+    }
+
+    fn expr_stmt(&mut self, e: Expr) -> Stmt {
+        self.stmt_node(e.span, StmtKind::Expr(e))
+    }
+
+    /// A bare name in a model position is the name of a model (an alias).
+    fn model_name(&mut self, e: Expr) -> Expr {
+        match e.kind {
+            ExprKind::Name(n) => self.text(e.span, &n),
+            ExprKind::List(items) => {
+                let items = items.into_iter().map(|i| self.model_name(i)).collect();
+                self.expr_node(e.span, ExprKind::List(items))
+            }
+            kind => Expr { id: e.id, span: e.span, kind },
+        }
+    }
+
+    /// The type of a parameter as a value the runtime can check against.
+    fn type_value(&mut self, t: &Option<TypeExpr>, span: Span) -> Expr {
+        match t {
+            Some(TypeExpr::Name(tn)) => self.name_expr(tn.span, &tn.name.clone()),
+            _ => self.expr_node(span, ExprKind::None),
+        }
+    }
+
+    /// db.sql("... {x} ..."): the literal parts and the values apart, so
+    /// the values become parameters (section 6, D100).
+    fn sql_text(&mut self, s: Expr) -> Expr {
+        let span = s.span;
+        let ExprKind::Str(pieces) = s.kind else { unreachable!() };
+        let mut parts = vec![String::new()];
+        let mut values = Vec::new();
+        for p in pieces {
+            match p {
+                StrPiece::Lit(t) => parts.last_mut().unwrap().push_str(&t),
+                StrPiece::Expr(x) => {
+                    values.push(x);
+                    parts.push(String::new());
+                }
+            }
+        }
+        let parts: Vec<Expr> = parts.iter().map(|p| self.text(span, p)).collect();
+        let parts = self.expr_node(span, ExprKind::List(parts));
+        let values = self.expr_node(span, ExprKind::List(values));
+        self.call(span, "__sql_text", vec![parts, values], Vec::new())
+    }
+
+    /// `10 per minute per ip` -> __rate(10, "minute", "ip")
+    fn rate(&mut self, value: Expr) -> PResult<Expr> {
+        if !self.at_name("per") {
+            return Ok(value);
+        }
+        let start = value.span;
+        let mut args = vec![value];
+        while self.at_name("per") {
+            self.advance();
+            let (w, sp) = self.expect_name()?;
+            args.push(self.text(sp, &w));
+        }
+        let span = self.span_from(start);
+        Ok(self.call(span, "__rate", args, Vec::new()))
+    }
+
+    /// ai:, ai models:, ai profile "name":, agent name:, server name:
+    fn module_block(&mut self, tok: Token) -> PResult<Stmt> {
+        let Tok::Name(word_) = tok.tok.clone() else { unreachable!() };
+        let mut name: Option<String> = None;
+        let mut name_span = tok.span;
+        let kind: &str = if word_ == "ai" && self.at_name("profile") {
+            self.advance();
+            let Tok::Str(parts) = self.peek().tok.clone() else { return Err(self.error(&word("string"))) };
+            self.advance();
+            name = Some(
+                parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        StrPart::Lit(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect(),
+            );
+            "profile"
+        } else if word_ == "ai" && self.at_name("models") {
+            self.advance();
+            "models"
+        } else if word_ == "ai" {
+            "ai"
+        } else {
+            let (n, sp) = self.expect_name()?;
+            name = Some(n);
+            name_span = sp;
+            if word_ == "agent" {
+                "agent"
+            } else {
+                "server"
+            }
+        };
+        self.expect_op(":")?;
+        self.expect_newline_raw()?;
+        if self.peek().tok != Tok::Indent {
+            return Err(self.error(&word("indented")));
+        }
+        self.advance();
+        let mut pairs: Vec<(String, Expr)> = Vec::new();
+        let mut routes: Vec<Route> = Vec::new();
+        while self.peek().tok != Tok::Dedent {
+            let t = self.peek().clone();
+            let is_route = matches!(&t.tok, Tok::Name(m) if ROUTE_METHODS.contains(&m.as_str()))
+                && matches!(self.peek_at(1).tok, Tok::Str(_));
+            if kind == "server" && (t.is_op("@") || is_route) {
+                routes.push(self.route()?);
+                continue;
+            }
+            let (key, key_span) = self.expect_name()?;
+            if !self.at_op("=") {
+                return Err(self.error("\"=\""));
+            }
+            self.advance();
+            let v = self.expr()?;
+            let mut value = self.rate(v)?;
+            if MODEL_KEYS.contains(&key.as_str()) && kind != "models" {
+                value = self.model_name(value);
+            }
+            if pairs.iter().any(|(n, _)| *n == key) {
+                return Err(Diagnostic::new("duplicate_name", key_span).arg("name", key));
+            }
+            pairs.push((key, value));
+            self.expect_newline()?;
+        }
+        self.advance();
+        self.block_end = self.p;
+        let span = tok.span;
+        if kind == "models" {
+            let c = self.call(span, "__ai_models", Vec::new(), pairs);
+            return Ok(self.expr_stmt(c));
+        }
+        if kind == "ai" || kind == "profile" {
+            let first = match &name {
+                Some(n) => self.text(span, &n.clone()),
+                None => self.expr_node(span, ExprKind::None),
+            };
+            let c = self.call(span, "__ai_config", vec![first], pairs);
+            return Ok(self.expr_stmt(c));
+        }
+        let name = name.unwrap();
+        let fname = if kind == "agent" { "__ai_agent" } else { "__web_server" };
+        let first = self.text(span, &name);
+        let value = self.call(span, fname, vec![first], pairs);
+        let target = self.name_expr(name_span, &name);
+        let stmt = self.stmt_node(name_span, StmtKind::Assign { target, op: "=", value, ty: None });
+        for r in routes {
+            let mut named: Vec<(String, Expr)> = Vec::new();
+            for a in &r.annotations {
+                match (a.name.as_str(), a.args.len()) {
+                    ("role", 1) => named.push(("role".into(), a.args[0].value.clone())),
+                    ("limit", 1) => named.push(("limit".into(), a.args[0].value.clone())),
+                    ("public", 0) => {
+                        let b = self.expr_node(a.span, ExprKind::Bool(true));
+                        named.push(("public".into(), b));
+                    }
+                    _ => {
+                        return Err(Diagnostic::new("not_supported", a.span).arg("what", format!("\"@{}\"", a.name)))
+                    }
+                }
+            }
+            let mspan = r.span;
+            let types: Vec<Expr> = r.func.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>().iter().map(|t| self.type_value(t, mspan)).collect();
+            let types = self.expr_node(mspan, ExprKind::List(types));
+            let fname = r.func.name.clone();
+            let fstmt = self.stmt_node(r.func.span, StmtKind::Fn(r.func));
+            self.extra.push(fstmt);
+            let server = self.name_expr(mspan, &name);
+            let method = self.text(mspan, &r.method);
+            let path = self.text(mspan, &r.path);
+            let handler = self.name_expr(mspan, &fname);
+            let c = self.call(mspan, "__web_route", vec![server, method, path, handler, types], named);
+            let st = self.expr_stmt(c);
+            self.extra.push(st);
+        }
+        Ok(stmt)
+    }
+
+    /// route = { annotation } METHOD STRING [ "(" params ")" ] block
+    fn route(&mut self) -> PResult<Route> {
+        let annotations = if self.at_op("@") { self.annotations()? } else { Vec::new() };
+        let tok = self.peek().clone();
+        let (m, mspan) = self.expect_name()?;
+        if !ROUTE_METHODS.contains(&m.as_str()) {
+            return Err(self.error_at(&word("route"), &tok));
+        }
+        let Tok::Str(parts) = self.peek().tok.clone() else { return Err(self.error(&word("string"))) };
+        self.advance();
+        let path = str_text(&parts);
+        let params = if self.at_op("(") { self.params()? } else { Vec::new() };
+        let method = m.to_uppercase();
+        let span = self.span_from(mspan);
+        let body = self.block()?;
+        let id = self.id();
+        let func = FnDef {
+            id,
+            span,
+            name: format!("{method} {path}"),
+            name_span: mspan,
+            params,
+            ret: None,
+            body,
+            is_pub: false,
+            annotations: Vec::new(),
+        };
+        Ok(Route { func, method, path, annotations, span: mspan })
+    }
+
+    /// @table type T: the type, then __db_table(T, key, many, marks).
+    fn table_def(&mut self, mut st: Stmt) -> PResult<Stmt> {
+        let StmtKind::Type(node) = &mut st.kind else { return Ok(st) };
+        let table = node.annotations.iter().find(|a| a.name == "table").cloned();
+        let rel = node.fields.iter().find_map(|f| match &f.ty {
+            TypeExpr::Name(t) if t.rel.is_some() => Some((t.rel.unwrap(), t.span)),
+            _ => None,
+        });
+        let Some(a) = table else {
+            if let Some((w, sp)) = rel {
+                return Err(Diagnostic::new("table_only", sp).arg("word", w));
+            }
+            return Ok(st);
+        };
+        if !a.args.is_empty() {
+            return Err(Diagnostic::new("not_supported", a.span).arg("what", "\"@table(...)\""));
+        }
+        if !self.db {
+            return Err(Diagnostic::new("needs_use", a.span).arg("what", "\"@table\"").arg("module", "nexo.db"));
+        }
+        node.annotations.retain(|x| x.name != "table");
+        let mut key: Option<String> = None;
+        let mut many: Vec<(String, Span, String, Span)> = Vec::new();
+        let mut marks: Vec<(String, Span, Vec<String>)> = Vec::new();
+        let mut kept = Vec::new();
+        let type_name = node.name.clone();
+        let type_span = node.name_span;
+        for mut f in std::mem::take(&mut node.fields) {
+            if let TypeExpr::Name(t) = &mut f.ty {
+                if t.rel == Some("many") {
+                    many.push((f.name.clone(), f.span, t.name.clone(), t.span));
+                    continue;
+                }
+                if t.name == "id" && t.params.is_empty() && t.rel.is_none() {
+                    if key.is_some() {
+                        return Err(Diagnostic::new("table_two_ids", f.span).arg("type", type_name));
+                    }
+                    key = Some(f.name.clone());
+                    t.name = "int".into();
+                    t.optional = true;
+                }
+            }
+            let mut fmarks = f.marks.clone();
+            if matches!(&f.ty, TypeExpr::Name(t) if t.rel == Some("ref")) {
+                fmarks.push("ref".into());
+            }
+            if !fmarks.is_empty() {
+                marks.push((f.name.clone(), f.span, fmarks));
+            }
+            kept.push(f);
+        }
+        node.fields = kept;
+        let span = a.span;
+        let tname = self.name_expr(type_span, &type_name);
+        let key_e = match &key {
+            Some(k) => self.text(span, &k.clone()),
+            None => self.expr_node(span, ExprKind::None),
+        };
+        let mut many_pairs = Vec::new();
+        for (n, ns, t, ts) in many {
+            let k = self.text(ns, &n);
+            let v = self.text(ts, &t);
+            many_pairs.push((k, v));
+        }
+        let many_e = self.expr_node(span, ExprKind::Map(many_pairs));
+        let mut mark_pairs = Vec::new();
+        for (n, ns, ms) in marks {
+            let k = self.text(ns, &n);
+            let items = ms.iter().map(|m| self.text(ns, m)).collect();
+            let v = self.expr_node(ns, ExprKind::List(items));
+            mark_pairs.push((k, v));
+        }
+        let marks_e = self.expr_node(span, ExprKind::Map(mark_pairs));
+        let c = self.call(span, "__db_table", vec![tname, key_e, many_e, marks_e], Vec::new());
+        let es = self.expr_stmt(c);
+        self.extra.push(es);
+        Ok(st)
+    }
+
+    /// @tool "description" fn ...: the function, then __ai_tool(fn, ...).
+    fn tool_def(&mut self, mut st: Stmt) -> PResult<Stmt> {
+        let StmtKind::Fn(f) = &mut st.kind else { return Ok(st) };
+        let Some(a) = f.annotations.iter().find(|a| a.name == "tool").cloned() else { return Ok(st) };
+        f.annotations.retain(|x| x.name != "tool");
+        let fname = f.name.clone();
+        let fspan = f.name_span;
+        let ptypes: Vec<Option<TypeExpr>> = f.params.iter().map(|p| p.ty.clone()).collect();
+        let desc = match a.args.first() {
+            Some(arg) => arg.value.clone(),
+            None => self.text(a.span, &fname),
+        };
+        let types: Vec<Expr> = ptypes.iter().map(|t| self.type_value(t, a.span)).collect();
+        let types = self.expr_node(a.span, ExprKind::List(types));
+        let fe = self.name_expr(fspan, &fname);
+        let c = self.call(a.span, "__ai_tool", vec![fe, desc, types], Vec::new());
+        let es = self.expr_stmt(c);
+        self.extra.push(es);
+        Ok(st)
+    }
+
+    /// fake NAME returns EXPR (inside a test, section 14)
+    fn fake_stmt(&mut self) -> PResult<Stmt> {
+        let tok = self.advance();
+        let name_start = self.peek().span;
+        let name = self.dotted_name()?;
+        let name_span = self.span_from(name_start);
+        if !self.at_name("returns") {
+            return Err(self.error("\"returns\""));
+        }
+        self.advance();
+        let value = self.expr()?;
+        let span = self.span_from(tok.span);
+        let n = self.text(name_span, &name);
+        let c = self.call(span, "__fake", vec![n, value], Vec::new());
+        let st = self.expr_stmt(c);
+        self.expect_newline()?;
+        Ok(st)
+    }
+
+    /// NAME { "." NAME } "." "transaction" ":" NEWLINE
+    fn at_transaction(&self) -> bool {
+        let mut k = 1;
+        while self.peek_at(k).is_op(".") && self.is_name_at(k + 1) {
+            k += 2;
+        }
+        k >= 3
+            && matches!(&self.peek_at(k - 1).tok, Tok::Name(n) if n == "transaction")
+            && self.peek_at(k).is_op(":")
+            && self.peek_at(k + 1).tok == Tok::Newline
+    }
+
+    /// db.transaction: block (section 6), as
+    ///     __txL_C = __db_begin(db)
+    ///     try:
+    ///         block
+    ///         __db_commit(__txL_C)
+    ///     else __e:
+    ///         __db_rollback(__txL_C)
+    ///         fail(__e)
+    fn transaction(&mut self) -> PResult<Stmt> {
+        let start = self.peek().span;
+        let (first, fspan) = self.expect_name()?;
+        let mut obj = self.name_expr(fspan, &first);
+        while !(matches!(&self.peek_at(1).tok, Tok::Name(n) if n == "transaction") && self.peek_at(2).is_op(":")) {
+            self.advance();
+            let (n, ns) = self.expect_name()?;
+            let span = self.span_from(start);
+            obj = self.expr_node(span, ExprKind::Attr { obj: Box::new(obj), name: n, name_span: ns });
+        }
+        self.advance();
+        self.advance();
+        let span = self.span_from(start);
+        let mut body = self.block()?;
+        let mut ret = None;
+        crate::checker::walk_stmts(&body, false, &mut |s| {
+            if matches!(s.kind, StmtKind::Return(_)) && ret.is_none() {
+                ret = Some(s.span);
+            }
+        });
+        if let Some(sp) = ret {
+            return Err(Diagnostic::new("transaction_return", sp));
+        }
+        let tx = format!("__tx{}_{}", span.line, span.col);
+        let begin_call = self.call(span, "__db_begin", vec![obj], Vec::new());
+        let target = self.name_expr(span, &tx);
+        let begin = self.stmt_node(span, StmtKind::Assign { target, op: "=", value: begin_call, ty: None });
+        let txe = self.name_expr(span, &tx);
+        let commit = self.call(span, "__db_commit", vec![txe], Vec::new());
+        let commit = self.expr_stmt(commit);
+        body.push(commit);
+        let txe = self.name_expr(span, &tx);
+        let rollback = self.call(span, "__db_rollback", vec![txe], Vec::new());
+        let rollback = self.expr_stmt(rollback);
+        let e = self.name_expr(span, "__e");
+        let refail = self.call(span, "fail", vec![e], Vec::new());
+        let refail = self.expr_stmt(refail);
+        let handler = Handler { span, var: "__e".into(), kind: None, body: vec![rollback, refail] };
+        let tr = self.stmt_node(span, StmtKind::Try { within: None, body, handlers: vec![handler] });
+        self.extra.push(tr);
+        Ok(begin)
+    }
+}
+
+/// Calls of `ask` (section 8, D107): in `model: fast` a bare name declared
+/// by an `ai models:` block is the name of that model; in `creativity: low`,
+/// `guard: injection` and `redact: private` a bare name is a word; and
+/// `o: Opinion = ask(...)` passes the type of the variable as `as:`.
+fn model_aliases(program: &mut Program, ids: &mut u32) {
+    let mut aliases: Vec<String> = Vec::new();
+    for s in &program.body {
+        if let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind {
+            if matches!(&func.kind, ExprKind::Name(n) if n == "__ai_models") {
+                aliases.extend(args.iter().filter_map(|a| a.name.clone()));
+            }
+        }
+    }
+    for s in &mut program.body {
+        fix_stmt(s, &aliases, ids);
+    }
+}
+
+/// The ask call a typed variable receives: it gets `as: T`.
+fn typed_ask(value: &mut Expr, ty: &Option<TypeExpr>, ids: &mut u32) {
+    let Some(TypeExpr::Name(tn)) = ty else { return };
+    // `o: Opinion = ask(...)?` too
+    let value = match &mut value.kind {
+        ExprKind::Propagate(inner) => inner.as_mut(),
+        _ => value,
+    };
+    if let ExprKind::Call { func, args } = &mut value.kind {
+        if matches!(&func.kind, ExprKind::Name(n) if n == "ask") && !args.iter().any(|a| a.name.as_deref() == Some("as")) {
+            *ids += 1;
+            let t = Expr { id: *ids, span: tn.span, kind: ExprKind::Name(tn.name.clone()) };
+            args.push(Arg { span: tn.span, name: Some("as".into()), value: t });
+        }
+    }
+}
+
+fn fix_body(body: &mut [Stmt], aliases: &[String], ids: &mut u32) {
+    for s in body {
+        fix_stmt(s, aliases, ids);
+    }
+}
+
+fn fix_stmt(s: &mut Stmt, aliases: &[String], ids: &mut u32) {
+    match &mut s.kind {
+        StmtKind::Expr(e) | StmtKind::Return(Some(e)) | StmtKind::Expect(e) | StmtKind::Ensure(e) => fix_expr(e, aliases, ids),
+        StmtKind::Assert { expr, .. } => fix_expr(expr, aliases, ids),
+        StmtKind::Assign { target, value, ty, .. } => {
+            typed_ask(value, ty, ids);
+            fix_expr(target, aliases, ids);
+            fix_expr(value, aliases, ids);
+        }
+        StmtKind::VarDecl { value, ty, .. } => {
+            typed_ask(value, ty, ids);
+            fix_expr(value, aliases, ids);
+        }
+        StmtKind::Shared { value, .. } => fix_expr(value, aliases, ids),
+        StmtKind::Spawn { call } => fix_expr(call, aliases, ids),
+        StmtKind::Emit { args, .. } => args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases, ids)),
+        StmtKind::Fn(f) => fix_body(&mut f.body, aliases, ids),
+        StmtKind::Type(t) => t.methods.iter_mut().for_each(|m| fix_body(&mut m.body, aliases, ids)),
+        StmtKind::If { branches, orelse } => {
+            for (c, b) in branches {
+                fix_expr(c, aliases, ids);
+                fix_body(b, aliases, ids);
+            }
+            if let Some(b) = orelse {
+                fix_body(b, aliases, ids);
+            }
+        }
+        StmtKind::For { iterable: e, body, .. } | StmtKind::While { cond: e, body } | StmtKind::Repeat { count: e, body } => {
+            fix_expr(e, aliases, ids);
+            fix_body(body, aliases, ids);
+        }
+        StmtKind::Match { subject, arms } => {
+            fix_expr(subject, aliases, ids);
+            for a in arms {
+                if let Some(g) = &mut a.guard {
+                    fix_expr(g, aliases, ids);
+                }
+                fix_body(&mut a.body, aliases, ids);
+            }
+        }
+        StmtKind::Try { within, body, handlers } => {
+            if let Some(w) = within {
+                fix_expr(w, aliases, ids);
+            }
+            fix_body(body, aliases, ids);
+            handlers.iter_mut().for_each(|h| fix_body(&mut h.body, aliases, ids));
+        }
+        StmtKind::Parallel(b) | StmtKind::Test { body: b, .. } | StmtKind::Event { body: b, .. } => fix_body(b, aliases, ids),
+        StmtKind::Select { arms } => arms.iter_mut().for_each(|a| fix_body(&mut a.body, aliases, ids)),
+        _ => {}
+    }
+}
+
+fn fix_expr(e: &mut Expr, aliases: &[String], ids: &mut u32) {
+    if let ExprKind::Call { func, args } = &mut e.kind {
+        if matches!(&func.kind, ExprKind::Name(n) if n == "ask") {
+            for a in args.iter_mut() {
+                let word = matches!(a.name.as_deref(), Some("creativity" | "guard" | "redact"));
+                if word || a.name.as_deref() == Some("model") {
+                    if let ExprKind::Name(n) = &a.value.kind {
+                        if word || aliases.contains(n) {
+                            a.value.kind = ExprKind::Str(vec![StrPiece::Lit(n.clone())]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    match &mut e.kind {
+        ExprKind::Str(parts) => {
+            for p in parts {
+                if let StrPiece::Expr(x) = p {
+                    fix_expr(x, aliases, ids);
+                }
+            }
+        }
+        ExprKind::List(items) => items.iter_mut().for_each(|x| fix_expr(x, aliases, ids)),
+        ExprKind::Map(pairs) => pairs.iter_mut().for_each(|(k, v)| {
+            fix_expr(k, aliases, ids);
+            fix_expr(v, aliases, ids);
+        }),
+        ExprKind::Comprehension { element, iterable, condition, .. } => {
+            fix_expr(element, aliases, ids);
+            fix_expr(iterable, aliases, ids);
+            if let Some(c) = condition {
+                fix_expr(c, aliases, ids);
+            }
+        }
+        ExprKind::Attr { obj, .. } | ExprKind::Propagate(obj) => fix_expr(obj, aliases, ids),
+        ExprKind::Unary { operand, .. } => fix_expr(operand, aliases, ids),
+        ExprKind::Index { obj, index } => {
+            fix_expr(obj, aliases, ids);
+            fix_expr(index, aliases, ids);
+        }
+        ExprKind::Call { func, args } => {
+            fix_expr(func, aliases, ids);
+            args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases, ids));
+        }
+        ExprKind::BinOp { left, right, .. }
+        | ExprKind::BoolOp { left, right, .. }
+        | ExprKind::Coalesce { left, right }
+        | ExprKind::Range { start: left, end: right } => {
+            fix_expr(left, aliases, ids);
+            fix_expr(right, aliases, ids);
+        }
+        ExprKind::Compare { operands, .. } => operands.iter_mut().for_each(|x| fix_expr(x, aliases, ids)),
+        ExprKind::Lambda { body, .. } => fix_expr(body, aliases, ids),
+        ExprKind::Pipeline { source, steps } => {
+            fix_expr(source, aliases, ids);
+            for st in steps {
+                if let Some(x) = &mut st.expr {
+                    fix_expr(x, aliases, ids);
+                }
+                st.columns.iter_mut().for_each(|c| fix_expr(c, aliases, ids));
+            }
+        }
+        ExprKind::ParallelFor { iterable, args, body, .. } => {
+            fix_expr(iterable, aliases, ids);
+            args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases, ids));
+            fix_body(body, aliases, ids);
+        }
+        _ => {}
+    }
+}
+
 fn check_unique<'a>(names: impl Iterator<Item = (&'a str, Span)>) -> PResult<()> {
     let mut seen = std::collections::HashSet::new();
     for (name, span) in names {
@@ -1530,8 +2292,47 @@ mod tests {
 
     #[test]
     fn config_blocks_are_skipped() {
-        let p = parse("ai:\n    model = \"x\"\n    nested:\n        a = 1\nprint(1)\n").unwrap();
+        let p = parse("infra shop:\n    cloud = \"aws\"\n    nested:\n        a = 1\nprint(1)\n").unwrap();
         assert!(matches!(p.body[0].kind, StmtKind::Config { .. }));
         assert_eq!(p.body.len(), 2);
+    }
+
+    fn summary(p: &Program) -> Vec<String> {
+        p.body
+            .iter()
+            .map(|s| match &s.kind {
+                StmtKind::Use { what, .. } => format!("use {what}"),
+                StmtKind::Assign { target: Expr { kind: ExprKind::Name(n), .. }, .. } => format!("{n} ="),
+                StmtKind::Type(t) => format!("type {} {}", t.name, t.fields.len()),
+                StmtKind::Fn(f) => format!("fn {}", f.name),
+                StmtKind::Expr(Expr { kind: ExprKind::Call { func, .. }, .. }) => match &func.kind {
+                    ExprKind::Name(n) => format!("{n}()"),
+                    _ => "call".into(),
+                },
+                StmtKind::Try { body, .. } => format!("try {}", body.len()),
+                StmtKind::Test { .. } => "test".into(),
+                _ => "?".into(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn module_blocks_desugar() {
+        let src = "use nexo.db\nuse python numpy as np\nuse c \"libm\"\n@table\ntype Customer:\n    id: id\n    email: str @unique\n    orders: many Order\nai models:\n    fast = \"openai:gpt-mini\"\nai:\n    model = fast\n@tool \"Looks up\"\nfn find(id: str) -> str:\n    return id\nagent support:\n    tools = [find]\nserver api:\n    port = 8080\n    @limit(10 per minute per ip)\n    get \"/users/{id}\"(id: int):\n        return id\ndb.transaction:\n    print(1)\nx = ask(\"hi\", model: fast)\ntest \"t\":\n    fake ask returns \"x\"\n";
+        let p = parse(src).unwrap();
+        assert_eq!(
+            summary(&p),
+            [
+                "use nexo.db", "use python numpy", "np =", "use c libm", "libm =", "type Customer 2", "__db_table()",
+                "__ai_models()", "__ai_config()", "fn find", "__ai_tool()", "support =", "api =", "fn GET /users/{id}",
+                "__web_route()", "__tx23_1 =", "try 2", "x =", "test"
+            ]
+        );
+        let StmtKind::Assign { value, .. } = &p.body[17].kind else { panic!() };
+        let ExprKind::Call { args, .. } = &value.kind else { panic!() };
+        assert!(matches!(&args[1].value.kind, ExprKind::Str(_)));
+        assert_eq!(err("@table\ntype A:\n    id: id\n").key, "needs_use");
+        assert_eq!(err("type A:\n    b: ref B\n").key, "table_only");
+        assert_eq!(err("use nexo.db\nfn f():\n    db.transaction:\n        return 1\n").key, "transaction_return");
     }
 }

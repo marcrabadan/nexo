@@ -1,0 +1,7 @@
+# @role needs a server with auth (D102)
+server api:
+    port = 8080
+
+    @role("admin")
+    get "/admin"():
+        return "secret"

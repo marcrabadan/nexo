@@ -1,0 +1,25 @@
+# ask in tests, with fake (section 8 and 14, D99)
+type Opinion:
+    tone: "positive" | "negative" | "neutral"
+    score: 1..5
+
+fn classify(review: str) -> Opinion!:
+    o: Opinion = ask("Analyse this review", review)?
+    return o
+
+fn summary(text: str) -> str!:
+    return ask("Summarise this text", text, max: 20 words, creativity: low)?
+
+test "ask can be faked":
+    fake ask returns "A short text."
+    assert summary("A very long text") == "A short text."
+
+test "a typed ask can be faked":
+    fake ask returns Opinion(tone: "positive", score: 4)
+    assert classify("Great!").score == 4
+
+test "without a provider ask fails":
+    try:
+        ask("hi")
+    else e is AIError:
+        print(e.message)

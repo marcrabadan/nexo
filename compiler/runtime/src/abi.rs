@@ -116,6 +116,11 @@ pub extern "C" fn nx_too_deep() {
 pub extern "C" fn nx_exit(code: i32) -> ! {
     // the program ends when every spawned task has ended
     crate::sync::wait_all();
+    // then its servers answer until it is stopped (D102)
+    let mut code = code;
+    if code == 0 && !crate::web::serve_forever() {
+        code = 1;
+    }
     if leakcheck_enabled() {
         check_leaks();
     }
@@ -133,6 +138,7 @@ fn check_leaks() {
     let handlers = std::mem::take(&mut state::registry().write().unwrap().handlers);
     drop(handlers);
     types::release_all();
+    crate::library::release_all();
     SCRATCH.with(|s| s.borrow_mut().clear());
     state::clear();
     let live = live_objects();
@@ -239,6 +245,20 @@ pub unsafe extern "C" fn nx_named(ptr: *const u8, len: usize) -> V {
         }
         None => NONE,
     }
+}
+
+/// `nexo db diff|migrate` (D101): the types are registered; compare them
+/// with the database and end.
+#[no_mangle]
+pub extern "C" fn nx_db_command() -> ! {
+    let code = crate::db::run_command();
+    nx_exit(code)
+}
+
+/// `now` and `today`, read from the clock each time.
+#[no_mangle]
+pub unsafe extern "C" fn nx_clock(ptr: *const u8, len: usize) -> V {
+    crate::time::clock(text(ptr, len)).into_raw()
 }
 
 /// Decode a type descriptor (when the program starts).
@@ -552,11 +572,12 @@ pub extern "C" fn nx_is(at: u64, ab: u64, tt: u64, tb: u64, span: u32) -> u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_interp(parts: *const V, n: u64) -> V {
+pub unsafe extern "C" fn nx_interp(parts: *const V, n: u64, spans: *const u32) -> V {
     let mut out = String::new();
-    for p in values(parts, n) {
-        match pipe::bind(*p) {
-            Ok(b) => out.push_str(&show(b.v())),
+    let spans = std::slice::from_raw_parts(spans, n as usize);
+    for (p, span) in values(parts, n).iter().zip(spans) {
+        match pipe::bind(*p).and_then(|b| crate::fmt::show_checked(b.v(), *span)) {
+            Ok(text) => out.push_str(&text),
             Err(_) => return NONE,
         }
     }
@@ -635,6 +656,25 @@ pub unsafe extern "C" fn nx_conform_return(
 
 #[no_mangle]
 pub unsafe extern "C" fn nx_call(t: u64, b: u64, args: *const V, nm: *const NameRef, n: u64, span: u32) -> V {
+    let names = names(nm, n);
+    ret(call::call(v(t, b), values(args, n), &names, span))
+}
+
+/// A call to a name a `fake` may replace (section 14).
+#[no_mangle]
+pub unsafe extern "C" fn nx_call_fake(
+    name: *const u8,
+    len: usize,
+    t: u64,
+    b: u64,
+    args: *const V,
+    nm: *const NameRef,
+    n: u64,
+    span: u32,
+) -> V {
+    if let Some(v) = crate::library::fake_value(text(name, len)) {
+        return v.into_raw();
+    }
     let names = names(nm, n);
     ret(call::call(v(t, b), values(args, n), &names, span))
 }
@@ -783,6 +823,7 @@ unsafe fn fields(decls: *const FieldDecl, n: u64, defaults: *const V) -> Vec<Fie
             ty: if f.desc.ptr.is_null() { None } else { Some(types::desc(f.desc.ptr, f.desc.len)) },
             optional: f.optional & 1 != 0,
             weak: f.optional & 2 != 0,
+            private: f.optional & 4 != 0,
             default: if defaults.is_null() { Val::simple(UNDEF) } else { Val::from(*defaults.add(i)) },
         })
         .collect()
@@ -962,6 +1003,54 @@ pub extern "C" fn nx_no_match(t: u64, b: u64, span: u32) {
 #[no_mangle]
 pub extern "C" fn nx_pipe_where(st_: u64, sb: u64, ft: u64, fb: u64, step: u32, expr: u32) -> V {
     pipe::where_(v(st_, sb), v(ft, fb), step, expr).into_raw()
+}
+
+/// `where` with the plan the compiler made of its condition: on a database
+/// query it may run in SQL (D100); `leaves` evaluate its values.
+#[no_mangle]
+pub unsafe extern "C" fn nx_pipe_where_sql(
+    st_: u64,
+    sb: u64,
+    ft: u64,
+    fb: u64,
+    plan: *const u8,
+    plen: usize,
+    leaves: *const V,
+    n: u64,
+    step: u32,
+    expr: u32,
+) -> V {
+    let src = v(st_, sb);
+    if crate::db::query_of(src).is_some() {
+        let plan = crate::db::parse_plan(text(plan, plen));
+        let leaves = values(leaves, n);
+        let mut value = |i: usize| call::call_value(leaves[i], &[NONE], expr);
+        match crate::db::pipe_where(src, &plan, &mut value, step) {
+            Ok(Some(q)) => return q.into_raw(),
+            Ok(None) => {}
+            Err(_) => return NONE,
+        }
+    }
+    pipe::where_(src, v(ft, fb), step, expr).into_raw()
+}
+
+/// `sort by name`: on a database query it may run in SQL (D100).
+#[no_mangle]
+pub unsafe extern "C" fn nx_pipe_sort_col(
+    st_: u64,
+    sb: u64,
+    ft: u64,
+    fb: u64,
+    desc: u32,
+    name: *const u8,
+    len: usize,
+    step: u32,
+    expr: u32,
+) -> V {
+    if let Some(q) = crate::db::pipe_sort(v(st_, sb), text(name, len), desc != 0) {
+        return q.into_raw();
+    }
+    pipe::sort(v(st_, sb), v(ft, fb), desc != 0, step, expr).into_raw()
 }
 
 #[no_mangle]
@@ -1298,7 +1387,8 @@ pub extern "C" fn nx_test_finish() -> ! {
     if let Ok(path) = std::env::var("NEXO_TEST_REPORT") {
         let _ = std::fs::write(path, format!("{run} {passed}\n"));
     }
-    nx_exit(0)
+    // a mistake in a handler of a server is a broken program (D102)
+    nx_exit(if crate::web::MISTAKE.load(std::sync::atomic::Ordering::SeqCst) { 1 } else { 0 })
 }
 
 static TEST_COUNTS: Mutex<(u32, u32)> = Mutex::new((0, 0));
@@ -1377,10 +1467,16 @@ pub unsafe extern "C" fn nx_test_register(name: *const u8, len: usize, t: u64, b
 pub extern "C" fn nx_run_tests() -> ! {
     let tests: Vec<(String, Val)> = TESTS.lock().unwrap().clone();
     if !tests.is_empty() {
+        if !crate::web::serve_in_background() {
+            state::report_pending();
+            std::process::exit(1);
+        }
         nx_test_header();
     }
     for (name, f) in tests {
+        crate::library::clear_fakes();
         drop(call::call_value(f.v(), &[], 0));
+        crate::library::clear_fakes();
         unsafe { nx_test_result(name.as_ptr(), name.len()) };
     }
     nx_test_finish()

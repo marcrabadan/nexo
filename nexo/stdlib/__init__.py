@@ -4,11 +4,12 @@ phase 0."""
 from __future__ import annotations
 
 import inspect
+import keyword
 from typing import Any
 
 from ..errors import NexoError, Span, suggest
-from ..types import Builtin, Lazy, NexoSet, plain, type_name
-from . import core, data, io
+from ..types import At, Builtin, Lazy, Native, NexoSet, plain, type_name
+from . import clock, core, data, io, text  # noqa: E402
 
 
 class Namespace:
@@ -23,8 +24,11 @@ class Namespace:
 
 
 def install(interp) -> None:
+    from . import ai, clib, crypto, db, http, pylib, web
+    web.reset()
+    ai.reset()
     env = interp.builtins
-    for module in (core, io, data):
+    for module in (core, io, data, clock, text, crypto, http, db, web, ai, clib, pylib):
         for name, value in module.exports().items():
             env.define(name, value)
     env.define("json", Namespace("json", data.json_exports()))
@@ -33,6 +37,8 @@ def install(interp) -> None:
 
 def members(interp, obj: Any, name: str, span: Span) -> Any:
     """Methods of builtin values: list.sum(), text.upper(), ..."""
+    if isinstance(obj, Native):
+        return obj.member(At(interp, span), name)
     if isinstance(obj, Namespace):
         if name in obj.attrs:
             return obj.attrs[name]
@@ -73,7 +79,7 @@ _SIGNATURES: dict = {}
 def check_arguments(fn: Builtin, positional: list, named: dict, span: Span) -> dict:
     """Validate a builtin call against its Python signature and return the
     named arguments renamed for Python (`as` -> `as_`)."""
-    named = {("as_" if k == "as" else k): v for k, v in named.items()}
+    named = {(k + "_" if keyword.iskeyword(k) else k): v for k, v in named.items()}
     sig = _SIGNATURES.get(fn.fn)
     if sig is None:
         sig = _SIGNATURES[fn.fn] = inspect.signature(fn.fn)

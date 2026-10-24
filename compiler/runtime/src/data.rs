@@ -23,7 +23,7 @@ use crate::value::*;
 
 // ------------------------------------------------------------------- files
 
-fn os_failure(path: &str, e: &std::io::Error, span: u32) -> crate::state::Fail {
+pub fn os_failure(path: &str, e: &std::io::Error, span: u32) -> crate::state::Fail {
     let reason = os_reason(e);
     let cause = Val::str(reason.clone());
     if e.kind() == std::io::ErrorKind::NotFound {
@@ -283,7 +283,7 @@ fn csv_line(fields: &[String]) -> String {
     parts.join(",") + "\n"
 }
 
-fn to_csv(value: V, span: u32) -> R<String> {
+pub fn to_csv(value: V, span: u32) -> R<String> {
     let Some(Obj::List(items)) = value.get() else {
         return Err(diag(nexo_diag::Diagnostic::new_spanless("csv_value").arg("vtype", type_name(value)), span));
     };
@@ -320,7 +320,7 @@ fn to_csv(value: V, span: u32) -> R<String> {
 
 // -------------------------------------------------------------------- json
 
-enum Json {
+pub(crate) enum Json {
     Null,
     Bool(bool),
     Int(BigInt),
@@ -554,7 +554,7 @@ impl<'a> JsonParser<'a> {
     }
 }
 
-fn parse_json(text: &str) -> Result<Json, (usize, usize)> {
+pub(crate) fn parse_json(text: &str) -> Result<Json, (usize, usize)> {
     let chars: Vec<char> = text.chars().collect();
     let mut p = JsonParser { s: &chars, i: 0 };
     p.ws();
@@ -576,7 +576,7 @@ fn parse_json(text: &str) -> Result<Json, (usize, usize)> {
     })
 }
 
-fn from_json(j: Json, span: u32) -> R<Val> {
+pub(crate) fn from_json(j: Json, span: u32) -> R<Val> {
     Ok(match j {
         Json::Null => Val::none(),
         Json::Bool(b) => Val::bool(b),
@@ -619,7 +619,7 @@ fn field_target(t: &'static TypeDesc) -> Option<Target> {
     match t {
         TypeDesc::Named { name, params, .. } => match name.as_str() {
             "list" if !params.is_empty() => Some(Target::List(Some(params[0]))),
-            "float" | "decimal" => Some(Target::Builtin(if name == "float" { "float" } else { "decimal" })),
+            "float" | "decimal" | "date" | "time" => Some(Target::Builtin(crate::num::intern(name))),
             _ => None,
         },
         TypeDesc::User { id, .. } => match lookup(*id) {
@@ -689,6 +689,14 @@ fn as_type(value: V, t: Target, span: u32) -> R<Val> {
             if name == "float" && value.tag == T_INT {
                 return Ok(Val::float(value.bits as i64 as f64));
             }
+            if name == "date" || name == "time" {
+                if let Some(t) = value.as_str() {
+                    let parsed = if name == "date" { crate::time::parse_date(t) } else { crate::time::parse_time(t) };
+                    return parsed.ok_or_else(|| {
+                        invalid(span, "detail.expected", &[("type", name.to_string()), ("vtype", "str".into())])
+                    });
+                }
+            }
             if name == "decimal" && (value.tag == T_INT || value.tag == T_FLOAT) {
                 let text = if value.tag == T_INT { (value.bits as i64).to_string() } else { format_float(f64::from_bits(value.bits)) };
                 return Ok(decimal(Dec::parse(&text).unwrap()));
@@ -748,9 +756,18 @@ pub fn json_string(s: &str) -> String {
     out
 }
 
+/// JSON on one line without spaces (for HTTP).
+pub fn to_json_compact(v: V) -> String {
+    to_json_in(v, 0, true)
+}
+
 /// JSON text of a value, indented with 2 spaces. Decimals keep all their
 /// digits; money and quantities are written as text ("19.99 EUR").
 pub fn to_json(v: V, level: usize) -> String {
+    to_json_in(v, level, false)
+}
+
+fn to_json_in(v: V, level: usize, compact: bool) -> String {
     let pad = "  ".repeat(level + 1);
     let close = "  ".repeat(level);
     let pairs: Option<Vec<(String, Val)>> = match v.get() {
@@ -769,8 +786,12 @@ pub fn to_json(v: V, level: usize) -> String {
         if pairs.is_empty() {
             return "{}".into();
         }
+        if compact {
+            let items: Vec<String> = pairs.iter().map(|(k, x)| format!("{}:{}", json_string(k), to_json_in(x.v(), 0, true))).collect();
+            return format!("{{{}}}", items.join(","));
+        }
         let items: Vec<String> =
-            pairs.iter().map(|(k, x)| format!("{pad}{}: {}", json_string(k), to_json(x.v(), level + 1))).collect();
+            pairs.iter().map(|(k, x)| format!("{pad}{}: {}", json_string(k), to_json_in(x.v(), level + 1, false))).collect();
         return format!("{{\n{}\n{close}}}", items.join(",\n"));
     }
     if let Some(Obj::List(items)) = v.get() {
@@ -778,7 +799,11 @@ pub fn to_json(v: V, level: usize) -> String {
         if items.is_empty() {
             return "[]".into();
         }
-        let parts: Vec<String> = items.iter().map(|x| format!("{pad}{}", to_json(x.v(), level + 1))).collect();
+        if compact {
+            let parts: Vec<String> = items.iter().map(|x| to_json_in(x.v(), 0, true)).collect();
+            return format!("[{}]", parts.join(","));
+        }
+        let parts: Vec<String> = items.iter().map(|x| format!("{pad}{}", to_json_in(x.v(), level + 1, false))).collect();
         return format!("[\n{}\n{close}]", parts.join(",\n"));
     }
     match v.tag {

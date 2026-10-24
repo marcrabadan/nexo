@@ -36,6 +36,9 @@ pub struct Options {
     /// The text error messages show (the new input in the REPL); its lines
     /// are counted from `repl_line`.
     pub shown_source: Option<String>,
+    /// `nexo db diff|migrate` (D101): the program is only its types; at
+    /// the end the runtime runs the command
+    pub db_command: bool,
 }
 
 pub type GResult<T> = Result<T, Diagnostic>;
@@ -144,6 +147,9 @@ enum FrameSrc<'a> {
     Task(&'a [Stmt]),
     /// a statement of a `parallel:` block
     TaskStmt(&'a Stmt),
+    /// a value inside the condition of a `where`, evaluated apart for SQL
+    /// (D100); it is compiled in the frame of its step
+    Leaf(&'a Expr),
 }
 
 pub struct Gen<'a> {
@@ -169,6 +175,8 @@ pub struct Gen<'a> {
     spans: Vec<Span>,
     span_ids: HashMap<(u32, u32, u32), u32>,
     frame_fns: HashMap<FrameId, (String, String)>,
+    /// the closures of the values of `where` conditions, by expression
+    leaf_fns: HashMap<u32, (String, String)>,
     /// functions on ints only: the version that takes the numbers directly
     int_workers: HashMap<FrameId, String>,
     /// set while compiling such a version
@@ -184,6 +192,9 @@ pub struct Gen<'a> {
     method_of: HashMap<u32, String>,
     /// values that are certainly ints (no type checks at run time)
     ints: Option<crate::narrow::Ints<'a>>,
+    /// names a `fake` of some test replaces (section 14): their calls ask
+    /// the runtime first
+    fakes: Vec<String>,
 }
 
 fn op_code(op: &str) -> u32 {
@@ -236,6 +247,73 @@ const DIRECT_BUILTINS: &[&str] = &[
     "print", "input", "len", "range", "set", "round", "split", "convert", "fail", "validate", "read", "write",
     "read_lines", "save",
 ];
+
+/// The plan of a `where` a database can run (D100): comparisons between a
+/// column and a value joined with and, or, not, as text for the runtime,
+/// and its leaves (the values). The same shape as phase 0's `where_plan`.
+fn where_plan(e: &Expr) -> Option<(String, Vec<&Expr>)> {
+    fn cond<'e>(x: &'e Expr, leaves: &mut Vec<&'e Expr>, out: &mut String) -> bool {
+        match &x.kind {
+            ExprKind::BoolOp { op, left, right } => {
+                out.push_str(if *op == "and" { "&(" } else { "|(" });
+                if !cond(left, leaves, out) {
+                    return false;
+                }
+                out.push(',');
+                if !cond(right, leaves, out) {
+                    return false;
+                }
+                out.push(')');
+                true
+            }
+            ExprKind::Unary { op: "not", operand } => {
+                out.push_str("!(");
+                if !cond(operand, leaves, out) {
+                    return false;
+                }
+                out.push(')');
+                true
+            }
+            ExprKind::Compare { ops, operands } if ops.len() == 1 => {
+                let op = match ops[0] {
+                    "==" => "=",
+                    "!=" => "<>",
+                    "<" | ">" | "<=" | ">=" | "in" => ops[0],
+                    _ => return false,
+                };
+                leaves.push(&operands[0]);
+                leaves.push(&operands[1]);
+                let _ = write!(out, "{op}({},{})", leaves.len() - 2, leaves.len() - 1);
+                true
+            }
+            ExprKind::Name(_) => {
+                leaves.push(x);
+                let _ = write!(out, "?({})", leaves.len() - 1);
+                true
+            }
+            _ => false,
+        }
+    }
+    let mut leaves = Vec::new();
+    let mut out = String::new();
+    if !cond(e, &mut leaves, &mut out) {
+        return None;
+    }
+    out.push('\u{1}');
+    for l in &leaves {
+        if let ExprKind::Name(n) = &l.kind {
+            out.push_str(n);
+        }
+        out.push('\u{3}');
+        let mut reads = Vec::new();
+        let mut writes = Vec::new();
+        crate::checker::expr_names(l, &mut reads, &mut writes);
+        let names: Vec<String> = reads.into_iter().map(|(n, _)| n).collect();
+        out.push_str(&names.join(","));
+        out.push('\u{2}');
+    }
+    Some((out, leaves))
+}
 
 fn not_supported(what: String, span: Span) -> Diagnostic {
     Diagnostic::new("not_supported", span).arg("what", what)
@@ -320,6 +398,7 @@ impl<'a> Gen<'a> {
             spans: Vec::new(),
             span_ids: HashMap::new(),
             frame_fns: HashMap::new(),
+            leaf_fns: HashMap::new(),
             int_workers: HashMap::new(),
             int_params: false,
             fs: Vec::new(),
@@ -328,6 +407,7 @@ impl<'a> Gen<'a> {
             prover: None,
             method_of: HashMap::new(),
             ints: None,
+            fakes: Vec::new(),
         }
     }
 
@@ -495,6 +575,7 @@ impl<'a> Gen<'a> {
     fn desc_text(&self, t: &TypeExpr) -> String {
         let display = type_text(t);
         let body = match t {
+            TypeExpr::Range { low, high, .. } => format!("r{low};{high};"),
             TypeExpr::Union { literals, .. } => {
                 let mut s = format!("l{};", literals.len());
                 for l in literals {
@@ -1227,13 +1308,21 @@ impl<'a> Gen<'a> {
     /// The LLVM function of a frame (compiled the first time it is needed)
     /// and its FnInfo constant.
     fn frame_fn(&mut self, frame: FrameId, src: FrameSrc<'a>) -> GResult<(String, String)> {
-        if let Some(x) = self.frame_fns.get(&frame) {
+        if let FrameSrc::Leaf(e) = src {
+            if let Some(x) = self.leaf_fns.get(&e.id) {
+                return Ok(x.clone());
+            }
+        } else if let Some(x) = self.frame_fns.get(&frame) {
             return Ok(x.clone());
         }
         let n = self.next();
         let name = format!("@fr.{n}");
         let info = format!("@fi.{n}");
-        self.frame_fns.insert(frame, (name.clone(), info.clone()));
+        if let FrameSrc::Leaf(e) = src {
+            self.leaf_fns.insert(e.id, (name.clone(), info.clone()));
+        } else {
+            self.frame_fns.insert(frame, (name.clone(), info.clone()));
+        }
         // FnInfo: name and parameters
         let (fname, params): (String, Vec<(String, bool)>) = match src {
             FrameSrc::Fn(f) => (
@@ -1247,7 +1336,7 @@ impl<'a> Gen<'a> {
                 let p = &self.res.bindings[self.res.frames[frame].params[0]].name;
                 ("lambda".into(), vec![(p.clone(), false)])
             }
-            FrameSrc::Step(_) => ("lambda".into(), vec![("it".into(), false)]),
+            FrameSrc::Step(_) | FrameSrc::Leaf(_) => ("lambda".into(), vec![("it".into(), false)]),
             FrameSrc::Default(_) => ("default".into(), vec![]),
             FrameSrc::Test(_) => ("test".into(), vec![]),
             FrameSrc::Handler(_) => {
@@ -1521,7 +1610,7 @@ impl<'a> Gen<'a> {
                 self.own(&v);
                 self.store(&ret_slot, &v);
             }
-            FrameSrc::Step(e) | FrameSrc::Default(e) => {
+            FrameSrc::Step(e) | FrameSrc::Default(e) | FrameSrc::Leaf(e) => {
                 let v = self.expr(e, true)?;
                 self.own(&v);
                 self.store(&ret_slot, &v);
@@ -1682,6 +1771,17 @@ impl<'a> Gen<'a> {
         self.prover = Some(crate::prove::Types::new(program));
         self.ints = Some(crate::narrow::Ints::new(program, self.res, &self.known_fns));
         crate::checker::walk_stmts(&program.body, true, &mut |s| {
+            if let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind {
+                if matches!(&func.kind, ExprKind::Name(n) if n == "__fake") {
+                    if let Some(Arg { value: Expr { kind: ExprKind::Str(parts), .. }, .. }) = args.first() {
+                        if let [StrPiece::Lit(name)] = parts.as_slice() {
+                            self.fakes.push(name.clone());
+                        }
+                    }
+                }
+            }
+        });
+        crate::checker::walk_stmts(&program.body, true, &mut |s| {
             if let StmtKind::Type(t) = &s.kind {
                 for m in &t.methods {
                     self.method_of.insert(m.id, t.name.clone());
@@ -1725,6 +1825,8 @@ impl<'a> Gen<'a> {
         }
         if self.opts.test_mode {
             self.emit("call void @nx_run_tests()");
+        } else if self.opts.db_command {
+            self.emit("call void @nx_db_command()");
         } else {
             self.emit("call void @nx_exit(i32 0)");
         }
@@ -1919,8 +2021,10 @@ impl<'a> Gen<'a> {
                     }
                 }
             }
-            StmtKind::Use { what } if what == "nexo.sync" => {}
-            StmtKind::Use { what } => return Err(not_supported(format!("\"use {what}\""), s.span)),
+            StmtKind::Use { what, .. } if what == "nexo.sync" => {}
+            StmtKind::Use { lang: Some(l), .. } if l == "c" || l == "python" => {}
+            StmtKind::Use { what, .. } if matches!(what.as_str(), "nexo.db" | "nexo.ai" | "nexo.web") => {}
+            StmtKind::Use { what, .. } => return Err(not_supported(format!("\"use {what}\""), s.span)),
             StmtKind::Spawn { call } => {
                 let ExprKind::Call { func, args } = &call.kind else { unreachable!() };
                 let f = self.expr(func, false)?;
@@ -2517,7 +2621,7 @@ impl<'a> Gen<'a> {
         let v = if !t.variants.is_empty() {
             let mut items = Vec::new();
             for (i, var) in t.variants.iter().enumerate() {
-                let fields = self.field_decls(var.params.iter().map(|p| (p.name.as_str(), p.ty.as_ref())).collect());
+                let fields = self.field_decls(var.params.iter().map(|p| (p.name.as_str(), p.ty.as_ref(), false)).collect());
                 let c = self.cstr(&var.name);
                 items.push(format!(
                     "{{ i64, ptr, i64, i64, ptr }} {{ i64 {}, ptr {c}, i64 {}, i64 {}, ptr {fields} }}",
@@ -2543,7 +2647,9 @@ impl<'a> Gen<'a> {
             }
             v
         } else {
-            let fields = self.field_decls(t.fields.iter().map(|f| (f.name.as_str(), Some(&f.ty))).collect());
+            let fields = self.field_decls(
+                t.fields.iter().map(|f| (f.name.as_str(), Some(&f.ty), f.marks.iter().any(|m| m == "private"))).collect(),
+            );
             let mut defaults = Vec::new();
             let mut any_default = false;
             for (i, f) in t.fields.iter().enumerate() {
@@ -2593,20 +2699,20 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
-    fn field_decls(&mut self, fields: Vec<(&str, Option<&TypeExpr>)>) -> String {
+    fn field_decls(&mut self, fields: Vec<(&str, Option<&TypeExpr>, bool)>) -> String {
         if fields.is_empty() {
             return "null".into();
         }
         let mut items = Vec::new();
-        for (name, ty) in &fields {
+        for (name, ty, private) in &fields {
             let c = self.cstr(name);
             let (d, dl, opt) = match ty {
                 Some(t) => {
                     let text = self.desc_text(t);
                     let dc = self.cstr(&text);
-                    // bit 1: optional; bit 2: a weak field
+                    // bit 1: optional; bit 2: a weak field; bit 3: @private
                     let weak = matches!(t, TypeExpr::Name(tn) if tn.weak);
-                    (dc, text.len(), t.optional() as u8 | (weak as u8) << 1)
+                    (dc, text.len(), t.optional() as u8 | (weak as u8) << 1 | (*private as u8) << 2)
                 }
                 None => ("null".to_string(), 0, 0),
             };
@@ -2965,14 +3071,23 @@ impl<'a> Gen<'a> {
                     self.str_value(&s)
                 } else {
                     let mut vals = Vec::new();
+                    let mut spans = Vec::new();
                     for p in parts {
                         match p {
-                            StrPiece::Lit(s) => vals.push(self.str_value(s)),
-                            StrPiece::Expr(x) => vals.push(self.expr(x, false)?),
+                            StrPiece::Lit(s) => {
+                                vals.push(self.str_value(s));
+                                spans.push("i32 0".to_string());
+                            }
+                            StrPiece::Expr(x) => {
+                                vals.push(self.expr(x, false)?);
+                                spans.push(format!("i32 {}", self.span_id(x.span)));
+                            }
                         }
                     }
                     let arr = self.values_array(&vals);
-                    let r = self.call_v("nx_interp", &format!("ptr {arr}, i64 {}", vals.len()));
+                    let g = format!("@isp.{}", self.next());
+                    let _ = writeln!(self.consts, "{g} = private constant [{} x i32] [{}]", spans.len(), spans.join(", "));
+                    let r = self.call_v("nx_interp", &format!("ptr {arr}, i64 {}, ptr {g}", vals.len()));
                     self.check();
                     self.drop_all(&vals);
                     self.owned(r)
@@ -3751,6 +3866,12 @@ impl<'a> Gen<'a> {
         if name == "PI" {
             return lit(T_FLOAT, float_bits(std::f64::consts::PI));
         }
+        if name == "now" || name == "today" {
+            // read from the clock each time (D94)
+            let a = self.strarg(name);
+            let v = self.call_v("nx_clock", &a);
+            return self.owned(v);
+        }
         if DIRECT_BUILTINS.contains(&name) {
             let key = format!("builtin {name}");
             let slot = match self.named_slots.get(&key) {
@@ -3846,6 +3967,38 @@ impl<'a> Gen<'a> {
         Ok(self.owned(v))
     }
 
+    /// A call to a name some `fake` replaces: the function and the
+    /// arguments are evaluated, then the runtime returns the fake value of
+    /// the running test, or makes the call.
+    fn faked_call(&mut self, func: &'a Expr, args: &'a [Arg], first: Option<Val>, sp: u32) -> GResult<Val> {
+        let f = self.expr(func, false)?;
+        let slot = self.spill(&f);
+        let mut vals = Vec::new();
+        let mut names: Vec<Option<&str>> = Vec::new();
+        if let Some(x) = &first {
+            vals.push(x.clone());
+            names.push(None);
+        }
+        let mut own_args = Vec::new();
+        for a in args {
+            let v = self.expr(&a.value, true)?;
+            vals.push(v.clone());
+            own_args.push(v);
+            names.push(a.name.as_deref());
+        }
+        let n = vals.len();
+        let arr = self.values_array(&vals);
+        let nm = self.names_array(&names);
+        let f = self.load(&slot);
+        let tf = self.tb(&f);
+        let na = self.strarg(&crate::checker::callee_name(func));
+        let r = self.call_v("nx_call_fake", &format!("{na}, {tf}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}"));
+        self.check();
+        self.drop_all(&own_args);
+        self.drop_slot(&slot);
+        Ok(self.owned(r))
+    }
+
     /// A call. `first` is the value a pipeline passes as first argument
     /// (the caller keeps ownership of it).
     fn call_expr(&mut self, e: &'a Expr, func: &'a Expr, args: &'a [Arg], first: Option<Val>, span: Span) -> GResult<Val> {
@@ -3864,6 +4017,9 @@ impl<'a> Gen<'a> {
             seen_named |= a.name.is_some();
         }
         let sp = self.span_id(span);
+        if !self.fakes.is_empty() && self.fakes.contains(&crate::checker::callee_name(func)) {
+            return self.faked_call(func, args, first, sp);
+        }
         // the function itself is evaluated before the arguments
         enum Target<'p> {
             Builtin(u32),
@@ -4301,12 +4457,39 @@ impl<'a> Gen<'a> {
                     let ts = self.tb(&cur);
                     let tf = self.tb(&f);
                     let esp = self.span_id(x.span);
+                    let plan = if step.kind == StepKind::Where { where_plan(x) } else { None };
                     let r = match step.kind {
+                        StepKind::Where if plan.is_some() => {
+                            // on a database query the condition may run in SQL (D100)
+                            let (text, leaves) = plan.unwrap();
+                            let mut fns = Vec::new();
+                            for l in &leaves {
+                                fns.push(self.closure(self.res.frame_of[&node], FrameSrc::Leaf(l))?);
+                            }
+                            let arr = self.values_array(&fns);
+                            let pa = self.strarg(&text);
+                            let cur = self.load(&slot);
+                            let ts = self.tb(&cur);
+                            let r = self.call_v(
+                                "nx_pipe_where_sql",
+                                &format!("{ts}, {tf}, {pa}, ptr {arr}, i64 {}, i32 {ssp}, i32 {esp}", fns.len()),
+                            );
+                            self.drop_all(&fns);
+                            r
+                        }
                         StepKind::Where => self.call_v("nx_pipe_where", &format!("{ts}, {tf}, i32 {ssp}, i32 {esp}")),
                         StepKind::Map => self.call_v("nx_pipe_map", &format!("{ts}, {tf}, i32 {ssp}, i32 {esp}")),
                         StepKind::Each => self.call_v("nx_pipe_each", &format!("{ts}, {tf}, i32 {ssp}, i32 {esp}")),
                         StepKind::Sort => {
-                            self.call_v("nx_pipe_sort", &format!("{ts}, {tf}, i32 {}, i32 {ssp}, i32 {esp}", step.desc as u8))
+                            if let ExprKind::Name(col) = &x.kind {
+                                let c = self.strarg(col);
+                                self.call_v(
+                                    "nx_pipe_sort_col",
+                                    &format!("{ts}, {tf}, i32 {}, {c}, i32 {ssp}, i32 {esp}", step.desc as u8),
+                                )
+                            } else {
+                                self.call_v("nx_pipe_sort", &format!("{ts}, {tf}, i32 {}, i32 {ssp}, i32 {esp}", step.desc as u8))
+                            }
                         }
                         _ => {
                             grouped = true;
@@ -4504,6 +4687,11 @@ declare %V @nx_str(ptr, i64)
 declare %V @nx_unit(ptr, i64, ptr, i64)
 declare %V @nx_builtin(i32)
 declare %V @nx_named(ptr, i64)
+declare %V @nx_clock(ptr, i64)
+declare void @nx_db_command()
+declare %V @nx_pipe_where_sql(i64, i64, i64, i64, ptr, i64, ptr, i64, i32, i32)
+declare %V @nx_pipe_sort_col(i64, i64, i64, i64, i32, ptr, i64, i32, i32)
+declare %V @nx_call_fake(ptr, i64, i64, i64, ptr, ptr, i64, i32)
 declare %V @nx_list(ptr, i64)
 declare void @nx_list_push(i64, i64, i64, i64)
 declare %V @nx_map(ptr, ptr, ptr, i64)
@@ -4518,7 +4706,7 @@ declare i8 @nx_eq(i64, i64, i64, i64, i32)
 declare i8 @nx_order(i32, i64, i64, i64, i64, i32)
 declare i8 @nx_in(i64, i64, i64, i64, i32)
 declare i8 @nx_is(i64, i64, i64, i64, i32)
-declare %V @nx_interp(ptr, i64)
+declare %V @nx_interp(ptr, i64, ptr)
 declare %V @nx_bind(i64, i64)
 declare %V @nx_force(i64, i64)
 declare ptr @nx_func_ptr(i64, i64)

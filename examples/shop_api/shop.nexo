@@ -1,0 +1,116 @@
+# A shop's web API with a database and AI, written in Nexo alone (the exit
+# criterion of phase 4). Run it with
+#     SHOP_JWT_KEY=... ANTHROPIC_KEY=... nexo shop.nexo
+# and test it, with the AI faked, with `nexo test shop.nexo`.
+use nexo.db
+
+db = connect("shop.db")
+tokens = jwt(key: secret("SHOP_JWT_KEY"))
+
+ai:
+    provider = "anthropic"
+    model = "claude-opus"
+    key = secret("ANTHROPIC_KEY")
+
+@table
+type Product:
+    id: id
+    name: str @unique
+    price: decimal
+
+@table
+type Review:
+    id: id
+    product: ref Product
+    text: str
+    tone: str
+    score: int
+
+type NewProduct:
+    name: str
+    price: decimal
+
+type NewReview:
+    text: str
+
+type Opinion:
+    tone: "positive" | "negative" | "neutral"
+    score: 1..5
+
+## What the AI thinks of a review: its tone and a score from 1 to 5.
+fn opinion(text: str) -> Opinion!:
+    o: Opinion = ask("Analyse this review of a product", text, creativity: low)?
+    return o
+
+## A short summary of the reviews of a product.
+fn summary(reviews: list[Review]) -> str!:
+    if len(reviews) == 0:
+        return "No reviews yet."
+    texts = reviews |> map it.text
+    return ask("Summarise these reviews in one sentence", texts, max: 40 words)?
+
+server shop:
+    port = 8080
+    auth = tokens
+
+    @public
+    post "/login"(name: str):
+        return {"token": tokens.sign({"sub": name, "role": "admin"}, expires: 1h)}
+
+    @public
+    get "/products"():
+        return db.Product |> sort by name
+
+    @public
+    get "/products/{id}"(id: int):
+        return db.Product.find(id: id)?
+
+    @role("admin")
+    post "/products"(product: NewProduct):
+        return db.Product.add(name: product.name, price: product.price)
+
+    @public
+    @limit(10 per minute per ip)
+    post "/products/{id}/reviews"(id: int, review: NewReview):
+        product = db.Product.find(id: id)?
+        o = opinion(review.text)?
+        return db.Review.add(product: product, text: review.text, tone: o.tone, score: o.score)
+
+    @public
+    get "/products/{id}/summary"(id: int):
+        product = db.Product.find(id: id)?
+        reviews = db.Review |> where product == product
+        scores = reviews |> map it.score
+        var average = 0.0
+        if len(scores) > 0:
+            average = float(scores |> sum) / len(scores)
+        return {"product": product.name, "reviews": len(scores), "score": average, "summary": summary(reviews)?}
+
+test "products need an admin":
+    try:
+        http.post("{shop.url}/products", {"name": "Lamp", "price": 25}, retries: 0)
+    else e is HTTPError:
+        assert e.message.ends_with("401 Unauthorized")
+    login = http.post("{shop.url}/login?name=ana", none).json()
+    headers = {"Authorization": "Bearer {login["token"]}"}
+    lamp = http.post("{shop.url}/products", {"name": "Lamp", "price": 25.50}, headers: headers)
+    assert lamp.status == 201
+    assert lamp.json()["name"] == "Lamp"
+    assert http.get("{shop.url}/products").json()[0]["price"] == 25.5
+
+test "reviews are analysed by the AI":
+    fake ask returns Opinion(tone: "positive", score: 5)
+    login = http.post("{shop.url}/login?name=ana", none).json()
+    headers = {"Authorization": "Bearer {login["token"]}"}
+    chair = http.post("{shop.url}/products", {"name": "Chair", "price": 80}, headers: headers).json()
+    review = http.post("{shop.url}/products/{chair["id"]}/reviews", {"text": "Comfortable!"}).json()
+    assert review["tone"] == "positive" and review["score"] == 5
+    fake ask returns "Buyers love it."
+    s = http.get("{shop.url}/products/{chair["id"]}/summary").json()
+    assert s["summary"] == "Buyers love it." and s["reviews"] == 1 and s["score"] == 5.0
+
+test "a missing product is a 404":
+    try:
+        http.get("{shop.url}/products/999", retries: 0)
+    else e is HTTPError:
+        assert e.message.ends_with("404 Not Found")

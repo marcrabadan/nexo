@@ -2,7 +2,7 @@
   "name": "nexo",
   "displayName": "Nexo",
   "description": "Nexo language support: highlighting, errors and warnings as you type with their fixes, formatting, go to definition, hover, outline and completion (nexo lsp).",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "nexo-lang",
   "license": "Apache-2.0 WITH LLVM-exception",
   "repository": {

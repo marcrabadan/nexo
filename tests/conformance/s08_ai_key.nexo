@@ -1,0 +1,4 @@
+# an ai block takes provider, model, key, url and fallback (D106)
+ai:
+    provider = "anthropic"
+    modle = "claude-opus"

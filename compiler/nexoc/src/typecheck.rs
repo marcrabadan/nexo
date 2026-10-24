@@ -255,7 +255,7 @@ impl<'a> TypeChecker<'a> {
 
     fn decl_ty(&self, t: &TypeExpr) -> Ty {
         match t {
-            TypeExpr::Union { .. } => Ty::Unknown,
+            TypeExpr::Union { .. } | TypeExpr::Range { .. } => Ty::Unknown,
             TypeExpr::Name(tn) => {
                 if tn.optional {
                     return Ty::Unknown;
@@ -508,6 +508,7 @@ impl<'a> TypeChecker<'a> {
                 | "read" | "write" | "read_lines" | "save" => Ty::Callable(Callee::Builtin),
                 "json" | "csv" => Ty::Unknown,
                 "half_up" | "half_even" => Ty::Unknown,
+                _ if crate::resolve::LIBRARY_FUNCTIONS.contains(&n.as_str()) => Ty::Unknown,
                 _ if crate::lexer::is_currency(n) => Ty::Unknown,
                 _ => Ty::TypeValue,
             },
@@ -854,7 +855,7 @@ impl<'a> TypeChecker<'a> {
             Ty::List(_) => &["sum", "count", "add"],
             Ty::Set => &["add", "count"],
             Ty::Map => &["keys", "values", "count"],
-            Ty::Str => &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with"],
+            Ty::Str => &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with", "find"],
             _ => return None,
         })
     }

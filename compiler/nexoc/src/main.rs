@@ -10,9 +10,12 @@
 //!     nexo fix [paths...]                apply the safe fixes
 //!     nexo check [paths...]              the compile checks, without running anything
 //!     nexo lsp                           language server on standard input and output (D87)
+//!     nexo db diff|migrate file.nexo     migrations of nexo.db (D101): --db path, --allow-drop
 //!     --lang es|en                       language of messages (Spanish by default)
 
+mod ai_cmd;
 mod ast;
+mod cheader;
 mod checker;
 mod codegen;
 mod fmt;
@@ -33,9 +36,9 @@ use nexo_diag::{msg, render, Diagnostic, Lang};
 
 fn usage() -> &'static str {
     if nexo_diag::lang() == Lang::En {
-        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp]"
+        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage]"
     } else {
-        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp]"
+        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage]"
     }
 }
 
@@ -45,13 +48,163 @@ struct CompileError(String);
 /// Compile Nexo source to LLVM IR.
 fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Result<String, CompileError> {
     let fail = |d: Diagnostic| CompileError(render(name, source, d.span, &d.text()));
-    let program = parser::parse(source).map_err(fail)?;
+    let mut program = parser::parse(source).map_err(fail)?;
+    // `use c`: the headers are read now (D110)
+    let folder = Path::new(name).parent().map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p }).unwrap_or(Path::new("."));
+    cheader::embed(&mut program, folder);
     checker::check(&program).map_err(fail)?;
     let res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
     let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
-    let opts = codegen::Options { file: name.to_string(), lang, test_mode, trust_ensure, repl_line: 0, shown_source: None };
+    let opts = codegen::Options {
+        file: name.to_string(),
+        lang,
+        test_mode,
+        trust_ensure,
+        repl_line: 0,
+        shown_source: None,
+        db_command: false,
+    };
     codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)
+}
+
+/// `nexo db diff|migrate file.nexo [--db path] [--allow-drop]` (D101): the
+/// types of the program are compiled alone, and the runtime compares them
+/// with the database.
+fn run_db(args: &[String]) -> u8 {
+    let command = args.first().cloned().unwrap_or_default();
+    let (mut file, mut db_path, mut allow_drop) = (None::<String>, None::<String>, false);
+    let mut i = 1;
+    let mut bad = false;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--db" && i + 1 < args.len() {
+            db_path = Some(args[i + 1].clone());
+            i += 2;
+            continue;
+        }
+        if a == "--allow-drop" && command == "migrate" {
+            allow_drop = true;
+        } else if file.is_none() && !a.starts_with('-') {
+            file = Some(a.to_string());
+        } else {
+            bad = true;
+        }
+        i += 1;
+    }
+    let (Some(file), false) = (file, bad || !(command == "diff" || command == "migrate")) else {
+        eprintln!("{}", usage());
+        return 2;
+    };
+    let source = match read_source(&file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprint!("{e}");
+            return 1;
+        }
+    };
+    let fail = |d: Diagnostic| render(&file, &source, d.span, &d.text());
+    let compiled = (|| {
+        let mut program = parser::parse(&source).map_err(fail)?;
+        checker::check(&program).map_err(fail)?;
+        resolve::resolve(&program).map_err(fail)?;
+        if db_path.is_none() {
+            db_path = connect_literal(&program);
+        }
+        program.body.retain(|s| match &s.kind {
+            ast::StmtKind::Type(_) | ast::StmtKind::Trait { .. } | ast::StmtKind::Use { .. } => true,
+            ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call { func, .. }, .. }) => {
+                matches!(&func.kind, ast::ExprKind::Name(n) if n == "__db_table")
+            }
+            _ => false,
+        });
+        let res = resolve::resolve(&program).map_err(fail)?;
+        typecheck::check(&program, &res).map_err(fail)?;
+        let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
+        let opts = codegen::Options {
+            file: file.clone(),
+            lang,
+            test_mode: false,
+            trust_ensure: false,
+            repl_line: 0,
+            shown_source: None,
+            db_command: true,
+        };
+        codegen::Gen::new(&source, &res, &opts).program(&program).map_err(fail)
+    })();
+    let ir = match compiled {
+        Ok(ir) => ir,
+        Err(text) => {
+            eprint!("{text}");
+            return 1;
+        }
+    };
+    let dir = work_dir();
+    let exe = dir.join("schema");
+    if let Err(e) = link(&ir, &exe, false) {
+        eprintln!("Error: {e}");
+        return 1;
+    }
+    let mut cmd = Command::new(&exe);
+    cmd.env("NEXO_DB_COMMAND", &command).env("NEXO_DB_FILE", &file);
+    if let Some(p) = &db_path {
+        cmd.env("NEXO_DB_PATH", p);
+    }
+    if allow_drop {
+        cmd.env("NEXO_DB_ALLOW_DROP", "1");
+    }
+    let status = cmd.status();
+    let _ = std::fs::remove_dir_all(&dir);
+    match status {
+        Ok(s) => exit_code(s),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
+    }
+}
+
+/// The database of a program: the first connect("...") it writes.
+fn connect_literal(program: &ast::Program) -> Option<String> {
+    use ast::{ExprKind, StrPiece};
+    fn find(e: &ast::Expr) -> Option<String> {
+        if let ExprKind::Call { func, args } = &e.kind {
+            if matches!(&func.kind, ExprKind::Name(n) if n == "connect") {
+                if let Some(ExprKind::Str(parts)) = args.first().map(|a| &a.value.kind) {
+                    if let [StrPiece::Lit(s)] = parts.as_slice() {
+                        return Some(s.clone());
+                    }
+                    if parts.is_empty() {
+                        return Some(String::new());
+                    }
+                }
+            }
+            if let Some(r) = find(func) {
+                return Some(r);
+            }
+            for a in args {
+                if let Some(r) = find(&a.value) {
+                    return Some(r);
+                }
+            }
+            return None;
+        }
+        checker::children(e).into_iter().find_map(find)
+    }
+    let mut found = None;
+    checker::walk_stmts(&program.body, true, &mut |s| {
+        if found.is_some() {
+            return;
+        }
+        let exprs: Vec<&ast::Expr> = match &s.kind {
+            ast::StmtKind::Expr(e) | ast::StmtKind::Return(Some(e)) => vec![e],
+            ast::StmtKind::Assign { target, value, .. } => vec![value, target],
+            ast::StmtKind::VarDecl { value, .. } => vec![value],
+            _ => vec![],
+        };
+        found = exprs.into_iter().find_map(find);
+    });
+    found
 }
 
 /// One line of the standard input, newline included, read byte by byte.
@@ -132,9 +285,11 @@ fn repl() -> u8 {
             trust_ensure: false,
             repl_line: first,
             shown_source: Some(cell.clone()),
+            db_command: false,
         };
         let compiled = (|| {
-            let program = parser::parse(&candidate)?;
+            let mut program = parser::parse(&candidate)?;
+            cheader::embed(&mut program, Path::new("."));
             checker::check(&program)?;
             let res = resolve::resolve(&program)?;
             typecheck::check(&program, &res)?;
@@ -412,7 +567,8 @@ fn test_files(paths: &[String]) -> Vec<PathBuf> {
             let mut files = Vec::new();
             walk(&path, &path, &mut files);
             files.sort();
-            found.extend(files);
+            // shown as phase 0 shows them: `nexo lint .` names `a.nexo`, not `./a.nexo`
+            found.extend(files.into_iter().map(|f| f.strip_prefix(".").map(|r| r.to_path_buf()).unwrap_or(f)));
         } else {
             found.push(path);
         }
@@ -467,12 +623,13 @@ fn run_tests(paths: &[String]) -> u8 {
         let ok = cmd.status().map(|s| s.success()).unwrap_or(false);
         let counts = std::fs::read_to_string(&report).unwrap_or_default();
         let nums: Vec<u32> = counts.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+        if nums.len() == 2 {
+            total += nums[0];
+            passed += nums[1];
+        }
         if !ok || nums.len() != 2 {
             broken += 1;
-            continue;
         }
-        total += nums[0];
-        passed += nums[1];
     }
     let _ = std::fs::remove_dir_all(work_dir());
     if total == 0 && broken == 0 {
@@ -678,6 +835,9 @@ fn main() -> ExitCode {
             "lint" => run_lint(&rest[1..]),
             "fix" => run_fix(&rest[1..]),
             "check" => run_check(&rest[1..]),
+            "db" => run_db(&rest[1..]),
+            "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),
+            "ai" if rest.len() == 2 && rest[1] == "usage" => ai_cmd::usage(),
             "lsp" if rest.len() == 1 => lsp::serve(lang_given),
             "--emit-llvm" if rest.len() == 2 => emit_ir(&rest[1]),
             a if a.starts_with('-') || rest.len() > 1 => {

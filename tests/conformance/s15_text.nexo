@@ -1,0 +1,23 @@
+# text: search, regular expressions and templates; io: move_file (D95, D96)
+print("hello world".find("o"), "hello".find("z"), "ñandú".find("dú"))
+digits = regex("[0-9]+")
+print(digits, digits.matches("123"), digits.matches("12a"))
+print(digits.find("ab 42 cd 7"), digits.find("none here"), digits.find_all("ab 42 cd 7"))
+print(digits.replace("a1b22c", "#"), digits.split("a1b22c"))
+email = regex("(\\w+)@(\\w+)\\.com")
+print(email.groups("write to ana@mail.com today"), email.groups("nobody"))
+print(regex("^a$").matches("a"), regex("a$").find("a\n"), regex("(?i)hola").find("¡HOLA!"))
+print(regex("(?<year>\\d{{4})-(\\d\\d)").groups("on 2026-10"))
+print(render("page.html", name: "<Ana & Luis>", count: 3))
+print(render("letter.txt", name: "<Ana>"))
+print(move_file("draft.txt", to: "archive/"))
+print(read("archive/draft.txt"))
+try:
+    move_file("missing.txt", to: "archive")
+else e is NotFound:
+    print(e.message)
+try:
+    render("letter.txt", title: "x")
+else e:
+    print(e.kind, e.message)
+r = regex("(?=a)b")

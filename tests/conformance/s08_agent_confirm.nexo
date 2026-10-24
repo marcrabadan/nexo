@@ -1,0 +1,14 @@
+# confirm names tools of the agent (D109)
+@tool "Sends an email"
+fn send_email(to: str, text: str):
+    print("to {to}: {text}")
+
+@tool "Deletes an order"
+fn delete_order(id: str):
+    print("deleted {id}")
+
+agent support:
+    model = "anthropic:claude-opus"
+    tools = [send_email]
+    goal = "Answer order questions politely"
+    confirm = [send_email, delete_order]

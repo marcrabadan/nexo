@@ -91,10 +91,29 @@ def b_save(call, value, path):
     return None
 
 
+def b_move_file(call, path, to):
+    """Move a file into a folder (created if needed); returns its new path."""
+    import shutil
+    path = check_path(call, path, "move_file")
+    folder = check_path(call, to, "move_file")
+    if not os.path.isfile(path):
+        if not os.path.exists(path):
+            raise failure("NotFound", call.span, path=path)
+        raise failure("IOError", call.span, path=path, reason=errors.msg("detail.not_a_file"))
+    target = os.path.join(folder, os.path.basename(path))
+    try:
+        os.makedirs(folder, exist_ok=True)
+        shutil.move(path, target)
+    except OSError as exc:
+        raise os_failure(call, target, exc)
+    return target
+
+
 def exports() -> dict:
     return {
         "read": Builtin("read", b_read, fallible=True),
         "write": Builtin("write", b_write, fallible=True),
         "read_lines": Builtin("read_lines", b_read_lines, fallible=True),
         "save": Builtin("save", b_save, fallible=True),
+        "move_file": Builtin("move_file", b_move_file, fallible=True),
     }

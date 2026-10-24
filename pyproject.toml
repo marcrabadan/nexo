@@ -3,6 +3,7 @@ name = "nexo"
 version = "0.0.1"
 description = "Phase 0 prototype: tree-walking interpreter for the Nexo core"
 requires-python = ">=3.12"
+dependencies = ["cryptography>=45"]
 
 [project.optional-dependencies]
 dev = ["pytest"]

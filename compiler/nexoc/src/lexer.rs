@@ -36,6 +36,8 @@ pub const TIME_UNITS: &[(&str, &str)] = &[
 pub const SIZE_UNITS: &[(&str, &str)] =
     &[("B", "1"), ("KB", "1000"), ("MB", "1000000"), ("GB", "1000000000"), ("TB", "1000000000000")];
 pub const LENGTH_UNITS: &[(&str, &str)] = &[("km", "1")];
+/// Limits of nexo.ai: `max: 200 words`, `max: 500 tokens`.
+pub const TEXT_UNITS: &[&str] = &["words", "tokens"];
 /// ISO 4217 codes and their minor units.
 pub const CURRENCIES: &[(&str, u32)] = &[
     ("EUR", 2),
@@ -67,6 +69,7 @@ pub fn is_unit(u: &str) -> bool {
         || TIME_UNITS.iter().any(|(n, _)| *n == u)
         || SIZE_UNITS.iter().any(|(n, _)| *n == u)
         || LENGTH_UNITS.iter().any(|(n, _)| *n == u)
+        || TEXT_UNITS.contains(&u)
 }
 
 pub fn is_currency(u: &str) -> bool {

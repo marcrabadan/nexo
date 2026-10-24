@@ -1,0 +1,5 @@
+# budget belongs with the cost controls of a later phase (D89)
+ai:
+    provider = "anthropic"
+    key = secret("ANTHROPIC_KEY")
+    budget = 5 EUR per day

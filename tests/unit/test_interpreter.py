@@ -285,8 +285,8 @@ def test_collections():
 
 
 def test_not_supported_features_are_reported():
-    assert error_of("use nexo.db\n").key == "not_supported"
-    assert error_of('ai:\n    model = "x"\n').key == "not_supported"
+    assert error_of("use nexo.ui\n").key == "not_supported"
+    assert error_of('infra shop:\n    cloud = "aws"\n').key == "not_supported"
     assert error_of("@cache(10m)\nfn f():\n    return 1\n").key == "not_supported"
     assert error_of("every 5m:\n    pass\n").key == "not_supported"
 

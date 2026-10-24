@@ -1,0 +1,4 @@
+Error en s08_ai_provider.nexo, línea 2:
+  ai models:
+  ^^
+"antropic" no es un proveedor de IA. ¿Quisiste decir "anthropic"?

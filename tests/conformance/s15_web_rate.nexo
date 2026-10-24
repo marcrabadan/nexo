@@ -1,0 +1,7 @@
+# a limit counts per second, minute, hour, day or month (D93)
+server api:
+    port = 8080
+
+    @limit(5 per week)
+    get "/users"():
+        return []

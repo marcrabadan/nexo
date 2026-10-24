@@ -1,0 +1,13 @@
+# log hides @private fields (section 9)
+type Customer:
+    name: str
+    national_id: str @private
+    card: str @private
+
+customer = Customer(name: "Ana", national_id: "12345678Z", card: "4111 1111 1111 1111")
+print("start")
+log(customer)
+log("orders:", [customer], {"n": 2})
+print(customer.card)
+print(customer)
+log(key.new())

@@ -706,3 +706,513 @@ error. Standard input is read one byte at a time, so a program that calls
 write files in a different order on each run, and timing (`select` with
 `after`), may replay differently; the REPL is for trying code, and a
 program file has none of these limits.
+
+## Phase 4: library and modules (section 25)
+
+**D89. What phase 4 covers.** Section 25 lists "standard library,
+`nexo.ai`, `nexo.web`, `nexo.db`, C and Python interoperability" with the
+exit criterion "a web API with a database and `ask` is built with Nexo
+alone". Both implementations get, with the same output: the standard
+library of section 15 (`io`, `text`, `data`, `time`, `units`, `http`,
+`crypto`, `test` with `fake`), `nexo.ai` (`ask`, `ai` blocks, `@tool`,
+`agent`), `nexo.web` (`server` blocks, routes, `jwt`, `@role`, `@limit`),
+`nexo.db` (SQLite through `connect`, `@table`, pipelines translated to SQL,
+transactions, `db.sql`, `nexo db diff` and `migrate`), `use c` and
+`use python`. What the specification ties to later phases stays out and
+is reported as unavailable (D65): `infra`, `pipeline`, `policy`, `flags`,
+`stream`, `ml`, `ui`, `notify`, `when`, `every`, `lifecycle`, the other
+patterns of section 10, and the parts of these modules that need them
+(secrets from a vault or a cloud, `budget` in `ai`, `mcp(...)` tools,
+PostgreSQL, see the decisions below). `unsupported` messages now say
+"phase 4".
+
+**D90. Module blocks and annotations are rewritten into core code.** The
+parser turns each module construct into ordinary statements that call
+builtins whose names start with `__`, so the checker, the interpreter,
+the compiler's passes and the tools see only the core:
+- `ai:` and `ai profile "p":` become `__ai_config(none | "p", key: value...)`;
+  `ai models:` becomes `__ai_models(alias: "provider:model"...)`;
+- `agent a:` becomes `a = __ai_agent("a", key: value...)`;
+- `server api:` becomes `api = __web_server("api", key: value...)`, and each
+  route a function named after it (`GET /users/{id}`, a name no program can
+  write) followed by `__web_route(api, "GET", "/users/{id}", that function,
+  [the parameter types], role:, limit:, public:)`;
+- `@table type T` becomes the type (its `many` fields removed, its `id`
+  field an `int?`) followed by `__db_table(T, "id", {many fields}, {marks})`;
+- `@tool "d" fn f` becomes the function followed by `__ai_tool(f, "d", [types])`;
+- `use python m as x` and `use c "lib"` become `x = __python_import("m")`
+  and `lib = __c_library("lib")` after the `use`;
+- `fake f returns v` (only inside `test`) becomes `__fake("f", v)`;
+- `db.transaction:` becomes `__txL_C = __db_begin(db)` and a `try` whose
+  body ends with `__db_commit` and whose handler calls `__db_rollback` and
+  passes the error on with `fail(e)`; `return` inside the block is a
+  compile error, since it would leave the transaction open.
+The values of a block are evaluated where the block is written, like any
+statement (D29): an `ai` block takes effect from its line on.
+
+**D91. Syntax the core grammar lacks.** The module examples use forms the
+EBNF of section 24 does not have; they are added in the simplest way that
+accepts the examples:
+- `use c "libz"`: a text after `c` (`use_stmt` only allows a dotted name).
+  The library is used through the name given with `as`, or the text
+  itself when it is a valid name.
+- `@tool "Looks up an order"`: an annotation may take one text without
+  parentheses.
+- `per` builds a rate in annotation arguments and block values:
+  `10 per minute per ip`, `5 EUR per day`.
+- In the fields of a type, `ref T` and `many T` (only with `@table`);
+  anywhere a type is written, `1..5` is an int between both bounds
+  (`score: 1..5`, section 8).
+- `ai profile "work":` has two words before its name.
+- In a `server` block, a route is `{annotation} get|post|put|patch|delete
+  "path" [(params)] block`; the `{name}` parts of the path are its path
+  parameters, not interpolations.
+- `words` and `tokens` are units (for `max:` of `ask`), written after a
+  space (`200 words`).
+- `X.transaction:` followed by a block is a statement.
+
+**D92. Values of the library.** Dates, times, secrets, keys, regular
+expressions, HTTP responses, databases, servers and the other values the
+library adds are values like any other: `x is date` checks their type,
+they are compared, used as map keys (dates and times) and passed around.
+They print as they are written in data files (a date as `2026-10-24`, a
+time in ISO 8601), without quotes even inside a collection, like money
+(D30); values that are a handle to something (a database, a server)
+print as their type and name.
+
+**D93. Rates.** `10 per minute per ip` (section 15) and `5 EUR per day`
+(section 8) have no rule in the grammar; `per` is read as a contextual
+word only in annotation arguments and the values of module blocks, where
+it builds a rate: an amount, the unit of time (`second`, `minute`,
+`hour`, `day`, `month`) and what it is counted per (`ip`, `user`).
+
+**D94. `time`.** Section 15 names `now`, `today`, durations and time
+zones. `today` is a `date` and `now` a `time`; section 6 writes
+`date: date = today` without parentheses, so both are names whose value
+is read from the clock each time they are used (not functions). A `date`
+is a day of the calendar (years 1 to 9999); `date(2026, 10, 24)` builds
+one and `date(t)` takes the day of a time. A `time` is an instant, with
+the zone it is shown in; `time(2026, 10, 24, 9, 30, zone: "Europe/Madrid")`
+builds one (hour, minute and second default to 0 and the zone to the
+machine's: `TZ`, then `/etc/localtime`, then UTC). Zones are the IANA
+names of the system's time zone files, `"UTC"` or a fixed offset
+(`"+05:30"`); `t.to_zone(z)` shows the same instant elsewhere (`in` is a
+reserved word). A wall clock time that a change of offset skips or
+repeats takes the offset in effect before the change. Members: `year`,
+`month`, `day`, `weekday` (1 is Monday) and, for times, `hour`, `minute`,
+`second`, `date`, `zone`. Arithmetic uses the durations of D39: a date
+moves by whole days (`d + 3h` is an error), a time by milliseconds;
+`date - date` is a number of `days` and `time - time` of `s`. Times are
+kept to the millisecond and print as `2026-10-24T09:30:00+02:00`
+(`Z` for UTC, `.250` when there are milliseconds); `validate(x, as: date)`
+and `as: time` read that form (a time needs its offset), and JSON and CSV
+write it. `1 year` is 365 days (D2).
+
+**D95. `text`.** Section 15 lists "interpolation, search, regular
+expressions, templates" without functions. The smallest set:
+- `s.find(sub)` is the position of the first `sub` in `s` (counted in
+  characters, from 0) or none.
+- `regex(pattern)` builds a regular expression; `r.matches(t)` (the whole
+  text), `r.find(t)` (the first match or none), `r.find_all(t)`,
+  `r.replace(t, with)` (every match, by a literal text), `r.split(t)` and
+  `r.groups(t)` (the groups of the first match, none for one that did not
+  take part, or none without a match). The syntax is the one both
+  implementations can run identically and in linear time: Rust's regex
+  crate without what Python lacks (`\p{..}`, `[[:alpha:]]`, `(?U)`) and
+  without what it lacks (lookarounds, backreferences, possessive
+  repetitions); `$` is the end of the text unless `(?m)` is given. Any
+  other pattern is an error when `regex` is called. Braces in a pattern
+  are written `{{` as in any text (`"\\d{{4}"`).
+- `render(path, name: value...)` reads a template file and replaces each
+  `{name}` with the text of the value of that name (`{{` is a brace); in a
+  `.html` file the values are escaped (section 9: "in web templates,
+  interpolation is escaped automatically"). A placeholder without a value
+  is an `InvalidData` error. Like `read`, it can fail.
+
+**D96. `move_file`.** Section 10 calls `move_file(path, to: "trash/")`:
+the file moves into the folder `to` (created when missing) keeping its
+name, and the call returns its new path. It can fail like `read`
+(`NotFound`, `IOError`).
+
+**D97. `crypto`.** Section 9 fixes the algorithms per edition; edition
+0.1 uses Argon2id (19 MiB, 2 passes, 1 lane, a 16-byte salt, written as a
+PHC string, so a hash made by one implementation is checked by the
+other), AES-256-GCM (a random 12-byte nonce, then the ciphertext and its
+tag) and Ed25519. Nexo has no bytes type, so keys, ciphertexts and
+signatures are base64 text; files are encrypted in place
+(`encrypt_file(path, k)`, `decrypt_file(path, k)?`).
+- `secret(name)` reads the environment variable `name` when the value is
+  used, not when it is created, so a missing one fails where it is needed
+  (`NotFound`: 'The secret "DB_PASS" is not set'). The system keychain and
+  `from: vault | aws | azure | gcp` belong to `nexo.infra` (phase 5) and
+  are reported as unavailable.
+- A secret, a key and a key pair cannot be shown: `print`, interpolation,
+  `str()`, `write`, `save` and `fail` stop with a compile-style
+  diagnostic (the compiler cannot always know a value is a secret, so
+  both phases check it when the value is shown). A `key:` argument (or a
+  `key =` of a module block) written as a text literal is a compile error
+  ("writing a literal key in the code is a compile error").
+- `password.hash(p)`, `password.check(p, stored)` (false for anything
+  that is not an Argon2id hash) and `password.generate(length: 20)`
+  (letters and digits, from the system's random source).
+- `key.new()`, `key.load(text)` and `k.export()`; `keypair.new()`,
+  `keypair.load(private)`, `pair.public` (text), `pair.private` and its
+  `export()`. Exporting is the visible, explicit way to store a key
+  (section 1, rule 2). `encrypt(text, k)`, `decrypt(text, k)?` (an
+  `InvalidData` error for another key or changed data), `sign(text,
+  private)` and `verify(text, signature, public)`.
+
+**D98. `http`.** Section 15 lists "`http.get`, `http.post`, client with
+retries"; section 10 calls `http.get(EXCHANGE_API).json().usd`. The client
+has `http.get(url)`, `http.delete(url)`, `http.post(url, body)`,
+`http.put` and `http.patch`, with `headers:` (a map; a value can be a
+secret), `timeout:` (a duration, 30s by default) and `retries:`. A text
+body is sent as `text/plain`, anything else as JSON (on one line). The
+answer is a `response` with `status`, `text`, `headers` (lowercase names)
+and `json()` (or `json(as: T)`), which can fail like `json.parse`. Every
+call can fail (`T!`): `NetworkError` when nothing answers (refused,
+unknown host, no answer in time) and `HTTPError` for a status of 400 or
+more, so `http.get(url)?.json()?` never reads an error page as data. GET,
+PUT and DELETE are retried twice by default (POST and PATCH never are,
+since repeating them may repeat their effect) after a network error or a
+502, 503 or 504, waiting 0.25 s, then 0.5 s...; a GET follows up to 5
+redirects (a redirect to another origin, scheme, host or port, drops the
+`Authorization`, `Cookie` and `Proxy-Authorization` headers, which belong
+to the origin they were given to); other 3xx answers are returned as they
+are. The proxy of the
+environment (`HTTPS_PROXY`, `NO_PROXY`) is used. `.usd` on the parsed
+JSON is not allowed (a map is read with `["usd"]`, D44); `json(as: T)`
+gives a record. `validate(x, as: email)` (section 9) accepts a text with
+one `@`, something before it and a domain with a dot after it.
+
+**D99. `fake`.** Section 14 writes `fake ask returns "positive"` and
+`fake payments_api returns {ok: true}` inside a test. `fake name returns
+value` (a dotted name, `fake http.get returns ...`, works too) makes every
+call written as `name(...)` return the value until the test ends; the
+function and the arguments are still evaluated. It is only a statement
+inside `test` blocks; `fake` stays an ordinary name elsewhere.
+
+**D100. `nexo.db`.** Section 6 shows one way to connect and the `@table`
+types as the source of truth. Phase 4 has SQLite, which needs no server:
+- `use nexo.db` makes `connect` and `@table` available (section 15:
+  "`use nexo.db`"; without it they are errors that say so).
+  `connect("data.db")` opens (or creates) an SQLite file and can fail
+  (`DatabaseError`); `connect("postgres://...")` and other servers belong
+  with the cloud resources of phase 5 and are reported as unavailable.
+  `key:` is checked to be readable and not used by SQLite.
+- A `@table` type is a table named after the type in lowercase. Its
+  fields are columns of type `int`, `float`, `bool`, `str`, `decimal`,
+  `money`, `date` or `time`, an int range, a union of literals, or an enum
+  without data; `ref T` is a column `<field>_id` that holds the id of a
+  row of `T` (reading it loads that row); `many T` is not a column but a
+  query of the rows of `T` whose `ref` field points to this one. A field
+  of another type, or a record without `ref`, is an error. The field of
+  type `id` is the automatic primary key (an `int?` that is none until the
+  row is saved). `@unique` is a UNIQUE column; `@private` and `@personal`
+  belong to privacy (phase 5) and change nothing yet. A record field
+  typed with another table type is shared (D78), so `ref` and `many` make
+  no reference cycle: `many` fields are left out of the cycle check.
+- Tables are created, and the columns of new fields added (empty for
+  existing rows), the first time the program uses a type through a
+  database. Anything that removes or changes data is done by
+  `nexo db migrate` (D101).
+- `db.T` is a query of the whole table: `find(field: value, ...)` (a
+  `NotFound` error when no row matches, so `?` passes it on; section 15's
+  `find(...) ?? 404` is written `find(...)?`, which a route answers with
+  404, D104), `add(field: value, ...)` (or `add(record)`; it returns the
+  record with its id), `update(record, field: value, ...)`,
+  `remove(record_or_id)`, `all()` and `count()`. A repeated `@unique` value
+  is a `DatabaseError` that names the field and the value. `ana.orders`
+  of a `many` field reads from the database the type was last used with.
+- Pipelines on a query are translated to SQL while they can be (section
+  6): `where` whose condition compares columns with values (`==`, `!=`,
+  `<`, `>`, `<=`, `>=`, `text in column`, a bare bool column, joined with
+  `and`, `or`, `not`), `sort by column [desc]` and `take n`, in that
+  order, then `count`. A bare name in a step is a column first (D44), so
+  `where date >= start` compares the column `date`. A value is computed
+  once, outside the rows; columns of `decimal` and `money` are not
+  compared in SQL (their text does not order as numbers do), and a value
+  of the wrong type runs in memory (where it gives its usual error). From
+  the first step that cannot be translated, the rows are read and the
+  rest runs in memory with the same result; comparing a missing value is
+  false in SQL. Rows come in the order of the primary key unless sorted
+  (ties of `sort by` too, as the stable sort in memory keeps them).
+  `NEXO_SQL_LOG=1` writes every statement to the standard error output;
+  the tests check that both phases send the same SQL.
+- `db.transaction:` (D90) runs its block in a transaction: an error rolls
+  it back and passes on; inside another one it is a savepoint. A table
+  first created inside a transaction that rolls back is created again
+  when it is next used.
+- `db.sql("SELECT ... {minimum}")` sends the text with each `{value}` as a
+  parameter, never inside the SQL ("raw SQL, always parameterised"), so
+  its argument must be a literal text (the parser keeps its parts apart);
+  a text built elsewhere is an error. A table name after FROM, JOIN, INTO,
+  UPDATE or TABLE, or before a dot, is quoted, so section 6's
+  `FROM order` works although `order` is an SQL word. The result is a
+  list of maps (empty for statements that return no rows).
+- Times are stored in UTC with milliseconds (they come back in UTC),
+  money as `"19.99 EUR"`, decimals as text.
+
+**D101. Migrations.** Section 6 has `nexo db diff` write "a readable
+migration file" and `nexo db migrate` apply it in a transaction; the
+format is left open for edition 1.0 (section 27). `nexo db diff app.nexo`
+runs only the types of the program (nothing else) and compares them with
+the database of its first `connect("...")` (or `--db path`): it writes
+`migrations/NNNN.sql` next to the program, numbered in order, with the
+SQL to create tables and add columns, then, under a comment, what drops
+data (removed tables, and removed columns, which SQLite drops by building
+the table again). A column whose type changed gets a comment to change
+it by hand. `nexo db migrate app.nexo` applies the files not applied yet
+(recorded in the table `nexo_migrations`), each in a transaction; a file
+that drops data needs `--allow-drop`.
+
+## nexo.web (section 15)
+
+**D102. Servers and routes.** Section 15 shows one `server` block and
+says HTTPS, secure headers and CSRF protection are on and cannot be
+turned off; how a server starts is not written. A `server NAME:` block
+(D90) holds `port` (default 8080) and `auth` (a `jwt`, optional), then
+routes: `get|post|put|patch|delete "/path/{param}"(params):` with a
+block. The servers start when the top level of the program has run (and
+its spawned tasks have ended), and answer until the program is stopped;
+the line `api escucha en http://127.0.0.1:8080` goes to the standard
+error output. `PORT` in the environment replaces the port when there is
+one server. Under `nexo test` every server listens on a free port before
+the tests, and `api.url` (also `api.port`, `api.name`) is its address,
+so a test calls it with `http`. `NEXO_WEB_LOCAL=1` listens on 127.0.0.1
+only; otherwise on every address.
+- A server answers HTTP/1.1 one request at a time and closes each
+  connection after its answer (`Connection: close`); heads are limited to
+  64 KB and bodies to 1 MB.
+- Parameters: a `{name}` of the path, then a parameter whose type is a
+  record, list or map, read from the JSON body (`json.parse(as: T)`),
+  then the query (`?limit=5`), converted to the parameter's type as
+  `validate` does; a parameter named `request` receives the request
+  (`method`, `path`, `headers`, `query`, `body`, `json()`, `user`, `ip`).
+  A parameter that is missing and has no default answers 400.
+- HTTPS: Nexo does not terminate TLS itself in this phase (a certificate
+  needs a host name). Every answer carries `Strict-Transport-Security`,
+  and a request that a proxy marks `X-Forwarded-Proto: http` is
+  redirected with 308 to `https://`. The other secure headers are
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`,
+  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY` and `Cache-Control: no-store`.
+- CSRF: a POST, PUT, PATCH or DELETE whose `Origin` is not the host it
+  was sent to answers 403. Tokens travel in `Authorization`, never in
+  cookies, so a page of another site cannot use them.
+- A path that no route has answers 404; one that another method has
+  answers 405 with `Allow`. A route defined twice, or `@role` on a server
+  without `auth`, is an error when the program starts.
+- `@limit(10 per minute per ip)` (D93; the units are `second`, `minute`,
+  `hour`, `day` and `month`) counts requests per route in windows of the
+  clock, per address (`per ip`, the default) or per token subject
+  (`per user`); one more answers 429 with `Retry-After`.
+- A mistake in a handler (a diagnostic) answers 500 and stops the program
+  with its message, as everywhere else (D17); under `nexo test` it fails
+  that request and is shown, the tests go on, and `nexo test` ends with
+  status 1.
+
+**D103. Authentication.** Section 15 writes `auth = jwt(key: ...)` and
+`@role("admin")` and nothing else. `jwt(key:)` takes a secret or a text
+and signs tokens with HS256 (the one algorithm, so there is nothing to
+choose and the `none` algorithm is never accepted): `tokens.sign(claims,
+expires: 1h)` adds `exp`; `tokens.verify(token)` gives the claims or
+fails with InvalidValue. With `auth`, every route needs
+`Authorization: Bearer <token>` (401 otherwise) unless it has `@public`;
+`@role("admin")` needs the claim `role` to be that text, or the claim
+`roles` to contain it (403 otherwise). `request.user` holds the claims
+(`none` on a public route without a token). A token that is not
+base64url text (three ASCII parts) is simply not valid.
+
+**D104. Answers.** Section 15 returns a record, `204` and `?? 404`. The
+value a handler returns is the answer: `none` is 204; an int is the
+status (100 to 599, another number is an error), with a JSON body
+`{"error": "Not Found"}` from 400 up; a text is `text/plain`; anything
+else is compact JSON (D58), with status 201 for POST and 200 otherwise.
+An error that leaves the handler is an answer too: NotFound is 404,
+InvalidValue and InvalidData are 400, a `@unique` that is repeated is
+409, each with `{"error": message}`; any other error is 500, and the
+program shows it on the standard error output as an unhandled error
+without stopping. Request parameters that cannot be converted answer 400
+with the message of the conversion.
+
+**D105. `log` and `@private`.** Section 9 shows `log(customer)` printing
+`{name: "Ana", national_id: "***", card: "***"}` and says `@private`
+fields are hidden in logs, traces and AI calls; where a log goes is not
+written. `log(values...)` writes one line to the standard error output,
+the values shown as `print` shows them and separated by a space, with the
+value of every `@private` field of a record replaced by `"***"` (the
+record keeps its own form, `Customer(name: "Ana", national_id: "***")`,
+D30). A secret cannot be logged (D97). Outside logs and `ask` (D108), the
+field is an ordinary field: the program reads and prints it.
+
+## nexo.ai (section 8)
+
+**D106. Configuration of `ask`.** Section 8 lists five places, "the first
+one that exists wins", and three providers by name (anthropic, openai,
+ollama); the format of nexo.toml and of the user configuration is not
+written.
+- The places are read key by key: a call with `model:` still takes the
+  key from the `ai` block. An `ai:` block replaces the file's previous
+  one from its line on (D90); `ai profile "p":` is used by
+  `ask(..., profile: "p")`, and a profile that does not exist is an error.
+- The keys of a block are `provider`, `model`, `key`, `url` and
+  `fallback`; another key is an error (with "Did you mean"). `budget` and
+  `when_over_budget` need the cost controls of a later phase (D89). `url`
+  is the address of the provider (for ollama on another machine, or a
+  server that speaks the same API); the defaults are
+  https://api.anthropic.com, https://api.openai.com and
+  http://localhost:11434.
+- A model is `"provider:model"` or a name of `ai models:`; a model without
+  a provider uses the configured `provider`. `key` and `url` belong to a
+  provider: they come from the first place that configures that
+  provider, so a fallback to another provider does not send it the first
+  one's key.
+- nexo.toml (in the program's folder or the nearest folder above) and the
+  user configuration (`$XDG_CONFIG_HOME/nexo/ai.toml`, by default
+  `~/.config/nexo/ai.toml`) have an `[ai]` table with the same keys and
+  an `[ai.models]` table with the aliases. Values are texts or lists of
+  texts in double quotes; `key` there is the name of the environment
+  variable that holds the key, since a key is never written in a file
+  (section 9). `nexo ai setup` asks for the provider, the model, that name
+  and the address, and writes the file.
+- Without a provider anywhere, `ask` fails with AIError and the message of
+  section 8; a provider without its key (ollama needs none) fails with
+  AIError too.
+
+**D107. Calls.** `ask(instruction, input?, options...)` is a function that
+can fail (`?` passes its error on). It sends one message to the provider
+(Anthropic's Messages API, OpenAI's Chat Completions, Ollama's
+`/api/chat`) with the http client and returns the text of the answer.
+- `creativity`, `guard` and `redact` take a bare word (`creativity: low`),
+  read as text by the parser like the model aliases. `creativity` is the
+  temperature: low 0.2, medium 0.7, high 1.0. `max: 200 tokens` limits the
+  answer; `max: 200 words` asks for that many words and limits the
+  answer to about 4/3 tokens per word. `timeout` is 60s by default.
+- `retries` (3 with a type, 1 without) is the number of new attempts after
+  a network error or a 502, 503 or 504, and, with a type, after an answer
+  that is not a valid value. When a model cannot answer (NetworkError,
+  HTTPError or AIError), the next one of `fallback` is tried; the error of
+  the last one passes on.
+- `stream: true` asks the provider for the answer in pieces and returns
+  the list of pieces in order, so `for chunk in ask(..., stream: true)`
+  works; the loop starts when the answer is complete, since a value that
+  arrives while the program runs needs the streams of a later phase. A
+  typed answer cannot be streamed.
+- Every answer adds a line to `usage.csv` next to ai.toml (day, model,
+  input and output tokens). `nexo ai usage` shows the calls and tokens per
+  day and model; spend needs the prices of each provider, which change
+  and are not in the specification, so it is not shown.
+- `fake ask returns value` (D99) replaces every call in a test.
+
+**D108. Typed answers, `guard` and `redact`.** `o: Opinion = ask(...)`
+passes the type of the variable to the call (`as: Opinion`, which can
+also be written). The message asks for JSON of the form of the type,
+written with the types as Nexo writes them (`{"tone": "positive" |
+"negative" | "neutral", "score": 1..5}`); the answer (also inside ```
+fences) is read as `json.parse(as: T)` does. An answer that is not a
+valid value is sent back with the reason and asked again, up to
+`retries` times; then the InvalidData error passes on.
+- Every value is treated as external (phase 4 does not mark where values
+  come from), so `guard: injection` is the default whenever there is an
+  input: the input goes between `<input>` and `</input>` and the system
+  message says that text there is data, never instructions. With
+  `guard: none` the input follows the instruction after a blank line.
+- `redact: private` (the default) shows the input with its `@private`
+  fields as `"***"`, as `log` does (D105); `redact: none` sends them. A
+  secret is never sent (D97).
+- The system message and these instructions are in English for every
+  language of the messages, so the same program sends the same request.
+
+**D109. Tools and agents.** Section 8 shows `@tool "description"`, an
+`agent` block with `model`, `tools`, `goal`, `max_steps` and `confirm`,
+and `support.handle(mail)`; how the agent talks to the model is not
+written.
+- A `@tool` function is described to the model by its name, its
+  description and a JSON schema of its parameters built from their types
+  (`int` is an integer, `decimal` a number, a union of texts an `enum`,
+  `1..5` an integer with bounds, a record an object with its fields); a
+  parameter with a default or an optional type is not required. Only
+  `@tool` functions can be tools, and `confirm` can only name tools of
+  the agent. Other keys are errors; `mcp("name")` belongs with the MCP
+  servers of a later phase (D89).
+- `agent.handle(input)` sends the goal (and the guard of D108) as the
+  system message and the input between `<input>` and `</input>`, with its
+  `@private` fields hidden, using the provider's own way of calling tools
+  (Anthropic's `tool_use` blocks, the `tool_calls` of OpenAI and Ollama).
+  Each call the model asks for runs the function with its arguments read
+  as `json.parse(as: T)` reads them; the value goes back as text (shown as
+  `log` shows it), and an error of the function goes back as
+  `Error: message`, so the model can recover. A tool in `confirm` is
+  shown on the terminal (`¿Usar send_email(to: "ana@mail.com")? (s/n)`)
+  and runs only after `s` or `y`; otherwise the model is told the user
+  did not allow it. The answer is the text of the first reply that asks
+  for no tool; after `max_steps` (10 by default) requests the call fails
+  with AIError. The agent uses its model (or the configured one) without
+  fallback, with creativity medium.
+
+## Interoperability (section 18)
+
+**D110. `use c "library"`.** Section 18 promises "direct call with headers
+read automatically"; how the library and its header are found, and which
+C types cross, is not written.
+- The library is `lib<name>.so` (or its first versioned file) in the
+  folders of `LD_LIBRARY_PATH`, `/usr/local/lib`, `/usr/lib/<arch>-linux-gnu`,
+  `/usr/lib`, `/lib/<arch>-linux-gnu` and `/lib`, the first that is a real
+  shared library (`libc.so` is often a script for the linker); a name with
+  a `/` is a path from the program's folder (`use c "./libgreet.so" as
+  greet`). It is used through the name after `as`, or the text itself.
+- The header of a few common libraries is known (`libm` is `math.h`,
+  `libz` is `zlib.h`, `libc` is `stdlib.h` and `string.h`, and `libssl`,
+  `libcrypto`, `libsqlite3`, `libcurl`, `libpthread`); for the others it
+  is `<name>.h`, `lib<name>.h` or `<name>lib.h`, looked for next to the
+  program (and the library) and in the system's folders. It is read
+  through the C preprocessor (`$CC`, `cc`, `clang` or `gcc`): phase 0 when
+  the `use` runs, the compiler when it compiles (so the program it builds
+  needs neither the compiler nor the header). Not finding the library,
+  the header or a C compiler is an error at the `use`.
+- A call converts `int` (every integer type and enum of C; a value that
+  does not fit in a narrower type is cut to its bits, as C does), `float`
+  (`float` and `double`; an int is accepted), `bool` and texts: a `const
+  char *` parameter takes a text, and a `char *` result is copied into a
+  text (`none` for NULL). A function that uses another type (other
+  pointers, which C may write through, structs, `long double`), takes a
+  variable number of arguments, or more arguments than the registers of
+  the calling convention hold (6 integers and 8 floats on x86-64) is an
+  error when it is called, with the type named. An unsigned 64-bit result
+  above the largest int is an Overflow. Arguments are positional.
+- Section 18's `C functions ... return T! if the header indicates an
+  error code` has no way to be read from a header, so results are plain
+  values; `nexo audit` belongs with the security tools of a later phase.
+- `use rust` and `use wasm` need a later phase (D89).
+
+**D111. `use python module as name`.** Section 18: "embedded Python
+interpreter; data is converted at the boundary". Phase 0 runs in Python and
+imports the module into itself. The compiler asks the Python of
+`$NEXO_PYTHON` (or `python3`) for its shared library and its `sys.path`
+when it compiles; the program loads that library when it first imports a
+module (a Python without its shared library is an error at the `use`).
+- To Python go `none`, `bool`, `int`, `float`, `str`, `decimal` (as
+  `decimal.Decimal`), lists, maps, sets and records (as a dict of their
+  fields); another value is an error. From Python come the same types
+  (tuples become lists; an int that does not fit is an Overflow); a
+  subclass of a container (`Counter`) and every other object stay a
+  `python` value, shown with Python's `repr`, whose attributes are read
+  and that is called with positional and named arguments, both converted
+  the same way. A missing attribute says "Did you mean" from `dir()`.
+- An exception of Python code is an error value (`Error`, message
+  `ValueError en Python: math domain error`) that `try` handles; a module
+  that cannot be imported is an error at the `use`.
+- "Unannotated Python types arrive as `any`": the values are dynamic, and
+  a typed variable checks them as usual (D33).
+
+**D112. `convert(x, to: format)` and the formats of `data`.** Section 10
+names `convert(x, to: format)` as the adapter and section 15 lists JSON,
+CSV, Parquet, XML, YAML and columnar tables in `data`. `convert(x, to:
+json)` gives the JSON text of a value, as `save` writes it (indented with
+two spaces), and `convert(rows, to: csv)` the CSV text of a list of
+records or maps; `convert(money, to: USD, rate: r)` stays as it was, and
+`rate` belongs only to it. Parquet, XML, YAML and columnar tables need
+their own readers and writers and are not part of phase 4's exit
+criterion; they stay for a later phase, and `yaml`, `xml` and `parquet`
+are ordinary names until then.

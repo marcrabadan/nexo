@@ -1,0 +1,2 @@
+# Rust crates come with a later phase (D110)
+use rust serde_json

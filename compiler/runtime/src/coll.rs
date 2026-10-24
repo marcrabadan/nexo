@@ -31,6 +31,7 @@ pub fn key_of(v: V) -> Option<Key> {
             Obj::Money(d, c) => Key::Money(d.key(), c),
             Obj::Quantity(d, u) => Key::Qty(d.key(), u),
             Obj::Variant(var) => Key::Variant(*var as *const _ as usize),
+            Obj::Native(n) => Key::Native(n.key()?),
             _ => return None,
         },
         _ => return None,

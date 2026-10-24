@@ -232,12 +232,15 @@ def test_events_and_use():
     prog = parse("use nexo.db\nuse python numpy as np\non created(o):\n    pass\nemit created(1)\n", "t.nexo").body
     assert prog[0].name == "nexo.db" and prog[0].lang is None
     assert prog[1].lang == "python" and prog[1].name == "numpy" and prog[1].alias == "np"
-    assert isinstance(prog[2], A.EventStmt) and isinstance(prog[3], A.Emit)
+    assert isinstance(prog[2], A.Assign) and prog[2].target.name == "np"  # np = __python_import("numpy")
+    assert isinstance(prog[3], A.EventStmt) and isinstance(prog[4], A.Emit)
 
 
 def test_config_block_is_recognised():
+    prog = parse('infra shop:\n    cloud = "aws"\nprint(1)\n', "t.nexo").body
+    assert isinstance(prog[0], A.ConfigBlock) and prog[0].word == "infra"
     prog = parse('ai:\n    provider = "anthropic"\n    key = secret("K")\nprint(1)\n', "t.nexo").body
-    assert isinstance(prog[0], A.ConfigBlock) and prog[0].word == "ai"
+    assert isinstance(prog[0], A.ExprStmt) and prog[0].expr.func.name == "__ai_config"
     assert isinstance(prog[1], A.ExprStmt)
 
 
@@ -253,3 +256,68 @@ def test_duplicate_names():
         with pytest.raises(NexoError) as e:
             parse(src, "t.nexo")
         assert e.value.key == "duplicate_name"
+
+
+MODULES = """use nexo.db
+use python numpy as np
+use c "libm"
+@table
+type Customer:
+    id: id
+    email: str @unique
+    orders: many Order
+ai models:
+    fast = "openai:gpt-mini"
+ai:
+    model = fast
+@tool "Looks up"
+fn find(id: str) -> str:
+    return id
+agent support:
+    tools = [find]
+server api:
+    port = 8080
+    @limit(10 per minute per ip)
+    get "/users/{id}"(id: int):
+        return id
+db.transaction:
+    print(1)
+x = ask("hi", model: fast)
+test "t":
+    fake ask returns "x"
+"""
+
+
+def summary(body):
+    out = []
+    for s in body:
+        if isinstance(s, A.Use):
+            out.append(f"use {s.lang + ' ' if s.lang else ''}{s.name}")
+        elif isinstance(s, A.Assign):
+            out.append(f"{s.target.name} =")
+        elif isinstance(s, A.TypeDef):
+            out.append(f"type {s.name} {len(s.fields)}")
+        elif isinstance(s, A.FnDef):
+            out.append(f"fn {s.name}")
+        elif isinstance(s, A.ExprStmt):
+            out.append(f"{s.expr.func.name}()")
+        elif isinstance(s, A.TryStmt):
+            out.append(f"try {len(s.body)}")
+        elif isinstance(s, A.TestDef):
+            out.append("test")
+    return out
+
+
+def test_module_blocks_desugar():
+    # the same list as the compiler's parser test module_blocks_desugar (D90)
+    body = parse(MODULES, "t.nexo").body
+    assert summary(body) == [
+        "use nexo.db", "use python numpy", "np =", "use c libm", "libm =", "type Customer 2", "__db_table()",
+        "__ai_models()", "__ai_config()", "fn find", "__ai_tool()", "support =", "api =", "fn GET /users/{id}",
+        "__web_route()", "__tx23_1 =", "try 2", "x =", "test"]
+    assert isinstance(body[17].value.args[1].value, A.Str)
+    for src, key in [("@table\ntype A:\n    id: id\n", "needs_use"), ("type A:\n    b: ref B\n", "table_only"),
+                     ("use nexo.db\nfn f():\n    db.transaction:\n        return 1\n", "transaction_return")]:
+        with pytest.raises(NexoError) as e:
+            parse(src, "t.nexo")
+        assert e.value.key == key

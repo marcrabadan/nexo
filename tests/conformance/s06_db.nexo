@@ -1,0 +1,52 @@
+# nexo.db: tables, queries in SQL, relations, transactions and raw SQL (section 6, D100)
+use nexo.db
+
+db = connect("shop.db")
+
+@table
+type Customer:
+    id: id
+    name: str
+    email: str @unique
+    orders: many Order
+
+@table
+type Order:
+    id: id
+    customer: ref Customer
+    amount: float
+    date: date = date(2026, 10, 1)
+
+ana = db.Customer.add(name: "Ana", email: "ana@mail.com")
+luis = db.Customer.add(name: "Luis", email: "luis@mail.com")
+print(ana)
+db.Order.add(customer: ana, amount: 49.9)
+db.Order.add(customer: ana, amount: 150.0, date: date(2026, 10, 20))
+db.Order.add(customer: luis, amount: 320.5, date: date(2026, 10, 5))
+large = db.Order |> where amount > 100 |> sort by date desc |> take 20
+for o in large:
+    print(o.amount, o.date, o.customer.name)
+found = db.Customer.find(email: "ana@mail.com")
+print(found.name, found.orders.count(), found.orders |> map it.amount |> sum)
+db.transaction:
+    db.Order.add(customer: found, amount: 10.0)
+    db.Customer.update(found, name: "Ana G.")
+print(db.Customer.find(id: found.id).name, db.Order.count())
+try:
+    db.transaction:
+        db.Order.add(customer: luis, amount: 1.0)
+        db.Customer.add(name: "Copy", email: "ana@mail.com")
+else e:
+    print(e.kind, e.message)
+print(db.Order.count(), db.Order |> where customer == luis |> count)
+minimum = 100
+rows = db.sql("SELECT id, amount FROM order WHERE amount > {minimum} ORDER BY amount")
+print(rows)
+try:
+    db.Customer.find(email: "nobody@mail.com")
+else e is NotFound:
+    print(e.message)
+db.Order.remove(1)
+start = date(2026, 10, 1)
+print(db.Order |> where amount < 100 and date >= start |> map it.amount)
+print(db.Customer.all() |> map it.name)

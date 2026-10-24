@@ -121,11 +121,21 @@ def b_split(call, amount, parts):
     return out
 
 
-def b_convert(call, value, to, rate):
+def b_convert(call, value, to, rate=None):
+    """convert(x, to: json | csv) gives the text of a value in a format
+    (D112); convert(money, to: USD, rate: r) changes its currency."""
+    from . import Namespace, data
+    if isinstance(to, Namespace) and to.name in ("json", "csv"):
+        if rate is not None:
+            raise NexoError("arg_unknown", call.span, fn="convert", param="rate", params="value, to")
+        value = call.interp.bind_value(value)
+        return data.to_json(value) if to.name == "json" else data.to_csv(call, value)
     if not isinstance(value, Money):
         raise expects(call, "convert", "money", value)
     if not isinstance(to, Currency):
-        raise expects(call, "convert", "currency", to)
+        raise expects(call, "convert", "currency, json, csv", to)
+    if rate is None:
+        raise NexoError("arg_missing", call.span, param="rate", fn="convert")
     try:
         factor = to_decimal(rate)
     except TypeError:
@@ -186,6 +196,8 @@ def b_fail(call, message):
 
 
 INT_RE = re.compile(r"^[+-]?\d+$")
+# an address with one @, a name before it and a domain with a dot after it
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
 FLOAT_RE = re.compile(r"^[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?$")
 
 
@@ -223,6 +235,15 @@ def b_validate(call, value, as_, range=None):
             result = text == "true"
         elif target.name == "str":
             result = value
+        elif target.name == "email":
+            if not EMAIL_RE.match(text):
+                raise invalid()
+            result = text
+        elif target.name in ("date", "time"):
+            from .clock import parse_date, parse_time
+            result = parse_date(text) if target.name == "date" else parse_time(text)
+            if result is None:
+                raise invalid()
         else:
             raise invalid()
     elif isinstance(target, (BuiltinType, RecordType)) or hasattr(target, "name"):
@@ -261,11 +282,17 @@ def exports() -> dict:
     }
     for t in ("int", "float", "decimal", "money", "str", "bool", "list", "map"):
         names[t] = BuiltinType(t)
+    names["email"] = BuiltinType("email")
     for kind in ERROR_KINDS:
         names[kind] = ErrorKind(kind)
     for code in CURRENCIES:
         names[code] = Currency(code)
     return names
+
+
+def _text():
+    from . import text
+    return text
 
 
 # ---------------------------------------------------- methods of values
@@ -321,5 +348,6 @@ METHODS = {
         "replace": text_method("replace", lambda s, a, b: s.replace(a, b), 2),
         "starts_with": text_method("starts_with", lambda s, p: s.startswith(p), 1),
         "ends_with": text_method("ends_with", lambda s, p: s.endswith(p), 1),
+        "find": lambda call, obj, text: _text().m_find(call, obj, text),
     },
 }

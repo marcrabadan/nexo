@@ -32,9 +32,11 @@ Total with VAT: 350.65 EUR
 > same programs with the same output. Phase 2 adds the memory model,
 > real `parallel`, `nexo.sync` and contracts the compiler proves. Phase 3
 > adds the tools: `nexo fmt`, `lint`, `fix`, `check`, `lsp`, a REPL in the
-> compiler and a VS Code extension. Modules
-> such as `nexo.ai`, `nexo.web`, `nexo.db` and `nexo.infra` are described
-> in the specification but not implemented yet.
+> compiler and a VS Code extension. Phase 4 adds the standard library and
+> the modules `nexo.ai`, `nexo.web` and `nexo.db`, with C and Python
+> interoperability. `nexo.infra`, CI pipelines, streams and the other
+> modules of later phases are described in the specification but not
+> implemented yet.
 
 ## Contents
 
@@ -319,6 +321,7 @@ Complete programs live in [`examples/`](examples). Each one has a
 | [`tip_calculator.nexo`](examples/tip_calculator.nexo) | reading and validating user input |
 | [`todo.nexo`](examples/todo.nexo) | enums, `match`, events with `on`/`emit`, tests |
 | [`word_count.nexo`](examples/word_count.nexo) | the five most common words in a text file |
+| [`shop_api/shop.nexo`](examples/shop_api/shop.nexo) | a web API with SQLite and `ask`: products, reviews the AI analyses, JWT login, tests with `fake ask` |
 
 Run any of them from the `examples/` directory so relative paths to
 `data/` resolve:
@@ -330,7 +333,7 @@ cd examples
 
 ## What is implemented
 
-This repository covers phases 0 to 3 of the plan in section 25 of
+This repository covers phases 0 to 4 of the plan in section 25 of
 the specification.
 
 **Included:** constants and `var`; `type` (records, unions, enums with
@@ -393,10 +396,50 @@ Warning in app.nexo, line 3:
 Warnings: 1. Safe fixes with nexo fix: 1.
 ```
 
-**Not yet:** the other official modules (`ai`, `web`, `db`, `infra`,
-`ci`, `stream`, `ml`) and `when`/`every`/`lifecycle`. Using them gives a
-clear "not available in this phase" error rather than being silently
-ignored.
+**Phase 4: library and modules.** Both implementations again give the
+same output; the decisions are D89 to D112.
+
+- **Standard library (section 15):** `now` and `today`, dates, times,
+  durations and IANA time zones; `find`, `regex` and `render` templates;
+  `move_file`; `convert(x, to: json | csv)`; an `http` client with
+  retries; `fake` in tests; `log`, which hides `@private` fields.
+- **Security (section 9):** `secret("NAME")` values that can never be
+  printed, `password.hash`/`check`, `encrypt`/`decrypt` (AES-256-GCM),
+  `sign`/`verify` (Ed25519) and `validate(x, as: email)`. A key written in
+  the code is a compile error.
+- **`nexo.db`:** SQLite through `connect`; `@table` types are the schema,
+  with `ref` and `many` relations. Pipelines on tables become
+  parameterised SQL, and there are transactions, `db.sql` and
+  `nexo db diff` / `nexo db migrate`.
+- **`nexo.web`:** `server` blocks with typed routes, JWT `auth`,
+  `@role`, `@limit`, `@public`, secure headers, CSRF and HTTPS
+  redirects. Errors become status codes, and `nexo test` serves the API
+  on a free port.
+- **`nexo.ai`:** `ai`, `ai models` and `ai profile` blocks, plus
+  nexo.toml and `nexo ai setup`. `ask` works with Anthropic, OpenAI and
+  Ollama; it validates typed answers with retries and has `fallback`,
+  `stream`, `guard` and `redact`. There are also `@tool` functions,
+  `agent` blocks with `confirm`, and `nexo ai usage`.
+- **Interoperability (section 18):** `use c "libz"` reads the header
+  through the C preprocessor and calls with int, float, bool and text
+  arguments. `use python statistics as stats` converts data at the
+  boundary; the compiler loads libpython at run time.
+
+```nexo
+o: Opinion = ask("Analyse this review", review)?   # validated, up to 3 retries
+
+server shop:
+    auth = jwt(key: secret("JWT_KEY"))
+
+    @role("admin")
+    post "/products"(product: NewProduct):
+        return db.Product.add(name: product.name, price: product.price)
+```
+
+**Not yet:** `infra`, CI pipelines, `stream`, `ml`, `ui`, `notify`,
+`policy`, `when`/`every`/`lifecycle`, AI budgets, MCP tools, PostgreSQL,
+`use rust`/`use wasm`, YAML/XML/Parquet. Using any of them gives a clear
+"not available in this phase" error; nothing is silently ignored.
 
 **Performance.** `compiler/bench/compare.py` times each benchmark against
 the same program in Rust (`rustc -O` with overflow checks, since Nexo
@@ -436,14 +479,17 @@ nexo/                 phase 0: Python interpreter
   interpreter.py      tree-walking evaluator
   numbers.py types.py arithmetic, money, units and runtime values
   errors.py           error renderer and es/en messages
-  stdlib/             builtins, io, JSON/CSV
+  stdlib/             builtins, io, JSON/CSV, time, text, crypto, http,
+                      db, web, ai, clib (use c), pylib (use python)
   fmt.py lint.py      nexo fmt, nexo lint and nexo fix
   lsp.py              nexo lsp, the language server
   cli.py              the `nexo` command
 compiler/             phase 1: Rust compiler
   nexoc/              driver, lexer, parser, resolver, type checker, LLVM codegen,
-                      fmt, lint, lsp (with json) and the REPL
-  runtime/            static library linked into every program (repl.rs: the REPL journal)
+                      fmt, lint, lsp (with json), the REPL, cheader (use c),
+                      ai_cmd (nexo ai setup|usage)
+  runtime/            static library linked into every program (repl.rs: the REPL journal;
+                      library.rs and its modules: the phase 4 library)
   diag/               es/en message catalog
   scripts/            conformance and differential test runners
   bench/              benchmarks
@@ -453,6 +499,7 @@ tests/
   unit/               pytest unit tests per layer
 editors/vscode/       the VS Code extension
 examples/             complete programs with expected output
+  shop_api/           the exit criterion of phase 4: a web API with a database and ask
 docs/
   especificacion-nexo.md  the specification (source of truth)
   decisions.md            every ambiguity and the choice made

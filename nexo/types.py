@@ -11,6 +11,7 @@ Mapping to Python:
 from __future__ import annotations
 
 import decimal
+import threading
 import weakref
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -265,6 +266,7 @@ class RecordType:
     methods: dict[str, Any] = field(default_factory=dict)
     traits: list[TraitType] = field(default_factory=list)
     env: Any = None
+    table: Any = None  # a @table type (nexo.db)
 
 
 class WeakRef:
@@ -361,7 +363,8 @@ class Symbol:
 # ----------------------------------------------------------------- errors
 
 ERROR_KINDS = ["Error", "NotFound", "IOError", "InvalidData", "Overflow", "DivisionByZero",
-               "OutOfRange", "ContractBroken", "Timeout", "InvalidValue"]
+               "OutOfRange", "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError", "AIError",
+               "DatabaseError"]
 
 
 @dataclass(eq=False)
@@ -387,10 +390,54 @@ class NexoFailure(Exception):
         self.error = error
 
 
-def failure(kind: str, span: Span | None = None, cause: Any = None, **args) -> NexoFailure:
-    message = errors.msg("err." + kind, **args)
-    fix = "fix." + kind if errors.has("fix." + kind) else None
+def failure(kind: str, span: Span | None = None, cause: Any = None, key: str | None = None, **args) -> NexoFailure:
+    """An error value; `key` picks another message of the same kind
+    ("err.<key>" and its "fix.<key>")."""
+    key = key or kind
+    message = errors.msg("err." + key, **args)
+    fix = "fix." + key if errors.has("fix." + key) else ("fix." + kind if errors.has("fix." + kind) else None)
     return NexoFailure(ErrorValue(kind, message, cause, span, fix))
+
+
+# ------------------------------------------------------- library values
+
+class At:
+    """Where a member of a library value is used: the interpreter and the
+    span (what builtins receive as `call`)."""
+
+    __slots__ = ("interp", "span", "node")
+
+    def __init__(self, interp, span, node=None):
+        self.interp, self.span, self.node = interp, span, node
+
+
+class Native:
+    """A value of the standard library or a module (date, time, regex,
+    secret, database...): it names its type, shows itself and answers
+    its members."""
+
+    __slots__ = ()
+    type_name = "native"
+
+    def repr(self) -> str:
+        return self.type_name
+
+    def show(self) -> str:
+        return self.repr()
+
+    def member(self, call, name: str) -> Any:
+        return self.missing(call, name, [])
+
+    def missing(self, call, name: str, candidates: list[str]):
+        s = errors_suggest(name, candidates)
+        if s:
+            raise NexoError("no_member", call.span, fix="suggest", vtype=self.type_name, name=name, suggestion=s)
+        raise NexoError("no_member", call.span, vtype=self.type_name, name=name)
+
+
+def errors_suggest(name, candidates):
+    from .errors import suggest
+    return suggest(name, candidates)
 
 
 # ------------------------------------------------------------- callables
@@ -429,6 +476,8 @@ class Builtin:
 def type_name(value: Any) -> str:
     if value is None:
         return "none"
+    if isinstance(value, Native):
+        return value.type_name
     if isinstance(value, bool):
         return "bool"
     if isinstance(value, int):
@@ -496,10 +545,33 @@ def format_decimal(d: Decimal) -> str:
     return text
 
 
+class _Hiding(threading.local):
+    on = False
+
+
+_HIDING = _Hiding()
+
+
+def private_fields(t: RecordType) -> set:
+    return {f.name for f in t.fields if "private" in getattr(f, "marks", ())}
+
+
+def show_hidden(value: Any) -> str:
+    """`show` with the @private fields of records as "***" (section 9:
+    hidden in logs and AI calls)."""
+    old, _HIDING.on = _HIDING.on, True
+    try:
+        return show(value)
+    finally:
+        _HIDING.on = old
+
+
 def show(value: Any) -> str:
     """Text of a value as `print` and interpolation show it."""
     if isinstance(value, str):
         return value
+    if isinstance(value, Native):
+        return value.show()
     return repr_value(value)
 
 
@@ -513,6 +585,8 @@ def repr_value(value: Any) -> str:
         return "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, Native):
+        return value.repr()
     if isinstance(value, float):
         return format_float(value)
     if isinstance(value, Decimal):
@@ -532,7 +606,9 @@ def repr_value(value: Any) -> str:
     if isinstance(value, Range):
         return f"{value.start}..{value.end}"
     if isinstance(value, Record):
-        inner = ", ".join(f"{k}: {weak_repr(v) if type(v) is WeakRef else repr_value(v)}" for k, v in value.fields.items())
+        hidden = private_fields(value.type) if _HIDING.on else ()
+        inner = ", ".join(f"{k}: {'"***"' if k in hidden else weak_repr(v) if type(v) is WeakRef else repr_value(v)}"
+                          for k, v in value.fields.items())
         return f"{value.type.name}({inner})"
     if isinstance(value, VariantValue):
         inner = ", ".join(f"{k}: {repr_value(v)}" for k, v in value.fields.items())
@@ -565,5 +641,7 @@ def hashable(value: Any, span: Span | None) -> Any:
     quantities and enum variants without data."""
     value = plain(value)
     if value is None or isinstance(value, (str, int, float, Decimal, Money, Quantity, Variant)):
+        return value
+    if isinstance(value, Native) and type(value).__hash__ is not object.__hash__ and value.type_name in ("date", "time"):
         return value
     raise NexoError("unhashable", span, vtype=type_name(value))

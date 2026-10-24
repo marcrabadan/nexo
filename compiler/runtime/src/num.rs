@@ -244,6 +244,9 @@ pub fn arith(op: Op, a: V, b: V, span: u32) -> R<Val> {
             return Ok(list(items));
         }
     }
+    if matches!(a.get(), Some(Obj::Native(_))) || matches!(b.get(), Some(Obj::Native(_))) {
+        return crate::time::arith(op, a, b, span);
+    }
     if matches!(a.get(), Some(Obj::Money(..))) || matches!(b.get(), Some(Obj::Money(..))) {
         return money_op(op, a, b, span);
     }
@@ -602,6 +605,13 @@ pub fn equals(a: V, b: V, span: u32) -> R<bool> {
     Ok(py_eq(a.v(), b.v()))
 }
 
+fn natives(a: V, b: V) -> Option<(&'static dyn Native, &'static dyn Native)> {
+    match (a.get(), b.get()) {
+        (Some(Obj::Native(x)), Some(Obj::Native(y))) => Some((&**x, &**y)),
+        _ => None,
+    }
+}
+
 /// Structural equality used inside collections (Python `==` on values).
 pub fn py_eq(a: V, b: V) -> bool {
     if a.tag != T_OBJ || b.tag != T_OBJ {
@@ -647,6 +657,7 @@ pub fn py_eq(a: V, b: V) -> bool {
         (Obj::Type(x), Obj::Type(y)) => crate::fmt::type_ref_name(x) == crate::fmt::type_ref_name(y),
         (Obj::Currency(x), Obj::Currency(y)) => x == y,
         (Obj::Symbol(x), Obj::Symbol(y)) => x == y,
+        (Obj::Native(x), Obj::Native(y)) => x.type_name() == y.type_name() && x.equals(&**y),
         (Obj::Decimal(x), _) => b.tag == T_OBJ && matches!(b.get(), Some(Obj::Decimal(y)) if x.eq(y)),
         _ => a.bits == b.bits,
     }
@@ -673,6 +684,8 @@ pub fn order(op: &str, a: V, b: V, span: u32) -> R<bool> {
             return Err(compare_error(a, b, span));
         }
         Some(qty_base(x, ux).cmp(&qty_base(y, uy)))
+    } else if let Some(o) = natives(a, b).filter(|(x, y)| x.type_name() == y.type_name()).and_then(|(x, y)| x.order(y)) {
+        Some(o)
     } else {
         return Err(compare_error(a, b, span));
     };

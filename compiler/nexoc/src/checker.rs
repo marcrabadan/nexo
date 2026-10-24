@@ -20,8 +20,17 @@ use nexo_diag::{Diagnostic, Span};
 
 use crate::ast::*;
 
-const FALLIBLE_BUILTINS: &[&str] = &["read", "write", "read_lines", "save", "validate"];
-const FALLIBLE_MEMBERS: &[(&str, &str)] = &[("json", "parse"), ("csv", "parse")];
+const FALLIBLE_BUILTINS: &[&str] =
+    &["read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt", "encrypt_file", "decrypt_file", "connect", "ask"];
+const FALLIBLE_MEMBERS: &[(&str, &str)] = &[
+    ("json", "parse"),
+    ("csv", "parse"),
+    ("http", "get"),
+    ("http", "post"),
+    ("http", "put"),
+    ("http", "patch"),
+    ("http", "delete"),
+];
 
 #[derive(Clone, Copy)]
 enum FnRef<'a> {
@@ -62,6 +71,7 @@ pub fn callee_name(func: &Expr) -> String {
 /// The type as the messages show it: `list[int]?`, or `a | b` for a union.
 pub fn type_text(t: &TypeExpr) -> String {
     match t {
+        TypeExpr::Range { low, high, .. } => format!("{low}..{high}"),
         TypeExpr::Union { literals, .. } => literals
             .iter()
             .map(|l| match &l.kind {
@@ -267,7 +277,7 @@ fn stmt_names(s: &Stmt, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(Strin
     Ok(())
 }
 
-fn expr_names(e: &Expr, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>) {
+pub fn expr_names(e: &Expr, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>) {
     match &e.kind {
         ExprKind::Name(n) => reads.push((n.clone(), e.span)),
         ExprKind::Call { func, args } => {
@@ -765,6 +775,10 @@ impl Checker {
                 }
                 self.expr(func, ctx, false)?;
                 for a in args {
+                    // section 9: a key written in the code is a compile error
+                    if a.name.as_deref() == Some("key") && matches!(a.value.kind, ExprKind::Str(_)) {
+                        return Err(Diagnostic::new("secret_literal", a.value.span));
+                    }
                     self.expr(&a.value, ctx, false)?;
                 }
                 Ok(())

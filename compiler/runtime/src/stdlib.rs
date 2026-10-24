@@ -38,7 +38,7 @@ pub const B_JSON_PARSE: BuiltinId = BuiltinId(18);
 pub const B_CSV_PARSE: BuiltinId = BuiltinId(19);
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind {
+pub(crate) enum Kind {
     /// positional or named
     Pos,
     /// *values
@@ -47,31 +47,31 @@ enum Kind {
     KwOnly,
 }
 
-struct Param {
+pub(crate) struct Param {
     name: &'static str,
     kind: Kind,
     required: bool,
 }
 
-const fn p(name: &'static str) -> Param {
+pub(crate) const fn p(name: &'static str) -> Param {
     Param { name, kind: Kind::Pos, required: true }
 }
 
-const fn opt(name: &'static str) -> Param {
+pub(crate) const fn opt(name: &'static str) -> Param {
     Param { name, kind: Kind::Pos, required: false }
 }
 
-const fn var(name: &'static str) -> Param {
+pub(crate) const fn var(name: &'static str) -> Param {
     Param { name, kind: Kind::VarPos, required: false }
 }
 
-const fn kw(name: &'static str) -> Param {
+pub(crate) const fn kw(name: &'static str) -> Param {
     Param { name, kind: Kind::KwOnly, required: false }
 }
 
-struct Sig {
-    name: &'static str,
-    params: &'static [Param],
+pub(crate) struct Sig {
+    pub(crate) name: &'static str,
+    pub(crate) params: &'static [Param],
 }
 
 static SIGS: &[Sig] = &[
@@ -82,7 +82,7 @@ static SIGS: &[Sig] = &[
     Sig { name: "set", params: &[var("items")] },
     Sig { name: "round", params: &[p("value"), opt("digits"), opt("mode")] },
     Sig { name: "split", params: &[p("amount"), p("parts")] },
-    Sig { name: "convert", params: &[p("value"), p("to"), p("rate")] },
+    Sig { name: "convert", params: &[p("value"), p("to"), opt("rate")] },
     Sig { name: "fail", params: &[p("message")] },
     Sig { name: "validate", params: &[p("value"), p("as"), opt("range")] },
     Sig { name: "decimal", params: &[p("value")] },
@@ -98,24 +98,27 @@ static SIGS: &[Sig] = &[
 ];
 
 pub fn builtin_name(id: BuiltinId) -> &'static str {
+    if id.0 >= crate::library::BASE {
+        return crate::library::name(id);
+    }
     SIGS[id.0 as usize].name
 }
 
 /// Arguments after checking them against the signature: one slot per
 /// parameter (MISSING when absent) and the extra positional values.
-struct Args {
-    slots: Vec<V>,
-    rest: Vec<V>,
+pub(crate) struct Args {
+    pub(crate) slots: Vec<V>,
+    pub(crate) rest: Vec<V>,
 }
 
 impl Args {
-    fn get(&self, i: usize) -> Option<V> {
+    pub(crate) fn get(&self, i: usize) -> Option<V> {
         let v = self.slots[i];
         (v.tag != T_MISSING).then_some(v)
     }
 }
 
-fn check_args(sig: &Sig, args: &[V], names: &[Option<&str>], span: u32) -> R<Args> {
+pub(crate) fn check_args(sig: &Sig, args: &[V], names: &[Option<&str>], span: u32) -> R<Args> {
     let fname = sig.name;
     let mut seen: Vec<&str> = Vec::new();
     for n in names.iter().flatten() {
@@ -204,7 +207,7 @@ fn check_args(sig: &Sig, args: &[V], names: &[Option<&str>], span: u32) -> R<Arg
     ))
 }
 
-fn bad_arg(fname: &str, detail: String, span: u32) -> crate::state::Fail {
+pub(crate) fn bad_arg(fname: &str, detail: String, span: u32) -> crate::state::Fail {
     diag(Diagnostic::new_spanless("bad_argument").arg("fn", fname).arg("detail", detail), span)
 }
 
@@ -212,12 +215,15 @@ pub fn expects(fname: &str, what: &str, v: V, span: u32) -> crate::state::Fail {
     bad_arg(fname, msg("detail.expects", &[("what", what.to_string()), ("vtype", type_name(v))]), span)
 }
 
-fn str_arg(fname: &str, v: V, span: u32) -> R<&'static str> {
+pub(crate) fn str_arg(fname: &str, v: V, span: u32) -> R<&'static str> {
     v.as_str().ok_or_else(|| expects(fname, "str", v, span))
 }
 
 /// Call builtin `id` with arguments checked against its signature.
 pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    if id.0 >= crate::library::BASE {
+        return crate::library::call(id, args, names, span);
+    }
     let sig = &SIGS[id.0 as usize];
     let a = check_args(sig, args, names, span)?;
     match id {
@@ -227,10 +233,10 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
                 if i > 0 {
                     text.push(' ');
                 }
-                text.push_str(&show(bind(*v)?.v()));
+                text.push_str(&crate::fmt::show_checked(bind(*v)?.v(), span)?);
             }
             match a.get(1) {
-                Some(end) => text.push_str(&show(end)),
+                Some(end) => text.push_str(&crate::fmt::show_checked(end, span)?),
                 None => text.push('\n'),
             }
             write_out(&text);
@@ -298,15 +304,26 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_ROUND => round(a.get(0).unwrap(), a.get(1).unwrap_or(V::int(0)), a.get(2), span),
         B_SPLIT => split(a.get(0).unwrap(), a.get(1).unwrap(), span),
         B_CONVERT => {
+            // convert(x, to: json | csv): the text of a value in a format (D112)
+            let to = a.get(1).unwrap();
+            if let Some(Obj::Namespace(ns @ ("json" | "csv"))) = to.get() {
+                if a.get(2).is_some() {
+                    let d = Diagnostic::new_spanless("arg_unknown").arg("fn", "convert").arg("param", "rate").arg("params", "value, to");
+                    return Err(diag(d, span));
+                }
+                let value = bind(a.get(0).unwrap())?;
+                return Ok(Val::str(if *ns == "json" { crate::data::to_json(value.v(), 0) } else { crate::data::to_csv(value.v(), span)? }));
+            }
             let value = a.get(0).unwrap();
             let Some(Obj::Money(amount, _)) = value.get() else {
                 return Err(expects("convert", "money", value, span));
             };
-            let to = a.get(1).unwrap();
             let Some(Obj::Currency(code)) = to.get() else {
-                return Err(expects("convert", "currency", to, span));
+                return Err(expects("convert", "currency, json, csv", to, span));
             };
-            let rate = a.get(2).unwrap();
+            let Some(rate) = a.get(2) else {
+                return Err(diag(Diagnostic::new_spanless("arg_missing").arg("param", "rate").arg("fn", "convert"), span));
+            };
             let Some(factor) = to_decimal(rate) else {
                 return Err(expects("convert", "decimal", rate, span));
             };
@@ -317,14 +334,14 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
             if let Some(Obj::Error(_)) = m.get() {
                 return Err(raise_value(Val::from(m)));
             }
-            let text = show(bind(m)?.v());
+            let text = crate::fmt::show_checked(bind(m)?.v(), span)?;
             Err(raise_error("Error", text, Val::none(), span))
         }
         B_VALIDATE => validate(a.get(0).unwrap(), a.get(1).unwrap(), a.get(2), span),
         B_DECIMAL => conv_decimal(a.get(0).unwrap(), span),
         B_FLOAT => conv_float(a.get(0).unwrap(), span),
         B_INT => conv_int(a.get(0).unwrap(), span),
-        B_STR => Ok(Val::str(show(bind(a.get(0).unwrap())?.v()))),
+        B_STR => Ok(Val::str(crate::fmt::show_checked(bind(a.get(0).unwrap())?.v(), span)?)),
         B_READ => {
             let path = str_arg("read", a.get(0).unwrap(), span)?;
             let text = data::read_text(path, span)?;
@@ -335,7 +352,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         }
         B_WRITE => {
             let path = str_arg("write", a.get(0).unwrap(), span)?;
-            let content = show(bind(a.get(1).unwrap())?.v());
+            let content = crate::fmt::show_checked(bind(a.get(1).unwrap())?.v(), span)?;
             data::write_text(path, &content, span)?;
             Ok(Val::none())
         }
@@ -346,6 +363,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_SAVE => {
             let value = bind(a.get(0).unwrap())?;
             let path = str_arg("save", a.get(1).unwrap(), span)?;
+            crate::fmt::show_checked(value.v(), span)?;
             data::save(value.v(), path, span)?;
             Ok(Val::none())
         }
@@ -484,6 +502,17 @@ fn conv_int(v: V, span: u32) -> R<Val> {
     }
 }
 
+/// An address with one @, a name before it and a domain with a dot after it.
+fn is_email(t: &str) -> bool {
+    let Some((user, domain)) = t.split_once('@') else { return false };
+    let bad = |c: char| c == '@' || c.is_whitespace();
+    !user.is_empty()
+        && !user.chars().any(bad)
+        && !domain.chars().any(bad)
+        && domain.contains('.')
+        && domain.split('.').all(|p| !p.is_empty())
+}
+
 fn is_int_text(t: &str) -> bool {
     let t = t.strip_prefix(['+', '-']).unwrap_or(t);
     !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())
@@ -518,7 +547,7 @@ pub fn is_float_text(t: &str, allow_plus: bool) -> bool {
 
 /// `validate(value, as: type, range: a..b)?` turns external text into a
 /// checked value (section 9).
-fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
+pub fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
     let owned = bind(value)?;
     let value = owned.v();
     let tname = match target.get() {
@@ -564,6 +593,14 @@ fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
                     _ => return Err(invalid()),
                 },
                 "str" => owned.clone(),
+                "email" => {
+                    if !is_email(text) {
+                        return Err(invalid());
+                    }
+                    Val::str(text)
+                }
+                "date" => crate::time::parse_date(text).ok_or_else(invalid)?,
+                "time" => crate::time::parse_time(text).ok_or_else(invalid)?,
                 _ => return Err(invalid()),
             };
         }
@@ -593,10 +630,14 @@ fn table(v: V) -> Option<(&'static str, &'static [&'static str])> {
         Obj::List(_) | Obj::Lazy(_) => ("list", &["sum", "count", "add"]),
         Obj::Set(_) => ("set", &["add", "count"]),
         Obj::Map(_) => ("map", &["keys", "values", "count"]),
-        Obj::Str(_) => ("str", &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with"]),
+        Obj::Str(_) => ("str", &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with", "find"]),
         Obj::Channel(_) => ("channel", &["send", "receive", "close"]),
         _ => return None,
     })
+}
+
+pub fn missing_member(vtype: &str, name: &str, candidates: &[&str], span: u32) -> crate::state::Fail {
+    missing(vtype, name, candidates, span)
 }
 
 fn missing(vtype: &str, name: &str, candidates: &[&str], span: u32) -> crate::state::Fail {
@@ -612,6 +653,10 @@ fn missing(vtype: &str, name: &str, candidates: &[&str], span: u32) -> crate::st
 /// Members of builtin values: `list.sum`, `text.upper`, `json.parse`...
 /// The name of a method of a builtin type, or the error of `member`.
 pub fn method_name(obj: V, name: &str, span: u32) -> R<&'static str> {
+    if let Some(q) = crate::db::query_of(obj) {
+        crate::db::query_member(&q, obj, name, span)?;
+        return Ok(crate::num::intern(name));
+    }
     match table(obj) {
         Some((_, names)) => match names.iter().find(|n| **n == name) {
             Some(n) => Ok(n),
@@ -622,7 +667,16 @@ pub fn method_name(obj: V, name: &str, span: u32) -> R<&'static str> {
 }
 
 pub fn member(obj: V, name: &str, span: u32) -> R<Val> {
+    if let Some(Obj::Native(n)) = obj.get() {
+        return n.member(obj, name, span);
+    }
+    if let Some(q) = crate::db::query_of(obj) {
+        return crate::db::query_member(&q, obj, name, span);
+    }
     if let Some(Obj::Namespace(ns)) = obj.get() {
+        if let Some(v) = crate::library::member(ns, name, span) {
+            return v;
+        }
         return match (*ns, name) {
             ("json", "parse") => Ok(Val::new(Obj::Builtin(B_JSON_PARSE))),
             ("csv", "parse") => Ok(Val::new(Obj::Builtin(B_CSV_PARSE))),
@@ -636,6 +690,63 @@ pub fn member(obj: V, name: &str, span: u32) -> R<Val> {
         Some((_, names)) => Err(missing(&type_name(obj), name, names, span)),
         None => Err(missing(&type_name(obj), name, &[], span)),
     }
+}
+
+/// Arguments of a library function or method checked against its
+/// parameters (the first `required` must be given): one slot per
+/// parameter, MISSING when absent. The errors come in the order phase 0
+/// checks them.
+pub fn method_args(fname: &str, params: &[&str], required: usize, args: &[V], names: &[Option<&str>], span: u32) -> R<Vec<V>> {
+    let mut slots = vec![MISSING; params.len()];
+    let mut seen: Vec<&str> = Vec::new();
+    for n in names.iter().flatten() {
+        if seen.contains(n) {
+            return Err(diag(Diagnostic::new_spanless("arg_twice").arg("param", *n), span));
+        }
+        seen.push(n);
+    }
+    for n in names.iter().flatten() {
+        if !params.contains(n) {
+            let d = match suggest(n, params.iter().copied()) {
+                Some(s) => Diagnostic::new_spanless("arg_unknown")
+                    .fix("suggest")
+                    .arg("fn", fname)
+                    .arg("param", *n)
+                    .arg("suggestion", s),
+                None => Diagnostic::new_spanless("arg_unknown").arg("fn", fname).arg("param", *n).arg(
+                    "params",
+                    if params.is_empty() { "-".to_string() } else { params.join(", ") },
+                ),
+            };
+            return Err(diag(d, span));
+        }
+    }
+    let positional: Vec<V> = args.iter().zip(names).filter(|(_, n)| n.is_none()).map(|(v, _)| *v).collect();
+    if positional.len() > params.len() {
+        return Err(diag(
+            Diagnostic::new_spanless("arg_too_many")
+                .arg("fn", fname)
+                .arg("n", params.len().to_string())
+                .arg("m", positional.len().to_string()),
+            span,
+        ));
+    }
+    slots[..positional.len()].copy_from_slice(&positional);
+    for (v, n) in args.iter().zip(names) {
+        if let Some(n) = n {
+            let i = params.iter().position(|p| p == n).unwrap();
+            if slots[i].tag != T_MISSING {
+                return Err(diag(Diagnostic::new_spanless("arg_twice").arg("param", *n), span));
+            }
+            slots[i] = *v;
+        }
+    }
+    for (i, p) in params.iter().enumerate().take(required) {
+        if slots[i].tag == T_MISSING {
+            return Err(diag(Diagnostic::new_spanless("arg_missing").arg("param", *p).arg("fn", fname), span));
+        }
+    }
+    Ok(slots)
 }
 
 fn arity(name: &str, args: &[V], names: &[Option<&str>], n: usize, span: u32) -> R<()> {
@@ -658,17 +769,23 @@ fn arity(name: &str, args: &[V], names: &[Option<&str>], n: usize, span: u32) ->
 }
 
 pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    if let Some(Obj::Native(n)) = obj.get() {
+        return n.call_method(obj, name, args, names, span);
+    }
+    if let Some(q) = crate::db::query_of(obj) {
+        return crate::db::query_method(&q, name, args, names, span);
+    }
     if let Some(Obj::Channel(c)) = obj.get() {
         return crate::sync::call_method(c, obj, name, args, names, span);
     }
     let max = match name {
-        "add" | "starts_with" | "ends_with" | "split" => 1,
+        "add" | "starts_with" | "ends_with" | "split" | "find" => 1,
         "replace" => 2,
         _ => 0,
     };
     arity(name, args, names, max, span)?;
     let need = match name {
-        "add" | "starts_with" | "ends_with" => 1,
+        "add" | "starts_with" | "ends_with" | "find" => 1,
         "replace" => 2,
         _ => 0,
     };
@@ -723,6 +840,13 @@ pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>
         }
         (Obj::Str(s), "starts_with") => Ok(Val::bool(s.starts_with(str_arg("starts_with", args[0], span)?))),
         (Obj::Str(s), "ends_with") => Ok(Val::bool(s.ends_with(str_arg("ends_with", args[0], span)?))),
+        (Obj::Str(s), "find") => {
+            let sub = str_arg("find", args[0], span)?;
+            Ok(match s.find(sub) {
+                Some(i) => Val::int(s[..i].chars().count() as i64),
+                None => Val::none(),
+            })
+        }
         _ => Err(missing(&type_name(obj), name, &[], span)),
     }
 }
@@ -733,12 +857,13 @@ pub fn named_value(name: &str) -> Option<Val> {
         "int" | "float" | "decimal" | "money" | "str" | "bool" | "list" | "map" => {
             Obj::Type(TypeRef::Builtin(crate::num::intern(name)))
         }
+        "date" | "time" | "email" => Obj::Type(TypeRef::Builtin(crate::num::intern(name))),
         "half_up" | "half_even" => Obj::Symbol(crate::num::intern(name)),
         "json" | "csv" => Obj::Namespace(crate::num::intern(name)),
         "channel" => Obj::ChannelType(None),
         _ if crate::types::ERROR_KINDS.contains(&name) => Obj::Type(TypeRef::ErrorKind(crate::num::intern(name))),
         _ if crate::num::is_currency(name) => Obj::Currency(crate::num::intern(name)),
-        _ => return None,
+        _ => return crate::library::value(name),
     };
     Some(Val::new(v))
 }

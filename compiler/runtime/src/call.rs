@@ -121,7 +121,13 @@ pub fn call(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
             "float" => crate::stdlib::call(crate::stdlib::B_FLOAT, args, names, span),
             "int" => crate::stdlib::call(crate::stdlib::B_INT, args, names, span),
             "str" => crate::stdlib::call(crate::stdlib::B_STR, args, names, span),
+            "date" => crate::time::make_date(args, names, span),
+            "time" => crate::time::make_time(args, names, span),
             _ => Err(not_callable(f, span)),
+        },
+        Some(Obj::Native(n)) => match n.call(f, args, names, span) {
+            Some(r) => r,
+            None => Err(not_callable(f, span)),
         },
         _ => Err(not_callable(f, span)),
     }
@@ -267,6 +273,9 @@ pub fn get_attr(obj: V, name: &str, span: u32) -> R<Val> {
             }
             if let Some(m) = find_method(obj, name) {
                 return Ok(bound(obj, m));
+            }
+            if let Some(q) = crate::db::relation(obj, name, span) {
+                return q;
             }
             let mut c: Vec<String> = r.ty.fields.iter().map(|f| f.name.clone()).collect();
             c.extend(method_names(obj));

@@ -1,0 +1,4 @@
+Error en s06_db_ref.nexo, línea 8:
+  @table
+  ^^^^^^
+El campo "customer" de Order guarda un Customer. Escribe customer: ref Customer para guardar una referencia a su fila.

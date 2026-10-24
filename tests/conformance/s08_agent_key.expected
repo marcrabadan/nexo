@@ -1,0 +1,4 @@
+Error en s08_agent_key.nexo, línea 2:
+  agent support:
+  ^^^^^
+"max_step" no es una opción de un agent. ¿Quisiste decir "max_steps"?

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+Phase 4 of Nexo: highlighting of `ai`, `agent` and `server` blocks, routes,
+`fake ... returns` and the functions of the library; completion of the
+library's names and members.
+
 ## 0.3.0
 
 First version, with phase 3 of Nexo: highlighting, diagnostics with their

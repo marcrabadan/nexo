@@ -1,0 +1,11 @@
+use nexo.db
+
+@table
+type Customer:
+    id: id
+    name: str
+
+@table
+type Order:
+    id: id
+    customer: Customer

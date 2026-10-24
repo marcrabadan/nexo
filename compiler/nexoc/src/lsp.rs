@@ -19,10 +19,21 @@ const BUILTINS: &[&str] = &[
     "int", "float", "decimal", "money", "str", "bool", "list", "map", "Error", "NotFound", "IOError", "InvalidData", "Overflow",
     "DivisionByZero", "OutOfRange", "ContractBroken", "Timeout", "InvalidValue", "read", "write", "read_lines", "save",
     "json", "csv",
+    // the library of phase 4 (D89)
+    "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair", "encrypt",
+    "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "jwt", "ask", "email", "NetworkError",
+    "HTTPError", "AIError", "DatabaseError",
+];
+/// The functions of phase 4 among BUILTINS (the others are values).
+const LIBRARY_FUNCTIONS: &[&str] = &[
+    "move_file", "date", "time", "regex", "render", "secret", "encrypt", "decrypt", "encrypt_file", "decrypt_file", "sign",
+    "verify", "log", "jwt", "ask",
 ];
 const MEMBERS: &[&str] = &[
     "add", "cause", "close", "count", "ends_with", "keys", "kind", "line", "lower", "message", "parse", "receive", "replace",
     "send", "split", "starts_with", "sum", "trim", "upper", "values",
+    // members of the values of phase 4
+    "all", "find", "handle", "headers", "remove", "status", "text", "url",
 ];
 
 fn symbol_kind(kind: &str) -> u32 {
@@ -615,7 +626,8 @@ fn completion(idx: Option<&Index>, text: &str, line: usize, col: usize) -> Json 
             }
         }
         for b in BUILTINS {
-            let kind = if crate::resolve::BUILTIN_FUNCTIONS.contains(b) { "function" } else { "constant" };
+            let function = crate::resolve::BUILTIN_FUNCTIONS.contains(b) || LIBRARY_FUNCTIONS.contains(b);
+            let kind = if function { "function" } else { "constant" };
             put(b, kind, "");
         }
         let mut kws: Vec<&str> = KEYWORDS.to_vec();

@@ -20,8 +20,10 @@ from dataclasses import dataclass
 from . import ast as A
 from .errors import NexoError
 
-FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate"}
-FALLIBLE_MEMBERS = {("json", "parse"), ("csv", "parse")}
+FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt",
+                     "encrypt_file", "decrypt_file", "connect", "ask"}
+FALLIBLE_MEMBERS = {("json", "parse"), ("csv", "parse"), ("http", "get"), ("http", "post"), ("http", "put"),
+                    ("http", "patch"), ("http", "delete")}
 
 
 @dataclass
@@ -42,6 +44,8 @@ def callee_name(func: A.Expr) -> str:
 
 
 def type_text(t: A.TypeExpr) -> str:
+    if isinstance(t, A.RangeType):
+        return f"{t.low}..{t.high}"
     if isinstance(t, A.LiteralUnion):
         return " | ".join(getattr(l, "text", "") or "".join(p for p in getattr(l, "parts", []) if isinstance(p, str)) for l in t.literals)
     text = t.name
@@ -206,6 +210,9 @@ class Checker:
                 raise NexoError("ignored_error", e.span, name=name)
             self.expr(e.func, ctx)
             for a in e.args:
+                # section 9: a key written in the code is a compile error
+                if a.name == "key" and isinstance(a.value, A.Str):
+                    raise NexoError("secret_literal", a.value.span)
                 self.expr(a.value, ctx)
             return
         if isinstance(e, A.Coalesce):

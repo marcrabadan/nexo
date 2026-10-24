@@ -190,9 +190,21 @@ pub fn failure(kind: &str, span_id: u32, args: &[(&str, String)]) -> Fail {
     raise_error(kind, message, Val::none(), span_id)
 }
 
+/// An error of `kind` with another of its messages ("err.<key>" and its
+/// "fix.<key>", or the fix of the kind).
+pub fn failure_as(kind: &str, key: &str, span_id: u32, args: &[(&str, String)]) -> Fail {
+    let message = nexo_diag::msg(&format!("err.{key}"), args);
+    let fix_key = format!("fix.{key}");
+    let fix = if nexo_diag::has(&fix_key) { fix_key } else { format!("fix.{kind}") };
+    raise_error_with(kind, message, Val::none(), span_id, &fix)
+}
+
 pub fn raise_error(kind: &str, message: String, cause: Val, span_id: u32) -> Fail {
-    let fix_key = format!("fix.{kind}");
-    let fix = if nexo_diag::has(&fix_key) { Some(crate::num::intern(&fix_key)) } else { None };
+    raise_error_with(kind, message, cause, span_id, &format!("fix.{kind}"))
+}
+
+fn raise_error_with(kind: &str, message: String, cause: Val, span_id: u32, fix_key: &str) -> Fail {
+    let fix = if nexo_diag::has(fix_key) { Some(crate::num::intern(fix_key)) } else { None };
     let line = span(span_id).map(|s| s.line);
     let err = Val::new(Obj::Error(ErrorValue {
         kind: kind.to_string(),
@@ -224,6 +236,12 @@ pub fn diag(d: Diagnostic, span_id: u32) -> Fail {
     drop(old);
     set_failing(DIAG);
     Fail
+}
+
+/// The error value pending in this thread, if the failure is one (not a
+/// diagnostic); it stays pending.
+pub fn pending_error() -> Option<Val> {
+    with_task(|s| s.error.clone())
 }
 
 pub fn take_error() -> Val {

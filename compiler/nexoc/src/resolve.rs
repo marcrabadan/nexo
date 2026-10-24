@@ -174,6 +174,8 @@ pub struct Resolution {
     pub task_outputs: HashMap<FrameId, Vec<BindingId>>,
     /// the program has `use nexo.sync`
     pub sync: bool,
+    /// the program has `use nexo.db`
+    pub db: bool,
     /// top-level names no function, lambda, task or test uses: they are
     /// locals of the main program (kept in registers) instead of statics
     pub main_local: std::collections::HashSet<BindingId>,
@@ -195,6 +197,10 @@ pub const ERROR_KINDS: &[&str] = &[
     "ContractBroken",
     "Timeout",
     "InvalidValue",
+    "NetworkError",
+    "HTTPError",
+    "AIError",
+    "DatabaseError",
 ];
 
 /// Builtin names in the order the phase 0 interpreter defines them (this
@@ -202,20 +208,38 @@ pub const ERROR_KINDS: &[&str] = &[
 pub fn builtin_names() -> Vec<&'static str> {
     let mut v = vec![
         "print", "input", "len", "range", "set", "round", "split", "convert", "fail", "validate", "PI", "half_up",
-        "half_even", "int", "float", "decimal", "money", "str", "bool", "list", "map",
+        "half_even", "int", "float", "decimal", "money", "str", "bool", "list", "map", "email",
     ];
     v.extend(ERROR_KINDS);
     v.extend(crate::lexer::CURRENCIES.iter().map(|(c, _)| *c));
-    v.extend(["read", "write", "read_lines", "save", "json", "csv"]);
+    v.extend(["read", "write", "read_lines", "save"]);
+    v.extend(LIBRARY_NAMES);
+    v.extend(["json", "csv"]);
     v
 }
+
+/// Names of the standard library added in phase 4, in the order phase 0
+/// defines them.
+pub const LIBRARY_NAMES: &[&str] = &[
+    "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair", "encrypt",
+    "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "__fake", "__db_table", "__db_begin",
+    "__db_commit", "__db_rollback", "__sql_text", "jwt", "__rate", "__web_server", "__web_route", "ask", "__ai_config", "__ai_models", "__ai_tool", "__ai_agent", "mcp", "__c_library", "__python_import",
+];
+
+/// Library names that are functions or namespaces (not types).
+pub const LIBRARY_FUNCTIONS: &[&str] = &[
+    "connect",
+    "move_file", "now", "today", "regex", "render", "secret", "password", "key", "keypair", "encrypt", "decrypt",
+    "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "email", "__fake", "__db_table",
+    "__db_begin", "__db_commit", "__db_rollback", "__sql_text", "jwt", "__rate", "__web_server", "__web_route", "ask", "__ai_config", "__ai_models", "__ai_tool", "__ai_agent", "mcp", "__c_library", "__python_import",
+];
 
 pub fn is_builtin(name: &str) -> bool {
     builtin_names().contains(&name)
 }
 
 pub const BUILTIN_TYPES: &[&str] =
-    &["int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "any", "channel"];
+    &["int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "any", "channel", "date", "time"];
 
 type RResult<T> = Result<T, Diagnostic>;
 
@@ -266,7 +290,8 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             next_type_id: 1,
             self_calls: std::collections::HashSet::new(),
             task_outputs: HashMap::new(),
-            sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what } if what == "nexo.sync")),
+            sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.sync")),
+            db: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.db")),
             main_local: std::collections::HashSet::new(),
         },
         used_outside: std::collections::HashSet::new(),
@@ -549,7 +574,10 @@ impl Resolver {
             }
             s = self.r.scopes[id].parent;
         }
-        if cands.is_empty() && row.is_none() && (is_builtin(name) || (self.r.sync && name == "channel")) {
+        if cands.is_empty()
+            && row.is_none()
+            && (is_builtin(name) || (self.r.sync && name == "channel") || (self.r.db && name == "connect"))
+        {
             return NameRes::Builtin(name.to_string());
         }
         for b in &cands {
@@ -565,6 +593,9 @@ impl Resolver {
     }
 
     fn name_error(&self, scope: ScopeId, name: &str, span: nexo_diag::Span) -> Diagnostic {
+        if name == "connect" {
+            return Diagnostic::new("needs_use", span).arg("what", "\"connect\"").arg("module", "nexo.db");
+        }
         let visible = self.visible(scope);
         match suggest(name, visible.iter().map(|s| s.as_str())) {
             Some(s) => Diagnostic::new("name_not_found", span).fix("suggest").arg("name", name).arg("suggestion", s),
@@ -998,7 +1029,7 @@ impl Resolver {
 
     fn type_expr(&mut self, scope: ScopeId, t: &TypeExpr) -> RResult<()> {
         match t {
-            TypeExpr::Union { .. } => Ok(()),
+            TypeExpr::Union { .. } | TypeExpr::Range { .. } => Ok(()),
             TypeExpr::Name(tn) => {
                 match self.type_name(scope, &tn.name) {
                     Some(r) => {

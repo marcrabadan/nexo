@@ -1,0 +1,67 @@
+# a server tested with nexo test: it answers on a free port (section 15, D102)
+tokens = jwt(key: password.generate(32))
+
+type Item:
+    name: str
+    price: decimal
+
+items = [Item(name: "pen", price: 1.50)]
+
+server shop:
+    port = 8080
+    auth = tokens
+
+    @public
+    get "/items"():
+        return items
+
+    @public
+    get "/items/{n}"(n: int):
+        if n >= len(items):
+            return 404
+        return items[n]
+
+    @public
+    get "/hello"(name: str = "world"):
+        return "hello {name}"
+
+    post "/items"(item: Item):
+        return item
+
+    @role("admin")
+    get "/admin"(request):
+        return request.user["sub"]
+
+test "public routes answer JSON":
+    r = http.get("{shop.url}/items")
+    assert r.status == 200
+    assert r.json()[0]["name"] == "pen"
+    assert http.get("{shop.url}/items/0").json()["price"] == 1.5
+    assert http.get("{shop.url}/hello?name=Ana").text == "hello Ana"
+
+test "errors become status codes":
+    try:
+        http.get("{shop.url}/items/9", retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(shop.url, "URL"))
+    try:
+        http.get("{shop.url}/items/x", retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(shop.url, "URL"))
+    try:
+        http.post("{shop.url}/items", {"name": "cup", "price": 2}, retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(shop.url, "URL"))
+
+test "a token opens the private routes":
+    token = tokens.sign({"sub": "ana", "role": "admin"}, expires: 1h)
+    headers = {"Authorization": "Bearer {token}"}
+    r = http.post("{shop.url}/items", {"name": "cup", "price": 2}, headers: headers)
+    assert r.status == 201
+    assert r.json()["name"] == "cup"
+    assert http.get("{shop.url}/admin", headers: headers).text == "ana"
+    plain = tokens.sign({"sub": "luis"}, expires: 1h)
+    try:
+        http.get("{shop.url}/admin", headers: {"Authorization": "Bearer {plain}"}, retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(shop.url, "URL"))

@@ -32,6 +32,8 @@ pub struct FieldInfo {
     pub optional: bool,
     /// a `weak` field (section 7, rule 4)
     pub weak: bool,
+    /// a `@private` field: hidden in logs and AI calls (section 9)
+    pub private: bool,
     /// a function without parameters that computes the default, or UNDEF
     pub default: Val,
 }
@@ -92,6 +94,10 @@ pub const ERROR_KINDS: &[&str] = &[
     "ContractBroken",
     "Timeout",
     "InvalidValue",
+    "NetworkError",
+    "HTTPError",
+    "AIError",
+    "DatabaseError",
 ];
 
 /// A declared type, decoded from the descriptor the compiler emits.
@@ -104,6 +110,8 @@ pub enum TypeDesc {
     Error { kind: String, optional: bool, display: String },
     /// "active" | "closed"
     Union { options: Vec<V>, display: String },
+    /// 1..5: an int between the bounds
+    Range { low: i64, high: i64, display: String },
 }
 
 impl TypeDesc {
@@ -112,7 +120,7 @@ impl TypeDesc {
             TypeDesc::Named { optional, .. } | TypeDesc::User { optional, .. } | TypeDesc::Error { optional, .. } => {
                 *optional
             }
-            TypeDesc::Union { .. } => false,
+            TypeDesc::Union { .. } | TypeDesc::Range { .. } => false,
         }
     }
 
@@ -122,7 +130,8 @@ impl TypeDesc {
             TypeDesc::Named { display, .. }
             | TypeDesc::User { display, .. }
             | TypeDesc::Error { display, .. }
-            | TypeDesc::Union { display, .. } => display,
+            | TypeDesc::Union { display, .. }
+            | TypeDesc::Range { display, .. } => display,
         }
     }
 }
@@ -130,7 +139,7 @@ impl TypeDesc {
 // ------------------------------------------------------------ descriptors
 //
 //  T     := 'n' name ';' params opt | 'u' id ':' name ';' opt | 'e' kind ';' opt
-//         | 'l' count ';' lit*
+//         | 'l' count ';' lit* | 'r' low ';' high ';'
 //  params:= '[' T { ',' T } ']' | ''
 //  opt   := '?' | ''
 //  lit   := 's' len ':' bytes | 'i' digits ';' | 'f' text ';' | 'b0' | 'b1' | 'z'
@@ -212,6 +221,11 @@ impl<'a> Reader<'a> {
                 let n: usize = self.until(b';').parse().unwrap();
                 let options = (0..n).map(|_| self.lit()).collect();
                 TypeDesc::Union { options, display }
+            }
+            b'r' => {
+                let low: i64 = self.until(b';').parse().unwrap();
+                let high: i64 = self.until(b';').parse().unwrap();
+                TypeDesc::Range { low, high, display }
             }
             other => panic!("bad type descriptor {}", other as char),
         }
@@ -333,6 +347,27 @@ fn conform_any(value: V, t: &'static TypeDesc, name: &str, span: u32) -> R<Val> 
         Val::from(value)
     };
     let value = owned.v();
+    if let TypeDesc::Range { low, high, display } = t {
+        if let Some(i) = value.as_int() {
+            if *low <= i && i <= *high {
+                return Ok(owned);
+            }
+        }
+        if value.is_none() {
+            return Err(diag(
+                Diagnostic::new_spanless("none_not_allowed").arg("name", name).arg("type", display.clone()),
+                span,
+            ));
+        }
+        return Err(diag(
+            Diagnostic::new_spanless("type_mismatch")
+                .arg("name", name)
+                .arg("type", display.clone())
+                .arg("value", repr(value.plain()))
+                .arg("vtype", type_name(value)),
+            span,
+        ));
+    }
     if let TypeDesc::Union { options, display } = t {
         let plain = value.plain();
         for o in options {
@@ -403,6 +438,7 @@ pub fn builtin_is(v: V, name: &str) -> bool {
             ("map", Some(Obj::Map(_))) => true,
             ("set", Some(Obj::Set(_))) => true,
             ("channel", Some(Obj::Channel(_))) => true,
+            (_, Some(Obj::Native(n))) => n.type_name() == name,
             _ => false,
         },
     }
@@ -412,7 +448,7 @@ fn fits_or_none(v: V, t: &'static TypeDesc, span: u32) -> R<bool> {
     if v.is_none() {
         return Ok(t.optional());
     }
-    if let TypeDesc::Union { .. } = t {
+    if let TypeDesc::Union { .. } | TypeDesc::Range { .. } = t {
         return match conform(v, t, "x", span) {
             Ok(_) => Ok(true),
             Err(_) => {
@@ -442,7 +478,7 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<Val>> {
                     T_OBJ if matches!(v.get(), Some(Obj::Decimal(_))) => Some(Val::from(v)),
                     _ => None,
                 }),
-                "str" | "bool" | "money" | "map" | "set" | "channel" => {
+                "str" | "bool" | "money" | "map" | "set" | "channel" | "date" | "time" => {
                     if !builtin_is(v, name) {
                         return Ok(None);
                     }
@@ -526,7 +562,7 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<Val>> {
             Ok(is_type(v, kind, span)?.then(|| Val::from(v)))
         }
         TypeDesc::Error { kind, .. } => Ok(is_error_kind(v, kind).then(|| Val::from(v))),
-        TypeDesc::Union { .. } => match conform(v, t, "x", span) {
+        TypeDesc::Union { .. } | TypeDesc::Range { .. } => match conform(v, t, "x", span) {
             Ok(c) => Ok(Some(c)),
             Err(_) => {
                 crate::state::clear();

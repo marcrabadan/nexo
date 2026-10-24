@@ -21,12 +21,14 @@ from .checker import Checker
 from .errors import NexoError, Span, suggest
 from .parser import parse, source_text
 from .types import (
-    AliasType, Builtin, BuiltinType, Currency, EnumType, ErrorKind, ErrorValue, Function,
+    AliasType, Builtin, BuiltinType, Native, Currency, EnumType, ErrorKind, ErrorValue, Function,
     INT_MIN, Lazy, LambdaFn, LitFloat, Money, NexoFailure, NexoSet, NList, NMap, Quantity, Range, Record,
     RecordType, Symbol, TraitType, Variant, VariantValue, check_int, copy_collection, failure, hashable,
     is_collection, plain, share, unique, WeakRef, field_value,
     repr_value, show, to_decimal, type_name,
 )
+
+from .stdlib.clock import Clock
 
 MISSING = object()
 
@@ -164,6 +166,8 @@ class Interpreter:
         self.checker_fns: dict[str, bool] = {}
         self.checker_methods: dict[str, bool] = {}
         self.handlers: dict[str, list] = {}
+        # `fake name returns value` of the running test (section 14)
+        self.fakes: dict[str, Any] = {}
         self.tests: list[A.TestDef] = []
         self.contracts: dict[int, tuple[list, list]] = {}
         # tasks of `parallel` (sequential in phase 0, D52) and of spawn
@@ -556,6 +560,13 @@ class Interpreter:
             self.sync = True
             self.builtins.define("channel", ChannelMaker())
             return
+        if s.lang is None and s.name == "nexo.db":
+            from .stdlib.db import db_exports
+            for name, value in db_exports().items():
+                self.builtins.define(name, value)
+            return
+        if s.lang in ("c", "python") or (s.lang is None and s.name in ("nexo.ai", "nexo.web")):
+            return  # the statements that follow it bind the names (D90)
         name = f"{s.lang} {s.name}" if s.lang else s.name
         raise NexoError("not_supported", s.span, what=f'"use {name}"')
 
@@ -645,7 +656,16 @@ class Interpreter:
     def eval_Str(self, e: A.Str, env: Env) -> str:
         out = []
         for part in e.parts:
-            out.append(part if isinstance(part, str) else show(self.bind_value(self.eval(part, env))))
+            if isinstance(part, str):
+                out.append(part)
+                continue
+            value = self.bind_value(self.eval(part, env))
+            try:
+                out.append(show(value))
+            except NexoError as err:
+                if err.span is None:
+                    err.span = part.span
+                raise
         return "".join(out)
 
     def eval_Bool(self, e: A.Bool, env: Env) -> bool:
@@ -661,6 +681,8 @@ class Interpreter:
         value = env.lookup(name)
         if value is MISSING:
             raise self.name_error(name, span, env)
+        if type(value) is Clock:
+            return value.read()
         if self.sync:
             b = env.find(name)
             if b is not None and b.value is value:
@@ -673,6 +695,8 @@ class Interpreter:
         return value
 
     def name_error(self, name: str, span: Span, env: Env) -> NexoError:
+        if name == "connect":
+            return NexoError("needs_use", span, what='"connect"', module="nexo.db")
         s = suggest(name, env.names())
         if s:
             return NexoError("name_not_found", span, fix="suggest", name=name, suggestion=s)
@@ -721,6 +745,11 @@ class Interpreter:
             return self.call_at(func, args, e)
         func = self.eval(e.func, env)
         args = self.eval_args(e.args, env)
+        if self.fakes:
+            from .checker import callee_name
+            name = callee_name(e.func)
+            if name in self.fakes:
+                return self.fakes[name]
         return self.call_at(func, args, e)
 
     # ------------------------------------------------------------ places
@@ -961,6 +990,10 @@ class Interpreter:
             return self.call_at(self.eval(step.expr, env), [(None, value)], step)
         if isinstance(value, Grouped):
             return self.aggregate(step, value, env)
+        if type(value).__name__ == "Query":
+            q = self.query_step(step, value, env)
+            if q is not None:
+                return q
         span = step.span
         source = value
         if kind == "where":
@@ -1023,6 +1056,28 @@ class Interpreter:
             return self.binop("/", self.total(items, span), len(items), span, span)
         raise NexoError("not_supported", span, what=f'"{kind}"')
 
+    def query_step(self, step: A.PipeStep, query, env: Env):
+        """A step on a database query, in SQL when it can be (D100)."""
+        from .stdlib import db
+        kind = step.kind
+        if kind == "where":
+            plan = db.where_plan(step.expr)
+            if plan is None:
+                return None
+            return db.pipe_where(query, plan[0], plan[1], lambda i: self.eval(plan[1][i], env))
+        if kind == "sort":
+            return db.pipe_sort(query, step.expr, step.desc)
+        if kind == "take":
+            n = self.eval(step.expr, env)
+            if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+                raise NexoError("type_mismatch", step.expr.span, name="take", type="int",
+                                value=repr_value(n), vtype=type_name(n))
+            return db.pipe_take(query, n)
+        if kind == "count":
+            from .types import At
+            return query.m_count(At(self, step.span, step))
+        return None
+
     def word_name(self) -> str:
         return "un nombre de columna" if errors.LANG == "es" else "a column name"
 
@@ -1080,6 +1135,9 @@ class Interpreter:
             conv = self.builtins.lookup("__convert_" + func.name)
             if conv is not MISSING:
                 return self.call_builtin(conv, args, node)
+        if isinstance(func, Native) and hasattr(func, "call_value"):
+            # a value of another language that can be called (D111)
+            return func.call_value(Call(self, node), args)
         raise NexoError("not_callable", node.span, vtype=type_name(func))
 
     def bind_args(self, fn_name: str, params: list[str], args: list, node: A.Node,
@@ -1242,6 +1300,12 @@ class Interpreter:
             method = obj.type.methods.get(name)
             if method is not None:
                 return method.bind(obj)
+            if getattr(obj.type, "table", None) is not None:
+                from .stdlib.db import relation
+                from .types import At
+                q = relation(At(self, span), obj, name)
+                if q is not None:
+                    return q
             raise self.member_error(obj, name, span, list(obj.fields) + list(obj.type.methods))
         if isinstance(obj, VariantValue):
             if name in obj.fields:
@@ -1429,6 +1493,14 @@ class Interpreter:
         """Check `value` against a declared type and apply the conversions
         of section 17 (a float literal becomes decimal where a decimal is
         expected). Returns the value to store."""
+        if isinstance(t, A.RangeType):
+            v = plain(value)
+            if isinstance(v, int) and not isinstance(v, bool) and t.low <= v <= t.high:
+                return v
+            if v is None:
+                raise NexoError("none_not_allowed", span, name=name, type=self.type_text(t))
+            raise NexoError("type_mismatch", span, name=name, type=self.type_text(t), value=repr_value(v),
+                            vtype=type_name(v))
         if isinstance(t, A.LiteralUnion):
             options = [self.eval(l, env) for l in t.literals]
             if any(self.equals(plain(o), plain(value), span) for o in options if type(plain(o)) is type(plain(value))):
@@ -1471,7 +1543,7 @@ class Interpreter:
             if type(value) is LitFloat or (isinstance(value, int) and not isinstance(value, bool)):
                 return True, to_decimal(value)
             return False, value
-        if name in ("str", "bool", "money", "map", "set", "channel"):
+        if name in ("str", "bool", "money", "map", "set", "channel", "date", "time"):
             if not builtin_is(value, name):
                 return False, value
             if name == "map" and len(t.params) == 2:
@@ -1519,7 +1591,7 @@ class Interpreter:
     def fits_or_none(self, value, t, env, span) -> bool:
         if value is None:
             return getattr(t, "optional", False)
-        if isinstance(t, A.LiteralUnion):
+        if isinstance(t, (A.LiteralUnion, A.RangeType)):
             try:
                 self.conform(value, t, env, "x", span)
                 return True
@@ -1576,6 +1648,8 @@ def builtin_is(value: Any, name: str) -> bool:
         return isinstance(value, NexoSet)
     if name == "channel":
         return type(value).__name__ == "Channel"
+    if isinstance(value, Native):
+        return value.type_name == name
     return False
 
 

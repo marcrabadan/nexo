@@ -8,6 +8,7 @@
     nexo fix [paths]     apply the safe fixes
     nexo check [paths]   the compile checks, without running anything
     nexo lsp             language server on standard input and output (D87)
+    nexo db diff|migrate file.nexo [--db path] [--allow-drop]   migrations (D101)
     --lang es|en         language of messages (Spanish by default)
 """
 from __future__ import annotations
@@ -22,8 +23,10 @@ from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
 USAGE = {
-    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp]",
-    "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp]",
+    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp"
+          " | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage]",
+    "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp"
+          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage]",
 }
 BANNER = {
     "es": "Nexo {v} (fase 0). Escribe código y pulsa Intro; Ctrl-D para salir.",
@@ -66,6 +69,10 @@ def run_file(path: str) -> int:
         # the program ends when every spawned task has ended
         from .stdlib.sync import wait_all
         wait_all()
+        # then its servers answer until it is stopped (D102)
+        from .stdlib.web import serve_forever
+        if not serve_forever(interp):
+            return 1
     except (NexoError, NexoFailure) as exc:
         report(exc)
         return 1
@@ -124,11 +131,19 @@ def run_tests(paths: list[str]) -> int:
             continue
         if not interp.tests:
             continue
+        from .stdlib.web import serve_in_background
+        try:
+            serve_in_background(interp)
+        except NexoError as exc:
+            report(exc)
+            broken_files += 1
+            continue
         if len(files) > 1:
             print(name)
             sys.stdout.flush()
         for test in interp.tests:
             total += 1
+            interp.fakes = {}
             try:
                 interp.exec_block(test.body, Env(interp.globals))
             except (NexoError, NexoFailure) as exc:
@@ -138,6 +153,11 @@ def run_tests(paths: list[str]) -> int:
             passed += 1
             print(f"✓ {test.name}")
             sys.stdout.flush()
+        # a mistake in a handler of a server is a broken program (D102)
+        from .stdlib import web
+        if web.MISTAKES:
+            broken_files += 1
+            web.MISTAKES.clear()
     if total == 0 and not broken_files:
         print(errors.msg("no_tests", path=", ".join(paths) or "."))
         return 0
@@ -251,6 +271,51 @@ def run_check(paths: list[str]) -> int:
     return status
 
 
+# ------------------------------------------------------------- nexo.db
+
+def run_db(args: list[str]) -> int:
+    """`nexo db diff|migrate file.nexo [--db path] [--allow-drop]` (D101)."""
+    from .parser import parse
+    from .stdlib import db
+    command = args[0] if args else ""
+    file = db_path = None
+    allow_drop = False
+    i = 1
+    while i < len(args):
+        a = args[i]
+        if a == "--db" and i + 1 < len(args):
+            db_path = args[i + 1]
+            i += 2
+            continue
+        if a == "--allow-drop" and command == "migrate":
+            allow_drop = True
+        elif file is None and not a.startswith("-"):
+            file = a
+        else:
+            file = None
+            break
+        i += 1
+    if command not in ("diff", "migrate") or file is None:
+        print(USAGE[errors.LANG], file=sys.stderr)
+        return 2
+    try:
+        source = Path(file).read_text(encoding="utf-8")
+    except OSError:
+        sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=file)}.\n")
+        return 1
+    interp = Interpreter()
+    try:
+        program = interp.load(source, file)
+        if db_path is None:
+            db_path = db.connect_literal(program)
+        for stmt in db.schema_program(program):
+            interp.exec(stmt, interp.globals)
+    except (NexoError, NexoFailure) as exc:
+        report(exc)
+        return 1
+    return db.run_command(interp, command, file, db_path, allow_drop)
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -316,6 +381,11 @@ def main(argv: list[str] | None = None) -> int:
         rest.append(a)
         i += 1
     errors.set_lang(lang)
+    if rest[:1] == ["db"] and lang in ("es", "en"):
+        return run_db(rest[1:])
+    if rest in (["ai", "setup"], ["ai", "usage"]) and lang in ("es", "en"):
+        from .stdlib import ai
+        return ai.setup_command() if rest[1] == "setup" else ai.usage_command()
     if lang not in ("es", "en") or any(a.startswith("-") for a in rest):
         print(USAGE[errors.LANG], file=sys.stderr)
         return 2

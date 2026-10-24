@@ -35,6 +35,7 @@ WORDS = {
     "string": {"es": "un texto entre comillas", "en": "a quoted text"},
     "member": {"es": "el nombre de un campo o método", "en": "the name of a field or method"},
     "call": {"es": "una llamada, por ejemplo nombre(...)", "en": "a call, for example name(...)"},
+    "route": {"es": "una ruta: get, post, put, patch o delete y su camino", "en": "a route: get, post, put, patch or delete and its path"},
 }
 
 
@@ -62,6 +63,13 @@ class Parser:
         self.block_end = -1  # token index right after an expression that ended in a block
         # after `use nexo.sync`, spawn, select and shared start statements
         self.sync = False
+        # `use nexo.db` makes connect and @table available
+        self.db = False
+        # statements a module block or annotation desugars into, after the
+        # one statement() returned (D90)
+        self.extra: list[A.Stmt] = []
+        self.in_test = False
+        self.in_transaction = 0
 
     # -- token helpers ---------------------------------------------------
     def peek(self, k: int = 0) -> Token:
@@ -127,8 +135,16 @@ class Parser:
         while self.peek().kind != "EOF":
             if self.peek().kind == "INDENT":
                 raise NexoError("dedent_mismatch", self.peek().span)
-            body.append(self.statement())
-        return A.Program(start.span, body)
+            self.statement_into(body)
+        program = A.Program(start.span, body)
+        model_aliases(program)
+        return program
+
+    def statement_into(self, body: list) -> None:
+        body.append(self.statement())
+        if self.extra:
+            body.extend(self.extra)
+            self.extra = []
 
     def block(self) -> list[A.Stmt]:
         """block = ":" NEWLINE INDENT statement { statement } DEDENT"""
@@ -144,9 +160,9 @@ class Parser:
         if self.peek().kind != "INDENT":
             raise self.error(word("indented"))
         self.advance()
-        body = []
+        body: list = []
         while self.peek().kind != "DEDENT":
-            body.append(self.statement())
+            self.statement_into(body)
         self.advance()
         return body
 
@@ -156,18 +172,22 @@ class Parser:
         if tok.is_op("@"):
             annotations = self.annotations()
             if self.at_kw("type") or (self.at_kw("pub") and self.peek(1).is_kw("type")):
-                return self.type_def(annotations)
-            return self.fn_def(annotations)
+                return self.table_def(self.type_def(annotations))
+            return self.tool_def(self.fn_def(annotations))
+        if self.in_test and tok.kind == "NAME" and tok.value == "fake" and self.peek(1).kind == "NAME":
+            return self.fake_stmt()
+        if tok.kind == "NAME" and self.at_transaction():
+            return self.transaction()
         if tok.kind == "KEYWORD":
             kw = tok.value
             if kw == "fn":
                 return self.fn_def([])
             if kw == "pub":
                 if self.peek(1).is_kw("type"):
-                    return self.type_def([])
+                    return self.table_def(self.type_def([]))
                 return self.fn_def([])
             if kw == "type":
-                return self.type_def([])
+                return self.table_def(self.type_def([]))
             if kw == "trait":
                 return self.trait_def()
             if kw == "if":
@@ -194,7 +214,11 @@ class Parser:
                 if self.peek().kind != "STRING" or any(not isinstance(p, str) for p in self.peek().value):
                     raise self.error(word("string"))
                 name = "".join(self.advance().value)
-                return A.TestDef(tok.span, name, self.block())
+                self.in_test = True
+                try:
+                    return A.TestDef(tok.span, name, self.block())
+                finally:
+                    self.in_test = False
             if kw in ("on", "when", "every", "lifecycle"):
                 return self.event_stmt()
         if self.sync and tok.kind == "NAME" and tok.value == "select" and self.peek(1).is_op(":"):
@@ -285,8 +309,15 @@ class Parser:
             return False
         if self.peek(1).is_op(":") and self.peek(2).kind == "NEWLINE":
             return True
+        if (self.peek().value == "ai" and self.at_name_at(1, "profile") and self.peek(2).kind == "STRING"
+                and self.peek(3).is_op(":")):
+            return True
         return (self.peek(1).kind in ("NAME", "STRING") and self.peek(2).is_op(":")
                 and self.peek(3).kind == "NEWLINE")
+
+    def at_name_at(self, k: int, value: str) -> bool:
+        tok = self.peek(k)
+        return tok.kind == "NAME" and tok.value == value
 
     def config_block(self) -> A.ConfigBlock:
         """config_block = IDENT [ IDENT | STRING ] ":" NEWLINE INDENT {...} DEDENT
@@ -295,6 +326,8 @@ class Parser:
         body is only skipped; the interpreter reports them as unavailable."""
         tok = self.advance()
         name = None
+        if tok.value in MODULE_BLOCKS:
+            return self.module_block(tok)
         if not self.at_op(":"):
             n = self.advance()
             name = n.value if n.kind == "NAME" else "".join(p for p in n.value if isinstance(p, str))
@@ -322,24 +355,47 @@ class Parser:
         self.advance()
 
     def use_stmt(self) -> A.Use:
-        """use_stmt = "use" [ IDENT ] dotted_name [ "as" IDENT ]"""
+        """use_stmt = "use" [ IDENT ] dotted_name [ "as" IDENT ], and
+        `use c "library"` (section 18, D110)"""
         tok = self.advance()
-        first = self.expect_name().value
+        first_tok = self.expect_name()
+        first = first_tok.value
         lang = None
-        if self.peek().kind == "NAME":
+        if self.peek().kind == "NAME" or (first == "c" and self.peek().kind == "STRING"):
             lang, first = first, None
-        name = first if first is not None else self.dotted_name()
-        if first is not None:
-            while self.at_op("."):
-                self.advance()
-                name += "." + self.expect_name().value
+        if lang == "c":
+            if self.peek().kind != "STRING" or any(not isinstance(p, str) for p in self.peek().value):
+                raise self.error(word("string"))
+            name = "".join(self.advance().value)
+        else:
+            name = first if first is not None else self.dotted_name()
+            if first is not None:
+                while self.at_op("."):
+                    self.advance()
+                    name += "." + self.expect_name().value
         alias = None
+        alias_span = None
         if self.at_kw("as"):
             self.advance()
-            alias = self.expect_name().value
+            a = self.expect_name()
+            alias, alias_span = a.value, a.span
+        span = self.span_from(tok)
         if lang is None and name == "nexo.sync":
             self.sync = True
-        return A.Use(self.span_from(tok), lang, name, alias)
+        if lang is None and name == "nexo.db":
+            self.db = True
+        if lang in ("c", "python"):
+            bound = alias or (name.rsplit(".", 1)[-1] if lang == "python" else name)
+            if not is_identifier(bound):
+                raise NexoError("use_needs_as", span, name=name)
+            fn = "__python_import" if lang == "python" else "__c_library"
+            args = [A.Arg(span, None, A.Str(span, [name]))]
+            if lang == "c":
+                # the name it is used with, for the messages (libz.crc32)
+                args.append(A.Arg(span, None, A.Str(span, [bound])))
+            call = A.Call(span, A.Name(span, fn), args)
+            self.extra.append(A.Assign(alias_span or span, A.Name(alias_span or span, bound), "=", call))
+        return A.Use(span, lang, name, alias)
 
     def select_stmt(self) -> A.Select:
         """select: arms `NAME from expr: ...` and `after expr: ...` (nexo.sync)"""
@@ -380,7 +436,9 @@ class Parser:
         return name
 
     def annotations(self) -> list[A.Annotation]:
-        """annotation = "@" dotted_name [ "(" [ args ] ")" ] NEWLINE"""
+        """annotation = "@" dotted_name [ "(" [ args ] ")" ] NEWLINE; also
+        `@tool "description"` (section 8) and rates such as
+        `@limit(10 per minute per ip)` (D93)"""
         result = []
         while self.at_op("@"):
             tok = self.advance()
@@ -388,11 +446,26 @@ class Parser:
             args = []
             if self.at_op("("):
                 self.advance()
-                args = self.args(")")
+                args = [A.Arg(a.span, a.name, self.rate(a.value)) for a in self.args(")")]
                 self.expect_op(")")
+            elif self.peek().kind == "STRING":
+                value = self.primary()
+                args = [A.Arg(value.span, None, value)]
             result.append(A.Annotation(self.span_from(tok), name, args))
             self.expect_newline()
         return result
+
+    def rate(self, value: A.Expr) -> A.Expr:
+        """`10 per minute per ip` -> __rate(10, "minute", "ip")"""
+        if not self.at_name("per"):
+            return value
+        args = [A.Arg(value.span, None, value)]
+        while self.at_name("per"):
+            self.advance()
+            w = self.expect_name()
+            args.append(A.Arg(w.span, None, A.Str(w.span, [w.value])))
+        span = self.span_from(value.span)
+        return A.Call(span, A.Name(span, "__rate"), args)
 
     def fn_def(self, annotations: list[A.Annotation]) -> A.FnDef:
         """fn_def = { annotation } [ "pub" ] "fn" IDENT "(" [ params ] ")" [ "->" type ] block"""
@@ -487,20 +560,21 @@ class Parser:
             elif tok.kind == "NAME" and self.peek(1).is_op(":"):
                 self.advance()
                 self.advance()
-                type_ = self.type_()
+                type_ = self.type_(field=True)
                 default = None
                 if self.at_op("="):
                     self.advance()
                     default = self.expr()
+                marks = []
                 while self.at_op("@"):  # annotation_inline, e.g. @private
                     self.advance()
-                    self.dotted_name()
+                    marks.append(self.dotted_name())
                     if self.at_op("("):
                         self.advance()
                         self.args(")")
                         self.expect_op(")")
                 self.expect_newline()
-                node.fields.append(A.FieldDef(tok.span, tok.value, type_, default))
+                node.fields.append(A.FieldDef(tok.span, tok.value, type_, default, marks))
             elif tok.kind == "NAME" and self.peek(1).is_op("="):
                 self.advance()
                 self.advance()
@@ -542,9 +616,26 @@ class Parser:
         self.advance()
         return A.TraitDef(start.span, name.value, sigs)
 
-    def type_(self) -> A.TypeExpr:
-        """type = base_type [ "?" | "!" ] | literal { "|" literal }"""
+    def type_(self, field: bool = False) -> A.TypeExpr:
+        """type = base_type [ "?" | "!" ] | literal { "|" literal }; also
+        `1..5` (an int in a range, section 8) and, in fields, `ref T` and
+        `many T` (nexo.db, section 6)"""
         tok = self.peek()
+        if tok.kind == "INT" and self.peek(1).is_op(".."):
+            low = int(self.advance().value)
+            self.advance()
+            if self.peek().kind != "INT":
+                raise self.error(word("expr"))
+            high = int(self.advance().value)
+            return A.RangeType(self.span_from(tok), low, high)
+        if (field and tok.kind == "NAME" and tok.value in ("ref", "many") and self.peek(1).kind == "NAME"):
+            self.advance()
+            inner = self.type_()
+            if not isinstance(inner, A.TypeName):
+                raise self.error(word("type"))
+            inner.rel = tok.value
+            inner.span = self.span_from(tok)
+            return inner
         if tok.kind in ("STRING", "INT", "FLOAT", "UNIT") or tok.is_kw("true", "false", "none"):
             literals = [self.literal()]
             while self.at_op("|"):
@@ -899,6 +990,9 @@ class Parser:
                 self.advance()
                 args = self.args(")")
                 self.expect_op(")")
+                if self.db and isinstance(node, A.Attr) and node.name == "sql" and len(args) == 1 \
+                        and args[0].name is None and isinstance(args[0].value, A.Str):
+                    args = [A.Arg(args[0].span, None, sql_text(args[0].value))]
                 node = A.Call(self.span_from(start), node, args)
             elif self.at_op("["):
                 self.advance()
@@ -1066,3 +1160,340 @@ def source_text(span: Span) -> str:
 
 def parse(source: str, file: str = "<input>") -> A.Program:
     return Parser(tokenize(source, file), file).program()
+
+
+# ------------------------------------------------------------------ modules
+# Module blocks and annotations desugar into ordinary statements that call
+# builtins whose names start with "__" (D90), so every later pass (the
+# checker, the interpreter, the compiler) sees only core constructs.
+
+MODULE_BLOCKS = {"ai", "agent", "server"}
+ROUTE_METHODS = {"get", "post", "put", "patch", "delete"}
+# keys whose bare names are model aliases (section 8)
+MODEL_KEYS = {"model", "fallback", "when_over_budget"}
+
+
+def is_identifier(text: str) -> bool:
+    from .lexer import KEYWORDS, is_ident_char, is_ident_start
+    return bool(text) and is_ident_start(text[0]) and all(is_ident_char(c) for c in text) and text not in KEYWORDS
+
+
+def call(span: Span, fn: str, args: list, named: list | None = None) -> A.Call:
+    out = [A.Arg(span, None, a) for a in args]
+    out += [A.Arg(span, n, v) for n, v in (named or [])]
+    return A.Call(span, A.Name(span, fn), out)
+
+
+def text(span: Span, value: str) -> A.Str:
+    return A.Str(span, [value])
+
+
+def model_name(e: A.Expr) -> A.Expr:
+    """A bare name in a model position is the name of a model (an alias)."""
+    if isinstance(e, A.Name):
+        return text(e.span, e.name)
+    if isinstance(e, A.ListLit):
+        return A.ListLit(e.span, [model_name(i) for i in e.items])
+    return e
+
+
+def raw_text(tok: Token) -> str:
+    """The text of a route path, with its {name} parts as written."""
+    return "".join(p if isinstance(p, str) else "{" + p.source + "}" for p in tok.value)
+
+
+def type_value(t: A.TypeExpr | None, span: Span) -> A.Expr:
+    """The type of a parameter as a value the runtime can check against."""
+    if isinstance(t, A.TypeName):
+        return A.Name(t.span, t.name)
+    return A.NoneLit(span)
+
+
+def _module_methods():
+    def module_block(self, tok: Token) -> A.Stmt:
+        """ai:, ai models:, ai profile "name":, agent name:, server name:"""
+        word_ = tok.value
+        name = None
+        name_tok = None
+        if word_ == "ai" and self.at_name("profile"):
+            self.advance()
+            if self.peek().kind != "STRING":
+                raise self.error(word("string"))
+            name = "".join(p for p in self.advance().value if isinstance(p, str))
+            kind = "profile"
+        elif word_ == "ai" and self.at_name("models"):
+            self.advance()
+            kind = "models"
+        elif word_ == "ai":
+            kind = "ai"
+        else:
+            name_tok = self.expect_name()
+            name = name_tok.value
+            kind = word_
+        self.expect_op(":")
+        self.expect_newline_raw()
+        if self.peek().kind != "INDENT":
+            raise self.error(word("indented"))
+        self.advance()
+        pairs: list = []
+        routes: list = []
+        while self.peek().kind != "DEDENT":
+            t = self.peek()
+            if kind == "server" and (t.is_op("@") or (t.kind == "NAME" and t.value in ROUTE_METHODS
+                                                       and self.peek(1).kind == "STRING")):
+                routes.append(self.route())
+                continue
+            key = self.expect_name()
+            if not self.at_op("="):
+                raise self.error('"="')
+            self.advance()
+            value = self.rate(self.expr())
+            if key.value in MODEL_KEYS and kind != "models":
+                value = model_name(value)
+            if any(n == key.value for n, _ in pairs):
+                raise NexoError("duplicate_name", key.span, name=key.value)
+            pairs.append((key.value, value))
+            self.expect_newline()
+        self.advance()
+        self.block_end = self.p
+        span = tok.span
+        if kind == "models":
+            return A.ExprStmt(span, call(span, "__ai_models", [], pairs))
+        if kind in ("ai", "profile"):
+            first = text(span, name) if name is not None else A.NoneLit(span)
+            return A.ExprStmt(span, call(span, "__ai_config", [first], pairs))
+        fn = "__ai_agent" if kind == "agent" else "__web_server"
+        target = A.Name(name_tok.span, name)
+        stmt = A.Assign(name_tok.span, target, "=", call(span, fn, [text(span, name)], pairs))
+        for route_fn, method, path, annotations, mspan in routes:
+            named = []
+            for a in annotations:
+                if a.name == "role" and len(a.args) == 1:
+                    named.append(("role", a.args[0].value))
+                elif a.name == "limit" and len(a.args) == 1:
+                    named.append(("limit", a.args[0].value))
+                elif a.name == "public" and not a.args:
+                    named.append(("public", A.Bool(a.span, True)))
+                else:
+                    raise NexoError("not_supported", a.span, what=f'"@{a.name}"')
+            types = A.ListLit(mspan, [type_value(p.type, mspan) for p in route_fn.params])
+            self.extra.append(route_fn)
+            self.extra.append(A.ExprStmt(mspan, call(mspan, "__web_route", [
+                A.Name(mspan, name), text(mspan, method), text(mspan, path),
+                A.Name(mspan, route_fn.name), types], named)))
+        return stmt
+
+    def route(self):
+        """route = { annotation } METHOD STRING [ "(" params ")" ] block"""
+        annotations = self.annotations() if self.at_op("@") else []
+        tok = self.expect_name()
+        if tok.value not in ROUTE_METHODS:
+            raise self.error(word("route"), tok)
+        if self.peek().kind != "STRING":
+            raise self.error(word("string"))
+        path = raw_text(self.advance())
+        params = self.params() if self.at_op("(") else []
+        method = tok.value.upper()
+        span = self.span_from(tok)
+        body = self.block()
+        fn = A.FnDef(span, f"{method} {path}", tok.span, params, None, body)
+        return fn, method, path, annotations, tok.span
+
+    def table_def(self, node: A.Stmt) -> A.Stmt:
+        """@table type T: the type, then __db_table(T, key, many, marks)."""
+        if not isinstance(node, A.TypeDef):
+            return node
+        tables = [a for a in node.annotations if a.name == "table"]
+        rels = [f for f in node.fields if isinstance(f.type, A.TypeName) and f.type.rel]
+        if not tables:
+            if rels:
+                raise NexoError("table_only", rels[0].type.span, word=rels[0].type.rel)
+            return node
+        a = tables[0]
+        if a.args:
+            raise NexoError("not_supported", a.span, what=f'"@table(...)"')
+        if not self.db:
+            raise NexoError("needs_use", a.span, what='"@table"', module="nexo.db")
+        node.annotations = [x for x in node.annotations if x.name != "table"]
+        key = None
+        many = []
+        kept = []
+        marks = []
+        for f in node.fields:
+            t = f.type
+            if isinstance(t, A.TypeName) and t.rel == "many":
+                many.append((text(f.span, f.name), text(t.span, t.name)))
+                continue
+            if isinstance(t, A.TypeName) and t.name == "id" and not t.params and t.rel is None:
+                if key is not None:
+                    raise NexoError("table_two_ids", f.span, type=node.name)
+                key = f.name
+                f.type = A.TypeName(t.span, "int", optional=True)
+            fmarks = f.marks + (["ref"] if isinstance(t, A.TypeName) and t.rel == "ref" else [])
+            if fmarks:
+                marks.append((text(f.span, f.name), A.ListLit(f.span, [text(f.span, m) for m in fmarks])))
+            kept.append(f)
+        node.fields = kept
+        span = a.span
+        self.extra.append(A.ExprStmt(span, call(span, "__db_table", [
+            A.Name(node.name_span, node.name),
+            text(span, key) if key else A.NoneLit(span),
+            A.MapLit(span, many), A.MapLit(span, marks)])))
+        return node
+
+    def tool_def(self, fn: A.Stmt) -> A.Stmt:
+        """@tool "description" fn ...: the function, then __ai_tool(fn, ...)."""
+        if not isinstance(fn, A.FnDef):
+            return fn
+        tools = [a for a in fn.annotations if a.name == "tool"]
+        if not tools:
+            return fn
+        a = tools[0]
+        fn.annotations = [x for x in fn.annotations if x.name != "tool"]
+        desc = a.args[0].value if a.args else text(a.span, fn.name)
+        types = A.ListLit(a.span, [type_value(p.type, a.span) for p in fn.params])
+        self.extra.append(A.ExprStmt(a.span, call(a.span, "__ai_tool", [A.Name(fn.name_span, fn.name), desc, types])))
+        return fn
+
+    def fake_stmt(self) -> A.Stmt:
+        """fake NAME returns EXPR (inside a test, section 14)"""
+        tok = self.advance()
+        name = self.dotted_name()
+        if not self.at_name("returns"):
+            raise self.error('"returns"')
+        self.advance()
+        value = self.expr()
+        span = self.span_from(tok)
+        stmt = A.ExprStmt(span, call(span, "__fake", [text(tok.span, name), value]))
+        self.expect_newline()
+        return stmt
+
+    def at_transaction(self) -> bool:
+        """NAME { "." NAME } "." "transaction" ":" NEWLINE"""
+        k = 0
+        if self.peek().kind != "NAME":
+            return False
+        k = 1
+        while self.peek(k).is_op(".") and self.peek(k + 1).kind == "NAME":
+            k += 2
+        return (k >= 3 and self.peek(k - 1).value == "transaction" and self.peek(k).is_op(":")
+                and self.peek(k + 1).kind == "NEWLINE")
+
+    def transaction(self) -> A.Stmt:
+        """db.transaction: block (section 6), as
+            __txL_C = __db_begin(db)
+            try:
+                block
+                __db_commit(__txL_C)
+            else __e:
+                __db_rollback(__txL_C)
+                fail(__e)"""
+        start = self.peek()
+        obj: A.Expr = A.Name(start.span, self.advance().value)
+        while not (self.peek(1).kind == "NAME" and self.peek(1).value == "transaction" and self.peek(2).is_op(":")):
+            self.advance()
+            n = self.advance()
+            obj = A.Attr(self.span_from(start), obj, n.value, n.span)
+        self.advance()
+        self.advance()
+        span = self.span_from(start)
+        body = self.block()
+        for s in body_returns(body):
+            raise NexoError("transaction_return", s.span)
+        tx = A.Name(span, f"__tx{span.line}_{span.col}")
+        begin = A.Assign(span, tx, "=", call(span, "__db_begin", [obj]))
+        body = body + [A.ExprStmt(span, call(span, "__db_commit", [tx]))]
+        handler = A.Handler(span, "__e", None, [
+            A.ExprStmt(span, call(span, "__db_rollback", [tx])),
+            A.ExprStmt(span, call(span, "fail", [A.Name(span, "__e")])),
+        ])
+        self.extra.append(A.TryStmt(span, None, body, [handler]))
+        return begin
+
+    return locals()
+
+
+for _name, _fn in _module_methods().items():
+    setattr(Parser, _name, _fn)
+
+
+def sql_text(s: A.Str) -> A.Call:
+    """db.sql("... {x} ..."): the literal parts and the values apart, so
+    the values become parameters (section 6, D100)."""
+    parts, values = [""], []
+    for p in s.parts:
+        if isinstance(p, str):
+            parts[-1] += p
+        else:
+            values.append(p)
+            parts.append("")
+    return call(s.span, "__sql_text", [A.ListLit(s.span, [text(s.span, x) for x in parts]),
+                                       A.ListLit(s.span, values)])
+
+
+def body_returns(body: list):
+    from .checker import walk_stmts
+    for s in walk_stmts(body, into_fns=False):
+        if isinstance(s, A.Return):
+            yield s
+
+
+def model_aliases(program: A.Program) -> None:
+    """Calls of `ask` (section 8, D107): in `model: fast` a bare name
+    declared by an `ai models:` block is the name of that model; in
+    `creativity: low`, `guard: injection` and `redact: private` a bare name
+    is a word; and `o: Opinion = ask(...)` passes the type of the variable
+    as `as:`."""
+    from .checker import walk_stmts
+    aliases = set()
+    for s in program.body:
+        if isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and getattr(s.expr.func, "name", "") == "__ai_models":
+            aliases.update(a.name for a in s.expr.args if a.name)
+
+    def fix(e):
+        if isinstance(e, A.Call) and isinstance(e.func, A.Name) and e.func.name == "ask":
+            for a in e.args:
+                word_ = a.name in ("creativity", "guard", "redact")
+                if (word_ or a.name == "model") and isinstance(a.value, A.Name) and (word_ or a.value.name in aliases):
+                    a.value = text(a.value.span, a.value.name)
+        for c in sub_exprs(e):
+            fix(c)
+
+    for s in walk_stmts(program.body):
+        if isinstance(s, (A.Assign, A.VarDecl)) and isinstance(s.type, A.TypeName):
+            v = s.value.expr if isinstance(s.value, A.Propagate) else s.value  # `o: T = ask(...)?` too
+            if (isinstance(v, A.Call) and isinstance(v.func, A.Name) and v.func.name == "ask"
+                    and not any(a.name == "as" for a in v.args)):
+                v.args.append(A.Arg(s.type.span, "as", A.Name(s.type.span, s.type.name)))
+        for e in stmt_exprs(s):
+            fix(e)
+
+
+def sub_exprs(e):
+    from .checker import children
+    if isinstance(e, A.Call):
+        return [e.func] + [a.value for a in e.args]
+    if isinstance(e, A.Propagate):
+        return [e.expr]
+    if isinstance(e, A.Coalesce):
+        return [e.left, e.right]
+    if isinstance(e, A.Lambda):
+        return [e.body]
+    if isinstance(e, A.Pipeline):
+        return [e.source] + [x for st in e.steps for x in ([st.expr] if st.expr else []) + list(st.columns)]
+    if isinstance(e, A.ParallelFor):
+        return [e.iterable] + [a.value for a in e.args] + [x for st in e.body for x in stmt_exprs(st)]
+    return children(e)
+
+
+def stmt_exprs(s):
+    out = []
+    for attr in ("expr", "value", "target", "cond", "count", "iterable", "subject", "within", "call"):
+        v = getattr(s, attr, None)
+        if isinstance(v, A.Expr):
+            out.append(v)
+    if isinstance(s, A.If):
+        out.extend(c for c, _ in s.branches)
+    if isinstance(s, A.Match):
+        out.extend(a.guard for a in s.arms if a.guard is not None)
+    return out

@@ -31,6 +31,7 @@ pub fn type_name(v: V) -> String {
             Obj::Symbol(_) => "Symbol".into(),
             Obj::Namespace(_) => "Namespace".into(),
             Obj::Channel(_) | Obj::ChannelType(_) => "channel".into(),
+            Obj::Native(n) => n.type_name().to_string(),
         },
         _ => "none".into(),
     }
@@ -103,6 +104,31 @@ pub fn quote(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+thread_local! {
+    static SECRET_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static HIDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `show_checked` with the @private fields of records as "***" (section 9:
+/// hidden in logs and AI calls).
+pub fn show_hidden(v: V, span: u32) -> crate::state::R<String> {
+    let old = HIDING.with(|h| h.replace(true));
+    let text = show_checked(v, span);
+    HIDING.with(|h| h.set(old));
+    text
+}
+
+/// `show`, for the places a secret must not reach (print, str(),
+/// interpolation, files): showing one is an error (section 9).
+pub fn show_checked(v: V, span: u32) -> crate::state::R<String> {
+    SECRET_SHOWN.with(|s| s.set(false));
+    let text = show(v);
+    if SECRET_SHOWN.with(|s| s.replace(false)) {
+        return Err(crate::state::diag(nexo_diag::Diagnostic::new_spanless("secret_shown"), span));
+    }
+    Ok(text)
 }
 
 /// Text of a value as `print` and interpolation show it.
@@ -202,7 +228,15 @@ pub fn repr_into(v: V, out: &mut String) {
                 out.push_str(&r.ty.name);
                 out.push('(');
                 let names: Vec<String> = r.ty.fields.iter().map(|f| f.name.clone()).collect();
-                fields_into(&names, &r.fields.borrow(), out);
+                if HIDING.with(|h| h.get()) && r.ty.fields.iter().any(|f| f.private) {
+                    let hidden = Val::str("***");
+                    let values: Vec<Val> = r.ty.fields.iter().zip(r.fields.borrow().iter())
+                        .map(|(f, v)| if f.private { hidden.clone() } else { v.clone() })
+                        .collect();
+                    fields_into(&names, &values, out);
+                } else {
+                    fields_into(&names, &r.fields.borrow(), out);
+                }
                 out.push(')');
             }
             Obj::VariantValue(vv) => {
@@ -238,6 +272,12 @@ pub fn repr_into(v: V, out: &mut String) {
             Obj::Namespace(n) => out.push_str(n),
             Obj::Channel(_) => out.push_str("channel"),
             Obj::ChannelType(_) => out.push_str("channel"),
+            Obj::Native(n) => {
+                if n.is_secret() {
+                    SECRET_SHOWN.with(|s| s.set(true));
+                }
+                out.push_str(&n.repr())
+            }
         },
         _ => out.push_str("none"),
     }

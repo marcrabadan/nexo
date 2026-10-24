@@ -36,12 +36,14 @@ TIME_UNITS = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "day": 86400, "days": 864
               "year": 31536000, "years": 31536000}
 SIZE_UNITS = {"B": 1, "KB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
 LENGTH_UNITS = {"km": 1}
+# limits of nexo.ai: `max: 200 words`, `max: 500 tokens`
+TEXT_UNITS = {"words": 1, "tokens": 1}
 CURRENCIES = {
     "EUR": 2, "USD": 2, "GBP": 2, "JPY": 0, "CHF": 2, "CAD": 2, "AUD": 2, "CNY": 2,
     "MXN": 2, "ARS": 2, "BRL": 2, "CLP": 0, "COP": 2, "PEN": 2, "UYU": 2, "SEK": 2,
     "NOK": 2, "DKK": 2, "PLN": 2, "INR": 2,
 }
-UNITS = {**TIME_UNITS, **SIZE_UNITS, **LENGTH_UNITS, "%": 1}
+UNITS = {**TIME_UNITS, **SIZE_UNITS, **LENGTH_UNITS, **TEXT_UNITS, "%": 1}
 ATTACHED_ONLY = {"s", "m", "h", "B", "%"}
 
 OPERATORS = [

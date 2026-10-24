@@ -1,0 +1,24 @@
+# fake inside a test (section 14, D99)
+fn dollar_price():
+    return http.get("http://127.0.0.1:1/rate", retries: 0)?.json()?["usd"]
+
+fn greet(name):
+    return "Hello {name}"
+
+fn total(n):
+    return dollar_price()? * n
+
+test "a fake replaces a function":
+    fake dollar_price returns 1.5
+    assert dollar_price() == 1.5
+    assert total(2) == 3.0
+
+test "fakes end with their test":
+    assert greet("Ana") == "Hello Ana"
+    assert dollar_price() fails
+
+test "a fake of a library function":
+    fake http.get returns "offline"
+    assert http.get("http://example.com") == "offline"
+    fake greet returns "Hi"
+    assert greet("Luis") == "Hi"

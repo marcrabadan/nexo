@@ -1,0 +1,5 @@
+✓ ask can be faked
+✓ a typed ask can be faked
+No hay ningún proveedor de IA configurado. Ejecuta: nexo ai setup
+✓ without a provider ask fails
+3 pruebas: 3 correctas, 0 fallidas

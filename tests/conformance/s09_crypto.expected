@@ -1,0 +1,17 @@
+true
+login
+false false
+32 20
+false Ana's data
+Ana's data
+Datos no válidos: los datos no están cifrados con esta clave o se han modificado
+InvalidData
+[{"name": "Ana", "card": 4111}]
+Authentic
+false false
+true
+El secreto "NEXO_UNSET_SECRET" no está definido
+Error en s09_crypto.nexo, línea 37:
+  print("the password is {db_pass}")
+                          ^^^^^^^
+Un secreto no se puede mostrar ni convertir en texto. Pasa el secreto solo donde se necesita (key: ..., una contraseña de connect, una cabecera de http); nunca a print, str() ni a un archivo.
