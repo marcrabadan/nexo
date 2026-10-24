@@ -40,6 +40,7 @@ static SIGS: &[Sig] = &[
     Sig { name: "__db_rollback", params: &[p("tx")] },
     Sig { name: "__sql_text", params: &[p("parts"), p("values")] },
     Sig { name: "jwt", params: &[p("key")] },
+    Sig { name: "log", params: &[] },
     Sig { name: "__rate", params: &[] },
     Sig { name: "__web_server", params: &[p("name"), opt("port"), opt("auth")] },
     Sig {
@@ -111,6 +112,9 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         // render(path, name: value...): every named argument is a value
         return crate::text::render(args, names, span);
     }
+    if sig.name == "log" {
+        return log(args, names, span);
+    }
     if sig.name == "__rate" {
         // __rate(amount, words...): the words of `10 per minute per ip`
         return crate::web::rate(args, span);
@@ -155,4 +159,21 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         }
         _ => unreachable!(),
     }
+}
+
+/// log(values...): a line on the standard error output, with the @private
+/// fields of records hidden (section 9).
+fn log(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    if let Some(n) = names.iter().flatten().next() {
+        let d = nexo_diag::Diagnostic::new_spanless("arg_unknown").arg("fn", "log").arg("param", *n).arg("params", "-");
+        return Err(crate::state::diag(d, span));
+    }
+    let mut parts = Vec::new();
+    for a in args {
+        let v = crate::pipe::bind(*a)?;
+        parts.push(crate::fmt::show_hidden(v.v(), span)?);
+    }
+    crate::state::flush();
+    eprintln!("{}", parts.join(" "));
+    Ok(Val::none())
 }

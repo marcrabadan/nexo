@@ -823,6 +823,7 @@ unsafe fn fields(decls: *const FieldDecl, n: u64, defaults: *const V) -> Vec<Fie
             ty: if f.desc.ptr.is_null() { None } else { Some(types::desc(f.desc.ptr, f.desc.len)) },
             optional: f.optional & 1 != 0,
             weak: f.optional & 2 != 0,
+            private: f.optional & 4 != 0,
             default: if defaults.is_null() { Val::simple(UNDEF) } else { Val::from(*defaults.add(i)) },
         })
         .collect()

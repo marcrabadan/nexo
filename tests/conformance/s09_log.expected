@@ -1,0 +1,9 @@
+start
+Customer(name: "Ana", national_id: "***", card: "***")
+orders: [Customer(name: "Ana", national_id: "***", card: "***")] {"n": 2}
+4111 1111 1111 1111
+Customer(name: "Ana", national_id: "12345678Z", card: "4111 1111 1111 1111")
+Error en s09_log.nexo, línea 13:
+  log(key.new())
+  ^^^^^^^^^^^^^^
+Un secreto no se puede mostrar ni convertir en texto. Pasa el secreto solo donde se necesita (key: ..., una contraseña de connect, una cabecera de http); nunca a print, str() ni a un archivo.

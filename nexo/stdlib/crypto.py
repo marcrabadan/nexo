@@ -310,4 +310,21 @@ def exports() -> dict:
         "decrypt_file": Builtin("decrypt_file", b_decrypt_file, fallible=True),
         "sign": Builtin("sign", b_sign),
         "verify": Builtin("verify", b_verify),
+        "log": Builtin("log", b_log),
     }
+
+
+def b_log(call, *values):
+    """log(values...): a line on the standard error output, with the
+    @private fields of records hidden (section 9)."""
+    import sys
+    from ..types import show_hidden
+    interp = call.interp
+    text = " ".join(show_hidden(interp.bind_value(v)) for v in values)
+    try:
+        interp.out.flush()
+    except Exception:
+        pass
+    sys.stderr.write(text + "\n")
+    sys.stderr.flush()
+    return None

@@ -32,6 +32,8 @@ pub struct FieldInfo {
     pub optional: bool,
     /// a `weak` field (section 7, rule 4)
     pub weak: bool,
+    /// a `@private` field: hidden in logs and AI calls (section 9)
+    pub private: bool,
     /// a function without parameters that computes the default, or UNDEF
     pub default: Val,
 }

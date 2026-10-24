@@ -108,6 +108,16 @@ pub fn quote(s: &str) -> String {
 
 thread_local! {
     static SECRET_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static HIDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `show_checked` with the @private fields of records as "***" (section 9:
+/// hidden in logs and AI calls).
+pub fn show_hidden(v: V, span: u32) -> crate::state::R<String> {
+    let old = HIDING.with(|h| h.replace(true));
+    let text = show_checked(v, span);
+    HIDING.with(|h| h.set(old));
+    text
 }
 
 /// `show`, for the places a secret must not reach (print, str(),
@@ -218,7 +228,15 @@ pub fn repr_into(v: V, out: &mut String) {
                 out.push_str(&r.ty.name);
                 out.push('(');
                 let names: Vec<String> = r.ty.fields.iter().map(|f| f.name.clone()).collect();
-                fields_into(&names, &r.fields.borrow(), out);
+                if HIDING.with(|h| h.get()) && r.ty.fields.iter().any(|f| f.private) {
+                    let hidden = Val::str("***");
+                    let values: Vec<Val> = r.ty.fields.iter().zip(r.fields.borrow().iter())
+                        .map(|(f, v)| if f.private { hidden.clone() } else { v.clone() })
+                        .collect();
+                    fields_into(&names, &values, out);
+                } else {
+                    fields_into(&names, &r.fields.borrow(), out);
+                }
                 out.push(')');
             }
             Obj::VariantValue(vv) => {

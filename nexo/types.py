@@ -11,6 +11,7 @@ Mapping to Python:
 from __future__ import annotations
 
 import decimal
+import threading
 import weakref
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -544,6 +545,27 @@ def format_decimal(d: Decimal) -> str:
     return text
 
 
+class _Hiding(threading.local):
+    on = False
+
+
+_HIDING = _Hiding()
+
+
+def private_fields(t: RecordType) -> set:
+    return {f.name for f in t.fields if "private" in getattr(f, "marks", ())}
+
+
+def show_hidden(value: Any) -> str:
+    """`show` with the @private fields of records as "***" (section 9:
+    hidden in logs and AI calls)."""
+    old, _HIDING.on = _HIDING.on, True
+    try:
+        return show(value)
+    finally:
+        _HIDING.on = old
+
+
 def show(value: Any) -> str:
     """Text of a value as `print` and interpolation show it."""
     if isinstance(value, str):
@@ -584,7 +606,9 @@ def repr_value(value: Any) -> str:
     if isinstance(value, Range):
         return f"{value.start}..{value.end}"
     if isinstance(value, Record):
-        inner = ", ".join(f"{k}: {weak_repr(v) if type(v) is WeakRef else repr_value(v)}" for k, v in value.fields.items())
+        hidden = private_fields(value.type) if _HIDING.on else ()
+        inner = ", ".join(f"{k}: {'"***"' if k in hidden else weak_repr(v) if type(v) is WeakRef else repr_value(v)}"
+                          for k, v in value.fields.items())
         return f"{value.type.name}({inner})"
     if isinstance(value, VariantValue):
         inner = ", ".join(f"{k}: {repr_value(v)}" for k, v in value.fields.items())

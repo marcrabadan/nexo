@@ -1029,3 +1029,13 @@ InvalidValue and InvalidData are 400, a `@unique` that is repeated is
 program shows it on the standard error output as an unhandled error
 without stopping. Request parameters that cannot be converted answer 400
 with the message of the conversion.
+
+**D105. `log` and `@private`.** Section 9 shows `log(customer)` printing
+`{name: "Ana", national_id: "***", card: "***"}` and says `@private`
+fields are hidden in logs, traces and AI calls; where a log goes is not
+written. `log(values...)` writes one line to the standard error output,
+the values shown as `print` shows them and separated by a space, with the
+value of every `@private` field of a record replaced by `"***"` (the
+record keeps its own form, `Customer(name: "Ana", national_id: "***")`,
+D30). A secret cannot be logged (D97). Outside logs and `ask` (D108), the
+field is an ordinary field: the program reads and prints it.
