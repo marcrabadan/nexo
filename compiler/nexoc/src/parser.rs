@@ -2060,6 +2060,11 @@ fn model_aliases(program: &mut Program, ids: &mut u32) {
 /// The ask call a typed variable receives: it gets `as: T`.
 fn typed_ask(value: &mut Expr, ty: &Option<TypeExpr>, ids: &mut u32) {
     let Some(TypeExpr::Name(tn)) = ty else { return };
+    // `o: Opinion = ask(...)?` too
+    let value = match &mut value.kind {
+        ExprKind::Propagate(inner) => inner.as_mut(),
+        _ => value,
+    };
     if let ExprKind::Call { func, args } = &mut value.kind {
         if matches!(&func.kind, ExprKind::Name(n) if n == "ask") && !args.iter().any(|a| a.name.as_deref() == Some("as")) {
             *ids += 1;

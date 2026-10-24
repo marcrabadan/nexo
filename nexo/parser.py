@@ -1461,7 +1461,7 @@ def model_aliases(program: A.Program) -> None:
 
     for s in walk_stmts(program.body):
         if isinstance(s, (A.Assign, A.VarDecl)) and isinstance(s.type, A.TypeName):
-            v = s.value
+            v = s.value.expr if isinstance(s.value, A.Propagate) else s.value  # `o: T = ask(...)?` too
             if (isinstance(v, A.Call) and isinstance(v.func, A.Name) and v.func.name == "ask"
                     and not any(a.name == "as" for a in v.args)):
                 v.args.append(A.Arg(s.type.span, "as", A.Name(s.type.span, s.type.name)))
