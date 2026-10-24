@@ -66,3 +66,27 @@ def error_of_thread(src):
         p = subprocess.run([sys.executable, "-m", "nexo", "--lang", "en", str(f)], capture_output=True, text=True)
     assert p.returncode == 1
     return "spawn_read" if "spawned task cannot read" in p.stderr else p.stderr
+
+
+def test_contracts_that_read_shared_variables_hold_the_lock(monkeypatch):
+    # an ensure (and the old() value it uses) is read like a statement:
+    # with the lock, so a task cannot change the variable halfway
+    from nexo.stdlib import sync
+    held = []
+    enter, leave = sync.SharedLock.__enter__, sync.SharedLock.__exit__
+
+    def counting_enter(self):
+        held.append(1)
+        return enter(self)
+
+    monkeypatch.setattr(sync.SharedLock, "__enter__", counting_enter)
+    monkeypatch.setattr(sync.SharedLock, "__exit__", leave)
+    src = SYNC + (
+        "shared xs = [1]\n"
+        "fn f(n: int):\n    ensure len(xs) >= old(len(xs))\n    pass\n"
+        "f(1)\n"
+    )
+    before = len(held)
+    assert run(src) == ""
+    # the old() snapshot and the ensure
+    assert len(held) - before == 2

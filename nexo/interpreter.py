@@ -6,6 +6,7 @@ call is silently ignored. Diagnostics (`NexoError`) are never caught.
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import itertools
 import sys
@@ -253,6 +254,17 @@ class Interpreter:
                 names.append((s.target.name, None))
             self.shared_uses[key] = any(n in self.shared_names for n, _ in names)
         return self.shared_uses[key]
+
+    def lock_for(self, e: A.Expr):
+        """The lock of shared variables when the expression reads one."""
+        if self.shared_names:
+            from .checker import expr_names
+            names: list = []
+            expr_names(e, names, names)
+            if any(n in self.shared_names for n, _ in names):
+                from .stdlib.sync import SharedLock
+                return SharedLock()
+        return contextlib.nullcontext()
 
     def exec_ExprStmt(self, s: A.ExprStmt, env: Env) -> None:
         self.eval(s.expr, env)
@@ -1122,7 +1134,8 @@ class Interpreter:
         for call_node in olds:
             if not call_node.args:
                 continue
-            old_values[id(call_node)] = copy.deepcopy(self.bind_value(self.eval(call_node.args[0].value, env)))
+            with self.lock_for(call_node.args[0].value):
+                old_values[id(call_node)] = copy.deepcopy(self.bind_value(self.eval(call_node.args[0].value, env)))
         try:
             self.exec_block(decl.body, env)
             result = None
@@ -1132,8 +1145,11 @@ class Interpreter:
             self.old_stack.append(old_values)
             try:
                 for ens in ensures:
-                    if not self.truth(self.eval(ens.expr, env), ens.expr.span, "ensure"):
-                        raise self.contract_broken("ensure", ens.expr, env)
+                    # like a statement, a contract that reads a shared
+                    # variable holds its lock
+                    with self.lock_for(ens.expr):
+                        if not self.truth(self.eval(ens.expr, env), ens.expr.span, "ensure"):
+                            raise self.contract_broken("ensure", ens.expr, env)
             finally:
                 self.old_stack.pop()
         if decl.ret is not None:

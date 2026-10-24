@@ -125,3 +125,19 @@ def test_call_depth_limit_counts_int_only_functions(tmp_path, nexo):
         assert (proc.returncode == 0) == ok, (a, b, proc.stdout)
         if ok:
             assert proc.stdout.decode() == f"{a + b}\n"
+
+
+def test_contracts_that_read_shared_variables_hold_the_lock(tmp_path, nexo):
+    # the old() snapshot and the ensure take the lock, like statements
+    src = tmp_path / "s.nexo"
+    src.write_text(
+        "use nexo.sync\nshared xs = [1]\n"
+        "fn f(n: int):\n    ensure len(xs) >= old(len(xs))\n    pass\n"
+        "f(1)\nprint(\"ok\")\n"
+    )
+    env = dict(os.environ, NEXO_KEEP_IR="1")
+    proc = subprocess.run([str(nexo), "build", src.name, "-o", "s"], cwd=tmp_path, env=env, capture_output=True)
+    assert proc.returncode == 0, proc.stderr
+    ir = (tmp_path / "s.ll").read_text()
+    assert ir.count("call void @nx_shared_lock()") == 2
+    assert run([str(tmp_path / "s")], tmp_path).stdout.decode() == "ok\n"

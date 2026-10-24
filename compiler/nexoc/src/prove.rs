@@ -218,7 +218,10 @@ impl Run<'_> {
     fn body(&mut self, body: &[Stmt]) -> bool {
         for (i, s) in body.iter().enumerate() {
             let ok = match &s.kind {
-                StmtKind::Expect(_) | StmtKind::Ensure(_) | StmtKind::Pass => true,
+                // a contract that may change something (a call) would make
+                // the symbolic state wrong for the contracts proven after it
+                StmtKind::Expect(e) | StmtKind::Ensure(e) => effect_free(e),
+                StmtKind::Pass => true,
                 StmtKind::Return(v) => i == body.len() - 1 && v.as_ref().is_none_or(|e| self.value(e, false).is_some()),
                 StmtKind::VarDecl { name, value, ty: None, .. } => match self.value(value, false) {
                     Some(v) if self.kind(name).is_none() => {
@@ -367,6 +370,30 @@ pub fn expect_holds(e: &Expr) -> bool {
     run.holds(e)
 }
 
+/// An expression that cannot change anything: no calls except `old()`,
+/// no pipelines, lambdas or tasks.
+fn effect_free(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Num { .. } | ExprKind::Unit { .. } | ExprKind::Bool(_) | ExprKind::None | ExprKind::Name(_) => true,
+        ExprKind::Call { func, args } => {
+            matches!(&func.kind, ExprKind::Name(n) if n == "old") && args.iter().all(|a| effect_free(&a.value))
+        }
+        ExprKind::Coalesce { left, right } => effect_free(left) && effect_free(right),
+        ExprKind::Str(_)
+        | ExprKind::List(_)
+        | ExprKind::Map(_)
+        | ExprKind::Comprehension { .. }
+        | ExprKind::Attr { .. }
+        | ExprKind::Index { .. }
+        | ExprKind::Unary { .. }
+        | ExprKind::BinOp { .. }
+        | ExprKind::BoolOp { .. }
+        | ExprKind::Compare { .. }
+        | ExprKind::Range { .. } => crate::checker::children(e).into_iter().all(effect_free),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,6 +437,19 @@ mod tests {
         let src = "fn g(x: float):\n    ensure x == old(x)\n    pass\n";
         assert_eq!(proven(src), vec![false]);
         let src = "fn h(x: int):\n    ensure x + 1 > old(x)\n    var y = x * 2\n    y -= x\n";
+        assert_eq!(proven(src), vec![true]);
+    }
+
+    #[test]
+    fn a_contract_that_may_change_something_stops_the_proof() {
+        // mutate(b) may change b.n before the ensure is checked
+        let src = "type B:\n    n: int\nfn mutate(b: B) -> bool:\n    b.n += 1\n    return true\nfn f(b: B):\n    expect mutate(b)\n    ensure b.n == old(b.n)\n    pass\n";
+        assert_eq!(proven(src), vec![false]);
+        // the same through another ensure
+        let src = "type B:\n    n: int\nfn mutate(b: B) -> bool:\n    b.n += 1\n    return true\nfn g(b: B):\n    ensure mutate(b)\n    ensure b.n == old(b.n)\n    pass\n";
+        assert_eq!(proven(src), vec![false, false]);
+        // old() and arithmetic change nothing
+        let src = "type B:\n    n: int\nfn h(b: B):\n    expect b.n >= 0 and old(b.n) == b.n\n    ensure b.n == old(b.n) + 1\n    b.n += 1\n";
         assert_eq!(proven(src), vec![true]);
     }
 }

@@ -1485,11 +1485,13 @@ impl<'a> Gen<'a> {
                         for call in find_old_calls(e) {
                             let ExprKind::Call { args, .. } = &call.kind else { continue };
                             let Some(arg) = args.first() else { continue };
+                            let locked = self.lock_for(&arg.value);
                             let v = self.expr(&arg.value, false)?;
                             let v = self.bind(v, &arg.value);
                             let tb = self.tb(&v);
                             let c = self.call_v("nx_deep_copy", &tb);
                             self.drop_val(&v);
+                            self.unlock_if(locked);
                             let slot = self.frame_owned_slot();
                             self.store(&slot, &c);
                             self.f().old_slots.insert(call.id, slot);
@@ -1524,6 +1526,9 @@ impl<'a> Gen<'a> {
         if let FrameSrc::Fn(f) = src {
             if !self.opts.trust_ensure {
                 for e in &ensures {
+                    // like a statement, a contract that reads a shared
+                    // variable holds its lock (a failure releases it)
+                    let locked = self.lock_for(e);
                     let v = self.expr(e, false)?;
                     let c = self.truth(&v, e.span, "ensure");
                     let ok = self.label();
@@ -1532,6 +1537,7 @@ impl<'a> Gen<'a> {
                     self.place(&bad);
                     self.contract_broken("ensure", e)?;
                     self.place(&ok);
+                    self.unlock_if(locked);
                 }
             }
             if let Some(ret) = &f.ret {
@@ -3592,6 +3598,23 @@ impl<'a> Gen<'a> {
             }
         }
         exprs.iter().any(|e| self.expr_uses_shared(e))
+    }
+
+    /// Take the lock of shared variables when `e` reads one.
+    fn lock_for(&mut self, e: &Expr) -> bool {
+        let locked = self.res.sync && self.expr_uses_shared(e);
+        if locked {
+            self.call_void("nx_shared_lock", "");
+            self.f().live.push(Live::Lock);
+        }
+        locked
+    }
+
+    fn unlock_if(&mut self, locked: bool) {
+        if locked {
+            self.unlive(&Live::Lock);
+            self.call_void("nx_shared_unlock", "");
+        }
     }
 
     fn expr_uses_shared(&self, e: &Expr) -> bool {

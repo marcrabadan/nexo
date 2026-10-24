@@ -564,6 +564,11 @@ others are checked when the function runs (D53). Floats are never proven
 also leaves out the unproven `ensure` checks and their `old()` copies;
 every `expect` stays. A proven `ensure` whose own evaluation would
 overflow an int is not evaluated, so that Overflow is not raised.
+A function whose `expect` or `ensure` may change something (it calls a
+function other than `old()`, or uses a pipeline or a lambda) has none of
+its contracts proven: the change would make the symbolic run wrong. As
+with any statement, a contract that reads a `shared` variable (D82),
+and the `old()` value taken for it, holds the lock while it is read.
 
 **D84. Fast paths of the compiled code.** The exit criterion of phase 2
 ("benchmarks under 2× Rust") asks for code close to what the types allow;
