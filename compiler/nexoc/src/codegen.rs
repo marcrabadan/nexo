@@ -2022,7 +2022,7 @@ impl<'a> Gen<'a> {
                 }
             }
             StmtKind::Use { what, .. } if what == "nexo.sync" => {}
-            StmtKind::Use { lang: Some(_), .. } => {}
+            StmtKind::Use { lang: Some(l), .. } if l == "c" || l == "python" => {}
             StmtKind::Use { what, .. } if matches!(what.as_str(), "nexo.db" | "nexo.ai" | "nexo.web") => {}
             StmtKind::Use { what, .. } => return Err(not_supported(format!("\"use {what}\""), s.span)),
             StmtKind::Spawn { call } => {

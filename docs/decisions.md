@@ -1144,3 +1144,58 @@ written.
   for no tool; after `max_steps` (10 by default) requests the call fails
   with AIError. The agent uses its model (or the configured one) without
   fallback, with creativity medium.
+
+## Interoperability (section 18)
+
+**D110. `use c "library"`.** Section 18 promises "direct call with headers
+read automatically"; how the library and its header are found, and which
+C types cross, is not written.
+- The library is `lib<name>.so` (or its first versioned file) in the
+  folders of `LD_LIBRARY_PATH`, `/usr/local/lib`, `/usr/lib/<arch>-linux-gnu`,
+  `/usr/lib`, `/lib/<arch>-linux-gnu` and `/lib`, the first that is a real
+  shared library (`libc.so` is often a script for the linker); a name with
+  a `/` is a path from the program's folder (`use c "./libgreet.so" as
+  greet`). It is used through the name after `as`, or the text itself.
+- The header of a few common libraries is known (`libm` is `math.h`,
+  `libz` is `zlib.h`, `libc` is `stdlib.h` and `string.h`, and `libssl`,
+  `libcrypto`, `libsqlite3`, `libcurl`, `libpthread`); for the others it
+  is `<name>.h`, `lib<name>.h` or `<name>lib.h`, looked for next to the
+  program (and the library) and in the system's folders. It is read
+  through the C preprocessor (`$CC`, `cc`, `clang` or `gcc`): phase 0 when
+  the `use` runs, the compiler when it compiles (so the program it builds
+  needs neither the compiler nor the header). Not finding the library,
+  the header or a C compiler is an error at the `use`.
+- A call converts `int` (every integer type and enum of C; a value that
+  does not fit in a narrower type is cut to its bits, as C does), `float`
+  (`float` and `double`; an int is accepted), `bool` and texts: a `const
+  char *` parameter takes a text, and a `char *` result is copied into a
+  text (`none` for NULL). A function that uses another type (other
+  pointers, which C may write through, structs, `long double`), takes a
+  variable number of arguments, or more arguments than the registers of
+  the calling convention hold (6 integers and 8 floats on x86-64) is an
+  error when it is called, with the type named. An unsigned 64-bit result
+  above the largest int is an Overflow. Arguments are positional.
+- Section 18's `C functions ... return T! if the header indicates an
+  error code` has no way to be read from a header, so results are plain
+  values; `nexo audit` belongs with the security tools of a later phase.
+- `use rust` and `use wasm` need a later phase (D89).
+
+**D111. `use python module as name`.** Section 18: "embedded Python
+interpreter; data is converted at the boundary". Phase 0 runs in Python and
+imports the module into itself. The compiler asks the Python of
+`$NEXO_PYTHON` (or `python3`) for its shared library and its `sys.path`
+when it compiles; the program loads that library when it first imports a
+module (a Python without its shared library is an error at the `use`).
+- To Python go `none`, `bool`, `int`, `float`, `str`, `decimal` (as
+  `decimal.Decimal`), lists, maps, sets and records (as a dict of their
+  fields); another value is an error. From Python come the same types
+  (tuples become lists; an int that does not fit is an Overflow); a
+  subclass of a container (`Counter`) and every other object stay a
+  `python` value, shown with Python's `repr`, whose attributes are read
+  and that is called with positional and named arguments, both converted
+  the same way. A missing attribute says "Did you mean" from `dir()`.
+- An exception of Python code is an error value (`Error`, message
+  `ValueError en Python: math domain error`) that `try` handles; a module
+  that cannot be imported is an error at the `use`.
+- "Unannotated Python types arrive as `any`": the values are dynamic, and
+  a typed variable checks them as usual (D33).

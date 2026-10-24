@@ -389,7 +389,11 @@ class Parser:
             if not is_identifier(bound):
                 raise NexoError("use_needs_as", span, name=name)
             fn = "__python_import" if lang == "python" else "__c_library"
-            call = A.Call(span, A.Name(span, fn), [A.Arg(span, None, A.Str(span, [name]))])
+            args = [A.Arg(span, None, A.Str(span, [name]))]
+            if lang == "c":
+                # the name it is used with, for the messages (libz.crc32)
+                args.append(A.Arg(span, None, A.Str(span, [bound])))
+            call = A.Call(span, A.Name(span, fn), args)
             self.extra.append(A.Assign(alias_span or span, A.Name(alias_span or span, bound), "=", call))
         return A.Use(span, lang, name, alias)
 

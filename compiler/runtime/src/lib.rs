@@ -5,6 +5,7 @@
 pub mod abi;
 pub mod ai;
 pub mod call;
+pub mod clib;
 pub mod coll;
 pub mod cow;
 pub mod crypto;
@@ -17,6 +18,7 @@ pub mod library;
 pub mod num;
 pub mod par;
 pub mod pipe;
+pub mod pylib;
 pub mod repl;
 pub mod state;
 pub mod stdlib;

@@ -47,6 +47,8 @@ static SIGS: &[Sig] = &[
     Sig { name: "__ai_tool", params: &[p("fn"), p("description"), p("types")] },
     Sig { name: "__ai_agent", params: &[] },
     Sig { name: "mcp", params: &[p("name")] },
+    Sig { name: "__c_library", params: &[p("name"), p("bound"), opt("info")] },
+    Sig { name: "__python_import", params: &[p("name"), opt("info")] },
     Sig { name: "__rate", params: &[] },
     Sig { name: "__web_server", params: &[p("name"), opt("port"), opt("auth")] },
     Sig {
@@ -165,6 +167,8 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "jwt" => crate::web::jwt(x(0), span),
         "__ai_tool" => crate::ai::tool(x(0), x(1), x(2), span),
         "mcp" => crate::ai::mcp(span),
+        "__c_library" => crate::clib::library(x(0), x(1), a.get(2).unwrap_or(NONE), span),
+        "__python_import" => crate::pylib::import(x(0), a.get(1).unwrap_or(NONE), span),
         "__web_server" => crate::web::server(x(0), a.get(1), a.get(2), span),
         "__web_route" => crate::web::route(x(0), x(1), x(2), x(3), x(4), a.get(5), a.get(6), a.get(7), span),
         "__fake" => {

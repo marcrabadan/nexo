@@ -1135,6 +1135,9 @@ class Interpreter:
             conv = self.builtins.lookup("__convert_" + func.name)
             if conv is not MISSING:
                 return self.call_builtin(conv, args, node)
+        if isinstance(func, Native) and hasattr(func, "call_value"):
+            # a value of another language that can be called (D111)
+            return func.call_value(Call(self, node), args)
         raise NexoError("not_callable", node.span, vtype=type_name(func))
 
     def bind_args(self, fn_name: str, params: list[str], args: list, node: A.Node,

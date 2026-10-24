@@ -570,8 +570,12 @@ impl<'s> Parser<'s> {
                 return Err(Diagnostic::new("use_needs_as", span).arg("name", name.clone()));
             }
             let fname = if l == "python" { "__python_import" } else { "__c_library" };
-            let arg = self.text(span, &name);
-            let call = self.call(span, fname, vec![arg], Vec::new());
+            let mut args = vec![self.text(span, &name)];
+            if l == "c" {
+                // the name it is used with, for the messages (libz.crc32)
+                args.push(self.text(span, &bound.clone()));
+            }
+            let call = self.call(span, fname, args, Vec::new());
             let at = alias_span.unwrap_or(span);
             let target = self.expr_node(at, ExprKind::Name(bound));
             let st = self.stmt_node(at, StmtKind::Assign { target, op: "=", value: call, ty: None });

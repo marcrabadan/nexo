@@ -15,6 +15,7 @@
 
 mod ai_cmd;
 mod ast;
+mod cheader;
 mod checker;
 mod codegen;
 mod fmt;
@@ -47,7 +48,10 @@ struct CompileError(String);
 /// Compile Nexo source to LLVM IR.
 fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Result<String, CompileError> {
     let fail = |d: Diagnostic| CompileError(render(name, source, d.span, &d.text()));
-    let program = parser::parse(source).map_err(fail)?;
+    let mut program = parser::parse(source).map_err(fail)?;
+    // `use c`: the headers are read now (D110)
+    let folder = Path::new(name).parent().map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p }).unwrap_or(Path::new("."));
+    cheader::embed(&mut program, folder);
     checker::check(&program).map_err(fail)?;
     let res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
@@ -284,7 +288,8 @@ fn repl() -> u8 {
             db_command: false,
         };
         let compiled = (|| {
-            let program = parser::parse(&candidate)?;
+            let mut program = parser::parse(&candidate)?;
+            cheader::embed(&mut program, Path::new("."));
             checker::check(&program)?;
             let res = resolve::resolve(&program)?;
             typecheck::check(&program, &res)?;
