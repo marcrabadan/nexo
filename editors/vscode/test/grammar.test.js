@@ -71,6 +71,11 @@ function programs(dir, found = []) {
     ['else e is NotFound:', [["else", "keyword.control.nexo"], ["is", "keyword.other.nexo"], ["NotFound", "entity.name.type.nexo"]]],
     ['email: str? = none', [["none", "constant.language.nexo"], ["?", "keyword.operator.error.nexo"]]],
     ['x = 10 % 3', [["%", "keyword.operator.nexo"]]],
+    ['server api:', [["server", "keyword.other.module.nexo"]]],
+    ['ai models:', [["ai", "keyword.other.module.nexo"], ["models", "keyword.other.module.nexo"]]],
+    ['    get "/users/{id}"(id: int):', [["get", "keyword.other.route.nexo"]]],
+    ['    fake ask returns "positive"', [["fake", "keyword.other.fake.nexo"], ["returns", "keyword.other.fake.nexo"]]],
+    ['summary = ask("Summarise this text", text)', [["ask", "support.function.builtin.nexo"]]],
   ];
   for (const [line, expected] of cases) {
     const tokens = tokenize(g, line);

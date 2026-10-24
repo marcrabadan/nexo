@@ -170,6 +170,22 @@
           "match": "\\b(within|fails)\\b"
         },
         {
+          "match": "^\\s*(?:(ai)(?:\\s+(models|profile))?|(agent|server))\\b(?=[^\\n]*:\\s*$)",
+          "captures": {
+            "1": { "name": "keyword.other.module.nexo" },
+            "2": { "name": "keyword.other.module.nexo" },
+            "3": { "name": "keyword.other.module.nexo" }
+          }
+        },
+        {
+          "match": "^\\s*(get|post|put|patch|delete)(?=\\s+\")",
+          "captures": { "1": { "name": "keyword.other.route.nexo" } }
+        },
+        {
+          "match": "^\\s*(fake)\\s+[\\p{L}_][\\p{L}\\p{N}_.]*\\s+(returns)\\b",
+          "captures": { "1": { "name": "keyword.other.fake.nexo" }, "2": { "name": "keyword.other.fake.nexo" } }
+        },
+        {
           "name": "storage.modifier.nexo",
           "match": "\\b(var|pub|weak|unsafe)\\b"
         },
@@ -203,7 +219,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.nexo",
-          "match": "\\b(print|input|len|range|set|round|split|convert|fail|validate|old|read|write|read_lines|save|decimal|float|int|str|channel)(?=\\()"
+          "match": "\\b(print|input|len|range|set|round|split|convert|fail|validate|old|read|write|read_lines|save|decimal|float|int|str|channel|move_file|date|time|regex|render|secret|encrypt|decrypt|encrypt_file|decrypt_file|sign|verify|log|jwt|ask|connect)(?=\\()"
         },
         {
           "name": "entity.name.function.call.nexo",

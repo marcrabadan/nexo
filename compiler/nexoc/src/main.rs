@@ -567,7 +567,8 @@ fn test_files(paths: &[String]) -> Vec<PathBuf> {
             let mut files = Vec::new();
             walk(&path, &path, &mut files);
             files.sort();
-            found.extend(files);
+            // shown as phase 0 shows them: `nexo lint .` names `a.nexo`, not `./a.nexo`
+            found.extend(files.into_iter().map(|f| f.strip_prefix(".").map(|r| r.to_path_buf()).unwrap_or(f)));
         } else {
             found.push(path);
         }
