@@ -24,6 +24,12 @@ def test_every_diagnostic_has_a_fix_sentence():
         assert "fix." + key in MESSAGES, key
 
 
+def test_every_error_kind_has_its_own_fix():
+    kinds = [key[4:] for key in MESSAGES if key.startswith("err.")]
+    for kind in kinds:
+        assert "fix." + kind in MESSAGES, kind
+
+
 def test_render_format_matches_section_14():
     tokenize('name = "Ana"\nage = 30\ngreeting = "Hello"\nprint(nmae)\n', "app.nexo")
     errors.set_lang("en")
@@ -49,3 +55,26 @@ def test_suggestions():
     assert suggest("pritn", ["print", "input"]) == "print"
     assert suggest("zzz", ["name"]) is None
     assert suggest("lenght", ["len", "length"]) == "length"
+
+
+def compiler_catalog():
+    import re
+    from pathlib import Path
+    path = Path(__file__).parents[2] / "compiler" / "diag" / "src" / "catalog.rs"
+    text = path.read_text(encoding="utf-8").split("pub(crate) static WORDS")[0]
+    return {m.group(1) for m in re.finditer(r'^    \("([\w.]+)",', text, re.M)}
+
+
+def test_the_compiler_catalog_has_every_message():
+    compiled = compiler_catalog()
+    assert set(MESSAGES) <= compiled, sorted(set(MESSAGES) - compiled)
+
+
+def test_every_compiler_diagnostic_has_a_fix_sentence():
+    exempt = {"header", "unexpected", "no_tests"}
+    compiled = compiler_catalog()
+    for key in compiled:
+        if key.startswith(("fix.", "detail.")) or key in exempt:
+            continue
+        fix = "fix." + (key[4:] if key.startswith("err.") else key)
+        assert fix in compiled, key

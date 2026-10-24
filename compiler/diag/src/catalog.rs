@@ -177,6 +177,7 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("err.NotFound", "No se encuentra el archivo \"{path}\"", "File \"{path}\" not found"),
     ("fix.NotFound", "Comprueba la ruta, o gestiónalo con try y else e is NotFound.", "Check the path, or handle it with try and else e is NotFound."),
     ("err.IOError", "No se puede acceder a \"{path}\": {reason}", "Cannot access \"{path}\": {reason}"),
+    ("fix.IOError", "Comprueba que la ruta exista y que tengas permiso, o gestiónalo con try y else e is IOError.", "Check that the path exists and that you have permission, or handle it with try and else e is IOError."),
     ("err.InvalidData", "Datos no válidos: {detail}", "Invalid data: {detail}"),
     ("err.Overflow", "El resultado no cabe en un int de 64 bits", "The result does not fit in a 64-bit int"),
     ("fix.Overflow", "Usa valores más pequeños, o decimal(x) o float(x) para números grandes.", "Use smaller values, or decimal(x) or float(x) for large numbers."),
@@ -186,8 +187,11 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("fix.OutOfRange", "Usa un índice entre 0 y el tamaño menos 1.", "Use an index between 0 and the size minus 1."),
     ("err.ContractBroken", "No se cumple {kw} {expr}{values}", "{kw} {expr} does not hold{values}"),
     ("fix.ContractBroken", "Revisa los valores que recibe la función o corrige su cuerpo.", "Check the values the function receives or fix its body."),
+    ("fix.InvalidData", "Corrige los datos de entrada, o gestiónalo con try y else e is InvalidData.", "Fix the input data, or handle it with try and else e is InvalidData."),
     ("err.Timeout", "El bloque tardó más de {limit}", "The block took longer than {limit}"),
+    ("fix.Timeout", "Aumenta el límite de within, o gestiónalo con try y else e is Timeout.", "Raise the within limit, or handle it with try and else e is Timeout."),
     ("err.InvalidValue", "{detail}", "{detail}"),
+    ("fix.InvalidValue", "Comprueba el valor antes de usarlo, o gestiónalo con try y else e is InvalidValue.", "Check the value before using it, or handle it with try and else e is InvalidValue."),
     ("detail.not_a", "\"{value}\" no es un valor {type} válido", "\"{value}\" is not a valid {type}"),
     ("detail.out_of_range", "{value} está fuera del rango {range}", "{value} is outside the range {range}"),
     ("detail.missing_field", "falta el campo \"{field}\" de {type}", "the field \"{field}\" of {type} is missing"),
@@ -206,7 +210,8 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("return_mismatch_static", "\"{fn}\" debe devolver {type} pero devuelve un valor {vtype}.", "\"{fn}\" must return {type} but returns a {vtype} value."),
     ("fix.return_mismatch_static", "Devuelve un valor de tipo {type} o cambia el tipo de retorno.", "Return a value of type {type} or change the return type."),
     // phase 1: the limit of nested calls of compiled programs (D73)
-    ("too_deep", "demasiadas llamadas anidadas (recursión infinita).", "too many nested calls (infinite recursion)."),
+    ("too_deep", "Demasiadas llamadas anidadas (recursión infinita).", "Too many nested calls (infinite recursion)."),
+    ("fix.too_deep", "Comprueba que la recursión tenga un caso base que la detenga.", "Check that the recursion has a base case that stops it."),
 ];
 
 pub(crate) static WORDS: &[(&str, &str, &str)] = &[

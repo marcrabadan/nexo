@@ -66,8 +66,7 @@ def run_file(path: str) -> int:
         return 1
     except RecursionError:
         sys.stdout.flush()
-        sys.stderr.write("Error: " + ("demasiadas llamadas anidadas (recursión infinita)."
-                                      if errors.LANG == "es" else "too many nested calls (infinite recursion).") + "\n")
+        sys.stderr.write(errors.render(None, NexoError("too_deep").text()))
         return 1
     finally:
         sys.stdout.flush()
@@ -181,7 +180,8 @@ def repl() -> int:
         except (NexoError, NexoFailure) as exc:
             report(exc)
         except RecursionError:
-            print("Error: recursion")
+            sys.stdout.flush()
+            sys.stderr.write(errors.render(None, NexoError("too_deep").text()))
         sys.stdout.flush()
 
 

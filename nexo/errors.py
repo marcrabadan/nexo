@@ -548,7 +548,15 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Check the path, or handle it with try and else e is NotFound.",
     },
     "err.IOError": {"es": 'No se puede acceder a "{path}": {reason}', "en": 'Cannot access "{path}": {reason}'},
+    "fix.IOError": {
+        "es": "Comprueba que la ruta exista y que tengas permiso, o gestiónalo con try y else e is IOError.",
+        "en": "Check that the path exists and that you have permission, or handle it with try and else e is IOError.",
+    },
     "err.InvalidData": {"es": "Datos no válidos: {detail}", "en": "Invalid data: {detail}"},
+    "fix.InvalidData": {
+        "es": "Corrige los datos de entrada, o gestiónalo con try y else e is InvalidData.",
+        "en": "Fix the input data, or handle it with try and else e is InvalidData.",
+    },
     "err.Overflow": {"es": "El resultado no cabe en un int de 64 bits", "en": "The result does not fit in a 64-bit int"},
     "fix.Overflow": {
         "es": "Usa valores más pequeños, o decimal(x) o float(x) para números grandes.",
@@ -573,7 +581,23 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Check the values the function receives or fix its body.",
     },
     "err.Timeout": {"es": "El bloque tardó más de {limit}", "en": "The block took longer than {limit}"},
+    "fix.Timeout": {
+        "es": "Aumenta el límite de within, o gestiónalo con try y else e is Timeout.",
+        "en": "Raise the within limit, or handle it with try and else e is Timeout.",
+    },
     "err.InvalidValue": {"es": "{detail}", "en": "{detail}"},
+    "fix.InvalidValue": {
+        "es": "Comprueba el valor antes de usarlo, o gestiónalo con try y else e is InvalidValue.",
+        "en": "Check the value before using it, or handle it with try and else e is InvalidValue.",
+    },
+    "too_deep": {
+        "es": "Demasiadas llamadas anidadas (recursión infinita).",
+        "en": "Too many nested calls (infinite recursion).",
+    },
+    "fix.too_deep": {
+        "es": "Comprueba que la recursión tenga un caso base que la detenga.",
+        "en": "Check that the recursion has a base case that stops it.",
+    },
     # details used inside error values and argument errors
     "detail.not_a": {"es": '"{value}" no es un valor {type} válido', "en": '"{value}" is not a valid {type}'},
     "detail.out_of_range": {"es": "{value} está fuera del rango {range}", "en": "{value} is outside the range {range}"},
