@@ -1,0 +1,4 @@
+# MCP servers come with a later phase (D89)
+agent support:
+    model = "anthropic:claude-opus"
+    tools = [mcp("github")]

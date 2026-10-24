@@ -44,6 +44,9 @@ static SIGS: &[Sig] = &[
     Sig { name: "ask", params: &[] },
     Sig { name: "__ai_config", params: &[] },
     Sig { name: "__ai_models", params: &[] },
+    Sig { name: "__ai_tool", params: &[p("fn"), p("description"), p("types")] },
+    Sig { name: "__ai_agent", params: &[] },
+    Sig { name: "mcp", params: &[p("name")] },
     Sig { name: "__rate", params: &[] },
     Sig { name: "__web_server", params: &[p("name"), opt("port"), opt("auth")] },
     Sig {
@@ -120,6 +123,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "ask" => return crate::ai::ask(args, names, span),
         "__ai_config" => return crate::ai::config(args, names, span),
         "__ai_models" => return crate::ai::models(args, names, span),
+        "__ai_agent" => return crate::ai::agent(args, names, span),
         _ => {}
     }
     if sig.name == "log" {
@@ -159,6 +163,8 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__db_rollback" => crate::db::end(x(0), false, span),
         "__sql_text" => crate::db::sql_text(x(0), x(1), span),
         "jwt" => crate::web::jwt(x(0), span),
+        "__ai_tool" => crate::ai::tool(x(0), x(1), x(2), span),
+        "mcp" => crate::ai::mcp(span),
         "__web_server" => crate::web::server(x(0), a.get(1), a.get(2), span),
         "__web_route" => crate::web::route(x(0), x(1), x(2), x(3), x(4), a.get(5), a.get(6), a.get(7), span),
         "__fake" => {

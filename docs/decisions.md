@@ -1117,3 +1117,30 @@ valid value is sent back with the reason and asked again, up to
   secret is never sent (D97).
 - The system message and these instructions are in English for every
   language of the messages, so the same program sends the same request.
+
+**D109. Tools and agents.** Section 8 shows `@tool "description"`, an
+`agent` block with `model`, `tools`, `goal`, `max_steps` and `confirm`,
+and `support.handle(mail)`; how the agent talks to the model is not
+written.
+- A `@tool` function is described to the model by its name, its
+  description and a JSON schema of its parameters built from their types
+  (`int` is an integer, `decimal` a number, a union of texts an `enum`,
+  `1..5` an integer with bounds, a record an object with its fields); a
+  parameter with a default or an optional type is not required. Only
+  `@tool` functions can be tools, and `confirm` can only name tools of
+  the agent. Other keys are errors; `mcp("name")` belongs with the MCP
+  servers of a later phase (D89).
+- `agent.handle(input)` sends the goal (and the guard of D108) as the
+  system message and the input between `<input>` and `</input>`, with its
+  `@private` fields hidden, using the provider's own way of calling tools
+  (Anthropic's `tool_use` blocks, the `tool_calls` of OpenAI and Ollama).
+  Each call the model asks for runs the function with its arguments read
+  as `json.parse(as: T)` reads them; the value goes back as text (shown as
+  `log` shows it), and an error of the function goes back as
+  `Error: message`, so the model can recover. A tool in `confirm` is
+  shown on the terminal (`¿Usar send_email(to: "ana@mail.com")? (s/n)`)
+  and runs only after `s` or `y`; otherwise the model is told the user
+  did not allow it. The answer is the text of the first reply that asks
+  for no tool; after `max_steps` (10 by default) requests the call fails
+  with AIError. The agent uses its model (or the configured one) without
+  fallback, with creativity medium.

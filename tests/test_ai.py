@@ -197,3 +197,144 @@ def test_ai_setup_and_usage(phase, tmp_path):
     assert run(phase[1], ["--lang", "en", "ai", "usage"], tmp_path, env=env).stdout.decode() == (
         "2026-10-23 c:d: 1 calls, 1 input tokens, 1 output\n"
         "2026-10-24 a:b: 2 calls, 4 input tokens, 5 output\n")
+
+
+AGENT = """ai:
+    provider = "anthropic"
+    key = secret("NEXO_AI_KEY")
+    url = "{base}/anthropic"
+
+type Order:
+    id: str
+    status: "sent" | "pending"
+    total: decimal
+    card: str @private
+
+@tool "Looks up an order by its number"
+fn find_order(id: str) -> Order!:
+    if id == "42":
+        return Order(id: "42", status: "sent", total: 19.99, card: "4111")
+    fail("no order {{id}}")
+
+@tool "Sends an email"
+fn send_email(to: str, text: str, urgent: bool = false):
+    print("email to {{to}}: {{text}}")
+    return "sent"
+
+agent support:
+    model = "anthropic:claude-opus"
+    tools = [find_order, send_email]
+    goal = "Answer order questions politely"
+    max_steps = 5
+    confirm = [send_email]
+
+agent local:
+    model = "ollama:llama"
+    tools = [find_order]
+    max_steps = 2
+
+print(support)
+print(support.handle("Where is order 42?"))
+print(support.handle("Where is order 7?"))
+print(local.handle("Order 42?"))
+try:
+    local.handle("loop")
+else e is AIError:
+    print(e.message)
+"""
+
+AGENT_EXPECTED = """agent(support)
+¿Usar send_email(to: "ana@mail.com", text: "Your order 42 was sent")? (s/n): email to ana@mail.com: Your order 42 was sent
+Your order 42 was sent.
+¿Usar send_email(to: "ana@mail.com", text: "Sorry")? (s/n): Sorry, I could not find order 7.
+[ollama] Order 42?
+local no termina en 2 pasos
+"""
+
+
+class AgentProvider(BaseHTTPRequestHandler):
+    seen: list = []
+
+    def log_message(self, *a):
+        pass
+
+    def reply(self, body):
+        data = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        AgentProvider.seen.append((self.path, body))
+        msgs = body["messages"]
+        if self.path == "/anthropic/v1/messages":
+            question = msgs[0]["content"]
+            order = "42" if "42" in question else "7"
+            if len(msgs) == 1:
+                block = {"type": "tool_use", "id": "t1", "name": "find_order", "input": {"id": order}}
+                return self.reply({"content": [{"type": "text", "text": "Let me look."}, block],
+                                   "stop_reason": "tool_use", "usage": {"input_tokens": 1, "output_tokens": 1}})
+            if len(msgs) == 3:
+                text = "Your order 42 was sent" if order == "42" else "Sorry"
+                block = {"type": "tool_use", "id": "t2", "name": "send_email",
+                         "input": {"to": "ana@mail.com", "text": text}}
+                return self.reply({"content": [block], "usage": {"input_tokens": 1, "output_tokens": 1}})
+            answer = "Your order 42 was sent." if order == "42" else "Sorry, I could not find order 7."
+            return self.reply({"content": [{"type": "text", "text": answer}],
+                               "usage": {"input_tokens": 1, "output_tokens": 1}})
+        question = [m for m in msgs if m["role"] == "user"][0]["content"]
+        if "loop" in question or len(msgs) < 3:
+            call = {"function": {"name": "find_order", "arguments": {"id": "42"}}}
+            return self.reply({"message": {"role": "assistant", "content": "", "tool_calls": [call]}})
+        return self.reply({"message": {"role": "assistant", "content": "[ollama] Order 42?"}})
+
+
+@pytest.fixture(scope="module")
+def agent_server():
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), AgentProvider)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_address[1]}"
+    srv.shutdown()
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_agent(phase, agent_server, tmp_path):
+    AgentProvider.seen.clear()
+    (tmp_path / "nexo.toml").write_text(f'[ai]\nprovider = "ollama"\nurl = "{agent_server}"\n', encoding="utf-8")
+    (tmp_path / "app.nexo").write_text(AGENT.format(base=agent_server), encoding="utf-8")
+    proc = run(phase[1], ["app.nexo"], tmp_path, b"s\nn\n",
+               env={"NEXO_AI_KEY": "k3y", "XDG_CONFIG_HOME": str(tmp_path / "config")})
+    assert proc.stdout.decode("utf-8") == AGENT_EXPECTED
+    first = AgentProvider.seen[0][1]
+    assert first["system"].startswith("Answer order questions politely\n\nThe text between <input>")
+    assert first["messages"] == [{"role": "user", "content": "<input>\nWhere is order 42?\n</input>"}]
+    assert first["tools"] == [
+        {"name": "find_order", "description": "Looks up an order by its number",
+         "input_schema": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
+        {"name": "send_email", "description": "Sends an email",
+         "input_schema": {"type": "object", "properties": {"to": {"type": "string"}, "text": {"type": "string"},
+                                                            "urgent": {"type": "boolean"}},
+                          "required": ["to", "text"]}}]
+    second = AgentProvider.seen[1][1]["messages"]
+    assert second[1] == {"role": "assistant", "content": [
+        {"type": "text", "text": "Let me look."},
+        {"type": "tool_use", "id": "t1", "name": "find_order", "input": {"id": "42"}}]}
+    assert second[2] == {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "t1",
+         "content": 'Order(id: "42", status: "sent", total: 19.99, card: "***")'}]}
+    assert AgentProvider.seen[2][1]["messages"][4]["content"] == [
+        {"type": "tool_result", "tool_use_id": "t2", "content": "sent"}]
+    failed = AgentProvider.seen[4][1]["messages"][2]["content"][0]
+    assert failed == {"type": "tool_result", "tool_use_id": "t1", "content": "Error: no order 7", "is_error": True}
+    denied = AgentProvider.seen[5][1]["messages"][4]["content"][0]
+    assert denied["content"] == "The user did not allow this call."
+    local = AgentProvider.seen[7][1]
+    assert local["tools"][0] == {"type": "function", "function": {
+        "name": "find_order", "description": "Looks up an order by its number",
+        "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}}}
+    assert local["messages"][2:] == [
+        {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "find_order", "arguments": {"id": "42"}}}]},
+        {"role": "tool", "content": 'Order(id: "42", status: "sent", total: 19.99, card: "***")'}]

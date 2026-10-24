@@ -1,0 +1,4 @@
+Error en s08_agent_confirm.nexo, línea 10:
+  agent support:
+  ^^^^^
+"delete_order" está en confirm pero no en tools. Añádela a tools o quítala de confirm.

@@ -1,0 +1,4 @@
+Error en s08_agent_tool.nexo, línea 9:
+  agent support:
+  ^^^^^
+"send_email" no es una herramienta. Márcala con @tool "lo que hace" antes de su fn.

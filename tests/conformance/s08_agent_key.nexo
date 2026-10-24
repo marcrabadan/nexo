@@ -1,0 +1,4 @@
+# the options of an agent (section 8)
+agent support:
+    model = "anthropic:claude-opus"
+    max_step = 10

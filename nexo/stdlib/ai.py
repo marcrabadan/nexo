@@ -18,7 +18,7 @@ from typing import Any
 
 from .. import errors
 from ..errors import NexoError, suggest
-from ..types import Builtin, BuiltinType, NexoFailure, Quantity, RecordType, failure, show, show_hidden
+from ..types import Builtin, BuiltinType, Native, NexoFailure, Quantity, RecordType, failure, show, show_hidden
 
 PROVIDERS = {
     "anthropic": "https://api.anthropic.com",
@@ -37,6 +37,7 @@ ALIASES: dict = {}
 
 
 def reset() -> None:
+    TOOLS.clear()
     CONFIG.clear()
     PROFILES.clear()
     ALIASES.clear()
@@ -498,11 +499,273 @@ def b_ask(call, instruction, input=None, model=None, profile=None, creativity=No
     raise last
 
 
+# ---------------------------------------------------------- tools, agents
+
+# function -> (description, [parameter types]) of the @tool functions (D109)
+TOOLS: dict = {}
+AGENT_KEYS = ["model", "tools", "goal", "max_steps", "confirm"]
+STEPS = 10
+DENIED = "The user did not allow this call."
+
+
+def b_ai_tool(call, fn, description, types):
+    """`@tool "description" fn f` (D90): f can be given to an agent."""
+    from .core import expects
+    if not isinstance(description, str):
+        raise expects(call, "@tool", "str", description)
+    TOOLS[id(fn.decl)] = (fn.decl, description, list(types))
+    return None
+
+
+SIMPLE = {"int": {"type": "integer"}, "float": {"type": "number"}, "decimal": {"type": "number"},
+          "str": {"type": "string"}, "email": {"type": "string"}, "money": {"type": "string"},
+          "bool": {"type": "boolean"}, "list": {"type": "array"}, "set": {"type": "array"},
+          "map": {"type": "object"}, "date": {"type": "string", "format": "date"},
+          "time": {"type": "string", "format": "date-time"}}
+
+
+def schema(t, depth: int = 0) -> dict:
+    """The JSON schema of a type value (a parameter of a tool)."""
+    if isinstance(t, RecordType):
+        if depth > 3:
+            return {"type": "object"}
+        props = {}
+        required = []
+        for f in t.fields:
+            props[f.name] = field_schema(f.type, t.env, depth + 1)
+            if f.default is None and not getattr(f.type, "optional", False):
+                required.append(f.name)
+        return {"type": "object", "properties": props, "required": required}
+    if isinstance(t, BuiltinType):
+        return dict(SIMPLE.get(t.name, {}))
+    return {}
+
+
+def field_schema(te, env, depth: int) -> dict:
+    from .. import ast as A
+    if isinstance(te, A.LiteralUnion):
+        values = []
+        for lit in te.literals:
+            if isinstance(lit, A.Str):
+                values.append("".join(p for p in lit.parts if isinstance(p, str)))
+            else:
+                values.append(float(lit.text) if lit.is_float else int(lit.text))
+        return {"enum": values}
+    if isinstance(te, A.RangeType):
+        return {"type": "integer", "minimum": te.low, "maximum": te.high}
+    if isinstance(te, A.TypeName):
+        if te.name == "list" and len(te.params) == 1:
+            return {"type": "array", "items": field_schema(te.params[0], env, depth)}
+        kind = env.lookup(te.name) if env is not None else None
+        if isinstance(kind, RecordType):
+            return schema(kind, depth)
+        return dict(SIMPLE.get(te.name, {}))
+    return {}
+
+
+class Tool:
+    def __init__(self, fn, description, types):
+        self.fn, self.description, self.types = fn, description, types
+        self.name = fn.decl.name
+
+    def params(self) -> dict:
+        props = {}
+        required = []
+        for p, t in zip(self.fn.decl.params, self.types + [None] * len(self.fn.decl.params)):
+            props[p.name] = schema(t)
+            if p.default is None and not getattr(p.type, "optional", False):
+                required.append(p.name)
+        return {"type": "object", "properties": props, "required": required}
+
+
+class Agent(Native):
+    type_name = "agent"
+
+    def __init__(self, name, model, tools, goal, max_steps, confirm):
+        self.name, self.model, self.tools, self.goal = name, model, tools, goal
+        self.max_steps, self.confirm = max_steps, confirm
+
+    def repr(self) -> str:
+        return f"agent({self.name})"
+
+    def member(self, call, name: str):
+        if name == "handle":
+            return Builtin("handle", self.handle, fallible=True)
+        if name == "name":
+            return self.name
+        return self.missing(call, name, ["handle", "name"])
+
+    def handle(self, call, input):
+        return run_agent(call, self, input)
+
+
+def b_ai_agent(call, name, **pairs):
+    """`agent name:` (D90)."""
+    from .core import expects
+    for k in pairs:
+        if k not in AGENT_KEYS:
+            s = suggest(k, AGENT_KEYS)
+            if s:
+                raise NexoError("agent_key", call.span, fix="suggest", option=k, suggestion=s)
+            raise NexoError("agent_key", call.span, option=k)
+    model = pairs.get("model")
+    if model is not None and not isinstance(model, str):
+        raise expects(call, "model", "str", model)
+    goal = pairs.get("goal", "")
+    if not isinstance(goal, str):
+        raise expects(call, "goal", "str", goal)
+    steps = pairs.get("max_steps", STEPS)
+    if not isinstance(steps, int) or isinstance(steps, bool) or steps < 1:
+        raise expects(call, "max_steps", "int", steps)
+    tools = []
+    for key in ("tools", "confirm"):
+        value = pairs.get(key, [])
+        if not isinstance(value, list):
+            raise expects(call, key, "list", value)
+    for fn in pairs.get("tools", []):
+        decl = getattr(fn, "decl", None)
+        if id(decl) not in TOOLS or TOOLS[id(decl)][0] is not decl:
+            raise NexoError("ai_not_tool", call.span, name=getattr(fn, "name", show(fn)))
+        tools.append(Tool(fn, *TOOLS[id(decl)][1:]))
+    confirm = []
+    for fn in pairs.get("confirm", []):
+        n = getattr(fn, "name", show(fn))
+        if not any(t.name == n for t in tools):
+            raise NexoError("agent_confirm", call.span, name=n)
+        confirm.append(n)
+    return Agent(name, model, tools, goal, steps, confirm)
+
+
+def tools_json(t: Target, tools: list) -> list:
+    if t.provider == "anthropic":
+        return [{"name": x.name, "description": x.description, "input_schema": x.params()} for x in tools]
+    return [{"type": "function", "function": {"name": x.name, "description": x.description,
+                                              "parameters": x.params()}} for x in tools]
+
+
+def agent_step(call, t: Target, system, messages, tools) -> tuple[str, list, Any]:
+    """One request: (text, [(id, name, arguments)], the assistant message)."""
+    from .http import send as http_send
+    key = reveal(call, t)
+    url, body, headers = request_of(t, key, system, messages, CREATIVITY["medium"], None, False)
+    if tools:
+        body["tools"] = tools_json(t, tools)
+    data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    r = http_send(call, "POST", url, data, "application/json", headers, 60.0, 1)
+
+    def bad():
+        return failure("AIError", call.span, model=t.shown, detail=errors.msg("detail.ai_no_text"))
+
+    try:
+        answer = json.loads(r.text())
+        calls = []
+        if t.provider == "anthropic":
+            content = answer["content"]
+            text = "".join(b["text"] for b in content if b.get("type") == "text")
+            calls = [(b["id"], b["name"], b.get("input") or {}) for b in content if b.get("type") == "tool_use"]
+            message = {"role": "assistant", "content": content}
+            u = answer.get("usage", {})
+            tokens = [u.get("input_tokens", 0), u.get("output_tokens", 0)]
+        else:
+            message = answer["choices"][0]["message"] if t.provider == "openai" else answer["message"]
+            text = message.get("content") or ""
+            for i, c in enumerate(message.get("tool_calls") or []):
+                args = c["function"].get("arguments") or {}
+                if isinstance(args, str):
+                    args = json.loads(args) if args.strip() else {}
+                calls.append((c.get("id", str(i)), c["function"]["name"], args))
+            if t.provider == "openai":
+                u = answer.get("usage") or {}
+                tokens = [u.get("prompt_tokens", 0), u.get("completion_tokens", 0)]
+            else:
+                tokens = [answer.get("prompt_eval_count", 0), answer.get("eval_count", 0)]
+        if not isinstance(text, str) or not all(isinstance(a, dict) for _, _, a in calls):
+            raise bad()
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        raise bad()
+    if not text and not calls:
+        raise bad()
+    record_usage(f"{t.provider}:{t.name}", tokens)
+    return text, calls, message
+
+
+def use_tool(call, agent: Agent, name: str, args: dict) -> tuple[str, bool]:
+    """(the result for the model, whether it is an error)."""
+    import sys
+    from .data import b_json_parse
+    from ..types import repr_value
+    tool = next((x for x in agent.tools if x.name == name), None)
+    if tool is None:
+        return f"There is no tool {name}.", True
+    interp = call.interp
+    values = []
+    try:
+        for p, t in zip(tool.fn.decl.params, tool.types + [None] * len(tool.fn.decl.params)):
+            if p.name in args:
+                values.append((p.name, b_json_parse(call, json.dumps(args[p.name]), as_=t)))
+            elif p.default is None and not getattr(p.type, "optional", False):
+                return f"Error: {errors.msg('detail.need_param', name=p.name)}", True
+    except NexoFailure as f:
+        return f"Error: {f.error.message}", True
+    if name in agent.confirm:
+        shown = f"{name}(" + ", ".join(f"{n}: {repr_value(v)}" for n, v in values) + ")"
+        interp.write(errors.msg("info.ai_confirm", call=shown))
+        try:
+            interp.out.flush()
+        except Exception:
+            pass
+        answer = sys.stdin.readline().strip().lower()
+        if answer not in ("s", "si", "sí", "y", "yes"):
+            return DENIED, False
+    try:
+        result = interp.bind_value(interp.call(tool.fn, values, tool.fn.decl))
+    except NexoFailure as f:
+        return f"Error: {f.error.message}", True
+    return (result if isinstance(result, str) else show_hidden(result)), False
+
+
+def run_agent(call, agent: Agent, input):
+    """`agent.handle(input)` (D109): the conversation with the model, using
+    its tools, until it answers without asking for one."""
+    targets, _ = resolve(call, {"model": agent.model})
+    t = targets[0]
+    system = "\n\n".join(x for x in (agent.goal, GUARD if input is not None else "") if x)
+    content = "" if input is None else f"<input>\n{show_hidden(call.interp.bind_value(input))}\n</input>"
+    messages: list = [{"role": "user", "content": content}]
+    for _ in range(agent.max_steps):
+        text, calls, message = agent_step(call, t, system, messages, agent.tools)
+        if not calls:
+            return text
+        messages.append(message)
+        results = []
+        for cid, name, args in calls:
+            out, is_error = use_tool(call, agent, name, args)
+            if t.provider == "anthropic":
+                r = {"type": "tool_result", "tool_use_id": cid, "content": out}
+                if is_error:
+                    r["is_error"] = True
+                results.append(r)
+            elif t.provider == "openai":
+                messages.append({"role": "tool", "tool_call_id": cid, "content": out})
+            else:
+                messages.append({"role": "tool", "content": out})
+        if results:
+            messages.append({"role": "user", "content": results})
+    raise failure("AIError", call.span, key="AIError.steps", agent=agent.name, n=agent.max_steps)
+
+
+def b_mcp(call, name):
+    raise NexoError("not_supported", call.span, what='"mcp(...)"')
+
+
 def exports() -> dict:
     return {
         "ask": Builtin("ask", b_ask, fallible=True),
         "__ai_config": Builtin("__ai_config", b_ai_config),
         "__ai_models": Builtin("__ai_models", b_ai_models),
+        "__ai_tool": Builtin("__ai_tool", b_ai_tool),
+        "__ai_agent": Builtin("__ai_agent", b_ai_agent),
+        "mcp": Builtin("mcp", b_mcp),
     }
 
 

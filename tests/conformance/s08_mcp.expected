@@ -1,0 +1,4 @@
+Error en s08_mcp.nexo, línea 4:
+  tools = [mcp("github")]
+           ^^^^^^^^^^^^^
+"mcp(...)" no está disponible en la fase 4 de Nexo. Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web y nexo.db; quítalo para ejecutar el programa.

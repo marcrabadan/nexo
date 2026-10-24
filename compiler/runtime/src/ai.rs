@@ -37,6 +37,7 @@ static PROFILES: Mutex<Vec<(String, Layer)>> = Mutex::new(Vec::new());
 static ALIASES: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
 
 pub fn release_all() {
+    release_tools();
     let old = std::mem::take(&mut *CONFIG.lock().unwrap());
     drop(old);
     let old = std::mem::take(&mut *PROFILES.lock().unwrap());
@@ -869,4 +870,509 @@ pub fn ask(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     }
     // the last failure, raised again
     Err(crate::state::raise_value(last.unwrap()))
+}
+
+// ---------------------------------------------------------- tools, agents
+
+/// The @tool functions (D109): (FnInfo address, description, parameter types).
+static TOOLS: Mutex<Vec<(usize, String, Vec<Val>)>> = Mutex::new(Vec::new());
+const AGENT_KEYS: &[&str] = &["model", "tools", "goal", "max_steps", "confirm"];
+const STEPS: i64 = 10;
+const DENIED: &str = "The user did not allow this call.";
+
+pub fn release_tools() {
+    let old = std::mem::take(&mut *TOOLS.lock().unwrap());
+    drop(old);
+}
+
+fn fn_key(f: V) -> Option<usize> {
+    match f.get() {
+        Some(Obj::Func(func)) => Some(func.info as *const _ as usize),
+        _ => None,
+    }
+}
+
+/// `@tool "description" fn f` (D90): f can be given to an agent.
+pub fn tool(f: V, description: V, types: V, span: u32) -> R<Val> {
+    let Some(desc) = description.as_str() else { return Err(expects("@tool", "str", description, span)) };
+    let types: Vec<Val> = match types.get() {
+        Some(Obj::List(items)) => items.borrow().clone(),
+        _ => Vec::new(),
+    };
+    if let Some(k) = fn_key(f) {
+        let mut tools = TOOLS.lock().unwrap();
+        tools.retain(|(key, _, _)| *key != k);
+        tools.push((k, desc.to_string(), types));
+    }
+    Ok(Val::none())
+}
+
+fn simple(name: &str) -> String {
+    match name {
+        "int" => r#"{"type":"integer"}"#.into(),
+        "float" | "decimal" => r#"{"type":"number"}"#.into(),
+        "str" | "email" | "money" => r#"{"type":"string"}"#.into(),
+        "bool" => r#"{"type":"boolean"}"#.into(),
+        "list" | "set" => r#"{"type":"array"}"#.into(),
+        "map" => r#"{"type":"object"}"#.into(),
+        "date" => r#"{"type":"string","format":"date"}"#.into(),
+        "time" => r#"{"type":"string","format":"date-time"}"#.into(),
+        _ => "{}".into(),
+    }
+}
+
+/// The JSON schema of a type value (a parameter of a tool).
+fn schema(t: Option<TypeRef>, depth: usize) -> String {
+    match t {
+        Some(TypeRef::Record(rt)) => {
+            if depth > 3 {
+                return r#"{"type":"object"}"#.into();
+            }
+            let mut props = Vec::new();
+            let mut required = Vec::new();
+            for f in &rt.fields {
+                let s = f.ty.map(|d| field_schema(d, depth + 1)).unwrap_or_else(|| "{}".into());
+                props.push(format!("{}:{s}", js(&f.name)));
+                if f.default.tag == T_UNDEF && !f.optional {
+                    required.push(js(&f.name));
+                }
+            }
+            format!(r#"{{"type":"object","properties":{{{}}},"required":[{}]}}"#, props.join(","), required.join(","))
+        }
+        Some(TypeRef::Builtin(name)) => simple(name),
+        _ => "{}".into(),
+    }
+}
+
+fn field_schema(d: &TypeDesc, depth: usize) -> String {
+    match d {
+        TypeDesc::Union { options, .. } => {
+            let values: Vec<String> = options.iter().map(|o| crate::data::to_json_compact(*o)).collect();
+            format!(r#"{{"enum":[{}]}}"#, values.join(","))
+        }
+        TypeDesc::Range { low, high, .. } => format!(r#"{{"type":"integer","minimum":{low},"maximum":{high}}}"#),
+        TypeDesc::Named { name, params, .. } if name == "list" && params.len() == 1 => {
+            format!(r#"{{"type":"array","items":{}}}"#, field_schema(params[0], depth))
+        }
+        TypeDesc::Named { name, .. } => simple(name),
+        TypeDesc::User { id, .. } => match crate::types::lookup(*id) {
+            Some(t @ TypeRef::Record(_)) => schema(Some(t), depth),
+            _ => "{}".into(),
+        },
+        _ => "{}".into(),
+    }
+}
+
+struct Tool {
+    func: Val,
+    name: String,
+    description: String,
+    types: Vec<Val>,
+}
+
+impl Tool {
+    fn params(&self) -> &'static [ParamInfo] {
+        match self.func.get() {
+            Some(Obj::Func(f)) => f.info.params(),
+            _ => &[],
+        }
+    }
+
+    fn type_of(&self, i: usize) -> V {
+        self.types.get(i).map(|t| t.v()).unwrap_or(NONE)
+    }
+
+    fn params_schema(&self) -> String {
+        let mut props = Vec::new();
+        let mut required = Vec::new();
+        for (i, p) in self.params().iter().enumerate() {
+            let name = p.name.get().unwrap_or("");
+            let t = match self.type_of(i).get() {
+                Some(Obj::Type(t)) => Some(*t),
+                _ => None,
+            };
+            props.push(format!("{}:{}", js(name), schema(t, 0)));
+            if p.optional == 0 {
+                required.push(js(name));
+            }
+        }
+        format!(r#"{{"type":"object","properties":{{{}}},"required":[{}]}}"#, props.join(","), required.join(","))
+    }
+}
+
+pub struct Agent {
+    name: String,
+    model: Option<String>,
+    tools: Vec<Tool>,
+    goal: String,
+    max_steps: i64,
+    confirm: Vec<String>,
+}
+
+impl Native for Agent {
+    fn type_name(&self) -> &str {
+        "agent"
+    }
+    fn repr(&self) -> String {
+        format!("agent({})", self.name)
+    }
+    fn member(&self, me: V, name: &str, span: u32) -> R<Val> {
+        match name {
+            "handle" => Ok(Val::new(Obj::BuiltinMethod(Val::from(me), "handle"))),
+            "name" => Ok(Val::str(self.name.clone())),
+            _ => Err(crate::stdlib::missing_member("agent", name, &["handle", "name"], span)),
+        }
+    }
+    fn call_method(&self, _me: V, _name: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+        let a = crate::stdlib::method_args("handle", &["input"], 1, args, names, span)?;
+        run_agent(self, a[0], span)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+fn func_name(v: V) -> String {
+    match v.get() {
+        Some(Obj::Func(f)) => f.info.name().to_string(),
+        _ => show(v),
+    }
+}
+
+/// `agent name:` (D90).
+pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    let pairs = named(args, names, "__ai_agent", 1, span)?;
+    for (k, _) in &pairs {
+        if !AGENT_KEYS.contains(k) {
+            let d = match suggest(k, AGENT_KEYS.iter().copied()) {
+                Some(s) => Diagnostic::new_spanless("agent_key").fix("suggest").arg("option", *k).arg("suggestion", s),
+                None => Diagnostic::new_spanless("agent_key").arg("option", *k),
+            };
+            return Err(diag(d, span));
+        }
+    }
+    let get = |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| *v);
+    let model = match get("model") {
+        None => None,
+        Some(m) => Some(m.as_str().ok_or_else(|| expects("model", "str", m, span))?.to_string()),
+    };
+    let goal = match get("goal") {
+        None => String::new(),
+        Some(g) => g.as_str().ok_or_else(|| expects("goal", "str", g, span))?.to_string(),
+    };
+    let max_steps = match get("max_steps") {
+        None => STEPS,
+        Some(s) => match s.as_int() {
+            Some(n) if n >= 1 && s.tag == T_INT => n,
+            _ => return Err(expects("max_steps", "int", s, span)),
+        },
+    };
+    let list_of = |k: &str| -> R<Vec<Val>> {
+        match get(k) {
+            None => Ok(Vec::new()),
+            Some(v) => match v.get() {
+                Some(Obj::List(items)) => Ok(items.borrow().clone()),
+                _ => Err(expects(k, "list", v, span)),
+            },
+        }
+    };
+    let tool_values = list_of("tools")?;
+    let confirm_values = list_of("confirm")?;
+    let mut tools = Vec::new();
+    {
+        let registry = TOOLS.lock().unwrap();
+        for f in &tool_values {
+            let found = fn_key(f.v()).and_then(|k| registry.iter().find(|(key, _, _)| *key == k));
+            let Some((_, desc, types)) = found else {
+                return Err(diag(Diagnostic::new_spanless("ai_not_tool").arg("name", func_name(f.v())), span));
+            };
+            tools.push(Tool { func: f.clone(), name: func_name(f.v()), description: desc.clone(), types: types.clone() });
+        }
+    }
+    let mut confirm = Vec::new();
+    for f in &confirm_values {
+        let n = func_name(f.v());
+        if !tools.iter().any(|t| t.name == n) {
+            return Err(diag(Diagnostic::new_spanless("agent_confirm").arg("name", n), span));
+        }
+        confirm.push(n);
+    }
+    let name = args.first().and_then(|n| n.as_str()).unwrap_or("").to_string();
+    Ok(native(Agent { name, model, tools, goal, max_steps, confirm }))
+}
+
+/// JSON text of a parsed value (to send back what the model sent).
+fn dump(j: &Json) -> String {
+    match j {
+        Json::Null => "null".into(),
+        Json::Bool(b) => b.to_string(),
+        Json::Int(n) => n.to_string(),
+        Json::Float(f) => {
+            let t = float(*f);
+            if t.contains(['.', 'e', 'E']) || t.contains("inf") || t.contains("nan") {
+                t
+            } else {
+                format!("{t}.0")
+            }
+        }
+        Json::Str(s) => js(s),
+        Json::List(items) => format!("[{}]", items.iter().map(dump).collect::<Vec<_>>().join(",")),
+        Json::Obj(pairs) => {
+            format!("{{{}}}", pairs.iter().map(|(k, v)| format!("{}:{}", js(k), dump(v))).collect::<Vec<_>>().join(","))
+        }
+    }
+}
+
+fn tools_json(t: &Target, tools: &[Tool]) -> String {
+    let items: Vec<String> = tools
+        .iter()
+        .map(|x| {
+            if t.provider == "anthropic" {
+                obj(&[("name", js(&x.name)), ("description", js(&x.description)), ("input_schema", x.params_schema())])
+            } else {
+                let f = obj(&[("name", js(&x.name)), ("description", js(&x.description)), ("parameters", x.params_schema())]);
+                obj(&[("type", js("function")), ("function", f)])
+            }
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// The body of an agent's request: the one of `ask` with structured
+/// messages and the tools.
+fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> String {
+    let mut body: Vec<(&str, String)> = vec![("model", js(&t.name))];
+    let mut all = Vec::new();
+    if t.provider != "anthropic" && !system.is_empty() {
+        all.push(obj(&[("role", js("system")), ("content", js(system))]));
+    }
+    all.extend(messages.iter().cloned());
+    let messages = format!("[{}]", all.join(","));
+    let temperature = float(0.7);
+    match t.provider.as_str() {
+        "anthropic" => {
+            body.push(("max_tokens", MAX_TOKENS.to_string()));
+            body.push(("temperature", temperature));
+            if !system.is_empty() {
+                body.push(("system", js(system)));
+            }
+            body.push(("messages", messages));
+        }
+        "openai" => {
+            body.push(("temperature", temperature));
+            body.push(("messages", messages));
+        }
+        _ => {
+            body.push(("messages", messages));
+            body.push(("options", obj(&[("temperature", temperature)])));
+        }
+    }
+    if t.provider == "ollama" {
+        body.push(("stream", "false".into()));
+    }
+    if !tools.is_empty() {
+        body.push(("tools", tools_json(t, tools)));
+    }
+    obj(&body)
+}
+
+/// A call the model asks for: (id, name, arguments).
+type ToolCall = (String, String, Json);
+
+/// One request: (text, the calls, the assistant message as JSON).
+fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], span: u32) -> R<(String, Vec<ToolCall>, String)> {
+    let key = reveal(t, span)?;
+    let (url, _, headers) = request_of(t, key, system, &[], 0.7, None, false);
+    let body = agent_body(t, system, messages, tools);
+    let r = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, 60.0, 1, span)?;
+    let bad = || {
+        let detail = msg("detail.ai_no_text", &[]);
+        failure("AIError", span, &[("model", t.shown.clone()), ("detail", detail)])
+    };
+    let parsed = (|| -> Option<(String, Vec<ToolCall>, String, [i64; 2])> {
+        let answer = crate::data::parse_json(&r.text()).ok()?;
+        let mut calls = Vec::new();
+        if t.provider == "anthropic" {
+            let content = at(&answer, "content")?;
+            let Json::List(blocks) = content else { return None };
+            let mut text = String::new();
+            for b in blocks {
+                match text_of(at(b, "type")).as_deref() {
+                    Some("text") => text.push_str(&text_of(at(b, "text"))?),
+                    Some("tool_use") => {
+                        let input = match at(b, "input") {
+                            Some(j @ Json::Obj(_)) => clone_json(j),
+                            Some(Json::Null) | None => Json::Obj(Vec::new()),
+                            _ => return None,
+                        };
+                        calls.push((text_of(at(b, "id"))?, text_of(at(b, "name"))?, input));
+                    }
+                    _ => {}
+                }
+            }
+            let message = obj(&[("role", js("assistant")), ("content", dump(content))]);
+            let u = at(&answer, "usage");
+            let tokens = [int(u.and_then(|u| at(u, "input_tokens"))), int(u.and_then(|u| at(u, "output_tokens")))];
+            return Some((text, calls, message, tokens));
+        }
+        let message = if t.provider == "openai" { at(idx(at(&answer, "choices")?, 0)?, "message")? } else { at(&answer, "message")? };
+        let text = match at(message, "content") {
+            Some(Json::Str(s)) => s.clone(),
+            Some(Json::Null) | None => String::new(),
+            _ => return None,
+        };
+        if let Some(Json::List(tcs)) = at(message, "tool_calls") {
+            for (i, c) in tcs.iter().enumerate() {
+                let f = at(c, "function")?;
+                let args = match at(f, "arguments") {
+                    Some(Json::Str(s)) if s.trim().is_empty() => Json::Obj(Vec::new()),
+                    Some(Json::Str(s)) => crate::data::parse_json(s).ok()?,
+                    Some(j) => clone_json(j),
+                    None => Json::Obj(Vec::new()),
+                };
+                if !matches!(args, Json::Obj(_)) {
+                    return None;
+                }
+                let id = text_of(at(c, "id")).unwrap_or_else(|| i.to_string());
+                calls.push((id, text_of(at(f, "name"))?, args));
+            }
+        }
+        let tokens = if t.provider == "openai" {
+            let u = at(&answer, "usage");
+            [int(u.and_then(|u| at(u, "prompt_tokens"))), int(u.and_then(|u| at(u, "completion_tokens")))]
+        } else {
+            [int(at(&answer, "prompt_eval_count")), int(at(&answer, "eval_count"))]
+        };
+        Some((text, calls, dump(message), tokens))
+    })();
+    let Some((text, calls, message, tokens)) = parsed else { return Err(bad()) };
+    if text.is_empty() && calls.is_empty() {
+        return Err(bad());
+    }
+    record_usage(&format!("{}:{}", t.provider, t.name), tokens);
+    Ok((text, calls, message))
+}
+
+fn text_of(j: Option<&Json>) -> Option<String> {
+    text(j)
+}
+
+fn clone_json(j: &Json) -> Json {
+    match j {
+        Json::Null => Json::Null,
+        Json::Bool(b) => Json::Bool(*b),
+        Json::Int(n) => Json::Int(n.clone()),
+        Json::Float(f) => Json::Float(*f),
+        Json::Str(s) => Json::Str(s.clone()),
+        Json::List(items) => Json::List(items.iter().map(clone_json).collect()),
+        Json::Obj(pairs) => Json::Obj(pairs.iter().map(|(k, v)| (k.clone(), clone_json(v))).collect()),
+    }
+}
+
+/// (the result for the model, whether it is an error).
+fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, bool)> {
+    let Some(tool) = agent.tools.iter().find(|x| x.name == name) else {
+        return Ok((format!("There is no tool {name}."), true));
+    };
+    let message_of_failure = |f: crate::state::Fail| -> R<(String, bool)> {
+        let Some(err) = crate::state::pending_error() else { return Err(f) };
+        let text = match err.get() {
+            Some(Obj::Error(e)) => e.message.clone(),
+            _ => String::new(),
+        };
+        crate::state::clear();
+        Ok((format!("Error: {text}"), true))
+    };
+    let mut values: Vec<Val> = Vec::new();
+    let mut names: Vec<Option<&str>> = Vec::new();
+    for (i, p) in tool.params().iter().enumerate() {
+        let pname = p.name.get().unwrap_or("");
+        match at(args, pname) {
+            Some(j) => match crate::data::json_parse(&dump(j), Some(tool.type_of(i)).filter(|t| !t.is_none()), span) {
+                Ok(v) => {
+                    values.push(v);
+                    names.push(Some(pname));
+                }
+                Err(f) => return message_of_failure(f),
+            },
+            None if p.optional == 0 => {
+                return Ok((format!("Error: {}", msg("detail.need_param", &[("name", pname.to_string())])), true));
+            }
+            None => {}
+        }
+    }
+    if agent.confirm.iter().any(|c| c == name) {
+        let shown: Vec<String> =
+            values.iter().zip(&names).map(|(v, n)| format!("{}: {}", n.unwrap_or(""), repr(v.v()))).collect();
+        let call = format!("{name}({})", shown.join(", "));
+        crate::state::write_out(&msg("info.ai_confirm", &[("call", call)]));
+        crate::state::flush();
+        let line = crate::repl::input_line(|| {
+            let mut line = String::new();
+            let _ = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line);
+            line.trim().to_string()
+        });
+        let answer = line.trim().to_lowercase();
+        if !matches!(answer.as_str(), "s" | "si" | "sí" | "y" | "yes") {
+            return Ok((DENIED.to_string(), false));
+        }
+    }
+    let raw: Vec<V> = values.iter().map(|v| v.v()).collect();
+    let result = match crate::call::call(tool.func.v(), &raw, &names, span) {
+        Ok(v) => v,
+        Err(f) => return message_of_failure(f),
+    };
+    let result = crate::pipe::bind(result.v())?;
+    Ok(match result.as_str() {
+        Some(s) => (s.to_string(), false),
+        None => (crate::fmt::show_hidden(result.v(), span)?, false),
+    })
+}
+
+/// `agent.handle(input)` (D109): the conversation with the model, using
+/// its tools, until it answers without asking for one.
+fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
+    let model = agent.model.as_ref().map(|m| Val::str(m.clone()));
+    let targets = resolve(model.as_ref().map(|m| m.v()), None, span)?;
+    let t = &targets[0];
+    let has_input = !input.is_none();
+    let system: Vec<&str> = [agent.goal.as_str(), if has_input { GUARD } else { "" }].into_iter().filter(|x| !x.is_empty()).collect();
+    let system = system.join("\n\n");
+    let content = if has_input {
+        let value = crate::pipe::bind(input)?;
+        format!("<input>\n{}\n</input>", crate::fmt::show_hidden(value.v(), span)?)
+    } else {
+        String::new()
+    };
+    let mut messages = vec![obj(&[("role", js("user")), ("content", js(&content))])];
+    for _ in 0..agent.max_steps {
+        let (text, calls, message) = agent_step(t, &system, &messages, &agent.tools, span)?;
+        if calls.is_empty() {
+            return Ok(Val::str(text));
+        }
+        messages.push(message);
+        let mut results = Vec::new();
+        for (id, name, args) in &calls {
+            let (out, is_error) = use_tool(agent, name, args, span)?;
+            match t.provider.as_str() {
+                "anthropic" => {
+                    let mut r = vec![("type", js("tool_result")), ("tool_use_id", js(id)), ("content", js(&out))];
+                    if is_error {
+                        r.push(("is_error", "true".into()));
+                    }
+                    results.push(obj(&r));
+                }
+                "openai" => messages.push(obj(&[("role", js("tool")), ("tool_call_id", js(id)), ("content", js(&out))])),
+                _ => messages.push(obj(&[("role", js("tool")), ("content", js(&out))])),
+            }
+        }
+        if !results.is_empty() {
+            messages.push(obj(&[("role", js("user")), ("content", format!("[{}]", results.join(",")))]));
+        }
+    }
+    Err(failure_as("AIError", "AIError.steps", span, &[("agent", agent.name.clone()), ("n", agent.max_steps.to_string())]))
+}
+
+pub fn mcp(span: u32) -> R<Val> {
+    Err(diag(Diagnostic::new_spanless("not_supported").arg("what", "\"mcp(...)\""), span))
 }
