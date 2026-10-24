@@ -1,0 +1,44 @@
+# Builds, tests and packages the VS Code extension (editors/vscode). A tag
+# vscode-vX.Y.Z also publishes it to the Marketplace, with the token of the
+# publisher in the VSCE_PAT secret.
+name: VS Code extension
+
+on:
+  pull_request:
+    paths: ["editors/vscode/**", "compiler/**", "nexo/**"]
+  push:
+    tags: ["vscode-v*"]
+  workflow_dispatch:
+
+jobs:
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build nexo (the language server)
+        working-directory: compiler
+        run: cargo build --release
+      - name: Install
+        working-directory: editors/vscode
+        run: npm ci
+      - name: Test
+        working-directory: editors/vscode
+        env:
+          NEXO: ${{ github.workspace }}/compiler/target/release/nexo
+        run: npm test
+      - name: Package
+        working-directory: editors/vscode
+        run: npx vsce package --out nexo.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexo-vsix
+          path: editors/vscode/nexo.vsix
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+        working-directory: editors/vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --packagePath nexo.vsix -p "$VSCE_PAT"

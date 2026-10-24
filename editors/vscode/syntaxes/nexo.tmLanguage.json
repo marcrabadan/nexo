@@ -1,0 +1,249 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nexo",
+  "scopeName": "source.nexo",
+  "fileTypes": ["nexo"],
+  "patterns": [{ "include": "#code" }],
+  "repository": {
+    "code": {
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        { "include": "#definitions" },
+        { "include": "#annotations" },
+        { "include": "#pipeline" },
+        { "include": "#keywords" },
+        { "include": "#calls" },
+        { "include": "#types" },
+        { "include": "#operators" },
+        { "include": "#brackets" }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.nexo",
+          "match": "##.*$"
+        },
+        {
+          "name": "comment.line.number-sign.cell.nexo",
+          "match": "#\\s*%%.*$"
+        },
+        {
+          "name": "comment.line.number-sign.nexo",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.nexo",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.nexo" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.nexo" } },
+          "patterns": [{ "include": "#string-content" }]
+        },
+        {
+          "name": "string.quoted.double.nexo",
+          "begin": "\"",
+          "end": "\"|$",
+          "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.nexo" } },
+          "endCaptures": { "0": { "name": "punctuation.definition.string.end.nexo" } },
+          "patterns": [{ "include": "#string-content" }]
+        }
+      ]
+    },
+    "string-content": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.nexo",
+          "match": "\\\\[ntr\\\\\"]|\\{\\{"
+        },
+        {
+          "name": "meta.interpolation.nexo",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.nexo" } },
+          "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.nexo" } },
+          "contentName": "source.nexo.embedded",
+          "patterns": [{ "include": "#interpolated" }]
+        }
+      ]
+    },
+    "interpolated": {
+      "patterns": [
+        {
+          "begin": "\\{",
+          "end": "\\}",
+          "patterns": [{ "include": "#interpolated" }]
+        },
+        { "include": "#code" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "comment": "unit literals: 30s, 10%, 300ms, 5 km, 2 days, 19.99 EUR (D2, D3)",
+          "match": "\\b(\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?)(?:(%)|(ms|s|m|h|days?|years?|B|KB|MB|GB|TB|km)\\b|\\s+(days?|years?|KB|MB|GB|TB|km|EUR|USD|GBP|JPY|CHF|CAD|AUD|CNY|MXN|ARS|BRL|CLP|COP|PEN|UYU|SEK|NOK|DKK|PLN|INR)\\b|(EUR|USD|GBP|JPY|CHF|CAD|AUD|CNY|MXN|ARS|BRL|CLP|COP|PEN|UYU|SEK|NOK|DKK|PLN|INR)\\b)",
+          "captures": {
+            "1": { "name": "constant.numeric.nexo" },
+            "2": { "name": "constant.numeric.unit.nexo" },
+            "3": { "name": "constant.numeric.unit.nexo" },
+            "4": { "name": "constant.numeric.unit.nexo" },
+            "5": { "name": "constant.numeric.unit.nexo" }
+          }
+        },
+        {
+          "name": "constant.numeric.nexo",
+          "match": "\\b\\d[\\d_]*(?:\\.\\d[\\d_]*)?(?:[eE][+-]?\\d+)?\\b"
+        }
+      ]
+    },
+    "definitions": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
+          "captures": {
+            "1": { "name": "storage.type.function.nexo" },
+            "2": { "name": "entity.name.function.nexo" }
+          }
+        },
+        {
+          "match": "\\b(type|trait)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)",
+          "captures": {
+            "1": { "name": "storage.type.nexo" },
+            "2": { "name": "entity.name.type.nexo" }
+          }
+        },
+        {
+          "match": "\\b(test)\\s+(?=\")",
+          "captures": { "1": { "name": "keyword.other.test.nexo" } }
+        }
+      ]
+    },
+    "annotations": {
+      "match": "(@)([\\p{L}_][\\p{L}\\p{N}_.]*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.decorator.nexo" },
+        "2": { "name": "entity.name.function.decorator.nexo" }
+      }
+    },
+    "pipeline": {
+      "patterns": [
+        {
+          "comment": "the step words of a pipeline (D13), contextual",
+          "match": "(\\|>)\\s*(where|map|pick|sum|count|avg|take|each)\\b(?!\\s*[(.])",
+          "captures": {
+            "1": { "name": "keyword.operator.pipeline.nexo" },
+            "2": { "name": "keyword.other.pipeline.nexo" }
+          }
+        },
+        {
+          "match": "(\\|>)\\s*(group|sort)\\s+(by)\\b",
+          "captures": {
+            "1": { "name": "keyword.operator.pipeline.nexo" },
+            "2": { "name": "keyword.other.pipeline.nexo" },
+            "3": { "name": "keyword.other.pipeline.nexo" }
+          }
+        },
+        {
+          "name": "keyword.other.pipeline.nexo",
+          "match": "\\bdesc\\b(?=\\s*(?:$|\\|>|#|\\)))"
+        },
+        {
+          "name": "variable.language.it.nexo",
+          "match": "\\bit\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.nexo",
+          "match": "\\b(if|elif|else|for|in|while|repeat|match|pass|return|try|parallel)\\b"
+        },
+        {
+          "name": "keyword.control.contextual.nexo",
+          "match": "\\b(within|fails)\\b"
+        },
+        {
+          "name": "storage.modifier.nexo",
+          "match": "\\b(var|pub|weak|unsafe)\\b"
+        },
+        {
+          "name": "storage.type.nexo",
+          "match": "\\b(fn|type|trait)\\b"
+        },
+        {
+          "name": "keyword.other.nexo",
+          "match": "\\b(use|is|as|expect|ensure|test|assert|on|emit|when|every|at|lifecycle)\\b"
+        },
+        {
+          "name": "keyword.other.sync.nexo",
+          "match": "^\\s*(spawn|select|shared)\\b"
+        },
+        {
+          "name": "keyword.operator.logical.nexo",
+          "match": "\\b(and|or|not)\\b"
+        },
+        {
+          "name": "constant.language.nexo",
+          "match": "\\b(true|false|none)\\b"
+        },
+        {
+          "name": "variable.language.self.nexo",
+          "match": "\\bself\\b"
+        }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.nexo",
+          "match": "\\b(print|input|len|range|set|round|split|convert|fail|validate|old|read|write|read_lines|save|decimal|float|int|str|channel)(?=\\()"
+        },
+        {
+          "name": "entity.name.function.call.nexo",
+          "match": "\\b[\\p{Ll}_][\\p{L}\\p{N}_]*(?=\\()"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.builtin.nexo",
+          "match": "\\b(int|float|decimal|money|str|bool|list|map|set|channel)\\b"
+        },
+        {
+          "name": "entity.name.type.nexo",
+          "match": "\\b\\p{Lu}[\\p{L}\\p{N}_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.pipeline.nexo",
+          "match": "\\|>"
+        },
+        {
+          "name": "keyword.operator.nexo",
+          "match": "->|\\?\\?|\\.\\.|==|!=|<=|>=|\\+=|-=|\\*=|/=|\\*\\*|//|[+\\-*/%<>=|]"
+        },
+        {
+          "name": "keyword.operator.error.nexo",
+          "match": "[?!]"
+        }
+      ]
+    },
+    "brackets": {
+      "patterns": [
+        { "name": "punctuation.separator.nexo", "match": "[,:]" },
+        { "name": "punctuation.accessor.nexo", "match": "\\." }
+      ]
+    }
+  }
+}

@@ -1,0 +1,7 @@
+Nexo for VS Code is part of Nexo and is distributed under the same
+licence as the compiler, the library and the official modules
+(section 26 of the specification): the Apache License, Version 2.0, with
+LLVM Exceptions.
+
+The full text: https://llvm.org/LICENSE.txt
+SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
