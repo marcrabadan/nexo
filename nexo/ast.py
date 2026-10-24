@@ -20,6 +20,7 @@ class TypeName(Node):
     optional: bool = False  # T?
     fallible: bool = False  # T!
     weak: bool = False
+    rel: str | None = None  # `ref T` or `many T` in a @table type (nexo.db)
 
 
 @dataclass
@@ -27,7 +28,14 @@ class LiteralUnion(Node):
     literals: list["Expr"]  # "active" | "closed"
 
 
-TypeExpr = TypeName | LiteralUnion
+@dataclass
+class RangeType(Node):
+    """`score: 1..5`: an int between the two bounds (section 8)."""
+    low: int
+    high: int
+
+
+TypeExpr = TypeName | LiteralUnion | RangeType
 
 
 # ---------------------------------------------------------- expressions
@@ -312,6 +320,7 @@ class FieldDef(Node):
     name: str
     type: TypeExpr
     default: Expr | None
+    marks: list[str] = field(default_factory=list)  # @unique, @private, @personal
 
 
 @dataclass

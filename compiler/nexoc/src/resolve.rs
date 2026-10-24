@@ -266,7 +266,7 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             next_type_id: 1,
             self_calls: std::collections::HashSet::new(),
             task_outputs: HashMap::new(),
-            sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what } if what == "nexo.sync")),
+            sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.sync")),
             main_local: std::collections::HashSet::new(),
         },
         used_outside: std::collections::HashSet::new(),
@@ -998,7 +998,7 @@ impl Resolver {
 
     fn type_expr(&mut self, scope: ScopeId, t: &TypeExpr) -> RResult<()> {
         match t {
-            TypeExpr::Union { .. } => Ok(()),
+            TypeExpr::Union { .. } | TypeExpr::Range { .. } => Ok(()),
             TypeExpr::Name(tn) => {
                 match self.type_name(scope, &tn.name) {
                     Some(r) => {

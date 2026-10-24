@@ -157,8 +157,6 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("fix.not_a_type_value", "Escribe x is int, x is User o e is NotFound.", "Write x is int, x is User or e is NotFound."),
     ("variant_fields", "\"{name}\" tiene {n} campos, pero el patrón tiene {m}.", "\"{name}\" has {n} fields, but the pattern has {m}."),
     ("fix.variant_fields", "Escribe un patrón por campo.", "Write one pattern per field."),
-    ("not_supported", "{what} no está disponible en la fase 1 de Nexo.", "{what} is not available in phase 1 of Nexo."),
-    ("fix.not_supported", "Este compilador solo incluye el núcleo del lenguaje; quítalo para compilar el programa.", "This compiler only includes the core of the language; remove it to compile the program."),
     ("bad_argument", "{fn}: {detail}.", "{fn}: {detail}."),
     ("fix.bad_argument", "Revisa los argumentos de {fn}.", "Check the arguments of {fn}."),
     ("unhashable", "Un valor {vtype} no puede ser clave ni elemento de un set.", "A {vtype} value cannot be a key or a set element."),
@@ -244,6 +242,19 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     // phase 1: the limit of nested calls of compiled programs (D73)
     ("too_deep", "Demasiadas llamadas anidadas (recursión infinita).", "Too many nested calls (infinite recursion)."),
     ("fix.too_deep", "Comprueba que la recursión tenga un caso base que la detenga.", "Check that the recursion has a base case that stops it."),
+    // phase 4 (D89-)
+    ("not_supported", "{what} no está disponible en la fase 4 de Nexo.", "{what} is not available in phase 4 of Nexo."),
+    ("fix.not_supported", "Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web y nexo.db; quítalo para ejecutar el programa.", "This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web and nexo.db; remove it to run the program."),
+    ("use_needs_as", "\"{name}\" no es un nombre válido para usarlo en el código.", "\"{name}\" is not a valid name to use in the code."),
+    ("fix.use_needs_as", "Dale un nombre con as, por ejemplo use c \"{name}\" as lib.", "Give it a name with as, for example use c \"{name}\" as lib."),
+    ("table_only", "{word} solo se usa en los campos de un type marcado con @table.", "{word} is only used in the fields of a type marked with @table."),
+    ("fix.table_only", "Escribe @table antes del type (y use nexo.db al principio del archivo), o quita {word}.", "Write @table before the type (and use nexo.db at the start of the file), or remove {word}."),
+    ("needs_use", "{what} es parte de {module}, que no está cargado.", "{what} belongs to {module}, which is not loaded."),
+    ("fix.needs_use", "Añade use {module} al principio del archivo.", "Add use {module} at the start of the file."),
+    ("table_two_ids", "El type \"{type}\" tiene dos campos de tipo id.", "The type \"{type}\" has two fields of type id."),
+    ("fix.table_two_ids", "Una tabla tiene una sola clave primaria; deja un solo campo id.", "A table has a single primary key; keep only one id field."),
+    ("transaction_return", "return no puede salir de un bloque transaction.", "return cannot leave a transaction block."),
+    ("fix.transaction_return", "Guarda el resultado en una variable y haz return después del bloque.", "Store the result in a variable and return after the block."),
 ];
 
 pub(crate) static WORDS: &[(&str, &str, &str)] = &[
@@ -264,4 +275,5 @@ pub(crate) static WORDS: &[(&str, &str, &str)] = &[
     ("string", "un texto entre comillas", "a quoted text"),
     ("member", "el nombre de un campo o método", "the name of a field or method"),
     ("call", "una llamada, por ejemplo nombre(...)", "a call, for example name(...)"),
+    ("route", "una ruta: get, post, put, patch o delete y su camino", "a route: get, post, put, patch or delete and its path"),
 ];

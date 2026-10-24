@@ -62,6 +62,7 @@ pub fn callee_name(func: &Expr) -> String {
 /// The type as the messages show it: `list[int]?`, or `a | b` for a union.
 pub fn type_text(t: &TypeExpr) -> String {
     match t {
+        TypeExpr::Range { low, high, .. } => format!("{low}..{high}"),
         TypeExpr::Union { literals, .. } => literals
             .iter()
             .map(|l| match &l.kind {

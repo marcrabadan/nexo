@@ -255,7 +255,7 @@ impl<'a> TypeChecker<'a> {
 
     fn decl_ty(&self, t: &TypeExpr) -> Ty {
         match t {
-            TypeExpr::Union { .. } => Ty::Unknown,
+            TypeExpr::Union { .. } | TypeExpr::Range { .. } => Ty::Unknown,
             TypeExpr::Name(tn) => {
                 if tn.optional {
                     return Ty::Unknown;

@@ -556,6 +556,8 @@ class Interpreter:
             self.sync = True
             self.builtins.define("channel", ChannelMaker())
             return
+        if s.lang in ("c", "python") or (s.lang is None and s.name in ("nexo.db", "nexo.ai", "nexo.web")):
+            return  # the statements that follow it bind the names (D90)
         name = f"{s.lang} {s.name}" if s.lang else s.name
         raise NexoError("not_supported", s.span, what=f'"use {name}"')
 
@@ -1429,6 +1431,14 @@ class Interpreter:
         """Check `value` against a declared type and apply the conversions
         of section 17 (a float literal becomes decimal where a decimal is
         expected). Returns the value to store."""
+        if isinstance(t, A.RangeType):
+            v = plain(value)
+            if isinstance(v, int) and not isinstance(v, bool) and t.low <= v <= t.high:
+                return v
+            if v is None:
+                raise NexoError("none_not_allowed", span, name=name, type=self.type_text(t))
+            raise NexoError("type_mismatch", span, name=name, type=self.type_text(t), value=repr_value(v),
+                            vtype=type_name(v))
         if isinstance(t, A.LiteralUnion):
             options = [self.eval(l, env) for l in t.literals]
             if any(self.equals(plain(o), plain(value), span) for o in options if type(plain(o)) is type(plain(value))):
@@ -1519,7 +1529,7 @@ class Interpreter:
     def fits_or_none(self, value, t, env, span) -> bool:
         if value is None:
             return getattr(t, "optional", False)
-        if isinstance(t, A.LiteralUnion):
+        if isinstance(t, (A.LiteralUnion, A.RangeType)):
             try:
                 self.conform(value, t, env, "x", span)
                 return True

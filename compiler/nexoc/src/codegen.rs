@@ -495,6 +495,7 @@ impl<'a> Gen<'a> {
     fn desc_text(&self, t: &TypeExpr) -> String {
         let display = type_text(t);
         let body = match t {
+            TypeExpr::Range { low, high, .. } => format!("r{low};{high};"),
             TypeExpr::Union { literals, .. } => {
                 let mut s = format!("l{};", literals.len());
                 for l in literals {
@@ -1919,8 +1920,10 @@ impl<'a> Gen<'a> {
                     }
                 }
             }
-            StmtKind::Use { what } if what == "nexo.sync" => {}
-            StmtKind::Use { what } => return Err(not_supported(format!("\"use {what}\""), s.span)),
+            StmtKind::Use { what, .. } if what == "nexo.sync" => {}
+            StmtKind::Use { lang: Some(_), .. } => {}
+            StmtKind::Use { what, .. } if matches!(what.as_str(), "nexo.db" | "nexo.ai" | "nexo.web") => {}
+            StmtKind::Use { what, .. } => return Err(not_supported(format!("\"use {what}\""), s.span)),
             StmtKind::Spawn { call } => {
                 let ExprKind::Call { func, args } = &call.kind else { unreachable!() };
                 let f = self.expr(func, false)?;

@@ -9,13 +9,15 @@ pub enum TypeExpr {
     Name(TypeName),
     /// `"active" | "closed"`
     Union { span: Span, literals: Vec<Expr> },
+    /// `1..5`: an int between the two bounds (section 8)
+    Range { span: Span, low: i64, high: i64 },
 }
 
 impl TypeExpr {
     pub fn span(&self) -> Span {
         match self {
             TypeExpr::Name(t) => t.span,
-            TypeExpr::Union { span, .. } => *span,
+            TypeExpr::Union { span, .. } | TypeExpr::Range { span, .. } => *span,
         }
     }
 
@@ -37,6 +39,8 @@ pub struct TypeName {
     pub optional: bool,
     pub fallible: bool,
     pub weak: bool,
+    /// `ref T` or `many T` in a @table type (nexo.db)
+    pub rel: Option<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -164,6 +168,7 @@ pub struct Param {
 pub struct Annotation {
     pub span: Span,
     pub name: String,
+    pub args: Vec<Arg>,
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +190,8 @@ pub struct FieldDef {
     pub name: String,
     pub ty: TypeExpr,
     pub default: Option<Expr>,
+    /// @unique, @private, @personal
+    pub marks: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -274,7 +281,8 @@ pub enum StmtKind {
     VarDecl { name: String, name_span: Span, ty: Option<TypeExpr>, value: Expr },
     Return(Option<Expr>),
     Pass,
-    Use { what: String },
+    /// `use nexo.db`, `use python numpy as np`, `use c "libm"`
+    Use { what: String, lang: Option<String>, name: String, alias: Option<String> },
     /// `spawn f(x)` (nexo.sync)
     Spawn { call: Expr },
     /// `select:` with `msg from channel:` and `after limit:` arms (nexo.sync)

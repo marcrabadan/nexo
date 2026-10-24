@@ -832,7 +832,7 @@ impl<'a> Linter<'a> {
 
     fn use_lines(&mut self) {
         let uses: Vec<&'a Stmt> =
-            self.program.body.iter().filter(|s| matches!(&s.kind, StmtKind::Use { what } if what == "nexo.sync")).collect();
+            self.program.body.iter().filter(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.sync")).collect();
         if uses.is_empty() {
             return;
         }

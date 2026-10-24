@@ -42,6 +42,8 @@ def callee_name(func: A.Expr) -> str:
 
 
 def type_text(t: A.TypeExpr) -> str:
+    if isinstance(t, A.RangeType):
+        return f"{t.low}..{t.high}"
     if isinstance(t, A.LiteralUnion):
         return " | ".join(getattr(l, "text", "") or "".join(p for p in getattr(l, "parts", []) if isinstance(p, str)) for l in t.literals)
     text = t.name

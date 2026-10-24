@@ -706,3 +706,67 @@ error. Standard input is read one byte at a time, so a program that calls
 write files in a different order on each run, and timing (`select` with
 `after`), may replay differently; the REPL is for trying code, and a
 program file has none of these limits.
+
+## Phase 4: library and modules (section 25)
+
+**D89. What phase 4 covers.** Section 25 lists "standard library,
+`nexo.ai`, `nexo.web`, `nexo.db`, C and Python interoperability" with the
+exit criterion "a web API with a database and `ask` is built with Nexo
+alone". Both implementations get, with the same output: the standard
+library of section 15 (`io`, `text`, `data`, `time`, `units`, `http`,
+`crypto`, `test` with `fake`), `nexo.ai` (`ask`, `ai` blocks, `@tool`,
+`agent`), `nexo.web` (`server` blocks, routes, `jwt`, `@role`, `@limit`),
+`nexo.db` (SQLite through `connect`, `@table`, pipelines translated to SQL,
+transactions, `db.sql`, `nexo db diff` and `migrate`), `use c` and
+`use python`. What the specification ties to later phases stays out and
+is reported as unavailable (D65): `infra`, `pipeline`, `policy`, `flags`,
+`stream`, `ml`, `ui`, `notify`, `when`, `every`, `lifecycle`, the other
+patterns of section 10, and the parts of these modules that need them
+(secrets from a vault or a cloud, `budget` in `ai`, `mcp(...)` tools,
+PostgreSQL, see the decisions below). `unsupported` messages now say
+"phase 4".
+
+**D90. Module blocks and annotations are rewritten into core code.** The
+parser turns each module construct into ordinary statements that call
+builtins whose names start with `__`, so the checker, the interpreter,
+the compiler's passes and the tools see only the core:
+- `ai:` and `ai profile "p":` become `__ai_config(none | "p", key: value...)`;
+  `ai models:` becomes `__ai_models(alias: "provider:model"...)`;
+- `agent a:` becomes `a = __ai_agent("a", key: value...)`;
+- `server api:` becomes `api = __web_server("api", key: value...)`, and each
+  route a function named after it (`GET /users/{id}`, a name no program can
+  write) followed by `__web_route(api, "GET", "/users/{id}", that function,
+  [the parameter types], role:, limit:, public:)`;
+- `@table type T` becomes the type (its `many` fields removed, its `id`
+  field an `int?`) followed by `__db_table(T, "id", {many fields}, {marks})`;
+- `@tool "d" fn f` becomes the function followed by `__ai_tool(f, "d", [types])`;
+- `use python m as x` and `use c "lib"` become `x = __python_import("m")`
+  and `lib = __c_library("lib")` after the `use`;
+- `fake f returns v` (only inside `test`) becomes `__fake("f", v)`;
+- `db.transaction:` becomes `__txL_C = __db_begin(db)` and a `try` whose
+  body ends with `__db_commit` and whose handler calls `__db_rollback` and
+  passes the error on with `fail(e)`; `return` inside the block is a
+  compile error, since it would leave the transaction open.
+The values of a block are evaluated where the block is written, like any
+statement (D29): an `ai` block takes effect from its line on.
+
+**D91. Syntax the core grammar lacks.** The module examples use forms the
+EBNF of section 24 does not have; they are added in the simplest way that
+accepts the examples:
+- `use c "libz"`: a text after `c` (`use_stmt` only allows a dotted name).
+  The library is used through the name given with `as`, or the text
+  itself when it is a valid name.
+- `@tool "Looks up an order"`: an annotation may take one text without
+  parentheses.
+- `per` builds a rate in annotation arguments and block values:
+  `10 per minute per ip`, `5 EUR per day`.
+- In the fields of a type, `ref T` and `many T` (only with `@table`);
+  anywhere a type is written, `1..5` is an int between both bounds
+  (`score: 1..5`, section 8).
+- `ai profile "work":` has two words before its name.
+- In a `server` block, a route is `{annotation} get|post|put|patch|delete
+  "path" [(params)] block`; the `{name}` parts of the path are its path
+  parameters, not interpolations.
+- `words` and `tokens` are units (for `max:` of `ask`), written after a
+  space (`200 words`).
+- `X.transaction:` followed by a block is a statement.
