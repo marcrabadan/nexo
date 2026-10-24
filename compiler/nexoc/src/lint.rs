@@ -280,6 +280,79 @@ impl<'a> Area<'a> {
     }
 }
 
+fn declared_names(body: &[Stmt]) -> HashSet<String> {
+    fn pattern(p: &Pattern, found: &mut HashSet<String>) {
+        match p {
+            Pattern::Name(_, n) => {
+                found.insert(n.clone());
+            }
+            Pattern::Ctor(_, _, args) => args.iter().for_each(|a| pattern(a, found)),
+            _ => {}
+        }
+    }
+    let mut found = HashSet::new();
+    let mut fn_def = |d: &FnDef, found: &mut HashSet<String>| {
+        found.insert(d.name.clone());
+        for p in &d.params {
+            found.insert(p.name.clone());
+        }
+    };
+    walk_body(body, &mut |n| match n {
+        Node::S(s) => match &s.kind {
+            StmtKind::Fn(d) => fn_def(d, &mut found),
+            StmtKind::Type(t) => {
+                found.insert(t.name.clone());
+                for m in &t.methods {
+                    fn_def(m, &mut found);
+                }
+                for v in &t.variants {
+                    for p in &v.params {
+                        found.insert(p.name.clone());
+                    }
+                }
+            }
+            StmtKind::Trait { name, .. } => {
+                found.insert(name.clone());
+            }
+            StmtKind::VarDecl { name, .. } | StmtKind::Shared { name, .. } | StmtKind::For { var: name, .. } => {
+                found.insert(name.clone());
+            }
+            StmtKind::Assign { target, .. } => {
+                if let ExprKind::Name(name) = &target.kind {
+                    found.insert(name.clone());
+                }
+            }
+            StmtKind::Match { arms, .. } => {
+                for a in arms {
+                    for p in &a.patterns {
+                        pattern(p, &mut found);
+                    }
+                }
+            }
+            StmtKind::Try { handlers, .. } => {
+                for h in handlers {
+                    found.insert(h.var.clone());
+                }
+            }
+            StmtKind::Select { arms } => {
+                for a in arms {
+                    if let Some(v) = &a.var {
+                        found.insert(v.clone());
+                    }
+                }
+            }
+            _ => {}
+        },
+        Node::E(e) => match &e.kind {
+            ExprKind::Comprehension { var, .. } | ExprKind::ParallelFor { var, .. } | ExprKind::Lambda { param: var, .. } => {
+                found.insert(var.clone());
+            }
+            _ => {}
+        },
+    });
+    found
+}
+
 fn root_name(e: &Expr) -> Option<&str> {
     let mut e = e;
     loop {
@@ -360,6 +433,8 @@ pub struct Linter<'a> {
     program: &'a Program,
     findings: Vec<Finding>,
     type_names: HashSet<String>,
+    /// every name the program defines
+    declared: HashSet<String>,
     scopes: Vec<Scope<'a>>,
     reads_cache: HashMap<usize, HashSet<String>>,
     writes_cache: HashMap<usize, HashSet<String>>,
@@ -376,7 +451,9 @@ impl<'a> Linter<'a> {
                 }
             }
         });
+        let declared = declared_names(&program.body);
         Linter {
+            declared,
             lines: source.split('\n').map(|l| l.chars().collect()).collect(),
             source,
             tokens,
@@ -685,12 +762,15 @@ impl<'a> Linter<'a> {
         if op != "=" {
             return;
         }
-        if matches!(&value.kind, ExprKind::Name(v) if v == name) && !typed {
-            let fix = Fix { edits: vec![self.remove_statement(s)], safe: true };
-            self.add("self_assign", target.span, Some(fix), vec![("name", name.clone())]);
+        let found = self.find(scope, name);
+        // `x = x` changes nothing only when it assigns the same binding: an
+        // immutable name of an enclosing function gets a new local instead (D26)
+        let same = matches!(found, Some((true, _)) | Some((_, false)));
+        if matches!(&value.kind, ExprKind::Name(v) if v == name) && !typed && same {
+            let fix = self.remove_statement(s).map(|e| Fix { edits: vec![e], safe: true });
+            self.add("self_assign", target.span, fix, vec![("name", name.clone())]);
             return;
         }
-        let found = self.find(scope, name);
         let declares = typed || found.is_none() || matches!(found, Some((false, true)));
         if !declares {
             return;
@@ -711,7 +791,10 @@ impl<'a> Linter<'a> {
         let count = match &it.kind {
             ExprKind::Range { start, end } if matches!(&start.kind, ExprKind::Num { text, .. } if text == "1") => Some(&**end),
             ExprKind::Call { func, args }
-                if matches!(&func.kind, ExprKind::Name(n) if n == "range") && args.len() == 1 && args[0].name.is_none() =>
+                if matches!(&func.kind, ExprKind::Name(n) if n == "range")
+                    && args.len() == 1
+                    && args[0].name.is_none()
+                    && !self.declared.contains("range") =>
             {
                 Some(&args[0].value)
             }
@@ -763,8 +846,8 @@ impl<'a> Linter<'a> {
             return;
         }
         for u in uses {
-            let fix = Fix { edits: vec![self.remove_statement(u)], safe: true };
-            self.add("unused_use", u.span, Some(fix), vec![("name", "nexo.sync".into())]);
+            let fix = self.remove_statement(u).map(|e| Fix { edits: vec![e], safe: true });
+            self.add("unused_use", u.span, fix, vec![("name", "nexo.sync".into())]);
         }
     }
 
@@ -890,15 +973,20 @@ impl<'a> Linter<'a> {
         last
     }
 
-    /// Remove a one-line statement; `pass` keeps a block that would be empty.
-    fn remove_statement(&self, s: &Stmt) -> Edit {
+    /// Remove a one-line statement; `pass` keeps a block that would be
+    /// empty. None when the statement goes on to other lines.
+    fn remove_statement(&self, s: &Stmt) -> Option<Edit> {
         let line = s.span.line;
+        let end = self.tokens.iter().find(|t| matches!(t.tok, Tok::Newline) && (t.span.line, t.span.col) >= (line, s.span.col))?;
+        if end.span.line != line {
+            return None;
+        }
         let text = &self.lines[line as usize - 1];
         let indent = text.iter().take_while(|&&c| c == ' ').count() as u32;
         if alone_in_block(&self.program.body, s, true) == Some(true) {
-            return Edit { line, col: indent + 1, end_line: line, end_col: text.len() as u32 + 1, text: "pass".into() };
+            return Some(Edit { line, col: indent + 1, end_line: line, end_col: text.len() as u32 + 1, text: "pass".into() });
         }
-        Edit { line, col: 1, end_line: line + 1, end_col: 1, text: String::new() }
+        Some(Edit { line, col: 1, end_line: line + 1, end_col: 1, text: String::new() })
     }
 }
 

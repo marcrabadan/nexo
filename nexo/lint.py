@@ -96,6 +96,7 @@ class Linter:
             if isinstance(s, A.TypeDef):
                 self.type_names.add(s.name)
                 self.type_names.update(v.name for v in s.variants)
+        self.declared = declared_names(program.body)  # every name the program defines
         self.reads_cache: dict[int, set[str]] = {}
         self.writes_cache: dict[int, set[str]] = {}
 
@@ -290,10 +291,14 @@ class Linter:
         name = target.name
         if s.op != "=":
             return
-        if isinstance(s.value, A.Name) and s.value.name == name and s.type is None:
-            self.add("self_assign", target.span, Fix([self.remove_statement(s)], True), name=name)
-            return
         found = self.find(scope, name)
+        # `x = x` changes nothing only when it assigns the same binding: an
+        # immutable name of an enclosing function gets a new local instead (D26)
+        same = found is not None and (found[1]["var"] or not found[2])
+        if isinstance(s.value, A.Name) and s.value.name == name and s.type is None and same:
+            edit = self.remove_statement(s)
+            self.add("self_assign", target.span, Fix([edit], True) if edit else None, name=name)
+            return
         declares = s.type is not None or found is None or (not found[1]["var"] and found[2])
         if not declares:
             return
@@ -311,7 +316,7 @@ class Linter:
         if isinstance(it, A.RangeExpr) and isinstance(it.start, A.Num) and it.start.text == "1":
             count = it.end
         elif (isinstance(it, A.Call) and isinstance(it.func, A.Name) and it.func.name == "range"
-              and len(it.args) == 1 and it.args[0].name is None):
+              and len(it.args) == 1 and it.args[0].name is None and "range" not in self.declared):
             count = it.args[0].value
         if count is None:
             return
@@ -351,7 +356,8 @@ class Linter:
         if words:
             return
         for u in uses:
-            self.add("unused_use", u.span, Fix([self.remove_statement(u)], True), name=u.name)
+            edit = self.remove_statement(u)
+            self.add("unused_use", u.span, Fix([edit], True) if edit else None, name=u.name)
 
     def expr(self, e: A.Expr | None) -> None:
         if e is None:
@@ -435,9 +441,14 @@ class Linter:
                     last += self.source.count("\n", start, stop)
         return last
 
-    def remove_statement(self, s: A.Stmt) -> Edit:
-        """Remove a one-line statement; `pass` keeps a block that would be empty."""
+    def remove_statement(self, s: A.Stmt) -> Edit | None:
+        """Remove a one-line statement; `pass` keeps a block that would be
+        empty. None when the statement goes on to other lines."""
         line = s.span.line
+        end = next((t for t in self.tokens if t.kind == "NEWLINE"
+                    and (t.span.line, t.span.col) >= (line, s.span.col)), None)
+        if end is None or end.span.line != line:
+            return None
         text = self.lines[line - 1]
         indent = len(text) - len(text.lstrip(" "))
         if self.alone_in_block(s):
@@ -504,6 +515,22 @@ def blocks(program: A.Program):
             elif name == "branches":
                 for _, b in value:
                     yield b
+
+
+def declared_names(body: list[A.Stmt]) -> set[str]:
+    found: set[str] = set()
+    for n in nodes(body):
+        if isinstance(n, (A.FnDef, A.TypeDef, A.TraitDef, A.VarDecl, A.SharedDecl, A.Param, A.Handler, A.PName)):
+            found.add(n.var if isinstance(n, A.Handler) else n.name)
+        elif isinstance(n, (A.For, A.Comprehension, A.ParallelFor)):
+            found.add(n.var)
+        elif isinstance(n, A.Lambda):
+            found.add(n.param)
+        elif isinstance(n, A.SelectArm) and n.var:
+            found.add(n.var)
+        elif isinstance(n, A.Assign) and isinstance(n.target, A.Name):
+            found.add(n.target.name)
+    return found
 
 
 def root_name(e: A.Expr) -> str | None:
