@@ -656,6 +656,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "es": "No hay avisos en {path}.",
         "en": "No warnings in {path}.",
     },
+    "lsp_fix_all": {"es": "Aplica los arreglos seguros (nexo fix)", "en": "Apply the safe fixes (nexo fix)"},
+    "check_ok": {"es": "No hay errores en {path}.", "en": "No errors in {path}."},
     # failures (error values). The first sentence becomes e.message.
     "unhandled": {"es": "Error sin gestionar{kind}: {message}", "en": "Unhandled error{kind}: {message}"},
     "fix.unhandled": {"es": "Gestiónalo con try y else e.", "en": "Handle it with try and else e."},

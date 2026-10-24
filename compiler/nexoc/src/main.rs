@@ -7,14 +7,18 @@
 //!     nexo fmt [paths...]                format files in place (D85)
 //!     nexo lint [paths...]               warn about questionable code (D86)
 //!     nexo fix [paths...]                apply the safe fixes
+//!     nexo check [paths...]              the compile checks, without running anything
+//!     nexo lsp                           language server on standard input and output (D87)
 //!     --lang es|en                       language of messages (Spanish by default)
 
 mod ast;
 mod checker;
 mod codegen;
 mod fmt;
+mod json;
 mod lexer;
 mod lint;
+mod lsp;
 mod narrow;
 mod parser;
 mod prove;
@@ -457,6 +461,32 @@ fn run_fix(paths: &[String]) -> u8 {
     status
 }
 
+/// `nexo check [paths]`: report the compile error of each file, if any.
+fn run_check(paths: &[String]) -> u8 {
+    let mut status = 0;
+    for f in test_files(paths) {
+        let display = f.to_string_lossy().into_owned();
+        let source = match read_source(&display) {
+            Ok(s) => s,
+            Err(e) => {
+                eprint!("{e}");
+                status = 1;
+                continue;
+            }
+        };
+        let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
+        if let Err(d) = front_end(&source) {
+            eprint!("{}", render(&name, &source, d.span, &d.text()));
+            status = 1;
+        }
+    }
+    if status == 0 {
+        let shown = if paths.is_empty() { ".".to_string() } else { paths.join(", ") };
+        println!("{}", msg("check_ok", &[("path", shown)]));
+    }
+    status
+}
+
 /// Print the LLVM IR of a program (for the compiler's own tests).
 fn emit_ir(path: &str) -> u8 {
     let source = match read_source(path) {
@@ -481,17 +511,20 @@ fn emit_ir(path: &str) -> u8 {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut lang = "es".to_string();
+    let mut lang_given = false;
     let mut rest = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
         if a == "--lang" && i + 1 < args.len() {
             lang = args[i + 1].clone();
+            lang_given = true;
             i += 2;
             continue;
         }
         if let Some(l) = a.strip_prefix("--lang=") {
             lang = l.to_string();
+            lang_given = true;
             i += 1;
             continue;
         }
@@ -510,6 +543,8 @@ fn main() -> ExitCode {
             "fmt" => run_fmt(&rest[1..]),
             "lint" => run_lint(&rest[1..]),
             "fix" => run_fix(&rest[1..]),
+            "check" => run_check(&rest[1..]),
+            "lsp" if rest.len() == 1 => lsp::serve(lang_given),
             "--emit-llvm" if rest.len() == 2 => emit_ir(&rest[1]),
             a if a.starts_with('-') || rest.len() > 1 => {
                 eprintln!("{}", usage());

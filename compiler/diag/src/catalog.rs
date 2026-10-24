@@ -202,6 +202,8 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("fix.lint.unused_binding", "Escribe _ en su lugar.", "Write _ instead."),
     ("lint_summary", "Avisos: {n}. Arreglos seguros con nexo fix: {safe}.", "Warnings: {n}. Safe fixes with nexo fix: {safe}."),
     ("lint_none", "No hay avisos en {path}.", "No warnings in {path}."),
+    ("lsp_fix_all", "Aplica los arreglos seguros (nexo fix)", "Apply the safe fixes (nexo fix)"),
+    ("check_ok", "No hay errores en {path}.", "No errors in {path}."),
     ("unhandled", "Error sin gestionar{kind}: {message}", "Unhandled error{kind}: {message}"),
     ("fix.unhandled", "Gestiónalo con try y else e.", "Handle it with try and else e."),
     ("err.NotFound", "No se encuentra el archivo \"{path}\"", "File \"{path}\" not found"),

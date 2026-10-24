@@ -69,3 +69,12 @@ def test_nexo_test_reports_failures(tmp_path):
 def test_program_does_not_run_test_blocks(tmp_path):
     (tmp_path / "t.nexo").write_text('print("main")\ntest "x":\n    print("in test")\n')
     assert nexo("t.nexo", cwd=tmp_path) == (0, "main\n")
+
+
+def test_nexo_check_reports_compile_errors_without_running(tmp_path):
+    (tmp_path / "ok.nexo").write_text('print("never printed")\n')
+    assert nexo("--lang", "en", "check", "ok.nexo", cwd=tmp_path) == (0, "No errors in ok.nexo.\n")
+    (tmp_path / "bad.nexo").write_text('fn f(p):\n    return read(p)\nprint("no")\n')
+    code, out = nexo("--lang", "en", "check", "bad.nexo", cwd=tmp_path)
+    assert code == 1
+    assert out.startswith("Error in bad.nexo, line 2:") and "no\n" not in out

@@ -6,6 +6,8 @@
     nexo fmt [paths]     format files in place (D85)
     nexo lint [paths]    warn about questionable code (D86)
     nexo fix [paths]     apply the safe fixes
+    nexo check [paths]   the compile checks, without running anything
+    nexo lsp             language server on standard input and output (D87)
     --lang es|en         language of messages (Spanish by default)
 """
 from __future__ import annotations
@@ -227,6 +229,28 @@ def run_fix(paths: list[str]) -> int:
     return status
 
 
+def run_check(paths: list[str]) -> int:
+    """`nexo check`: report the compile error of each file, if any."""
+    from .lint import front_end
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            front_end(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+    if status == 0:
+        print(errors.msg("check_ok", path=", ".join(paths) or "."))
+    return status
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -274,16 +298,19 @@ def repl() -> int:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     lang = "es"
+    lang_given = False
     rest = []
     i = 0
     while i < len(args):
         a = args[i]
         if a == "--lang" and i + 1 < len(args):
             lang = args[i + 1]
+            lang_given = True
             i += 2
             continue
         if a.startswith("--lang="):
             lang = a.split("=", 1)[1]
+            lang_given = True
             i += 1
             continue
         rest.append(a)
@@ -303,6 +330,11 @@ def main(argv: list[str] | None = None) -> int:
         return run_lint(rest[1:])
     if rest[0] == "fix":
         return run_fix(rest[1:])
+    if rest[0] == "check":
+        return run_check(rest[1:])
+    if rest == ["lsp"]:
+        from .lsp import serve
+        return serve(lang_given)
     if len(rest) > 1:
         print(USAGE[errors.LANG], file=sys.stderr)
         return 2
