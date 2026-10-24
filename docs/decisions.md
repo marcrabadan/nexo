@@ -1199,3 +1199,14 @@ module (a Python without its shared library is an error at the `use`).
   that cannot be imported is an error at the `use`.
 - "Unannotated Python types arrive as `any`": the values are dynamic, and
   a typed variable checks them as usual (D33).
+
+**D112. `convert(x, to: format)` and the formats of `data`.** Section 10
+names `convert(x, to: format)` as the adapter and section 15 lists JSON,
+CSV, Parquet, XML, YAML and columnar tables in `data`. `convert(x, to:
+json)` gives the JSON text of a value, as `save` writes it (indented with
+two spaces), and `convert(rows, to: csv)` the CSV text of a list of
+records or maps; `convert(money, to: USD, rate: r)` stays as it was, and
+`rate` belongs only to it. Parquet, XML, YAML and columnar tables need
+their own readers and writers and are not part of phase 4's exit
+criterion; they stay for a later phase, and `yaml`, `xml` and `parquet`
+are ordinary names until then.

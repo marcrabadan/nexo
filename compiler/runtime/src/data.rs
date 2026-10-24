@@ -283,7 +283,7 @@ fn csv_line(fields: &[String]) -> String {
     parts.join(",") + "\n"
 }
 
-fn to_csv(value: V, span: u32) -> R<String> {
+pub fn to_csv(value: V, span: u32) -> R<String> {
     let Some(Obj::List(items)) = value.get() else {
         return Err(diag(nexo_diag::Diagnostic::new_spanless("csv_value").arg("vtype", type_name(value)), span));
     };

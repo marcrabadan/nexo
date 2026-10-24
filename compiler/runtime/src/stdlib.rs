@@ -82,7 +82,7 @@ static SIGS: &[Sig] = &[
     Sig { name: "set", params: &[var("items")] },
     Sig { name: "round", params: &[p("value"), opt("digits"), opt("mode")] },
     Sig { name: "split", params: &[p("amount"), p("parts")] },
-    Sig { name: "convert", params: &[p("value"), p("to"), p("rate")] },
+    Sig { name: "convert", params: &[p("value"), p("to"), opt("rate")] },
     Sig { name: "fail", params: &[p("message")] },
     Sig { name: "validate", params: &[p("value"), p("as"), opt("range")] },
     Sig { name: "decimal", params: &[p("value")] },
@@ -304,15 +304,26 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_ROUND => round(a.get(0).unwrap(), a.get(1).unwrap_or(V::int(0)), a.get(2), span),
         B_SPLIT => split(a.get(0).unwrap(), a.get(1).unwrap(), span),
         B_CONVERT => {
+            // convert(x, to: json | csv): the text of a value in a format (D112)
+            let to = a.get(1).unwrap();
+            if let Some(Obj::Namespace(ns @ ("json" | "csv"))) = to.get() {
+                if a.get(2).is_some() {
+                    let d = Diagnostic::new_spanless("arg_unknown").arg("fn", "convert").arg("param", "rate").arg("params", "value, to");
+                    return Err(diag(d, span));
+                }
+                let value = bind(a.get(0).unwrap())?;
+                return Ok(Val::str(if *ns == "json" { crate::data::to_json(value.v(), 0) } else { crate::data::to_csv(value.v(), span)? }));
+            }
             let value = a.get(0).unwrap();
             let Some(Obj::Money(amount, _)) = value.get() else {
                 return Err(expects("convert", "money", value, span));
             };
-            let to = a.get(1).unwrap();
             let Some(Obj::Currency(code)) = to.get() else {
-                return Err(expects("convert", "currency", to, span));
+                return Err(expects("convert", "currency, json, csv", to, span));
             };
-            let rate = a.get(2).unwrap();
+            let Some(rate) = a.get(2) else {
+                return Err(diag(Diagnostic::new_spanless("arg_missing").arg("param", "rate").arg("fn", "convert"), span));
+            };
             let Some(factor) = to_decimal(rate) else {
                 return Err(expects("convert", "decimal", rate, span));
             };

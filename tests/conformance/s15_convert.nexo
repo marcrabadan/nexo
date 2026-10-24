@@ -1,0 +1,10 @@
+# convert(x, to: format), the adapter of section 10 (D112)
+type Row:
+    name: str
+    total: decimal
+rows = [Row(name: "Ana", total: 10.5), Row(name: "Luis, Jr", total: 3)]
+print(convert(rows, to: json))
+print(convert(rows, to: csv), end: "")
+print(convert({"a": [1, none]}, to: json))
+print(convert(10 EUR, to: USD, rate: 1.08))
+convert(10 EUR, to: USD)

@@ -1,0 +1,24 @@
+[
+  {
+    "name": "Ana",
+    "total": 10.5
+  },
+  {
+    "name": "Luis, Jr",
+    "total": 3
+  }
+]
+name,total
+Ana,10.5
+"Luis, Jr",3
+{
+  "a": [
+    1,
+    null
+  ]
+}
+10.80 USD
+Error en s15_convert.nexo, línea 10:
+  convert(10 EUR, to: USD)
+  ^^^^^^^^^^^^^^^^^^^^^^^^
+Falta el argumento "rate" en la llamada a "convert". Pásalo así: convert(..., rate: valor).

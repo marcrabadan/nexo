@@ -121,11 +121,21 @@ def b_split(call, amount, parts):
     return out
 
 
-def b_convert(call, value, to, rate):
+def b_convert(call, value, to, rate=None):
+    """convert(x, to: json | csv) gives the text of a value in a format
+    (D112); convert(money, to: USD, rate: r) changes its currency."""
+    from . import Namespace, data
+    if isinstance(to, Namespace) and to.name in ("json", "csv"):
+        if rate is not None:
+            raise NexoError("arg_unknown", call.span, fn="convert", param="rate", params="value, to")
+        value = call.interp.bind_value(value)
+        return data.to_json(value) if to.name == "json" else data.to_csv(call, value)
     if not isinstance(value, Money):
         raise expects(call, "convert", "money", value)
     if not isinstance(to, Currency):
-        raise expects(call, "convert", "currency", to)
+        raise expects(call, "convert", "currency, json, csv", to)
+    if rate is None:
+        raise NexoError("arg_missing", call.span, param="rate", fn="convert")
     try:
         factor = to_decimal(rate)
     except TypeError:
