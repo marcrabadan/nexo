@@ -21,7 +21,7 @@ from . import ast as A
 from .errors import NexoError
 
 FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt",
-                     "encrypt_file", "decrypt_file", "connect"}
+                     "encrypt_file", "decrypt_file", "connect", "ask"}
 FALLIBLE_MEMBERS = {("json", "parse"), ("csv", "parse"), ("http", "get"), ("http", "post"), ("http", "put"),
                     ("http", "patch"), ("http", "delete")}
 

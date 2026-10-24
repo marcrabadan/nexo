@@ -41,6 +41,9 @@ static SIGS: &[Sig] = &[
     Sig { name: "__sql_text", params: &[p("parts"), p("values")] },
     Sig { name: "jwt", params: &[p("key")] },
     Sig { name: "log", params: &[] },
+    Sig { name: "ask", params: &[] },
+    Sig { name: "__ai_config", params: &[] },
+    Sig { name: "__ai_models", params: &[] },
     Sig { name: "__rate", params: &[] },
     Sig { name: "__web_server", params: &[p("name"), opt("port"), opt("auth")] },
     Sig {
@@ -99,6 +102,7 @@ pub fn release_all() {
     clear_fakes();
     crate::db::release_all();
     crate::web::release_all();
+    crate::ai::release_all();
 }
 
 pub fn clear_fakes() {
@@ -111,6 +115,12 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
     if sig.name == "render" {
         // render(path, name: value...): every named argument is a value
         return crate::text::render(args, names, span);
+    }
+    match sig.name {
+        "ask" => return crate::ai::ask(args, names, span),
+        "__ai_config" => return crate::ai::config(args, names, span),
+        "__ai_models" => return crate::ai::models(args, names, span),
+        _ => {}
     }
     if sig.name == "log" {
         return log(args, names, span);

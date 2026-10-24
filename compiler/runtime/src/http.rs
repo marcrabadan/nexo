@@ -21,7 +21,7 @@ pub struct Response {
 }
 
 impl Response {
-    fn text(&self) -> String {
+    pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
 }
@@ -218,7 +218,7 @@ fn join_url(base: &str, loc: &str) -> String {
     format!("{scheme}://{host}{dir}{loc}")
 }
 
-fn seconds(v: V, name: &str, span: u32) -> R<f64> {
+pub fn seconds(v: V, name: &str, span: u32) -> R<f64> {
     if let Some(Obj::Quantity(d, u)) = v.get() {
         let (dim, f) = crate::num::unit_dimension(u);
         if dim == "time" {
@@ -281,10 +281,24 @@ pub fn request(method: &str, args: &[V], names: &[Option<&str>], span: u32) -> R
             headers.push((key, crate::crypto::text_or_secret("headers", v.v(), span)?));
         }
     }
+    Ok(native(send(method, &url, &body, &headers, limit, retries, span)?))
+}
+
+/// The request, retried `retries` times after a network error or a 502,
+/// 503 or 504 (also used by `ask`).
+pub fn send(
+    method: &str,
+    url: &str,
+    body: &Option<(Vec<u8>, &str)>,
+    headers: &[(String, String)],
+    limit: f64,
+    retries: u32,
+    span: u32,
+) -> R<Response> {
     let mut attempt = 0;
     loop {
-        match once(method, &url, &body, &headers, limit, span)? {
-            Outcome::Done(r) => return Ok(native(r)),
+        match once(method, url, body, headers, limit, span)? {
+            Outcome::Done(r) => return Ok(r),
             Outcome::Retry(f) => {
                 if attempt >= retries {
                     return Err(f);

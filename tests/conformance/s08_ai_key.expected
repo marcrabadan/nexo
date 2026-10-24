@@ -1,0 +1,4 @@
+Error en s08_ai_key.nexo, línea 2:
+  ai:
+  ^^
+"modle" no es una opción de un bloque ai. ¿Quisiste decir "model"?

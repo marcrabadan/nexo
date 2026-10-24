@@ -212,7 +212,7 @@ impl<'s> Parser<'s> {
             self.statement_into(&mut body)?;
         }
         let mut program = Program { body };
-        model_aliases(&mut program);
+        model_aliases(&mut program, &mut self.next_id);
         Ok(program)
     }
 
@@ -2035,9 +2035,11 @@ impl<'s> Parser<'s> {
     }
 }
 
-/// `ask(..., model: fast)`: a bare name declared by an `ai models:` block is
-/// the name of that model (section 8).
-fn model_aliases(program: &mut Program) {
+/// Calls of `ask` (section 8, D107): in `model: fast` a bare name declared
+/// by an `ai models:` block is the name of that model; in `creativity: low`,
+/// `guard: injection` and `redact: private` a bare name is a word; and
+/// `o: Opinion = ask(...)` passes the type of the variable as `as:`.
+fn model_aliases(program: &mut Program, ids: &mut u32) {
     let mut aliases: Vec<String> = Vec::new();
     for s in &program.body {
         if let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind {
@@ -2046,75 +2048,90 @@ fn model_aliases(program: &mut Program) {
             }
         }
     }
-    if aliases.is_empty() {
-        return;
-    }
     for s in &mut program.body {
-        fix_stmt(s, &aliases);
+        fix_stmt(s, &aliases, ids);
     }
 }
 
-fn fix_body(body: &mut [Stmt], aliases: &[String]) {
-    for s in body {
-        fix_stmt(s, aliases);
-    }
-}
-
-fn fix_stmt(s: &mut Stmt, aliases: &[String]) {
-    match &mut s.kind {
-        StmtKind::Expr(e) | StmtKind::Return(Some(e)) | StmtKind::Expect(e) | StmtKind::Ensure(e) => fix_expr(e, aliases),
-        StmtKind::Assert { expr, .. } => fix_expr(expr, aliases),
-        StmtKind::Assign { target, value, .. } => {
-            fix_expr(target, aliases);
-            fix_expr(value, aliases);
+/// The ask call a typed variable receives: it gets `as: T`.
+fn typed_ask(value: &mut Expr, ty: &Option<TypeExpr>, ids: &mut u32) {
+    let Some(TypeExpr::Name(tn)) = ty else { return };
+    if let ExprKind::Call { func, args } = &mut value.kind {
+        if matches!(&func.kind, ExprKind::Name(n) if n == "ask") && !args.iter().any(|a| a.name.as_deref() == Some("as")) {
+            *ids += 1;
+            let t = Expr { id: *ids, span: tn.span, kind: ExprKind::Name(tn.name.clone()) };
+            args.push(Arg { span: tn.span, name: Some("as".into()), value: t });
         }
-        StmtKind::VarDecl { value, .. } | StmtKind::Shared { value, .. } => fix_expr(value, aliases),
-        StmtKind::Spawn { call } => fix_expr(call, aliases),
-        StmtKind::Emit { args, .. } => args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases)),
-        StmtKind::Fn(f) => fix_body(&mut f.body, aliases),
-        StmtKind::Type(t) => t.methods.iter_mut().for_each(|m| fix_body(&mut m.body, aliases)),
+    }
+}
+
+fn fix_body(body: &mut [Stmt], aliases: &[String], ids: &mut u32) {
+    for s in body {
+        fix_stmt(s, aliases, ids);
+    }
+}
+
+fn fix_stmt(s: &mut Stmt, aliases: &[String], ids: &mut u32) {
+    match &mut s.kind {
+        StmtKind::Expr(e) | StmtKind::Return(Some(e)) | StmtKind::Expect(e) | StmtKind::Ensure(e) => fix_expr(e, aliases, ids),
+        StmtKind::Assert { expr, .. } => fix_expr(expr, aliases, ids),
+        StmtKind::Assign { target, value, ty, .. } => {
+            typed_ask(value, ty, ids);
+            fix_expr(target, aliases, ids);
+            fix_expr(value, aliases, ids);
+        }
+        StmtKind::VarDecl { value, ty, .. } => {
+            typed_ask(value, ty, ids);
+            fix_expr(value, aliases, ids);
+        }
+        StmtKind::Shared { value, .. } => fix_expr(value, aliases, ids),
+        StmtKind::Spawn { call } => fix_expr(call, aliases, ids),
+        StmtKind::Emit { args, .. } => args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases, ids)),
+        StmtKind::Fn(f) => fix_body(&mut f.body, aliases, ids),
+        StmtKind::Type(t) => t.methods.iter_mut().for_each(|m| fix_body(&mut m.body, aliases, ids)),
         StmtKind::If { branches, orelse } => {
             for (c, b) in branches {
-                fix_expr(c, aliases);
-                fix_body(b, aliases);
+                fix_expr(c, aliases, ids);
+                fix_body(b, aliases, ids);
             }
             if let Some(b) = orelse {
-                fix_body(b, aliases);
+                fix_body(b, aliases, ids);
             }
         }
         StmtKind::For { iterable: e, body, .. } | StmtKind::While { cond: e, body } | StmtKind::Repeat { count: e, body } => {
-            fix_expr(e, aliases);
-            fix_body(body, aliases);
+            fix_expr(e, aliases, ids);
+            fix_body(body, aliases, ids);
         }
         StmtKind::Match { subject, arms } => {
-            fix_expr(subject, aliases);
+            fix_expr(subject, aliases, ids);
             for a in arms {
                 if let Some(g) = &mut a.guard {
-                    fix_expr(g, aliases);
+                    fix_expr(g, aliases, ids);
                 }
-                fix_body(&mut a.body, aliases);
+                fix_body(&mut a.body, aliases, ids);
             }
         }
         StmtKind::Try { within, body, handlers } => {
             if let Some(w) = within {
-                fix_expr(w, aliases);
+                fix_expr(w, aliases, ids);
             }
-            fix_body(body, aliases);
-            handlers.iter_mut().for_each(|h| fix_body(&mut h.body, aliases));
+            fix_body(body, aliases, ids);
+            handlers.iter_mut().for_each(|h| fix_body(&mut h.body, aliases, ids));
         }
-        StmtKind::Parallel(b) | StmtKind::Test { body: b, .. } | StmtKind::Event { body: b, .. } => fix_body(b, aliases),
-        StmtKind::Select { arms } => arms.iter_mut().for_each(|a| fix_body(&mut a.body, aliases)),
+        StmtKind::Parallel(b) | StmtKind::Test { body: b, .. } | StmtKind::Event { body: b, .. } => fix_body(b, aliases, ids),
+        StmtKind::Select { arms } => arms.iter_mut().for_each(|a| fix_body(&mut a.body, aliases, ids)),
         _ => {}
     }
 }
 
-fn fix_expr(e: &mut Expr, aliases: &[String]) {
+fn fix_expr(e: &mut Expr, aliases: &[String], ids: &mut u32) {
     if let ExprKind::Call { func, args } = &mut e.kind {
         if matches!(&func.kind, ExprKind::Name(n) if n == "ask") {
             for a in args.iter_mut() {
-                if a.name.as_deref() == Some("model") {
+                let word = matches!(a.name.as_deref(), Some("creativity" | "guard" | "redact"));
+                if word || a.name.as_deref() == Some("model") {
                     if let ExprKind::Name(n) = &a.value.kind {
-                        if aliases.contains(n) {
+                        if word || aliases.contains(n) {
                             a.value.kind = ExprKind::Str(vec![StrPiece::Lit(n.clone())]);
                         }
                     }
@@ -2126,54 +2143,54 @@ fn fix_expr(e: &mut Expr, aliases: &[String]) {
         ExprKind::Str(parts) => {
             for p in parts {
                 if let StrPiece::Expr(x) = p {
-                    fix_expr(x, aliases);
+                    fix_expr(x, aliases, ids);
                 }
             }
         }
-        ExprKind::List(items) => items.iter_mut().for_each(|x| fix_expr(x, aliases)),
+        ExprKind::List(items) => items.iter_mut().for_each(|x| fix_expr(x, aliases, ids)),
         ExprKind::Map(pairs) => pairs.iter_mut().for_each(|(k, v)| {
-            fix_expr(k, aliases);
-            fix_expr(v, aliases);
+            fix_expr(k, aliases, ids);
+            fix_expr(v, aliases, ids);
         }),
         ExprKind::Comprehension { element, iterable, condition, .. } => {
-            fix_expr(element, aliases);
-            fix_expr(iterable, aliases);
+            fix_expr(element, aliases, ids);
+            fix_expr(iterable, aliases, ids);
             if let Some(c) = condition {
-                fix_expr(c, aliases);
+                fix_expr(c, aliases, ids);
             }
         }
-        ExprKind::Attr { obj, .. } | ExprKind::Propagate(obj) => fix_expr(obj, aliases),
-        ExprKind::Unary { operand, .. } => fix_expr(operand, aliases),
+        ExprKind::Attr { obj, .. } | ExprKind::Propagate(obj) => fix_expr(obj, aliases, ids),
+        ExprKind::Unary { operand, .. } => fix_expr(operand, aliases, ids),
         ExprKind::Index { obj, index } => {
-            fix_expr(obj, aliases);
-            fix_expr(index, aliases);
+            fix_expr(obj, aliases, ids);
+            fix_expr(index, aliases, ids);
         }
         ExprKind::Call { func, args } => {
-            fix_expr(func, aliases);
-            args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases));
+            fix_expr(func, aliases, ids);
+            args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases, ids));
         }
         ExprKind::BinOp { left, right, .. }
         | ExprKind::BoolOp { left, right, .. }
         | ExprKind::Coalesce { left, right }
         | ExprKind::Range { start: left, end: right } => {
-            fix_expr(left, aliases);
-            fix_expr(right, aliases);
+            fix_expr(left, aliases, ids);
+            fix_expr(right, aliases, ids);
         }
-        ExprKind::Compare { operands, .. } => operands.iter_mut().for_each(|x| fix_expr(x, aliases)),
-        ExprKind::Lambda { body, .. } => fix_expr(body, aliases),
+        ExprKind::Compare { operands, .. } => operands.iter_mut().for_each(|x| fix_expr(x, aliases, ids)),
+        ExprKind::Lambda { body, .. } => fix_expr(body, aliases, ids),
         ExprKind::Pipeline { source, steps } => {
-            fix_expr(source, aliases);
+            fix_expr(source, aliases, ids);
             for st in steps {
                 if let Some(x) = &mut st.expr {
-                    fix_expr(x, aliases);
+                    fix_expr(x, aliases, ids);
                 }
-                st.columns.iter_mut().for_each(|c| fix_expr(c, aliases));
+                st.columns.iter_mut().for_each(|c| fix_expr(c, aliases, ids));
             }
         }
         ExprKind::ParallelFor { iterable, args, body, .. } => {
-            fix_expr(iterable, aliases);
-            args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases));
-            fix_body(body, aliases);
+            fix_expr(iterable, aliases, ids);
+            args.iter_mut().for_each(|a| fix_expr(&mut a.value, aliases, ids));
+            fix_body(body, aliases, ids);
         }
         _ => {}
     }

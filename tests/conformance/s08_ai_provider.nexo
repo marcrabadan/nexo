@@ -1,0 +1,3 @@
+# the providers are anthropic, openai and ollama (D106)
+ai models:
+    smart = "antropic:claude-opus"

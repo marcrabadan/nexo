@@ -24,9 +24,9 @@ from .types import NexoFailure, repr_value
 
 USAGE = {
     "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp"
-          " | db diff|migrate archivo.nexo [--db ruta] [--allow-drop]]",
+          " | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage]",
     "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp"
-          " | db diff|migrate file.nexo [--db path] [--allow-drop]]",
+          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage]",
 }
 BANNER = {
     "es": "Nexo {v} (fase 0). Escribe código y pulsa Intro; Ctrl-D para salir.",
@@ -383,6 +383,9 @@ def main(argv: list[str] | None = None) -> int:
     errors.set_lang(lang)
     if rest[:1] == ["db"] and lang in ("es", "en"):
         return run_db(rest[1:])
+    if rest in (["ai", "setup"], ["ai", "usage"]) and lang in ("es", "en"):
+        from .stdlib import ai
+        return ai.setup_command() if rest[1] == "setup" else ai.usage_command()
     if lang not in ("es", "en") or any(a.startswith("-") for a in rest):
         print(USAGE[errors.LANG], file=sys.stderr)
         return 2

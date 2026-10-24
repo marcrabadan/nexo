@@ -1435,25 +1435,32 @@ def body_returns(body: list):
 
 
 def model_aliases(program: A.Program) -> None:
-    """`ask(..., model: fast)`: a bare name declared by an `ai models:`
-    block is the name of that model (section 8)."""
+    """Calls of `ask` (section 8, D107): in `model: fast` a bare name
+    declared by an `ai models:` block is the name of that model; in
+    `creativity: low`, `guard: injection` and `redact: private` a bare name
+    is a word; and `o: Opinion = ask(...)` passes the type of the variable
+    as `as:`."""
     from .checker import walk_stmts
     aliases = set()
     for s in program.body:
         if isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and getattr(s.expr.func, "name", "") == "__ai_models":
             aliases.update(a.name for a in s.expr.args if a.name)
-    if not aliases:
-        return
 
     def fix(e):
         if isinstance(e, A.Call) and isinstance(e.func, A.Name) and e.func.name == "ask":
             for a in e.args:
-                if a.name == "model" and isinstance(a.value, A.Name) and a.value.name in aliases:
+                word_ = a.name in ("creativity", "guard", "redact")
+                if (word_ or a.name == "model") and isinstance(a.value, A.Name) and (word_ or a.value.name in aliases):
                     a.value = text(a.value.span, a.value.name)
         for c in sub_exprs(e):
             fix(c)
 
     for s in walk_stmts(program.body):
+        if isinstance(s, (A.Assign, A.VarDecl)) and isinstance(s.type, A.TypeName):
+            v = s.value
+            if (isinstance(v, A.Call) and isinstance(v.func, A.Name) and v.func.name == "ask"
+                    and not any(a.name == "as" for a in v.args)):
+                v.args.append(A.Arg(s.type.span, "as", A.Name(s.type.span, s.type.name)))
         for e in stmt_exprs(s):
             fix(e)
 

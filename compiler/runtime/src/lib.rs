@@ -3,6 +3,7 @@
 //! standard library and the error machinery of section 3.
 
 pub mod abi;
+pub mod ai;
 pub mod call;
 pub mod coll;
 pub mod cow;

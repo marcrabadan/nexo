@@ -13,6 +13,7 @@
 //!     nexo db diff|migrate file.nexo     migrations of nexo.db (D101): --db path, --allow-drop
 //!     --lang es|en                       language of messages (Spanish by default)
 
+mod ai_cmd;
 mod ast;
 mod checker;
 mod codegen;
@@ -34,9 +35,9 @@ use nexo_diag::{msg, render, Diagnostic, Lang};
 
 fn usage() -> &'static str {
     if nexo_diag::lang() == Lang::En {
-        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop]]"
+        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage]"
     } else {
-        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp | db diff|migrate archivo.nexo [--db ruta] [--allow-drop]]"
+        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage]"
     }
 }
 
@@ -829,6 +830,8 @@ fn main() -> ExitCode {
             "fix" => run_fix(&rest[1..]),
             "check" => run_check(&rest[1..]),
             "db" => run_db(&rest[1..]),
+            "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),
+            "ai" if rest.len() == 2 && rest[1] == "usage" => ai_cmd::usage(),
             "lsp" if rest.len() == 1 => lsp::serve(lang_given),
             "--emit-llvm" if rest.len() == 2 => emit_ir(&rest[1]),
             a if a.starts_with('-') || rest.len() > 1 => {

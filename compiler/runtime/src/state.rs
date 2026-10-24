@@ -238,6 +238,12 @@ pub fn diag(d: Diagnostic, span_id: u32) -> Fail {
     Fail
 }
 
+/// The error value pending in this thread, if the failure is one (not a
+/// diagnostic); it stays pending.
+pub fn pending_error() -> Option<Val> {
+    with_task(|s| s.error.clone())
+}
+
 pub fn take_error() -> Val {
     set_failing(0);
     with_task(|s| s.error.take()).unwrap_or(Val::none())

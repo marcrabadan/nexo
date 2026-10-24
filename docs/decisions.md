@@ -1039,3 +1039,81 @@ value of every `@private` field of a record replaced by `"***"` (the
 record keeps its own form, `Customer(name: "Ana", national_id: "***")`,
 D30). A secret cannot be logged (D97). Outside logs and `ask` (D108), the
 field is an ordinary field: the program reads and prints it.
+
+## nexo.ai (section 8)
+
+**D106. Configuration of `ask`.** Section 8 lists five places, "the first
+one that exists wins", and three providers by name (anthropic, openai,
+ollama); the format of nexo.toml and of the user configuration is not
+written.
+- The places are read key by key: a call with `model:` still takes the
+  key from the `ai` block. An `ai:` block replaces the file's previous
+  one from its line on (D90); `ai profile "p":` is used by
+  `ask(..., profile: "p")`, and a profile that does not exist is an error.
+- The keys of a block are `provider`, `model`, `key`, `url` and
+  `fallback`; another key is an error (with "Did you mean"). `budget` and
+  `when_over_budget` need the cost controls of a later phase (D89). `url`
+  is the address of the provider (for ollama on another machine, or a
+  server that speaks the same API); the defaults are
+  https://api.anthropic.com, https://api.openai.com and
+  http://localhost:11434.
+- A model is `"provider:model"` or a name of `ai models:`; a model without
+  a provider uses the configured `provider`. `key` and `url` belong to a
+  provider: they come from the first place that configures that
+  provider, so a fallback to another provider does not send it the first
+  one's key.
+- nexo.toml (in the program's folder or the nearest folder above) and the
+  user configuration (`$XDG_CONFIG_HOME/nexo/ai.toml`, by default
+  `~/.config/nexo/ai.toml`) have an `[ai]` table with the same keys and
+  an `[ai.models]` table with the aliases. Values are texts or lists of
+  texts in double quotes; `key` there is the name of the environment
+  variable that holds the key, since a key is never written in a file
+  (section 9). `nexo ai setup` asks for the provider, the model, that name
+  and the address, and writes the file.
+- Without a provider anywhere, `ask` fails with AIError and the message of
+  section 8; a provider without its key (ollama needs none) fails with
+  AIError too.
+
+**D107. Calls.** `ask(instruction, input?, options...)` is a function that
+can fail (`?` passes its error on). It sends one message to the provider
+(Anthropic's Messages API, OpenAI's Chat Completions, Ollama's
+`/api/chat`) with the http client and returns the text of the answer.
+- `creativity`, `guard` and `redact` take a bare word (`creativity: low`),
+  read as text by the parser like the model aliases. `creativity` is the
+  temperature: low 0.2, medium 0.7, high 1.0. `max: 200 tokens` limits the
+  answer; `max: 200 words` asks for that many words and limits the
+  answer to about 4/3 tokens per word. `timeout` is 60s by default.
+- `retries` (3 with a type, 1 without) is the number of new attempts after
+  a network error or a 502, 503 or 504, and, with a type, after an answer
+  that is not a valid value. When a model cannot answer (NetworkError,
+  HTTPError or AIError), the next one of `fallback` is tried; the error of
+  the last one passes on.
+- `stream: true` asks the provider for the answer in pieces and returns
+  the list of pieces in order, so `for chunk in ask(..., stream: true)`
+  works; the loop starts when the answer is complete, since a value that
+  arrives while the program runs needs the streams of a later phase. A
+  typed answer cannot be streamed.
+- Every answer adds a line to `usage.csv` next to ai.toml (day, model,
+  input and output tokens). `nexo ai usage` shows the calls and tokens per
+  day and model; spend needs the prices of each provider, which change
+  and are not in the specification, so it is not shown.
+- `fake ask returns value` (D99) replaces every call in a test.
+
+**D108. Typed answers, `guard` and `redact`.** `o: Opinion = ask(...)`
+passes the type of the variable to the call (`as: Opinion`, which can
+also be written). The message asks for JSON of the form of the type,
+written with the types as Nexo writes them (`{"tone": "positive" |
+"negative" | "neutral", "score": 1..5}`); the answer (also inside ```
+fences) is read as `json.parse(as: T)` does. An answer that is not a
+valid value is sent back with the reason and asked again, up to
+`retries` times; then the InvalidData error passes on.
+- Every value is treated as external (phase 4 does not mark where values
+  come from), so `guard: injection` is the default whenever there is an
+  input: the input goes between `<input>` and `</input>` and the system
+  message says that text there is data, never instructions. With
+  `guard: none` the input follows the instruction after a blank line.
+- `redact: private` (the default) shows the input with its `@private`
+  fields as `"***"`, as `log` does (D105); `redact: none` sends them. A
+  secret is never sent (D97).
+- The system message and these instructions are in English for every
+  language of the messages, so the same program sends the same request.

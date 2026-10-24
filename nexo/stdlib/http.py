@@ -104,6 +104,12 @@ def request(call, method: str, url, body=None, headers=None, timeout=None, retri
         raise expects(call, "retries", "int", retries)
     data, content_type = encode_body(call, body)
     extra = header_values(call, headers)
+    return send(call, method, url, data, content_type, extra, limit, retries)
+
+
+def send(call, method, url, data, content_type, extra, limit, retries) -> Response:
+    """The request, retried `retries` times after a network error or a 502,
+    503 or 504 (also used by `ask`)."""
     attempt = 0
     while True:
         try:

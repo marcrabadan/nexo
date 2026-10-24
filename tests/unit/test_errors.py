@@ -78,3 +78,12 @@ def test_every_compiler_diagnostic_has_a_fix_sentence():
             continue
         fix = "fix." + (key[4:] if key.startswith("err.") else key)
         assert fix in compiled, key
+
+
+def test_no_message_is_written_twice():
+    import collections
+    import re
+    from pathlib import Path
+    text = (Path(__file__).parents[2] / "nexo" / "errors.py").read_text(encoding="utf-8")
+    keys = re.findall(r'^    "([\w.]+)": \{', text, re.M)
+    assert [k for k, n in collections.Counter(keys).items() if n > 1] == []

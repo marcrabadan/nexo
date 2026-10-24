@@ -1,0 +1,2 @@
+# creativity is low, medium or high (section 8)
+print(ask("Write a poem", creativity: wild))

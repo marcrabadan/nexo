@@ -96,6 +96,7 @@ pub const ERROR_KINDS: &[&str] = &[
     "InvalidValue",
     "NetworkError",
     "HTTPError",
+    "AIError",
     "DatabaseError",
 ];
 
