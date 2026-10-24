@@ -1387,8 +1387,13 @@ impl<'s> Parser<'s> {
                 node = self.expr_node(span, ExprKind::Attr { obj: Box::new(node), name, name_span });
             } else if self.at_op("(") {
                 self.advance();
-                let args = self.args(")")?;
+                let mut args = self.args(")")?;
                 self.expect_op(")")?;
+                let is_sql = matches!(&node.kind, ExprKind::Attr { name, .. } if name == "sql");
+                if self.db && is_sql && args.len() == 1 && args[0].name.is_none() && matches!(args[0].value.kind, ExprKind::Str(_)) {
+                    let value = std::mem::replace(&mut args[0].value, Expr { id: 0, span: start, kind: ExprKind::None });
+                    args[0].value = self.sql_text(value);
+                }
                 let span = self.span_from(start);
                 node = self.expr_node(span, ExprKind::Call { func: Box::new(node), args });
             } else if self.at_op("[") {
@@ -1660,6 +1665,28 @@ impl<'s> Parser<'s> {
         }
     }
 
+    /// db.sql("... {x} ..."): the literal parts and the values apart, so
+    /// the values become parameters (section 6, D100).
+    fn sql_text(&mut self, s: Expr) -> Expr {
+        let span = s.span;
+        let ExprKind::Str(pieces) = s.kind else { unreachable!() };
+        let mut parts = vec![String::new()];
+        let mut values = Vec::new();
+        for p in pieces {
+            match p {
+                StrPiece::Lit(t) => parts.last_mut().unwrap().push_str(&t),
+                StrPiece::Expr(x) => {
+                    values.push(x);
+                    parts.push(String::new());
+                }
+            }
+        }
+        let parts: Vec<Expr> = parts.iter().map(|p| self.text(span, p)).collect();
+        let parts = self.expr_node(span, ExprKind::List(parts));
+        let values = self.expr_node(span, ExprKind::List(values));
+        self.call(span, "__sql_text", vec![parts, values], Vec::new())
+    }
+
     /// `10 per minute per ip` -> __rate(10, "minute", "ip")
     fn rate(&mut self, value: Expr) -> PResult<Expr> {
         if !self.at_name("per") {
@@ -1867,8 +1894,12 @@ impl<'s> Parser<'s> {
                     t.optional = true;
                 }
             }
-            if !f.marks.is_empty() {
-                marks.push((f.name.clone(), f.span, f.marks.clone()));
+            let mut fmarks = f.marks.clone();
+            if matches!(&f.ty, TypeExpr::Name(t) if t.rel == Some("ref")) {
+                fmarks.push("ref".into());
+            }
+            if !fmarks.is_empty() {
+                marks.push((f.name.clone(), f.span, fmarks));
             }
             kept.push(f);
         }

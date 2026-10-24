@@ -452,6 +452,16 @@ fn date_text(days: i64) -> String {
 }
 
 impl Time {
+    /// The form stored in databases: UTC with milliseconds, so the text
+    /// sorts as the instants do.
+    pub fn iso_utc(&self) -> String {
+        let days = self.ms.div_euclid(MS_PER_DAY);
+        let rest = self.ms.rem_euclid(MS_PER_DAY);
+        let (y, m, d) = civil_from_days(days);
+        let s = rest / 1000;
+        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z", s / 3600, s / 60 % 60, s % 60, rest % 1000)
+    }
+
     fn offset(&self) -> i64 {
         zone(&self.zone).map(|z| z.offset_at(self.ms.div_euclid(1000))).unwrap_or(0)
     }

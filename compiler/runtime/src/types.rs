@@ -94,6 +94,7 @@ pub const ERROR_KINDS: &[&str] = &[
     "InvalidValue",
     "NetworkError",
     "HTTPError",
+    "DatabaseError",
 ];
 
 /// A declared type, decoded from the descriptor the compiler emits.

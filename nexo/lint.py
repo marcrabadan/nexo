@@ -304,7 +304,8 @@ class Linter:
             return
         home = scope.target()
         self.declare(home, name)
-        if name not in self.reads(home.node):
+        # names the parser makes for module code (D90) are not the author's
+        if name not in self.reads(home.node) and not name.startswith("__"):
             self.add("unused", target.span, name=name)
 
     # -- rules ------------------------------------------------------------

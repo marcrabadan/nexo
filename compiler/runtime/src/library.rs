@@ -33,6 +33,12 @@ static SIGS: &[Sig] = &[
     Sig { name: "http.patch", params: &[] },
     Sig { name: "http.delete", params: &[] },
     Sig { name: "__fake", params: &[p("name"), p("value")] },
+    Sig { name: "connect", params: &[p("url"), opt("key")] },
+    Sig { name: "__db_table", params: &[p("type"), p("key"), p("many"), p("marks")] },
+    Sig { name: "__db_begin", params: &[p("db")] },
+    Sig { name: "__db_commit", params: &[p("tx")] },
+    Sig { name: "__db_rollback", params: &[p("tx")] },
+    Sig { name: "__sql_text", params: &[p("parts"), p("values")] },
 ];
 
 /// Namespaces of the library: their members are the SIGS named "ns.member".
@@ -80,6 +86,12 @@ pub fn fake_value(name: &str) -> Option<Val> {
     FAKES.lock().unwrap().iter().rev().find(|(n, _)| n == name).map(|(_, v)| v.clone())
 }
 
+/// End of the program (NEXO_LEAKCHECK): what the library still holds.
+pub fn release_all() {
+    clear_fakes();
+    crate::db::release_all();
+}
+
 pub fn clear_fakes() {
     let old = std::mem::take(&mut *FAKES.lock().unwrap());
     drop(old);
@@ -114,6 +126,12 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "decrypt_file" => c::decrypt_file(x(0), x(1), span),
         "sign" => c::sign(x(0), x(1), span),
         "verify" => c::verify(x(0), x(1), x(2), span),
+        "connect" => crate::db::connect(x(0), a.get(1), span),
+        "__db_table" => crate::db::register(x(0), x(1), x(2), x(3), span),
+        "__db_begin" => crate::db::begin(x(0), span),
+        "__db_commit" => crate::db::end(x(0), true, span),
+        "__db_rollback" => crate::db::end(x(0), false, span),
+        "__sql_text" => crate::db::sql_text(x(0), x(1), span),
         "__fake" => {
             let name = x(0).as_str().unwrap_or("").to_string();
             let value = crate::pipe::bind(x(1))?;

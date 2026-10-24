@@ -8,6 +8,7 @@
     nexo fix [paths]     apply the safe fixes
     nexo check [paths]   the compile checks, without running anything
     nexo lsp             language server on standard input and output (D87)
+    nexo db diff|migrate file.nexo [--db path] [--allow-drop]   migrations (D101)
     --lang es|en         language of messages (Spanish by default)
 """
 from __future__ import annotations
@@ -22,8 +23,10 @@ from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
 USAGE = {
-    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp]",
-    "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp]",
+    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp"
+          " | db diff|migrate archivo.nexo [--db ruta] [--allow-drop]]",
+    "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp"
+          " | db diff|migrate file.nexo [--db path] [--allow-drop]]",
 }
 BANNER = {
     "es": "Nexo {v} (fase 0). Escribe código y pulsa Intro; Ctrl-D para salir.",
@@ -252,6 +255,51 @@ def run_check(paths: list[str]) -> int:
     return status
 
 
+# ------------------------------------------------------------- nexo.db
+
+def run_db(args: list[str]) -> int:
+    """`nexo db diff|migrate file.nexo [--db path] [--allow-drop]` (D101)."""
+    from .parser import parse
+    from .stdlib import db
+    command = args[0] if args else ""
+    file = db_path = None
+    allow_drop = False
+    i = 1
+    while i < len(args):
+        a = args[i]
+        if a == "--db" and i + 1 < len(args):
+            db_path = args[i + 1]
+            i += 2
+            continue
+        if a == "--allow-drop" and command == "migrate":
+            allow_drop = True
+        elif file is None and not a.startswith("-"):
+            file = a
+        else:
+            file = None
+            break
+        i += 1
+    if command not in ("diff", "migrate") or file is None:
+        print(USAGE[errors.LANG], file=sys.stderr)
+        return 2
+    try:
+        source = Path(file).read_text(encoding="utf-8")
+    except OSError:
+        sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=file)}.\n")
+        return 1
+    interp = Interpreter()
+    try:
+        program = interp.load(source, file)
+        if db_path is None:
+            db_path = db.connect_literal(program)
+        for stmt in db.schema_program(program):
+            interp.exec(stmt, interp.globals)
+    except (NexoError, NexoFailure) as exc:
+        report(exc)
+        return 1
+    return db.run_command(interp, command, file, db_path, allow_drop)
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -317,6 +365,8 @@ def main(argv: list[str] | None = None) -> int:
         rest.append(a)
         i += 1
     errors.set_lang(lang)
+    if rest[:1] == ["db"] and lang in ("es", "en"):
+        return run_db(rest[1:])
     if lang not in ("es", "en") or any(a.startswith("-") for a in rest):
         print(USAGE[errors.LANG], file=sys.stderr)
         return 2

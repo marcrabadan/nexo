@@ -174,6 +174,8 @@ pub struct Resolution {
     pub task_outputs: HashMap<FrameId, Vec<BindingId>>,
     /// the program has `use nexo.sync`
     pub sync: bool,
+    /// the program has `use nexo.db`
+    pub db: bool,
     /// top-level names no function, lambda, task or test uses: they are
     /// locals of the main program (kept in registers) instead of statics
     pub main_local: std::collections::HashSet<BindingId>,
@@ -197,6 +199,7 @@ pub const ERROR_KINDS: &[&str] = &[
     "InvalidValue",
     "NetworkError",
     "HTTPError",
+    "DatabaseError",
 ];
 
 /// Builtin names in the order the phase 0 interpreter defines them (this
@@ -218,13 +221,16 @@ pub fn builtin_names() -> Vec<&'static str> {
 /// defines them.
 pub const LIBRARY_NAMES: &[&str] = &[
     "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair", "encrypt",
-    "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "http", "__fake",
+    "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "http", "__fake", "__db_table", "__db_begin",
+    "__db_commit", "__db_rollback", "__sql_text",
 ];
 
 /// Library names that are functions or namespaces (not types).
 pub const LIBRARY_FUNCTIONS: &[&str] = &[
+    "connect",
     "move_file", "now", "today", "regex", "render", "secret", "password", "key", "keypair", "encrypt", "decrypt",
-    "encrypt_file", "decrypt_file", "sign", "verify", "http", "email", "__fake",
+    "encrypt_file", "decrypt_file", "sign", "verify", "http", "email", "__fake", "__db_table",
+    "__db_begin", "__db_commit", "__db_rollback", "__sql_text",
 ];
 
 pub fn is_builtin(name: &str) -> bool {
@@ -284,6 +290,7 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             self_calls: std::collections::HashSet::new(),
             task_outputs: HashMap::new(),
             sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.sync")),
+            db: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.db")),
             main_local: std::collections::HashSet::new(),
         },
         used_outside: std::collections::HashSet::new(),
@@ -566,7 +573,10 @@ impl Resolver {
             }
             s = self.r.scopes[id].parent;
         }
-        if cands.is_empty() && row.is_none() && (is_builtin(name) || (self.r.sync && name == "channel")) {
+        if cands.is_empty()
+            && row.is_none()
+            && (is_builtin(name) || (self.r.sync && name == "channel") || (self.r.db && name == "connect"))
+        {
             return NameRes::Builtin(name.to_string());
         }
         for b in &cands {
@@ -582,6 +592,9 @@ impl Resolver {
     }
 
     fn name_error(&self, scope: ScopeId, name: &str, span: nexo_diag::Span) -> Diagnostic {
+        if name == "connect" {
+            return Diagnostic::new("needs_use", span).arg("what", "\"connect\"").arg("module", "nexo.db");
+        }
         let visible = self.visible(scope);
         match suggest(name, visible.iter().map(|s| s.as_str())) {
             Some(s) => Diagnostic::new("name_not_found", span).fix("suggest").arg("name", name).arg("suggestion", s),

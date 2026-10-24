@@ -986,6 +986,9 @@ class Parser:
                 self.advance()
                 args = self.args(")")
                 self.expect_op(")")
+                if self.db and isinstance(node, A.Attr) and node.name == "sql" and len(args) == 1 \
+                        and args[0].name is None and isinstance(args[0].value, A.Str):
+                    args = [A.Arg(args[0].span, None, sql_text(args[0].value))]
                 node = A.Call(self.span_from(start), node, args)
             elif self.at_op("["):
                 self.advance()
@@ -1322,8 +1325,9 @@ def _module_methods():
                     raise NexoError("table_two_ids", f.span, type=node.name)
                 key = f.name
                 f.type = A.TypeName(t.span, "int", optional=True)
-            if f.marks:
-                marks.append((text(f.span, f.name), A.ListLit(f.span, [text(f.span, m) for m in f.marks])))
+            fmarks = f.marks + (["ref"] if isinstance(t, A.TypeName) and t.rel == "ref" else [])
+            if fmarks:
+                marks.append((text(f.span, f.name), A.ListLit(f.span, [text(f.span, m) for m in fmarks])))
             kept.append(f)
         node.fields = kept
         span = a.span
@@ -1407,6 +1411,20 @@ def _module_methods():
 
 for _name, _fn in _module_methods().items():
     setattr(Parser, _name, _fn)
+
+
+def sql_text(s: A.Str) -> A.Call:
+    """db.sql("... {x} ..."): the literal parts and the values apart, so
+    the values become parameters (section 6, D100)."""
+    parts, values = [""], []
+    for p in s.parts:
+        if isinstance(p, str):
+            parts[-1] += p
+        else:
+            values.append(p)
+            parts.append("")
+    return call(s.span, "__sql_text", [A.ListLit(s.span, [text(s.span, x) for x in parts]),
+                                       A.ListLit(s.span, values)])
 
 
 def body_returns(body: list):

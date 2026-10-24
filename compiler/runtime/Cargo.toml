@@ -20,3 +20,4 @@ aes-gcm = { version = "0.10", default-features = false, features = ["aes", "allo
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
 getrandom = "0.2"
 ureq = { version = "2", default-features = false, features = ["tls", "native-certs"] }
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }

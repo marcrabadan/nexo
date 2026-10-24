@@ -642,6 +642,10 @@ fn missing(vtype: &str, name: &str, candidates: &[&str], span: u32) -> crate::st
 /// Members of builtin values: `list.sum`, `text.upper`, `json.parse`...
 /// The name of a method of a builtin type, or the error of `member`.
 pub fn method_name(obj: V, name: &str, span: u32) -> R<&'static str> {
+    if let Some(q) = crate::db::query_of(obj) {
+        crate::db::query_member(&q, obj, name, span)?;
+        return Ok(crate::num::intern(name));
+    }
     match table(obj) {
         Some((_, names)) => match names.iter().find(|n| **n == name) {
             Some(n) => Ok(n),
@@ -654,6 +658,9 @@ pub fn method_name(obj: V, name: &str, span: u32) -> R<&'static str> {
 pub fn member(obj: V, name: &str, span: u32) -> R<Val> {
     if let Some(Obj::Native(n)) = obj.get() {
         return n.member(obj, name, span);
+    }
+    if let Some(q) = crate::db::query_of(obj) {
+        return crate::db::query_member(&q, obj, name, span);
     }
     if let Some(Obj::Namespace(ns)) = obj.get() {
         if let Some(v) = crate::library::member(ns, name, span) {
@@ -753,6 +760,9 @@ fn arity(name: &str, args: &[V], names: &[Option<&str>], n: usize, span: u32) ->
 pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     if let Some(Obj::Native(n)) = obj.get() {
         return n.call_method(obj, name, args, names, span);
+    }
+    if let Some(q) = crate::db::query_of(obj) {
+        return crate::db::query_method(&q, name, args, names, span);
     }
     if let Some(Obj::Channel(c)) = obj.get() {
         return crate::sync::call_method(c, obj, name, args, names, span);

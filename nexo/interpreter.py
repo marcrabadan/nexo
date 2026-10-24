@@ -560,7 +560,12 @@ class Interpreter:
             self.sync = True
             self.builtins.define("channel", ChannelMaker())
             return
-        if s.lang in ("c", "python") or (s.lang is None and s.name in ("nexo.db", "nexo.ai", "nexo.web")):
+        if s.lang is None and s.name == "nexo.db":
+            from .stdlib.db import db_exports
+            for name, value in db_exports().items():
+                self.builtins.define(name, value)
+            return
+        if s.lang in ("c", "python") or (s.lang is None and s.name in ("nexo.ai", "nexo.web")):
             return  # the statements that follow it bind the names (D90)
         name = f"{s.lang} {s.name}" if s.lang else s.name
         raise NexoError("not_supported", s.span, what=f'"use {name}"')
@@ -690,6 +695,8 @@ class Interpreter:
         return value
 
     def name_error(self, name: str, span: Span, env: Env) -> NexoError:
+        if name == "connect":
+            return NexoError("needs_use", span, what='"connect"', module="nexo.db")
         s = suggest(name, env.names())
         if s:
             return NexoError("name_not_found", span, fix="suggest", name=name, suggestion=s)
@@ -983,6 +990,10 @@ class Interpreter:
             return self.call_at(self.eval(step.expr, env), [(None, value)], step)
         if isinstance(value, Grouped):
             return self.aggregate(step, value, env)
+        if type(value).__name__ == "Query":
+            q = self.query_step(step, value, env)
+            if q is not None:
+                return q
         span = step.span
         source = value
         if kind == "where":
@@ -1044,6 +1055,28 @@ class Interpreter:
                 return None
             return self.binop("/", self.total(items, span), len(items), span, span)
         raise NexoError("not_supported", span, what=f'"{kind}"')
+
+    def query_step(self, step: A.PipeStep, query, env: Env):
+        """A step on a database query, in SQL when it can be (D100)."""
+        from .stdlib import db
+        kind = step.kind
+        if kind == "where":
+            plan = db.where_plan(step.expr)
+            if plan is None:
+                return None
+            return db.pipe_where(query, plan[0], plan[1], lambda i: self.eval(plan[1][i], env))
+        if kind == "sort":
+            return db.pipe_sort(query, step.expr, step.desc)
+        if kind == "take":
+            n = self.eval(step.expr, env)
+            if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+                raise NexoError("type_mismatch", step.expr.span, name="take", type="int",
+                                value=repr_value(n), vtype=type_name(n))
+            return db.pipe_take(query, n)
+        if kind == "count":
+            from .types import At
+            return query.m_count(At(self, step.span, step))
+        return None
 
     def word_name(self) -> str:
         return "un nombre de columna" if errors.LANG == "es" else "a column name"
@@ -1264,6 +1297,12 @@ class Interpreter:
             method = obj.type.methods.get(name)
             if method is not None:
                 return method.bind(obj)
+            if getattr(obj.type, "table", None) is not None:
+                from .stdlib.db import relation
+                from .types import At
+                q = relation(At(self, span), obj, name)
+                if q is not None:
+                    return q
             raise self.member_error(obj, name, span, list(obj.fields) + list(obj.type.methods))
         if isinstance(obj, VariantValue):
             if name in obj.fields:

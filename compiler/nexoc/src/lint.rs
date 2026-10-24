@@ -778,7 +778,8 @@ impl<'a> Linter<'a> {
         let home = self.target(scope);
         self.declare(home, name, false);
         let area = self.scopes[home].area;
-        if !self.is_read(area, name) {
+        // names the parser makes for module code (D90) are not the author's
+        if !self.is_read(area, name) && !name.starts_with("__") {
             self.add("unused", target.span, None, vec![("name", name.clone())]);
         }
     }

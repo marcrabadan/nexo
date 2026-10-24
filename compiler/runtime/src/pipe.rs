@@ -19,6 +19,8 @@ pub type Items = Box<dyn Iterator<Item = R<Val>> + Send>;
 /// A re-readable lazy sequence: each iteration calls `make` again.
 pub struct Lazy {
     pub make: Box<dyn Fn() -> R<Items> + Send + Sync>,
+    /// a database query (nexo.db): its steps may still run in SQL
+    pub query: Option<Val>,
 }
 
 /// Result of `group by`, waiting for sum, count or avg.
@@ -48,7 +50,12 @@ fn boxed<F: FnMut() -> Option<R<Val>> + Send + 'static>(f: F) -> Items {
 }
 
 pub fn lazy(make: impl Fn() -> R<Items> + Send + Sync + 'static) -> Val {
-    Val::new(Obj::Lazy(Lazy { make: Box::new(make) }))
+    Val::new(Obj::Lazy(Lazy { make: Box::new(make), query: None }))
+}
+
+/// A lazy sequence that is a database query.
+pub fn lazy_query(make: impl Fn() -> R<Items> + Send + Sync + 'static, query: Val) -> Val {
+    Val::new(Obj::Lazy(Lazy { make: Box::new(make), query: Some(query) }))
 }
 
 /// The elements of an iterable value. The iterator holds its own
@@ -220,6 +227,9 @@ pub fn take(src: V, n: V, step_span: u32, n_span: u32) -> R<Val> {
             ))
         }
     };
+    if let Some(q) = crate::db::pipe_take(src, count as i64) {
+        return Ok(q);
+    }
     let src = Val::from(src);
     Ok(lazy(move || Ok(Box::new(iterate(src.v(), step_span)?.take(count)))))
 }
@@ -293,6 +303,9 @@ pub fn each(src: V, f: V, step_span: u32, expr_span: u32) -> R<Val> {
 }
 
 pub fn count(src: V, span: u32) -> R<Val> {
+    if let Some(q) = crate::db::query_of(src) {
+        return Ok(Val::int(q.count(span)?));
+    }
     let mut n = 0i64;
     for item in iterate(src, span)? {
         item?;

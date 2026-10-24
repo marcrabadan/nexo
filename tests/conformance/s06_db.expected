@@ -1,0 +1,11 @@
+Customer(id: 1, name: "Ana", email: "ana@mail.com")
+150.0 2026-10-20 Ana
+320.5 2026-10-05 Luis
+Ana 2 199.9
+Ana G. 4
+DatabaseError Ya hay un Customer con email = "ana@mail.com"
+4 1
+[{"id": 2, "amount": 150.0}, {"id": 3, "amount": 320.5}]
+No hay ningún Customer con email = "nobody@mail.com"
+[10.0]
+["Ana G.", "Luis"]

@@ -1,0 +1,7 @@
+use nexo.db
+
+db = connect("data.db")
+minimum = 10
+query = "SELECT * FROM sqlite_master WHERE rootpage > " + str(minimum)
+print(db.sql("SELECT 1 + {minimum} AS total"))
+rows = db.sql(query)

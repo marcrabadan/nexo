@@ -1,0 +1,9 @@
+use nexo.db
+
+@table
+type Basket:
+    id: id
+    items: list[str]
+
+db = connect("baskets.db")
+print(db.Basket.count())

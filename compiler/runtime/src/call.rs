@@ -274,6 +274,9 @@ pub fn get_attr(obj: V, name: &str, span: u32) -> R<Val> {
             if let Some(m) = find_method(obj, name) {
                 return Ok(bound(obj, m));
             }
+            if let Some(q) = crate::db::relation(obj, name, span) {
+                return q;
+            }
             let mut c: Vec<String> = r.ty.fields.iter().map(|f| f.name.clone()).collect();
             c.extend(method_names(obj));
             Err(member_error(obj, name, span, c))

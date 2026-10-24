@@ -1,0 +1,5 @@
+[{"total": 11}]
+Error en s06_db_sql.nexo, línea 7:
+  rows = db.sql(query)
+         ^^^^^^^^^^^^^
+db.sql necesita el texto de la consulta escrito en la llamada. Escribe db.sql("SELECT ... {valor}"): los valores entre llaves se pasan como parámetros, nunca dentro del texto.

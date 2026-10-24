@@ -133,6 +133,7 @@ fn check_leaks() {
     let handlers = std::mem::take(&mut state::registry().write().unwrap().handlers);
     drop(handlers);
     types::release_all();
+    crate::library::release_all();
     SCRATCH.with(|s| s.borrow_mut().clear());
     state::clear();
     let live = live_objects();
@@ -239,6 +240,14 @@ pub unsafe extern "C" fn nx_named(ptr: *const u8, len: usize) -> V {
         }
         None => NONE,
     }
+}
+
+/// `nexo db diff|migrate` (D101): the types are registered; compare them
+/// with the database and end.
+#[no_mangle]
+pub extern "C" fn nx_db_command() -> ! {
+    let code = crate::db::run_command();
+    nx_exit(code)
 }
 
 /// `now` and `today`, read from the clock each time.
@@ -988,6 +997,54 @@ pub extern "C" fn nx_no_match(t: u64, b: u64, span: u32) {
 #[no_mangle]
 pub extern "C" fn nx_pipe_where(st_: u64, sb: u64, ft: u64, fb: u64, step: u32, expr: u32) -> V {
     pipe::where_(v(st_, sb), v(ft, fb), step, expr).into_raw()
+}
+
+/// `where` with the plan the compiler made of its condition: on a database
+/// query it may run in SQL (D100); `leaves` evaluate its values.
+#[no_mangle]
+pub unsafe extern "C" fn nx_pipe_where_sql(
+    st_: u64,
+    sb: u64,
+    ft: u64,
+    fb: u64,
+    plan: *const u8,
+    plen: usize,
+    leaves: *const V,
+    n: u64,
+    step: u32,
+    expr: u32,
+) -> V {
+    let src = v(st_, sb);
+    if crate::db::query_of(src).is_some() {
+        let plan = crate::db::parse_plan(text(plan, plen));
+        let leaves = values(leaves, n);
+        let mut value = |i: usize| call::call_value(leaves[i], &[NONE], expr);
+        match crate::db::pipe_where(src, &plan, &mut value, step) {
+            Ok(Some(q)) => return q.into_raw(),
+            Ok(None) => {}
+            Err(_) => return NONE,
+        }
+    }
+    pipe::where_(src, v(ft, fb), step, expr).into_raw()
+}
+
+/// `sort by name`: on a database query it may run in SQL (D100).
+#[no_mangle]
+pub unsafe extern "C" fn nx_pipe_sort_col(
+    st_: u64,
+    sb: u64,
+    ft: u64,
+    fb: u64,
+    desc: u32,
+    name: *const u8,
+    len: usize,
+    step: u32,
+    expr: u32,
+) -> V {
+    if let Some(q) = crate::db::pipe_sort(v(st_, sb), text(name, len), desc != 0) {
+        return q.into_raw();
+    }
+    pipe::sort(v(st_, sb), v(ft, fb), desc != 0, step, expr).into_raw()
 }
 
 #[no_mangle]

@@ -888,3 +888,75 @@ value` (a dotted name, `fake http.get returns ...`, works too) makes every
 call written as `name(...)` return the value until the test ends; the
 function and the arguments are still evaluated. It is only a statement
 inside `test` blocks; `fake` stays an ordinary name elsewhere.
+
+**D100. `nexo.db`.** Section 6 shows one way to connect and the `@table`
+types as the source of truth. Phase 4 has SQLite, which needs no server:
+- `use nexo.db` makes `connect` and `@table` available (section 15:
+  "`use nexo.db`"; without it they are errors that say so).
+  `connect("data.db")` opens (or creates) an SQLite file and can fail
+  (`DatabaseError`); `connect("postgres://...")` and other servers belong
+  with the cloud resources of phase 5 and are reported as unavailable.
+  `key:` is checked to be readable and not used by SQLite.
+- A `@table` type is a table named after the type in lowercase. Its
+  fields are columns of type `int`, `float`, `bool`, `str`, `decimal`,
+  `money`, `date` or `time`, an int range, a union of literals, or an enum
+  without data; `ref T` is a column `<field>_id` that holds the id of a
+  row of `T` (reading it loads that row); `many T` is not a column but a
+  query of the rows of `T` whose `ref` field points to this one. A field
+  of another type, or a record without `ref`, is an error. The field of
+  type `id` is the automatic primary key (an `int?` that is none until the
+  row is saved). `@unique` is a UNIQUE column; `@private` and `@personal`
+  belong to privacy (phase 5) and change nothing yet. A record field
+  typed with another table type is shared (D78), so `ref` and `many` make
+  no reference cycle: `many` fields are left out of the cycle check.
+- Tables are created, and the columns of new fields added (empty for
+  existing rows), the first time the program uses a type through a
+  database. Anything that removes or changes data is done by
+  `nexo db migrate` (D101).
+- `db.T` is a query of the whole table: `find(field: value, ...)` (a
+  `NotFound` error when no row matches, so `?` passes it on; section 15's
+  `find(...) ?? 404` is written `find(...)?`, which a route answers with
+  404, D104), `add(field: value, ...)` (or `add(record)`; it returns the
+  record with its id), `update(record, field: value, ...)`,
+  `remove(record_or_id)`, `all()` and `count()`. A repeated `@unique` value
+  is a `DatabaseError` that names the field and the value. `ana.orders`
+  of a `many` field reads from the database the type was last used with.
+- Pipelines on a query are translated to SQL while they can be (section
+  6): `where` whose condition compares columns with values (`==`, `!=`,
+  `<`, `>`, `<=`, `>=`, `text in column`, a bare bool column, joined with
+  `and`, `or`, `not`), `sort by column [desc]` and `take n`, in that
+  order, then `count`. A bare name in a step is a column first (D44), so
+  `where date >= start` compares the column `date`. A value is computed
+  once, outside the rows; columns of `decimal` and `money` are not
+  compared in SQL (their text does not order as numbers do), and a value
+  of the wrong type runs in memory (where it gives its usual error). From
+  the first step that cannot be translated, the rows are read and the
+  rest runs in memory with the same result; comparing a missing value is
+  false in SQL. Rows come in the order of the primary key unless sorted
+  (ties of `sort by` too, as the stable sort in memory keeps them).
+  `NEXO_SQL_LOG=1` writes every statement to the standard error output;
+  the tests check that both phases send the same SQL.
+- `db.transaction:` (D90) runs its block in a transaction: an error rolls
+  it back and passes on; inside another one it is a savepoint.
+- `db.sql("SELECT ... {minimum}")` sends the text with each `{value}` as a
+  parameter, never inside the SQL ("raw SQL, always parameterised"), so
+  its argument must be a literal text (the parser keeps its parts apart);
+  a text built elsewhere is an error. A table name after FROM, JOIN, INTO,
+  UPDATE or TABLE, or before a dot, is quoted, so section 6's
+  `FROM order` works although `order` is an SQL word. The result is a
+  list of maps (empty for statements that return no rows).
+- Times are stored in UTC with milliseconds (they come back in UTC),
+  money as `"19.99 EUR"`, decimals as text.
+
+**D101. Migrations.** Section 6 has `nexo db diff` write "a readable
+migration file" and `nexo db migrate` apply it in a transaction; the
+format is left open for edition 1.0 (section 27). `nexo db diff app.nexo`
+runs only the types of the program (nothing else) and compares them with
+the database of its first `connect("...")` (or `--db path`): it writes
+`migrations/NNNN.sql` next to the program, numbered in order, with the
+SQL to create tables and add columns, then, under a comment, what drops
+data (removed tables, and removed columns, which SQLite drops by building
+the table again). A column whose type changed gets a comment to change
+it by hand. `nexo db migrate app.nexo` applies the files not applied yet
+(recorded in the table `nexo_migrations`), each in a transaction; a file
+that drops data needs `--allow-drop`.

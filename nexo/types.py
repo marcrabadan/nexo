@@ -265,6 +265,7 @@ class RecordType:
     methods: dict[str, Any] = field(default_factory=dict)
     traits: list[TraitType] = field(default_factory=list)
     env: Any = None
+    table: Any = None  # a @table type (nexo.db)
 
 
 class WeakRef:
@@ -361,7 +362,8 @@ class Symbol:
 # ----------------------------------------------------------------- errors
 
 ERROR_KINDS = ["Error", "NotFound", "IOError", "InvalidData", "Overflow", "DivisionByZero",
-               "OutOfRange", "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError"]
+               "OutOfRange", "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError",
+               "DatabaseError"]
 
 
 @dataclass(eq=False)

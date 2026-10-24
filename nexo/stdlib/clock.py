@@ -160,6 +160,13 @@ class Time(Native):
         offset = abs(offset)
         return f"{text}{sign}{offset // 60:02d}:{offset % 60:02d}"
 
+    def iso_utc(self) -> str:
+        """The form stored in databases: UTC with milliseconds, so the text
+        sorts as the instants do."""
+        w = EPOCH + dt.timedelta(milliseconds=self.ms)
+        return (f"{w.year:04d}-{w.month:02d}-{w.day:02d}T{w.hour:02d}:{w.minute:02d}:{w.second:02d}"
+                f".{self.ms % 1000:03d}Z")
+
     def member(self, call, name: str):
         names = ["year", "month", "day", "hour", "minute", "second", "date", "zone", "to_zone"]
         if name in ("year", "month", "day", "hour", "minute", "second"):

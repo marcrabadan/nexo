@@ -21,7 +21,7 @@ use nexo_diag::{Diagnostic, Span};
 use crate::ast::*;
 
 const FALLIBLE_BUILTINS: &[&str] =
-    &["read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt", "encrypt_file", "decrypt_file"];
+    &["read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt", "encrypt_file", "decrypt_file", "connect"];
 const FALLIBLE_MEMBERS: &[(&str, &str)] = &[
     ("json", "parse"),
     ("csv", "parse"),
@@ -277,7 +277,7 @@ fn stmt_names(s: &Stmt, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(Strin
     Ok(())
 }
 
-fn expr_names(e: &Expr, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>) {
+pub fn expr_names(e: &Expr, reads: &mut Vec<(String, Span)>, writes: &mut Vec<(String, Span)>) {
     match &e.kind {
         ExprKind::Name(n) => reads.push((n.clone(), e.span)),
         ExprKind::Call { func, args } => {
