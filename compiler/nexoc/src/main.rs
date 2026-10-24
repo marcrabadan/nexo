@@ -4,11 +4,13 @@
 //!     nexo build [--release] file.nexo   compile to a native program
 //!         --trust-ensure                 (with --release) leave out unproven ensure checks
 //!     nexo test [paths...]               run the `test` blocks
+//!     nexo fmt [paths...]                format files in place (D85)
 //!     --lang es|en                       language of messages (Spanish by default)
 
 mod ast;
 mod checker;
 mod codegen;
+mod fmt;
 mod lexer;
 mod narrow;
 mod parser;
@@ -300,6 +302,40 @@ fn run_tests(paths: &[String]) -> u8 {
     }
 }
 
+/// `nexo fmt [paths]`: format the files in place and print the ones it changed.
+fn run_fmt(paths: &[String]) -> u8 {
+    let mut status = 0;
+    for f in test_files(paths) {
+        let display = f.to_string_lossy().into_owned();
+        let source = match read_source(&display) {
+            Ok(s) => s,
+            Err(e) => {
+                eprint!("{e}");
+                status = 1;
+                continue;
+            }
+        };
+        let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
+        match fmt::format_source(&source) {
+            Ok(formatted) => {
+                if formatted != source {
+                    if let Err(e) = std::fs::write(&f, &formatted) {
+                        eprintln!("Error: {e}");
+                        status = 1;
+                        continue;
+                    }
+                    println!("{name}");
+                }
+            }
+            Err(d) => {
+                eprint!("{}", render(&name, &source, d.span, &d.text()));
+                status = 1;
+            }
+        }
+    }
+    status
+}
+
 /// Print the LLVM IR of a program (for the compiler's own tests).
 fn emit_ir(path: &str) -> u8 {
     let source = match read_source(path) {
@@ -350,6 +386,7 @@ fn main() -> ExitCode {
         match rest[0].as_str() {
             "test" => run_tests(&rest[1..]),
             "build" => build(&rest[1..]),
+            "fmt" => run_fmt(&rest[1..]),
             "--emit-llvm" if rest.len() == 2 => emit_ir(&rest[1]),
             a if a.starts_with('-') || rest.len() > 1 => {
                 eprintln!("{}", usage());

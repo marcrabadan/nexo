@@ -3,6 +3,7 @@
     nexo                 interactive REPL
     nexo file.nexo       run a program
     nexo test [paths]    run the `test` blocks
+    nexo fmt [paths]     format files in place (D85)
     --lang es|en         language of messages (Spanish by default)
 """
 from __future__ import annotations
@@ -141,6 +142,32 @@ def run_tests(paths: list[str]) -> int:
     return 0 if passed == total and not broken_files else 1
 
 
+# ------------------------------------------------------------------ fmt
+
+def run_fmt(paths: list[str]) -> int:
+    """`nexo fmt`: format the files in place and print the ones it changed."""
+    from .fmt import format_source
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            formatted = format_source(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+            continue
+        if formatted != source:
+            f.write_text(formatted, encoding="utf-8")
+            print(name)
+    return status
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -211,6 +238,8 @@ def main(argv: list[str] | None = None) -> int:
         return repl()
     if rest[0] == "test":
         return run_tests(rest[1:])
+    if rest[0] == "fmt":
+        return run_fmt(rest[1:])
     if len(rest) > 1:
         print(USAGE[errors.LANG], file=sys.stderr)
         return 2

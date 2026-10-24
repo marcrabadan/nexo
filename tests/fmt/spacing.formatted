@@ -1,0 +1,21 @@
+## Spacing inside a line.
+type Point:
+    x: int
+    y: int = 0
+    fn norm(self) -> int:
+        return self.x * self.x + self.y ** 2
+
+p = Point(3, y: 4)
+print(p.norm())
+xs = [1, 2, 3]
+m = {"a": 1, "b": 2}
+print(xs[0], m["a"], -xs[1], 2 * -3, 10 % 3, 10%)
+r = 1..5
+print([n * n for n in r if n % 2 == 1])
+double = x -> x * 2
+print(double(4))
+email: str? = none
+print(email ?? "none", not (true), len(xs) > 0 and true)
+fn load(path: str) -> str!:
+    text = read(path)?
+    return text
