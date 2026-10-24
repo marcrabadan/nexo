@@ -470,8 +470,58 @@ impl<'a> Linter<'a> {
         let top = self.new_scope(Area::Body(&self.program.body), None, true, None);
         self.block(&self.program.body, top);
         self.use_lines();
+        self.expired_flags();
         self.findings.sort_by(|a, b| (a.span.line, a.span.col, a.key).cmp(&(b.span.line, b.span.col, b.key)));
         self.findings
+    }
+
+    /// A flag whose `expires` date has passed (section 22, rule 3); the day
+    /// is the one in UTC.
+    fn expired_flags(&mut self) {
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let today = nexo_runtime::time::civil_from_days(secs.div_euclid(86400));
+        let mut found = Vec::new();
+        for s in &self.program.body {
+            let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind else { continue };
+            if !matches!(&func.kind, ExprKind::Name(n) if n == "__flags") {
+                continue;
+            }
+            let Some(ExprKind::List(entries)) = args.first().map(|a| &a.value.kind) else { continue };
+            for entry in entries {
+                let ExprKind::Call { args: eargs, .. } = &entry.kind else { continue };
+                let ExprKind::List(phrases) = &eargs[0].value.kind else { continue };
+                let Some(ExprKind::List(atoms)) = phrases.first().map(|p| &p.kind) else { continue };
+                let [Expr { kind: ExprKind::Str(name), span: name_span, .. }] = atoms.as_slice() else { continue };
+                let ExprKind::Map(options) = &eargs[2].value.kind else { continue };
+                for (k, v) in options {
+                    let is_expires = matches!(&k.kind, ExprKind::Str(p) if matches!(p.as_slice(), [StrPiece::Lit(t)] if t == "expires"));
+                    let ExprKind::Call { func: df, args: dargs } = &v.kind else { continue };
+                    if !is_expires || !matches!(&df.kind, ExprKind::Name(n) if n == "date") || dargs.len() != 3 {
+                        continue;
+                    }
+                    let nums: Vec<i64> = dargs
+                        .iter()
+                        .filter_map(|a| match &a.value.kind {
+                            ExprKind::Num { text, is_float: false } => text.parse().ok(),
+                            _ => None,
+                        })
+                        .collect();
+                    if nums.len() != 3 || !nexo_runtime::time::valid_date(nums[0], nums[1], nums[2]) {
+                        continue;
+                    }
+                    if (nums[0], nums[1], nums[2]) < today {
+                        let text: String = name.iter().map(|p| match p {
+                            StrPiece::Lit(t) => t.as_str(),
+                            _ => "",
+                        }).collect();
+                        found.push((*name_span, text, format!("{:04}-{:02}-{:02}", nums[0], nums[1], nums[2])));
+                    }
+                }
+            }
+        }
+        for (span, name, date) in found {
+            self.add("flag_expired", span, None, vec![("name", name), ("date", date)]);
+        }
     }
 
     fn add(&mut self, key: &'static str, span: Span, fix: Option<Fix>, args: Vec<(&'static str, String)>) {

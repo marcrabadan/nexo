@@ -31,6 +31,11 @@ pub struct Parser<'s> {
     /// one `statement` returned (D90)
     extra: Vec<Stmt>,
     in_test: bool,
+    /// inside a phrase of a phase 5 block, `(` and `[` after a space start
+    /// a new atom (D114)
+    phrase_mode: bool,
+    /// names the steps of each pipeline keep (D122)
+    pipeline_vars: std::collections::HashMap<String, Vec<String>>,
 }
 
 fn describe(tok: &Token) -> String {
@@ -73,6 +78,8 @@ impl<'s> Parser<'s> {
             db: false,
             extra: Vec::new(),
             in_test: false,
+            phrase_mode: false,
+            pipeline_vars: std::collections::HashMap::new(),
         }
     }
 
@@ -112,6 +119,12 @@ impl<'s> Parser<'s> {
 
     fn at_op(&self, op: &str) -> bool {
         self.peek().is_op(op)
+    }
+
+    /// Is there a space between the last token and the next one?
+    fn spaced(&self) -> bool {
+        let (a, b) = (self.prev().span, self.peek().span);
+        a.line != b.line || a.end_col != b.col
     }
 
     fn at_ops(&self, ops: &[&str]) -> bool {
@@ -308,7 +321,7 @@ impl<'s> Parser<'s> {
                     let body = self.block()?;
                     return Ok(self.stmt_node(tok.span, StmtKind::Parallel(body)));
                 }
-                "test" => {
+                "test" if !self.peek_at(1).is_op("(") => {
                     self.advance();
                     let name = match &self.peek().tok {
                         Tok::Str(parts) if parts.iter().all(|p| matches!(p, StrPart::Lit(_))) => parts
@@ -1381,6 +1394,9 @@ impl<'s> Parser<'s> {
         let start = self.peek().span;
         let mut node = self.primary()?;
         loop {
+            if self.phrase_mode && (self.at_op("(") || self.at_op("[")) && self.spaced() {
+                return Ok(node);
+            }
             if self.at_op(".") {
                 self.advance();
                 let Tok::Name(name) = self.peek().tok.clone() else {
@@ -1490,6 +1506,11 @@ impl<'s> Parser<'s> {
                     return Ok(self.expr_node(tok.span, ExprKind::Name("self".into())));
                 }
                 "parallel" if self.peek_at(1).is_kw("for") => return self.parallel_for(),
+                // test() in a step of a pipeline runs the tests (D122)
+                "test" if self.peek_at(1).is_op("(") => {
+                    self.advance();
+                    return Ok(self.expr_node(tok.span, ExprKind::Name("test".into())));
+                }
                 _ => {}
             },
             Tok::Op("(") => {
@@ -1597,7 +1618,11 @@ impl<'s> Parser<'s> {
 // builtins whose names start with "__" (D90), so every later pass (the
 // checker, the resolver, the code generator) sees only core constructs.
 
-const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server"];
+const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server", "infra", "stage", "pipeline", "flags"];
+/// blocks of phase 5 whose body is read with the rule of D114
+const CFG_BLOCKS: &[&str] = &["infra", "stage", "pipeline", "flags"];
+/// keywords that start an expression; any other one is a word in a phrase
+const EXPR_KEYWORDS: &[&str] = &["true", "false", "none", "not", "self", "parallel"];
 const ROUTE_METHODS: &[&str] = &["get", "post", "put", "patch", "delete"];
 /// keys whose bare names are model aliases (section 8)
 const MODEL_KEYS: &[&str] = &["model", "fallback", "when_over_budget"];
@@ -1710,6 +1735,9 @@ impl<'s> Parser<'s> {
     /// ai:, ai models:, ai profile "name":, agent name:, server name:
     fn module_block(&mut self, tok: Token) -> PResult<Stmt> {
         let Tok::Name(word_) = tok.tok.clone() else { unreachable!() };
+        if CFG_BLOCKS.contains(&word_.as_str()) {
+            return self.cfg_block(tok, &word_);
+        }
         let mut name: Option<String> = None;
         let mut name_span = tok.span;
         let kind: &str = if word_ == "ai" && self.at_name("profile") {
@@ -1824,6 +1852,366 @@ impl<'s> Parser<'s> {
             self.extra.push(st);
         }
         Ok(stmt)
+    }
+
+    // -- phase 5 blocks (D114) ------------------------------------------
+
+    /// infra NAME:, stage NAME:, pipeline NAME:, flags: as
+    /// __infra("NAME", [entries]) and the like, each entry a __cfg(...).
+    fn cfg_block(&mut self, tok: Token, word_: &str) -> PResult<Stmt> {
+        let mut name = None;
+        if word_ != "flags" {
+            name = Some(self.expect_name()?.0);
+        }
+        self.expect_op(":")?;
+        self.expect_newline_raw()?;
+        if self.peek().tok != Tok::Indent {
+            return Err(self.error(&word("indented")));
+        }
+        self.advance();
+        let saved = std::mem::take(&mut self.extra);
+        let entries = self.cfg_entries(word_, name.as_deref());
+        let made = std::mem::replace(&mut self.extra, saved);
+        let entries = entries?;
+        self.block_end = self.p;
+        let span = tok.span;
+        let mut args = Vec::new();
+        if let Some(n) = &name {
+            args.push(self.text(span, &n.clone()));
+        }
+        args.push(self.expr_node(span, ExprKind::List(entries)));
+        let c = self.call(span, &format!("__{word_}"), args, Vec::new());
+        let stmt = self.expr_stmt(c);
+        // the functions of the steps come first, then the block that names them
+        if made.is_empty() {
+            return Ok(stmt);
+        }
+        let mut made = made.into_iter();
+        let first = made.next().unwrap();
+        let mut rest: Vec<Stmt> = made.collect();
+        rest.push(stmt);
+        rest.append(&mut self.extra);
+        self.extra = rest;
+        Ok(first)
+    }
+
+    /// { entry } DEDENT, the DEDENT consumed.
+    fn cfg_entries(&mut self, block: &str, name: Option<&str>) -> PResult<Vec<Expr>> {
+        let mut entries = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        while self.peek().tok != Tok::Dedent {
+            entries.push(self.cfg_entry(block, name, &mut seen)?);
+        }
+        self.advance();
+        Ok(entries)
+    }
+
+    fn cfg_entry(&mut self, block: &str, name: Option<&str>, seen: &mut Vec<String>) -> PResult<Expr> {
+        let start = self.peek().clone();
+        let mut head = vec![self.phrase()?];
+        let mut values: Option<Vec<Expr>> = None;
+        let mut options: Vec<(String, Expr)> = Vec::new();
+        if self.at_op("=") {
+            self.advance();
+            let mut v = vec![self.phrase()?];
+            self.cfg_items(&mut v, &mut options)?;
+            values = Some(v);
+            if let ExprKind::List(items) = &head[0].kind {
+                if let [Expr { kind: ExprKind::Str(parts), .. }] = items.as_slice() {
+                    let key: String = parts
+                        .iter()
+                        .map(|p| match p {
+                            StrPiece::Lit(s) => s.as_str(),
+                            _ => "",
+                        })
+                        .collect();
+                    if seen.contains(&key) {
+                        return Err(Diagnostic::new("duplicate_name", start.span).arg("name", key));
+                    }
+                    seen.push(key);
+                }
+            }
+        } else {
+            self.cfg_items(&mut head, &mut options)?;
+        }
+        let first_word = match &head[0].kind {
+            ExprKind::List(items) => match items.first().map(|i| &i.kind) {
+                Some(ExprKind::Str(parts)) => match parts.as_slice() {
+                    [StrPiece::Lit(s)] => Some(s.clone()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+        let span = start.span;
+        let body = if self.at_op(":") && self.peek_at(1).tok == Tok::Newline {
+            if block == "pipeline" && matches!(first_word.as_deref(), Some("step") | Some("after")) && values.is_none() {
+                let h = head[0].clone();
+                self.pipeline_code(name.unwrap_or(""), &h, span)?
+            } else {
+                self.advance();
+                self.expect_newline_raw()?;
+                if self.peek().tok != Tok::Indent {
+                    return Err(self.error(&word("indented")));
+                }
+                self.advance();
+                let inner = self.cfg_entries(block, name)?;
+                self.expr_node(span, ExprKind::List(inner))
+            }
+        } else {
+            self.expect_newline()?;
+            self.expr_node(span, ExprKind::None)
+        };
+        let mut pairs = Vec::new();
+        for (k, v) in options {
+            let key = self.text(span, &k);
+            pairs.push((key, v));
+        }
+        let opts = self.expr_node(span, ExprKind::Map(pairs));
+        let head = self.expr_node(span, ExprKind::List(head));
+        let values = match values {
+            Some(v) => self.expr_node(span, ExprKind::List(v)),
+            None => self.expr_node(span, ExprKind::None),
+        };
+        Ok(self.call(span, "__cfg", vec![head, values, opts, body], Vec::new()))
+    }
+
+    /// { "," item }: a phrase, or NAME ":" atom
+    fn cfg_items(&mut self, items: &mut Vec<Expr>, options: &mut Vec<(String, Expr)>) -> PResult<()> {
+        while self.at_op(",") {
+            self.advance();
+            let t = self.peek().clone();
+            let word_ = match &t.tok {
+                Tok::Name(n) => Some(n.clone()),
+                Tok::Keyword(k) => Some(k.to_string()),
+                _ => None,
+            };
+            if let Some(w) = word_.filter(|_| self.peek_at(1).is_op(":") && self.peek_at(2).tok != Tok::Newline) {
+                self.advance();
+                self.advance();
+                if options.iter().any(|(k, _)| *k == w) {
+                    return Err(Diagnostic::new("duplicate_name", t.span).arg("name", w));
+                }
+                let a = self.atom()?;
+                options.push((w, a));
+            } else {
+                items.push(self.phrase()?);
+            }
+        }
+        Ok(())
+    }
+
+    /// phrase = atom { atom }
+    fn phrase(&mut self) -> PResult<Expr> {
+        let start = self.peek().span;
+        let mut atoms = vec![self.atom()?];
+        while !(matches!(self.peek().tok, Tok::Newline | Tok::Dedent | Tok::Eof)
+            || self.at_op(",")
+            || self.at_op("=")
+            || self.at_op(":"))
+        {
+            atoms.push(self.atom()?);
+        }
+        let span = self.span_from(start);
+        Ok(self.expr_node(span, ExprKind::List(atoms)))
+    }
+
+    fn atom(&mut self) -> PResult<Expr> {
+        let tok = self.peek().clone();
+        if let Tok::Keyword(k) = tok.tok {
+            if !EXPR_KEYWORDS.contains(&k) {
+                self.advance();
+                return Ok(self.text(tok.span, k));
+            }
+        }
+        if tok.is_op("->") {
+            self.advance();
+            return Ok(self.text(tok.span, "->"));
+        }
+        let ok = matches!(tok.tok, Tok::Name(_) | Tok::Int(_) | Tok::Float(_) | Tok::Unit { .. } | Tok::Str(_) | Tok::Keyword(_))
+            || tok.is_op("[")
+            || tok.is_op("{")
+            || tok.is_op("(")
+            || tok.is_op("-");
+        if !ok {
+            return Err(self.error(&word("expr")));
+        }
+        let old = self.phrase_mode;
+        self.phrase_mode = true;
+        let e = self.or_expr();
+        self.phrase_mode = old;
+        let e = e?;
+        Ok(self.cfg_value(e))
+    }
+
+    /// An atom of a phase 5 block as data (D114): a bare name is a word, a
+    /// dotted name a reference, a comparison a condition, 2027-03-01 a date.
+    fn cfg_value(&mut self, e: Expr) -> Expr {
+        let sp = e.span;
+        if let Some(parts) = dotted(&e) {
+            if parts.len() == 1 {
+                return self.text(sp, &parts[0]);
+            }
+            let args = parts.iter().map(|p| self.text(sp, p)).collect();
+            return self.call(sp, "__ref", args, Vec::new());
+        }
+        match e.kind {
+            ExprKind::Compare { ops, operands } => {
+                let mut out: Option<Expr> = None;
+                let operands: Vec<Expr> = operands;
+                for (i, op) in ops.iter().enumerate() {
+                    let o = self.text(sp, op);
+                    let l = self.cfg_value(operands[i].clone());
+                    let r = self.cfg_value(operands[i + 1].clone());
+                    let c = self.call(sp, "__cond", vec![o, l, r], Vec::new());
+                    out = Some(match out {
+                        None => c,
+                        Some(prev) => {
+                            let and = self.text(sp, "and");
+                            self.call(sp, "__cond", vec![and, prev, c], Vec::new())
+                        }
+                    });
+                }
+                out.unwrap()
+            }
+            ExprKind::BoolOp { op, left, right } => {
+                let o = self.text(sp, op);
+                let l = self.cfg_value(*left);
+                let r = self.cfg_value(*right);
+                self.call(sp, "__cond", vec![o, l, r], Vec::new())
+            }
+            ExprKind::Unary { op: "not", operand } => {
+                let o = self.text(sp, "not");
+                let x = self.cfg_value(*operand);
+                self.call(sp, "__cond", vec![o, x], Vec::new())
+            }
+            ExprKind::BinOp { op: "-", left, right } => {
+                let date = match (&left.kind, &right.kind) {
+                    (ExprKind::BinOp { op: "-", left: y, right: m }, ExprKind::Num { text: d, is_float: false }) => {
+                        match (&y.kind, &m.kind) {
+                            (ExprKind::Num { text: y, is_float: false }, ExprKind::Num { text: m, is_float: false })
+                                if y.len() == 4 && m.len() == 2 && d.len() == 2 =>
+                            {
+                                Some((y.clone(), m.clone(), d.clone(), y_span(&left), m_span(&left), right.span))
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                match date {
+                    Some((y, m, d, ys, ms, ds)) => {
+                        let mut args = Vec::new();
+                        for (t, s) in [(y, ys), (m, ms), (d, ds)] {
+                            let n: i64 = t.parse().unwrap_or(0);
+                            args.push(self.expr_node(s, ExprKind::Num { text: n.to_string(), is_float: false }));
+                        }
+                        self.call(sp, "date", args, Vec::new())
+                    }
+                    None => Expr { id: e.id, span: sp, kind: ExprKind::BinOp { op: "-", left, right } },
+                }
+            }
+            ExprKind::List(items) => {
+                let items = items.into_iter().map(|i| self.cfg_value(i)).collect();
+                self.expr_node(sp, ExprKind::List(items))
+            }
+            kind => Expr { id: e.id, span: sp, kind },
+        }
+    }
+
+    /// The body of `step NAME:` or `after success|failure:` is ordinary
+    /// code: a function of the run of the pipeline (D122).
+    fn pipeline_code(&mut self, pipeline: &str, head: &Expr, span: Span) -> PResult<Expr> {
+        let words: Vec<Option<String>> = match &head.kind {
+            ExprKind::List(items) => items
+                .iter()
+                .map(|i| match &i.kind {
+                    ExprKind::Str(parts) => match parts.as_slice() {
+                        [StrPiece::Lit(s)] => Some(s.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        if words.len() != 2 || words[1].is_none() {
+            return Err(Diagnostic::new("unexpected", head.span)
+                .fix("expected")
+                .arg("got", format!("\"{}\"", source_text(self.source, head.span)))
+                .arg("expected", word("name")));
+        }
+        let saved = std::mem::take(&mut self.extra);
+        let body = self.block();
+        self.extra = saved;
+        let body = body?;
+        let mut ret = None;
+        crate::checker::walk_stmts(&body, false, &mut |s| {
+            if matches!(s.kind, StmtKind::Return(_)) && ret.is_none() {
+                ret = Some(s.span);
+            }
+        });
+        if let Some(sp) = ret {
+            return Err(Diagnostic::new("step_return", sp));
+        }
+        let fname = format!("{pipeline} {} {}", words[0].clone().unwrap_or_default(), words[1].clone().unwrap());
+        let mut assigned: Vec<String> = Vec::new();
+        for s in &body {
+            match &s.kind {
+                StmtKind::Assign { target: Expr { kind: ExprKind::Name(n), .. }, op: "=", .. } => {
+                    if !assigned.contains(n) {
+                        assigned.push(n.clone());
+                    }
+                }
+                StmtKind::VarDecl { name, .. } => {
+                    if !assigned.contains(name) {
+                        assigned.push(name.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut used = std::collections::HashSet::new();
+        crate::checker::walk_stmts(&body, true, &mut |s| stmt_names(s, &mut used));
+        let known = self.pipeline_vars.entry(pipeline.to_string()).or_insert_with(|| vec!["version".into(), "step".into()]).clone();
+        let mut full = Vec::new();
+        for n in known.iter().filter(|n| used.contains(*n)) {
+            let run = self.name_expr(span, "__run");
+            let key = self.text(span, n);
+            let value = self.call(span, "__ci_get", vec![run, key], Vec::new());
+            let target = self.name_expr(span, n);
+            full.push(self.stmt_node(span, StmtKind::Assign { target, op: "=", value, ty: None }));
+        }
+        full.extend(body);
+        for n in &assigned {
+            let run = self.name_expr(span, "__run");
+            let key = self.text(span, n);
+            let v = self.name_expr(span, n);
+            let c = self.call(span, "__ci_keep", vec![run, key, v], Vec::new());
+            full.push(self.expr_stmt(c));
+        }
+        let known = self.pipeline_vars.get_mut(pipeline).unwrap();
+        for n in assigned {
+            if !known.contains(&n) {
+                known.push(n);
+            }
+        }
+        let id = self.id();
+        let func = FnDef {
+            id,
+            span,
+            name: fname.clone(),
+            name_span: span,
+            params: vec![Param { span, name: "__run".into(), ty: None, default: None }],
+            ret: None,
+            body: full,
+            is_pub: false,
+            annotations: Vec::new(),
+        };
+        let st = self.stmt_node(span, StmtKind::Fn(func));
+        self.extra.push(st);
+        Ok(self.name_expr(span, &fname))
     }
 
     /// route = { annotation } METHOD STRING [ "(" params ")" ] block
@@ -2037,6 +2425,115 @@ impl<'s> Parser<'s> {
         self.extra.push(tr);
         Ok(begin)
     }
+}
+
+/// ["a", "b", "c"] for a.b.c (["a"] for a bare name), or None.
+fn dotted(e: &Expr) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    let mut e = e;
+    loop {
+        match &e.kind {
+            ExprKind::Attr { obj, name, .. } => {
+                out.push(name.clone());
+                e = obj;
+            }
+            ExprKind::Name(n) => {
+                out.push(n.clone());
+                out.reverse();
+                return Some(out);
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn y_span(e: &Expr) -> Span {
+    match &e.kind {
+        ExprKind::BinOp { left, .. } => left.span,
+        _ => e.span,
+    }
+}
+
+fn m_span(e: &Expr) -> Span {
+    match &e.kind {
+        ExprKind::BinOp { right, .. } => right.span,
+        _ => e.span,
+    }
+}
+
+/// Every expression a statement holds directly (not those of its blocks).
+pub fn each_stmt_expr<'a>(s: &'a Stmt, f: &mut dyn FnMut(&'a Expr)) {
+    match &s.kind {
+        StmtKind::Expr(e) | StmtKind::Expect(e) | StmtKind::Ensure(e) | StmtKind::Return(Some(e)) => f(e),
+        StmtKind::Assign { target, value, .. } => {
+            f(target);
+            f(value);
+        }
+        StmtKind::VarDecl { value, .. } | StmtKind::Shared { value, .. } => f(value),
+        StmtKind::Assert { expr, .. } => f(expr),
+        StmtKind::If { branches, .. } => branches.iter().for_each(|(c, _)| f(c)),
+        StmtKind::For { iterable: e, .. } | StmtKind::While { cond: e, .. } | StmtKind::Repeat { count: e, .. } => f(e),
+        StmtKind::Match { subject, arms } => {
+            f(subject);
+            for a in arms {
+                if let Some(g) = &a.guard {
+                    f(g);
+                }
+            }
+        }
+        StmtKind::Spawn { call } => f(call),
+        StmtKind::Try { within: Some(w), .. } => f(w),
+        StmtKind::Emit { args, .. } => args.iter().for_each(|a| f(&a.value)),
+        _ => {}
+    }
+}
+
+/// Every expression directly inside another one, with the expressions of
+/// the statements of a `parallel for` body.
+pub fn each_child<'a>(e: &'a Expr, f: &mut dyn FnMut(&'a Expr)) {
+    match &e.kind {
+        ExprKind::Call { func, args } => {
+            f(func);
+            args.iter().for_each(|a| f(&a.value));
+        }
+        ExprKind::Propagate(x) => f(x),
+        ExprKind::Coalesce { left, right } => {
+            f(left);
+            f(right);
+        }
+        ExprKind::Lambda { body, .. } => f(body),
+        ExprKind::Pipeline { source, steps } => {
+            f(source);
+            for st in steps {
+                if let Some(x) = &st.expr {
+                    f(x);
+                }
+                st.columns.iter().for_each(|c| f(c));
+            }
+        }
+        ExprKind::ParallelFor { iterable, args, body, .. } => {
+            f(iterable);
+            args.iter().for_each(|a| f(&a.value));
+            crate::checker::walk_stmts(body, true, &mut |s| each_stmt_expr(s, f));
+        }
+        _ => {
+            for c in crate::checker::children(e) {
+                f(c);
+            }
+        }
+    }
+}
+
+/// The names a statement reads or writes.
+fn stmt_names(s: &Stmt, out: &mut std::collections::HashSet<String>) {
+    each_stmt_expr(s, &mut |e| expr_names(e, out));
+}
+
+fn expr_names(e: &Expr, out: &mut std::collections::HashSet<String>) {
+    if let ExprKind::Name(n) = &e.kind {
+        out.insert(n.clone());
+    }
+    each_child(e, &mut |c| expr_names(c, out));
 }
 
 /// Calls of `ask` (section 8, D107): in `model: fast` a bare name declared
@@ -2292,9 +2789,18 @@ mod tests {
 
     #[test]
     fn config_blocks_are_skipped() {
-        let p = parse("infra shop:\n    cloud = \"aws\"\n    nested:\n        a = 1\nprint(1)\n").unwrap();
+        let p = parse("policy:\n    deny shell\n    nested:\n        a = 1\nprint(1)\n").unwrap();
         assert!(matches!(p.body[0].kind, StmtKind::Config { .. }));
         assert_eq!(p.body.len(), 2);
+    }
+
+    #[test]
+    fn phase_5_blocks_desugar_into_entries() {
+        let src = "infra shop:\n    cloud = \"aws\"\n    require tags [\"a\"]\nflags:\n    a = on, expires: 2027-03-01\npipeline main:\n    step build:\n        image = \"x\"\n    step dev:\n        print(image)\n";
+        let p = parse(src).unwrap();
+        assert_eq!(summary(&p), vec!["__infra()", "__flags()", "fn main step build", "fn main step dev", "__pipeline()"]);
+        let StmtKind::Fn(dev) = &p.body[3].kind else { panic!() };
+        assert!(matches!(&dev.body[0].kind, StmtKind::Assign { value: Expr { kind: ExprKind::Call { .. }, .. }, .. }));
     }
 
     fn summary(p: &Program) -> Vec<String> {

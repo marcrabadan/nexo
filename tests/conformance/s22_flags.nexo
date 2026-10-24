@@ -1,0 +1,25 @@
+# section 22: flags declared in a block and read with flag()
+type User:
+    id: int
+    country: str
+
+flags:
+    new_checkout = 10%                         # stable percentage per user
+    dark_mode = users where country == "ES"
+    payments_v2 = off
+    ai_recommendations = on, expires: 2099-03-01
+
+ana = User(id: 7, country: "ES")
+luis = User(id: 8, country: "FR")
+print(flag("payments_v2"), flag("ai_recommendations"))
+print(flag("dark_mode", ana), flag("dark_mode", luis))
+
+# the same user always gets the same result
+print(flag("new_checkout", ana) == flag("new_checkout", ana))
+var count = 0
+for i in range(1, 1001):
+    if flag("new_checkout", User(id: i, country: "ES")):
+        count += 1
+print(count)
+print(flag("new_checkout", "ana@company.com"), flag("new_checkout", 42))
+flag("new_checkout")

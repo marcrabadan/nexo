@@ -25,6 +25,7 @@ mod lint;
 mod lsp;
 mod narrow;
 mod parser;
+mod phase5;
 mod prove;
 mod resolve;
 mod typecheck;
@@ -34,7 +35,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use nexo_diag::{msg, render, Diagnostic, Lang};
 
-fn usage() -> &'static str {
+pub fn usage() -> &'static str {
     if nexo_diag::lang() == Lang::En {
         "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage]"
     } else {
@@ -431,7 +432,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn read_source(path: &str) -> Result<String, String> {
+pub fn read_source(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|_| format!("Error: {}.\n", msg("err.NotFound", &[("path", path.to_string())])))
 }
 
@@ -836,6 +837,7 @@ fn main() -> ExitCode {
             "fix" => run_fix(&rest[1..]),
             "check" => run_check(&rest[1..]),
             "db" => run_db(&rest[1..]),
+            "flags" => phase5::run_flags(&rest[1..]),
             "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),
             "ai" if rest.len() == 2 && rest[1] == "usage" => ai_cmd::usage(),
             "lsp" if rest.len() == 1 => lsp::serve(lang_given),

@@ -1216,3 +1216,86 @@ records or maps; `convert(money, to: USD, rate: r)` stays as it was, and
 their own readers and writers and are not part of phase 4's exit
 criterion; they stay for a later phase, and `yaml`, `xml` and `parquet`
 are ordinary names until then.
+
+## Phase 5: cloud and operations (section 25)
+
+**D113. What phase 5 covers.** Section 25 lists "`nexo.infra`, `nexo.ci`,
+`nexo.stream`, flags, privacy" with the exit criterion "an app deploys to
+AWS, Azure, GCP and k8s from the same file". Both implementations get,
+with the same output: `infra` and `stage` blocks with the portable
+resources of section 11, `native` resources, `output`, the `policy` of an
+infra block, `budget`, and the commands `nexo plan`, `apply`, `destroy`,
+`drift`, `cost` and `import`, which talk to each cloud's own API (D118-D121);
+`pipeline` blocks with `nexo ci run` and `nexo ci export github|gitlab|
+azure|jenkins` (D122, D123); `when` on a stream source, `send` and the
+window steps of section 19 on a local broker (D117); `flags` and `flag()`
+with `nexo flags set` (D115); the markers, rules and functions of section
+23 with `nexo privacy report` (D116). What needs a running controller or
+measured metrics stays out and is reported as unavailable (D65): `release
+canary` and `blue_green` (`rolling` is the default and the only strategy),
+`watch` and `rollback` in flags, high availability across regions, the
+`calls` block, `scale at`, `nexo chaos` and `nexo release`; also what
+other phases or modules own: the program `policy` of section 9, `notify`
+(`slack`), `audit`, `scan`, `every`, `lifecycle`, `when` on things that are
+not streams (email, files, webhooks), secrets from a vault or a cloud
+manager, brokers reached over the network (Kafka, RabbitMQ, SQS, Kinesis,
+Service Bus, Event Hubs, Pub/Sub, WebSocket: D117), `flags_store`,
+PostgreSQL. `unsupported` messages now say "phase 5".
+
+**D114. The body of phase 5 blocks.** Section 4 says configuration blocks
+are `word name?:` followed by `key = value` pairs, but the examples of
+sections 11, 12, 22 and 23 also write lines of words (`deny public
+database`, `can read storage photos`, `trigger push to main`, `queue
+orders`), nested blocks (`network net:`, `env:`, `scale 3..50:`), options
+after a comma (`retry = 3, backoff: exp`, `output db = customers.url,
+secret`) and conditions (`cpu > 70%`, `users where country == "ES"`). Both
+parsers read the body of `infra`, `stage`, `pipeline` and `flags` with one
+rule:
+
+    entry  = phrase [ "=" items ] [ ":" NEWLINE INDENT { entry } DEDENT ] NEWLINE
+           | phrase { "," item } ...
+    items  = item { "," item }
+    item   = IDENT ":" atom | phrase
+    phrase = atom { atom }
+
+An atom is an expression without `->`, `|>` or lambdas (so a phrase can
+hold several), or a keyword that cannot start one (`every`, `at`, `type`),
+or `->`. Inside atoms a bare name is a word (the text of the name: `size =
+medium` is `size = "medium"`), a dotted name is a reference to what a
+resource exposes (`customers.url`), a comparison or `and`/`or`/`not` is a
+condition kept as data (`errors < 1%`), and `2027-03-01` is a date;
+calls (`secret("API_KEY")`, `s3("bucket")`) and their arguments are
+ordinary code. Each entry becomes a value made by `__cfg(head, values,
+options, body)` (D90) that the module reads, so every mistake is reported
+at the line of its entry. The bodies of `step` and `after` in a `pipeline`
+are ordinary code (section 12). A value of a program constant is written
+inside a text (`image = "{IMAGE}"`), since a bare name is a word.
+`nexo fmt` keeps, inside these blocks, the space a phrase needs before
+`(` or `[` (`require tags ["team", "cost"]` has two words, `tags[0]`
+would be an index) and the date `2027-03-01` together. `test` is a
+keyword, so `test()` in a step (section 12) is the call of nexo.ci's
+`test`: the keyword followed by `(` is a name.
+
+**D115. Flags.** Section 22 declares flags in a `flags:` block of `name =
+value` lines and reads them with `flag(name, user)`. A value is `on`,
+`off`, a percentage from 0% to 100%, or `users where condition`, whose
+words are fields of the user (`country == "ES"`); `expires: date` is the
+only option (`watch` and `rollback` need metrics, D113). `flag(name)`
+needs the user only for a percentage or an audience. The same user always
+gets the same result (rule 1): the first 8 bytes of SHA-256 of
+`name:key`, modulo 10,000, below the percentage times 100, where the key
+is the `id` field of a record, or the text of a text or an int. Rule 2: a
+literal name no block declares is a compile error; a name built at run
+time is checked when it is used. Rule 3: `nexo lint` warns about a flag
+whose `expires` day (in UTC) has passed. Rule 4: `nexo flags set name
+value [file.nexo] [--stage s]` writes on, off or a percentage to
+`.nexo/flags.json` (the local store of the last paragraph, under the stage
+or `default`), which `flag()` reads again whenever the file changes, so
+running programs see it at once; the program's stage is the environment
+variable `NEXO_STAGE` (set by `nexo apply` on every app, D120). The change
+is recorded as a line of `.nexo/audit.log` with the time, `$USER`, what
+changed and the SHA-256 of the previous line, so a changed or removed line
+shows (section 9 calls the audit log signed and append-only; `audit()`
+itself is not part of phase 5). The commands of phase 5 that read a
+program take its file, or else the only `.nexo` file of the current
+directory with that block.

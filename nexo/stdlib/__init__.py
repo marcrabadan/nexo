@@ -24,11 +24,12 @@ class Namespace:
 
 
 def install(interp) -> None:
-    from . import ai, clib, crypto, db, http, pylib, web
+    from . import ai, cfg, clib, crypto, db, flags, http, pylib, web
     web.reset()
     ai.reset()
+    flags.reset()
     env = interp.builtins
-    for module in (core, io, data, clock, text, crypto, http, db, web, ai, clib, pylib):
+    for module in (core, io, data, clock, text, crypto, http, db, web, ai, clib, pylib, cfg, flags):
         for name, value in module.exports().items():
             env.define(name, value)
     env.define("json", Namespace("json", data.json_exports()))

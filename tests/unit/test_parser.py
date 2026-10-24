@@ -237,8 +237,8 @@ def test_events_and_use():
 
 
 def test_config_block_is_recognised():
-    prog = parse('infra shop:\n    cloud = "aws"\nprint(1)\n', "t.nexo").body
-    assert isinstance(prog[0], A.ConfigBlock) and prog[0].word == "infra"
+    prog = parse('policy:\n    deny shell\nprint(1)\n', "t.nexo").body
+    assert isinstance(prog[0], A.ConfigBlock) and prog[0].word == "policy"
     prog = parse('ai:\n    provider = "anthropic"\n    key = secret("K")\nprint(1)\n', "t.nexo").body
     assert isinstance(prog[0], A.ExprStmt) and prog[0].expr.func.name == "__ai_config"
     assert isinstance(prog[1], A.ExprStmt)
@@ -321,3 +321,31 @@ def test_module_blocks_desugar():
         with pytest.raises(NexoError) as e:
             parse(src, "t.nexo")
         assert e.value.key == key
+
+
+def test_phase_5_blocks_desugar_into_entries():
+    # D114: each line is a __cfg(head, values, options, body)
+    src = ('infra shop:\n    cloud = "aws"\n    require tags ["a"]\n    database customers:\n        size = medium\n'
+           '    output db = customers.url, secret\n    dns "x.com" -> api, https\nflags:\n    a = on, expires: 2027-03-01\n'
+           'pipeline main:\n    step build:\n        image = "x"\n    step dev:\n        print(image)\n')
+    prog = parse(src, "t.nexo").body
+    infra = prog[0].expr
+    assert infra.func.name == "__infra" and infra.args[0].value.parts == ["shop"]
+    entries = infra.args[1].value.items
+    assert [e.func.name for e in entries] == ["__cfg"] * 5
+    tags = entries[1].args[0].value.items[0].items
+    assert [type(a).__name__ for a in tags] == ["Str", "Str", "ListLit"]
+    out = entries[3]
+    assert out.args[1].value.items[0].items[0].func.name == "__ref"
+    assert out.args[1].value.items[1].items[0].parts == ["secret"]
+    db = entries[2].args[3].value.items[0]
+    assert db.args[1].value.items[0].items[0].parts == ["medium"]
+    flags = prog[1].expr
+    expires = flags.args[0].value.items[0].args[2].value.pairs[0][1]
+    assert expires.func.name == "date" and [a.value.text for a in expires.args] == ["2027", "3", "1"]
+    # the steps are functions that keep and get the pipeline's variables
+    assert [getattr(s, "name", None) for s in prog[2:4]] == ["main step build", "main step dev"]
+    assert prog[4].expr.func.name == "__pipeline"
+    dev = prog[3].body
+    assert dev[0].value.func.name == "__ci_get" and dev[0].target.name == "image"
+    assert prog[2].body[-1].expr.func.name == "__ci_keep"

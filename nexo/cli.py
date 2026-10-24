@@ -316,6 +316,81 @@ def run_db(args: list[str]) -> int:
     return db.run_command(interp, command, file, db_path, allow_drop)
 
 
+# ------------------------------------------------------------- phase 5
+
+def split_options(args: list[str], flags: tuple = (), values: tuple = ()):
+    """(positional, {option: value or True}) or None when an option is unknown."""
+    pos, opts = [], {}
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in values and i + 1 < len(args):
+            opts[a] = args[i + 1]
+            i += 2
+            continue
+        if a in flags:
+            opts[a] = True
+        elif a.startswith("--"):
+            return None
+        else:
+            pos.append(a)
+        i += 1
+    return pos, opts
+
+
+def program_file(word: str, given: str | None) -> str | None:
+    """The file a phase 5 command reads: the one given, or the only .nexo
+    file of the current directory that has a `word` block (D113)."""
+    if given is not None:
+        return given
+    import re
+    pattern = re.compile(rf"^{word}\b", re.M)
+    found = []
+    for f in sorted(Path(".").glob("*.nexo")):
+        try:
+            if pattern.search(f.read_text(encoding="utf-8")):
+                found.append(str(f))
+        except OSError:
+            continue
+    if len(found) == 1:
+        return found[0]
+    sys.stderr.write(errors.render(None, NexoError("which_file", None, word=word).text()))
+    return None
+
+
+def read_program(path: str):
+    """(source, program) parsed, or None after reporting the error."""
+    from .parser import parse
+    try:
+        source = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=path)}.\n")
+        return None
+    errors.SOURCES[path] = source
+    try:
+        return source, parse(source, path)
+    except NexoError as exc:
+        report(exc)
+        return None
+
+
+def run_flags(args: list[str]) -> int:
+    """`nexo flags set NAME VALUE [file.nexo] [--stage S]` (section 22)."""
+    from .stdlib import flags
+    parsed = split_options(args[1:], values=("--stage",))
+    if args[:1] != ["set"] or parsed is None or len(parsed[0]) not in (2, 3):
+        print(USAGE[errors.LANG], file=sys.stderr)
+        return 2
+    pos, opts = parsed
+    path = program_file("flags", pos[2] if len(pos) == 3 else None)
+    if path is None:
+        return 1
+    read = read_program(path)
+    if read is None:
+        return 1
+    return flags.set_command(flags.declared(read[1]), pos[0], pos[1], opts.get("--stage"))
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -383,6 +458,8 @@ def main(argv: list[str] | None = None) -> int:
     errors.set_lang(lang)
     if rest[:1] == ["db"] and lang in ("es", "en"):
         return run_db(rest[1:])
+    if rest[:1] == ["flags"] and lang in ("es", "en"):
+        return run_flags(rest[1:])
     if rest in (["ai", "setup"], ["ai", "usage"]) and lang in ("es", "en"):
         from .stdlib import ai
         return ai.setup_command() if rest[1] == "setup" else ai.usage_command()

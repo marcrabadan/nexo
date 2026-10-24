@@ -54,6 +54,7 @@ class Row:
     end_line: int = 0
     indent: int = 0  # original indentation
     blank_before: int = 0
+    cfg: bool = False  # inside the body of an infra, stage, pipeline or flags block (D114)
 
 
 def format_source(source: str, file: str = "<input>") -> str:
@@ -122,7 +123,23 @@ def build_rows(source: str, lines: list[str], tokens: list[Token]) -> list[Row]:
         row.blank_before = blanks
         blanks = 0
         result.append(row)
+    mark_cfg(result)
     return result
+
+
+CFG_BLOCKS = ("infra", "stage", "pipeline", "flags")
+
+
+def mark_cfg(rows: list[Row]) -> None:
+    """Rows inside phase 5 blocks: there a space before `(` or `[` starts a
+    new word of the phrase, and `2027-03-01` is a date (D114)."""
+    inside = False
+    for row in rows:
+        if row.pieces and row.indent == 0:
+            first, last = row.pieces[0].tok, row.pieces[-1].tok
+            inside = first.kind == "NAME" and first.value in CFG_BLOCKS and last.is_op(":")
+            continue
+        row.cfg = inside and bool(row.pieces)
 
 
 # ------------------------------------------------------------- spacing
@@ -137,9 +154,17 @@ def ends_operand(tok: Token | None) -> bool:
     return tok.kind == "OP" and tok.value in (")", "]", "}", "?", "!")
 
 
-def gap(prev: Piece | None, a: Piece, b: Piece) -> str:
+def gap(prev: Piece | None, a: Piece, b: Piece, cfg: bool = False) -> str:
     """The space between two tokens of the same row; `prev` comes before a."""
     ta, tb = a.tok, b.tok
+    same_place = a.end_line == b.line and a.end == b.col
+    if cfg and same_place and ((ta.kind == "INT" and tb.is_op("-"))
+                               or (ta.is_op("-") and tb.kind == "INT" and prev is not None and prev.tok.kind == "INT")):
+        return ""  # a date: 2027-03-01
+    if cfg and tb.kind == "OP" and tb.value in ("(", "[") and ends_operand(ta):
+        return "" if same_place else " "
+    if ta.kind == "KEYWORD" and ta.value == "test" and tb.is_op("("):
+        return ""  # test() in a step of a pipeline
     if tb.kind == "OP" and tb.value in (")", "]", "}", ",", ".", ":", "?", "!", ".."):
         return ""
     if ta.kind == "OP" and ta.value in ("(", "[", "{", ".", "@", ".."):
@@ -165,7 +190,7 @@ def row_code(before: Piece | None, row: Row) -> str:
     for i, piece in enumerate(row.pieces):
         if i:
             prev = row.pieces[i - 2] if i >= 2 else before
-            parts.append(gap(prev, row.pieces[i - 1], piece))
+            parts.append(gap(prev, row.pieces[i - 1], piece, row.cfg))
         parts.append(piece.text)
     return "".join(parts)
 

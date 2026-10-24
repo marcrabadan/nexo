@@ -70,6 +70,11 @@ class Parser:
         self.extra: list[A.Stmt] = []
         self.in_test = False
         self.in_transaction = 0
+        # inside a phrase of a phase 5 block, `(` and `[` after a space
+        # start a new atom (D114)
+        self.phrase_mode = False
+        # names the steps of each pipeline keep (D122)
+        self.pipeline_vars: dict = {}
 
     # -- token helpers ---------------------------------------------------
     def peek(self, k: int = 0) -> Token:
@@ -83,6 +88,11 @@ class Parser:
         if tok.kind != "EOF":
             self.p += 1
         return tok
+
+    def spaced(self) -> bool:
+        """Is there a space between the last token and the next one?"""
+        a, b = self.prev().span, self.peek().span
+        return a.line != b.line or a.end_col != b.col
 
     def at_op(self, *ops: str) -> bool:
         return self.peek().is_op(*ops)
@@ -209,7 +219,7 @@ class Parser:
             if kw == "parallel" and self.peek(1).is_op(":"):
                 self.advance()
                 return A.ParallelBlock(tok.span, self.block())
-            if kw == "test":
+            if kw == "test" and not self.peek(1).is_op("("):
                 self.advance()
                 if self.peek().kind != "STRING" or any(not isinstance(p, str) for p in self.peek().value):
                     raise self.error(word("string"))
@@ -551,6 +561,7 @@ class Parser:
         if self.peek().kind != "INDENT":
             raise self.error(word("indented"))
         self.advance()
+        settings_seen: list = []
         while self.peek().kind != "DEDENT":
             tok = self.peek()
             if tok.is_op("@"):
@@ -576,10 +587,8 @@ class Parser:
                 self.expect_newline()
                 node.fields.append(A.FieldDef(tok.span, tok.value, type_, default, marks))
             elif tok.kind == "NAME" and self.peek(1).is_op("="):
-                self.advance()
-                self.advance()
-                node.settings.append((tok.value, self.expr()))
-                self.expect_newline()
+                # keep = 5 years after last_activity, purpose = "..." (D116)
+                node.settings.append((tok.value, self.cfg_entry("type", None, settings_seen)))
             elif tok.kind == "NAME":
                 self.advance()
                 params = self.params() if self.at_op("(") else []
@@ -986,6 +995,8 @@ class Parser:
                     raise self.error(word("member"))
                 name = self.advance()
                 node = A.Attr(self.span_from(start), node, name.value, name.span)
+            elif self.phrase_mode and self.at_op("(", "[") and self.spaced():
+                return node
             elif self.at_op("("):
                 self.advance()
                 args = self.args(")")
@@ -1052,6 +1063,10 @@ class Parser:
             if tok.value == "self":
                 self.advance()
                 return A.Name(tok.span, "self")
+            if tok.value == "test" and self.peek(1).is_op("("):
+                # test() in a step of a pipeline runs the tests (D122)
+                self.advance()
+                return A.Name(tok.span, "test")
             if tok.value == "parallel" and self.peek(1).is_kw("for"):
                 return self.parallel_for()
         if tok.is_op("("):
@@ -1167,7 +1182,11 @@ def parse(source: str, file: str = "<input>") -> A.Program:
 # builtins whose names start with "__" (D90), so every later pass (the
 # checker, the interpreter, the compiler) sees only core constructs.
 
-MODULE_BLOCKS = {"ai", "agent", "server"}
+MODULE_BLOCKS = {"ai", "agent", "server", "infra", "stage", "pipeline", "flags"}
+# blocks of phase 5 whose body is read with the rule of D114
+CFG_BLOCKS = {"infra", "stage", "pipeline", "flags"}
+# keywords that start an expression; any other one is a word in a phrase
+EXPR_KEYWORDS = {"true", "false", "none", "not", "self", "parallel"}
 ROUTE_METHODS = {"get", "post", "put", "patch", "delete"}
 # keys whose bare names are model aliases (section 8)
 MODEL_KEYS = {"model", "fallback", "when_over_budget"}
@@ -1213,6 +1232,8 @@ def _module_methods():
     def module_block(self, tok: Token) -> A.Stmt:
         """ai:, ai models:, ai profile "name":, agent name:, server name:"""
         word_ = tok.value
+        if word_ in CFG_BLOCKS:
+            return self.cfg_block(tok)
         name = None
         name_tok = None
         if word_ == "ai" and self.at_name("profile"):
@@ -1300,9 +1321,23 @@ def _module_methods():
         return fn, method, path, annotations, tok.span
 
     def table_def(self, node: A.Stmt) -> A.Stmt:
-        """@table type T: the type, then __db_table(T, key, many, marks)."""
+        """@table type T: the type, then __db_table(T, key, many, marks);
+        and __privacy_type(T, [settings], {marks}) after a type with
+        personal data or settings (D116)."""
         if not isinstance(node, A.TypeDef):
             return node
+        out = self.table_def_db(node)
+        personal = [(f.name, f.span, [m for m in f.marks if m in ("personal", "private")]) for f in node.fields]
+        personal = [p for p in personal if p[2]]
+        if False and (node.settings or personal):
+            span = node.name_span
+            settings = A.ListLit(span, [c for _, c in node.settings])
+            marks = A.MapLit(span, [(text(fs, n), A.ListLit(fs, [text(fs, m) for m in ms])) for n, fs, ms in personal])
+            node.settings = []
+            self.extra.append(A.ExprStmt(span, call(span, "__privacy_type", [A.Name(span, node.name), settings, marks])))
+        return out
+
+    def table_def_db(self, node: A.TypeDef) -> A.Stmt:
         tables = [a for a in node.annotations if a.name == "table"]
         rels = [f for f in node.fields if isinstance(f.type, A.TypeName) and f.type.rel]
         if not tables:
@@ -1410,11 +1445,218 @@ def _module_methods():
         self.extra.append(A.TryStmt(span, None, body, [handler]))
         return begin
 
+    # -- phase 5 blocks (D114) ------------------------------------------
+    def cfg_block(self, tok: Token) -> A.Stmt:
+        """infra NAME:, stage NAME:, pipeline NAME:, flags: as
+        __infra("NAME", [entries]) and the like, each entry a __cfg(...)."""
+        word_ = tok.value
+        name = None
+        if word_ != "flags":
+            name = self.expect_name().value
+        self.expect_op(":")
+        self.expect_newline_raw()
+        if self.peek().kind != "INDENT":
+            raise self.error(word("indented"))
+        self.advance()
+        saved, self.extra = self.extra, []
+        entries = self.cfg_entries(word_, name)
+        made, self.extra = self.extra, saved
+        self.block_end = self.p
+        span = tok.span
+        args = ([] if name is None else [text(span, name)]) + [A.ListLit(span, entries)]
+        stmt = A.ExprStmt(span, call(span, f"__{word_}", args))
+        # the functions of the steps come first, then the block that names them
+        if made:
+            self.extra = made[1:] + [stmt] + self.extra
+            return made[0]
+        return stmt
+
+    def cfg_entries(self, block: str, name) -> list:
+        """{ entry } DEDENT, the DEDENT consumed."""
+        entries = []
+        seen: list = []
+        while self.peek().kind != "DEDENT":
+            entries.append(self.cfg_entry(block, name, seen))
+        self.advance()
+        return entries
+
+    def cfg_entry(self, block: str, name, seen: list) -> A.Expr:
+        start = self.peek()
+        head = [self.phrase()]
+        values = None
+        options: list = []
+        if self.at_op("="):
+            self.advance()
+            values = [self.phrase()]
+            self.cfg_items(values, options)
+            if len(head[0].items) == 1 and isinstance(head[0].items[0], A.Str):
+                key = head[0].items[0].parts[0] if head[0].items[0].parts else ""
+                if any(k == key for k, _ in seen):
+                    raise NexoError("duplicate_name", start.span, name=key)
+                seen.append((key, start.span))
+        else:
+            self.cfg_items(head, options)
+        body: A.Expr = A.NoneLit(start.span)
+        first = head[0].items[0] if head[0].items else None
+        first_word = first.parts[0] if isinstance(first, A.Str) and len(first.parts) == 1 else None
+        if self.at_op(":") and self.peek(1).kind == "NEWLINE":
+            if block == "pipeline" and first_word in ("step", "after") and values is None:
+                body = self.pipeline_code(name, head[0], start)
+            else:
+                self.advance()
+                self.expect_newline_raw()
+                if self.peek().kind != "INDENT":
+                    raise self.error(word("indented"))
+                self.advance()
+                body = A.ListLit(start.span, self.cfg_entries(block, name))
+        else:
+            self.expect_newline()
+        span = start.span
+        opts = A.MapLit(span, [(text(span, k), v) for k, v in options])
+        return call(span, "__cfg", [A.ListLit(span, head), A.ListLit(span, values) if values is not None
+                                    else A.NoneLit(span), opts, body])
+
+    def cfg_items(self, items: list, options: list) -> None:
+        """{ "," item }: a phrase, or NAME ":" atom"""
+        while self.at_op(","):
+            self.advance()
+            t = self.peek()
+            if t.kind in ("NAME", "KEYWORD") and self.peek(1).is_op(":") and self.peek(2).kind != "NEWLINE":
+                self.advance()
+                self.advance()
+                if any(k == t.value for k, _ in options):
+                    raise NexoError("duplicate_name", t.span, name=t.value)
+                options.append((t.value, self.atom()))
+            else:
+                items.append(self.phrase())
+
+    def phrase(self) -> A.ListLit:
+        """phrase = atom { atom }"""
+        start = self.peek()
+        atoms = [self.atom()]
+        while not (self.peek().kind in ("NEWLINE", "DEDENT", "EOF") or self.at_op(",", "=", ":")):
+            atoms.append(self.atom())
+        return A.ListLit(self.span_from(start), atoms)
+
+    def atom(self) -> A.Expr:
+        tok = self.peek()
+        if tok.kind == "KEYWORD" and tok.value not in EXPR_KEYWORDS:
+            self.advance()
+            return text(tok.span, tok.value)
+        if tok.is_op("->"):
+            self.advance()
+            return text(tok.span, "->")
+        if tok.kind not in ("NAME", "INT", "FLOAT", "UNIT", "STRING", "KEYWORD") and not tok.is_op("[", "{", "(", "-"):
+            raise self.error(word("expr"))
+        old = self.phrase_mode
+        self.phrase_mode = True
+        try:
+            e = self.or_expr()
+        finally:
+            self.phrase_mode = old
+        return cfg_value(e)
+
+    def pipeline_code(self, pipeline: str, head: A.ListLit, start: Token) -> A.Expr:
+        """The body of `step NAME:` or `after success|failure:` is ordinary
+        code: a function of the run of the pipeline (D122)."""
+        words = [i.parts[0] if isinstance(i, A.Str) and len(i.parts) == 1 else None for i in head.items]
+        if len(words) != 2 or words[1] is None:
+            raise NexoError("unexpected", head.span, fix="expected", got=f'"{source_text(head.span)}"',
+                            expected=word("name"))
+        saved, self.extra = self.extra, []
+        body = self.block()
+        self.extra = saved
+        for s in body_returns(body):
+            raise NexoError("step_return", s.span)
+        fname = f"{pipeline} {words[0]} {words[1]}"
+        span = start.span
+        run = A.Name(span, "__run")
+        assigned = []
+        for s in body:
+            if isinstance(s, A.Assign) and s.op == "=" and isinstance(s.target, A.Name):
+                if s.target.name not in assigned:
+                    assigned.append(s.target.name)
+            elif isinstance(s, A.VarDecl) and s.name not in assigned:
+                assigned.append(s.name)
+        used = names_used(body)
+        known = self.pipeline_vars.setdefault(pipeline, ["version", "step"])
+        prelude = [A.Assign(span, A.Name(span, n), "=", call(span, "__ci_get", [run, text(span, n)]))
+                   for n in known if n in used]
+        keep = [A.ExprStmt(span, call(span, "__ci_keep", [run, text(span, n), A.Name(span, n)]))
+                for n in assigned]
+        for n in assigned:
+            if n not in known:
+                known.append(n)
+        fn = A.FnDef(span, fname, span, [A.Param(span, "__run", None, None)], None, prelude + body + keep)
+        self.extra.append(fn)
+        return A.Name(span, fname)
+
     return locals()
 
 
 for _name, _fn in _module_methods().items():
     setattr(Parser, _name, _fn)
+
+
+def cfg_value(e: A.Expr) -> A.Expr:
+    """An atom of a phase 5 block as data (D114): a bare name is a word,
+    a dotted name a reference, a comparison a condition, 2027-03-01 a date."""
+    sp = e.span
+    if isinstance(e, A.Name):
+        return text(sp, e.name)
+    parts = dotted(e)
+    if parts is not None:
+        return call(sp, "__ref", [text(sp, p) for p in parts])
+    if isinstance(e, A.Compare):
+        out = None
+        for i, op in enumerate(e.ops):
+            c = call(sp, "__cond", [text(sp, op), cfg_value(e.operands[i]), cfg_value(e.operands[i + 1])])
+            out = c if out is None else call(sp, "__cond", [text(sp, "and"), out, c])
+        return out
+    if isinstance(e, A.BoolOp):
+        return call(sp, "__cond", [text(sp, e.op), cfg_value(e.left), cfg_value(e.right)])
+    if isinstance(e, A.Unary) and e.op == "not":
+        return call(sp, "__cond", [text(sp, "not"), cfg_value(e.operand)])
+    if (isinstance(e, A.BinOp) and e.op == "-" and isinstance(e.right, A.Num) and isinstance(e.left, A.BinOp)
+            and e.left.op == "-" and isinstance(e.left.left, A.Num) and isinstance(e.left.right, A.Num)
+            and len(e.left.left.text) == 4 and len(e.left.right.text) == 2 and len(e.right.text) == 2
+            and not (e.left.left.is_float or e.left.right.is_float or e.right.is_float)):
+        return call(sp, "date", [A.Num(n.span, str(int(n.text)), False) for n in (e.left.left, e.left.right, e.right)])
+    if isinstance(e, A.ListLit):
+        return A.ListLit(sp, [cfg_value(i) for i in e.items])
+    return e
+
+
+def dotted(e: A.Expr):
+    """["a", "b", "c"] for a.b.c, or None."""
+    out = []
+    while isinstance(e, A.Attr):
+        out.append(e.name)
+        e = e.obj
+    if not out or not isinstance(e, A.Name):
+        return None
+    out.append(e.name)
+    return out[::-1]
+
+
+def names_used(body: list) -> set:
+    from .checker import walk_stmts
+    found = set()
+
+    def visit(e):
+        if isinstance(e, A.Name):
+            found.add(e.name)
+        if isinstance(e, A.Str):
+            for p in e.parts:
+                if not isinstance(p, str):
+                    visit(p)
+        for c in sub_exprs(e):
+            visit(c)
+
+    for s in walk_stmts(body):
+        for e in stmt_exprs(s):
+            visit(e)
+    return found
 
 
 def sql_text(s: A.Str) -> A.Call:

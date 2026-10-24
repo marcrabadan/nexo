@@ -5,6 +5,7 @@
 pub mod abi;
 pub mod ai;
 pub mod call;
+pub mod cfg;
 pub mod clib;
 pub mod coll;
 pub mod cow;
@@ -12,8 +13,10 @@ pub mod crypto;
 pub mod data;
 pub mod db;
 pub mod dec;
+pub mod flags;
 pub mod fmt;
 pub mod http;
+pub mod json;
 pub mod library;
 pub mod num;
 pub mod par;

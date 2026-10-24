@@ -1,0 +1,3 @@
+flags:
+    new_checkout = 10%
+    payments_v2 = maybe

@@ -51,6 +51,11 @@ static SIGS: &[Sig] = &[
     Sig { name: "__python_import", params: &[p("name"), opt("info")] },
     Sig { name: "__rate", params: &[] },
     Sig { name: "__web_server", params: &[p("name"), opt("port"), opt("auth")] },
+    Sig { name: "__cfg", params: &[p("head"), p("values"), p("options"), p("body")] },
+    Sig { name: "__ref", params: &[] },
+    Sig { name: "__cond", params: &[] },
+    Sig { name: "__flags", params: &[p("entries")] },
+    Sig { name: "flag", params: &[p("name"), opt("user")] },
     Sig {
         name: "__web_route",
         params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
@@ -108,6 +113,7 @@ pub fn release_all() {
     crate::db::release_all();
     crate::web::release_all();
     crate::ai::release_all();
+    crate::flags::release_all();
 }
 
 pub fn clear_fakes() {
@@ -130,6 +136,11 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
     }
     if sig.name == "log" {
         return log(args, names, span);
+    }
+    match sig.name {
+        "__ref" => return crate::cfg::reference(args),
+        "__cond" => return crate::cfg::cond(args),
+        _ => {}
     }
     if sig.name == "__rate" {
         // __rate(amount, words...): the words of `10 per minute per ip`
@@ -171,6 +182,9 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__python_import" => crate::pylib::import(x(0), a.get(1).unwrap_or(NONE), span),
         "__web_server" => crate::web::server(x(0), a.get(1), a.get(2), span),
         "__web_route" => crate::web::route(x(0), x(1), x(2), x(3), x(4), a.get(5), a.get(6), a.get(7), span),
+        "__cfg" => crate::cfg::cfg(x(0), x(1), x(2), x(3), span),
+        "__flags" => crate::flags::flags(x(0), span),
+        "flag" => crate::flags::flag(x(0), a.get(1), span),
         "__fake" => {
             let name = x(0).as_str().unwrap_or("").to_string();
             let value = crate::pipe::bind(x(1))?;

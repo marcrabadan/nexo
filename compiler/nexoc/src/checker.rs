@@ -114,6 +114,7 @@ pub fn check(program: &Program) -> CResult {
     let mut c = Checker { fns: HashMap::new(), methods: HashMap::new() };
     c.collect(&program.body);
     check_memory(&program.body)?;
+    crate::phase5::check_flags(&program.body)?;
     c.stmts(&program.body, Ctx::top())
 }
 

@@ -39,6 +39,8 @@ struct Row {
     comment: Option<String>,
     indent: usize,
     blank_before: usize,
+    /// inside the body of an infra, stage, pipeline or flags block (D114)
+    cfg: bool,
 }
 
 fn is_synthetic(t: &Tok) -> bool {
@@ -154,7 +156,25 @@ fn build_rows(source: &str, lines: &[Vec<char>], tokens: &[Token]) -> Vec<Row> {
         blanks = 0;
         result.push(row);
     }
+    mark_cfg(&mut result);
     result
+}
+
+const CFG_BLOCKS: &[&str] = &["infra", "stage", "pipeline", "flags"];
+
+/// Rows inside phase 5 blocks: there a space before `(` or `[` starts a
+/// new word of the phrase, and `2027-03-01` is a date (D114).
+fn mark_cfg(rows: &mut [Row]) {
+    let mut inside = false;
+    for row in rows.iter_mut() {
+        if !row.pieces.is_empty() && row.indent == 0 {
+            let first = &row.pieces[0].tok;
+            let last = &row.pieces[row.pieces.len() - 1].tok;
+            inside = matches!(first, Tok::Name(n) if CFG_BLOCKS.contains(&n.as_str())) && is_op(last, ":");
+            continue;
+        }
+        row.cfg = inside && !row.pieces.is_empty();
+    }
 }
 
 fn ends_operand(t: Option<&Tok>) -> bool {
@@ -167,7 +187,21 @@ fn ends_operand(t: Option<&Tok>) -> bool {
 }
 
 /// The space between two tokens of the same row; `prev` comes before `a`.
-fn gap(prev: Option<&Piece>, a: &Piece, b: &Piece) -> &'static str {
+fn gap(prev: Option<&Piece>, a: &Piece, b: &Piece, cfg: bool) -> &'static str {
+    let same_place = a.end_line == b.line && a.end == b.col;
+    if cfg
+        && same_place
+        && ((matches!(a.tok, Tok::Int(_)) && is_op(&b.tok, "-"))
+            || (is_op(&a.tok, "-") && matches!(b.tok, Tok::Int(_)) && prev.is_some_and(|p| matches!(p.tok, Tok::Int(_)))))
+    {
+        return ""; // a date: 2027-03-01
+    }
+    if cfg && op_in(&b.tok, &["(", "["]) && ends_operand(Some(&a.tok)) {
+        return if same_place { "" } else { " " };
+    }
+    if matches!(a.tok, Tok::Keyword("test")) && is_op(&b.tok, "(") {
+        return ""; // test() in a step of a pipeline
+    }
     if op_in(&b.tok, &[")", "]", "}", ",", ".", ":", "?", "!", ".."]) {
         return "";
     }
@@ -195,7 +229,7 @@ fn row_code(before: Option<&Piece>, row: &Row) -> String {
     for (i, piece) in row.pieces.iter().enumerate() {
         if i > 0 {
             let prev = if i >= 2 { Some(&row.pieces[i - 2]) } else { before };
-            out.push_str(gap(prev, &row.pieces[i - 1], piece));
+            out.push_str(gap(prev, &row.pieces[i - 1], piece, row.cfg));
         }
         out.push_str(&piece.text);
     }

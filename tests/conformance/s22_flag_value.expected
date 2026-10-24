@@ -1,0 +1,4 @@
+Error en s22_flag_value.nexo, línea 3:
+  payments_v2 = maybe
+  ^^^^^^^^^^^
+El valor del flag "payments_v2" no es válido. Usa on, off, un porcentaje entre 0% y 100% o users where condición.
