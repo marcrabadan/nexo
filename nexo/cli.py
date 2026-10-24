@@ -431,6 +431,68 @@ def run_privacy(args: list[str]) -> int:
     return 0
 
 
+INFRA_COMMANDS = ("plan", "apply", "destroy", "drift", "cost", "import")
+
+
+def infra_program(program) -> list:
+    """What the commands of nexo.infra run: the types (for privacy, D121),
+    constants written as literals, and the infra and stage blocks."""
+    keep = []
+    for s in program.body:
+        if isinstance(s, (A.TypeDef, A.TraitDef, A.Use)):
+            keep.append(s)
+        elif (isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and isinstance(s.expr.func, A.Name)
+              and s.expr.func.name in ("__db_table", "__privacy_type", "__infra", "__stage")):
+            keep.append(s)
+        elif isinstance(s, A.Assign) and s.op == "=" and isinstance(s.target, A.Name) and literal(s.value):
+            keep.append(s)
+    return keep
+
+
+def literal(e) -> bool:
+    if isinstance(e, (A.Num, A.UnitLit, A.Bool, A.NoneLit)):
+        return True
+    if isinstance(e, A.Str):
+        return all(isinstance(p, str) for p in e.parts)
+    if isinstance(e, A.ListLit):
+        return all(literal(i) for i in e.items)
+    return False
+
+
+def run_infra(command: str, args: list[str]) -> int:
+    """`nexo plan|apply|destroy|drift|cost [file.nexo] [--stage s] [--yes]`
+    and `nexo import CLOUD RESOURCE ID [file.nexo] [--stage s]` (section 11)."""
+    from .stdlib import infra, infra_cloud
+    parsed = split_options(args, flags=("--yes",) if command == "apply" else (), values=("--stage",))
+    if parsed is None:
+        print(USAGE[errors.LANG], file=sys.stderr)
+        return 2
+    pos, opts = parsed
+    extra = 3 if command == "import" else 0
+    if len(pos) not in (extra, extra + 1):
+        print(USAGE[errors.LANG], file=sys.stderr)
+        return 2
+    path = program_file("infra", pos[extra] if len(pos) > extra else None)
+    if path is None:
+        return 1
+    interp = Interpreter()
+    try:
+        source = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=path)}.\n")
+        return 1
+    try:
+        program = interp.load(source, path)
+        for stmt in infra_program(program):
+            interp.exec(stmt, interp.globals)
+        if not infra.INFRAS:
+            raise NexoError("infra_none", None, file=path)
+        return infra_cloud.command(interp, command, pos[:extra], opts.get("--stage"), "--yes" in opts)
+    except (NexoError, NexoFailure) as exc:
+        report(exc)
+        return 1
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -500,6 +562,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_db(rest[1:])
     if rest[:1] == ["flags"] and lang in ("es", "en"):
         return run_flags(rest[1:])
+    if rest[:1] and rest[0] in INFRA_COMMANDS and lang in ("es", "en"):
+        return run_infra(rest[0], rest[1:])
     if rest[:1] == ["privacy"] and lang in ("es", "en"):
         return run_privacy(rest[1:])
     if rest in (["ai", "setup"], ["ai", "usage"]) and lang in ("es", "en"):
