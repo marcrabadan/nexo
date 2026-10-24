@@ -1,0 +1,31 @@
+# a table first used inside a transaction that rolls back is created again (D100)
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Item:
+    id: id
+    name: str
+
+@table
+type Tag:
+    id: id
+    label: str
+
+try:
+    db.transaction:
+        db.Item.add(name: "a")
+        fail("stop")
+else e:
+    print(e.message)
+print(db.Item.count())
+db.transaction:
+    db.Item.add(name: "b")
+    try:
+        db.transaction:
+            db.Tag.add(label: "x")
+            fail("inner")
+    else e:
+        print(e.message)
+print(db.Item.count(), db.Tag.count())

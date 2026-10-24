@@ -937,7 +937,9 @@ types as the source of truth. Phase 4 has SQLite, which needs no server:
   `NEXO_SQL_LOG=1` writes every statement to the standard error output;
   the tests check that both phases send the same SQL.
 - `db.transaction:` (D90) runs its block in a transaction: an error rolls
-  it back and passes on; inside another one it is a savepoint.
+  it back and passes on; inside another one it is a savepoint. A table
+  first created inside a transaction that rolls back is created again
+  when it is next used.
 - `db.sql("SELECT ... {minimum}")` sends the text with each `{value}` as a
   parameter, never inside the SQL ("raw SQL, always parameterised"), so
   its argument must be a literal text (the parser keeps its parts apart);

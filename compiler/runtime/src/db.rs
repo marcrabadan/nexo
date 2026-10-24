@@ -1248,6 +1248,8 @@ pub struct Transaction {
     db: Val,
     depth: usize,
     done: std::sync::atomic::AtomicBool,
+    /// the tables in sync when it began, for a rollback
+    synced: Vec<String>,
 }
 
 impl Native for Transaction {
@@ -1268,7 +1270,8 @@ pub fn begin(db: V, span: u32) -> R<Val> {
     let sql = if *depth == 0 { "BEGIN".to_string() } else { format!("SAVEPOINT nexo_{}", *depth) };
     d.exec(&sql, &[], span)?;
     *depth += 1;
-    Ok(native(Transaction { db: Val::from(db), depth: *depth, done: std::sync::atomic::AtomicBool::new(false) }))
+    let synced = d.synced.lock().unwrap().clone();
+    Ok(native(Transaction { db: Val::from(db), depth: *depth, done: std::sync::atomic::AtomicBool::new(false), synced }))
 }
 
 pub fn end(tx: V, commit: bool, span: u32) -> R<Val> {
@@ -1279,6 +1282,10 @@ pub fn end(tx: V, commit: bool, span: u32) -> R<Val> {
     let d = t.db.v().native::<Database>().unwrap();
     let level = t.depth - 1;
     *d.depth.lock().unwrap() = level;
+    if !commit {
+        // a table created inside the transaction is gone again
+        *d.synced.lock().unwrap() = t.synced.clone();
+    }
     if level == 0 {
         d.exec(if commit { "COMMIT" } else { "ROLLBACK" }, &[], span)?;
     } else if commit {

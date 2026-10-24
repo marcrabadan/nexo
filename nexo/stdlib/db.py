@@ -312,13 +312,16 @@ class Database(Native):
     def begin(self, call):
         self.execute(call, "BEGIN" if self.depth == 0 else f"SAVEPOINT nexo_{self.depth}", [])
         self.depth += 1
-        return Transaction(self, self.depth)
+        return Transaction(self, self.depth, set(self.synced))
 
     def end(self, call, tx: "Transaction", commit: bool):
         if tx.done:
             return
         tx.done = True
         self.depth = tx.depth - 1
+        if not commit:
+            # a table created inside the transaction is gone again
+            self.synced = tx.synced
         if self.depth == 0:
             self.execute(call, "COMMIT" if commit else "ROLLBACK", [])
         elif commit:
@@ -355,8 +358,9 @@ def quote_tables(sql: str, tables: dict) -> str:
 class Transaction(Native):
     type_name = "transaction"
 
-    def __init__(self, db: Database, depth: int):
-        self.db, self.depth, self.done = db, depth, False
+    def __init__(self, db: Database, depth: int, synced: set):
+        # the tables in sync when it began, for a rollback
+        self.db, self.depth, self.done, self.synced = db, depth, False, synced
 
 
 def b_db_begin(call, db):
