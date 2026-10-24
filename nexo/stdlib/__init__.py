@@ -24,9 +24,9 @@ class Namespace:
 
 
 def install(interp) -> None:
-    from . import crypto
+    from . import crypto, http
     env = interp.builtins
-    for module in (core, io, data, clock, text, crypto):
+    for module in (core, io, data, clock, text, crypto, http):
         for name, value in module.exports().items():
             env.define(name, value)
     env.define("json", Namespace("json", data.json_exports()))

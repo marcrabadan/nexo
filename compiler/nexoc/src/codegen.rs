@@ -184,6 +184,9 @@ pub struct Gen<'a> {
     method_of: HashMap<u32, String>,
     /// values that are certainly ints (no type checks at run time)
     ints: Option<crate::narrow::Ints<'a>>,
+    /// names a `fake` of some test replaces (section 14): their calls ask
+    /// the runtime first
+    fakes: Vec<String>,
 }
 
 fn op_code(op: &str) -> u32 {
@@ -328,6 +331,7 @@ impl<'a> Gen<'a> {
             prover: None,
             method_of: HashMap::new(),
             ints: None,
+            fakes: Vec::new(),
         }
     }
 
@@ -1682,6 +1686,17 @@ impl<'a> Gen<'a> {
         self.find_known_fns(program);
         self.prover = Some(crate::prove::Types::new(program));
         self.ints = Some(crate::narrow::Ints::new(program, self.res, &self.known_fns));
+        crate::checker::walk_stmts(&program.body, true, &mut |s| {
+            if let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind {
+                if matches!(&func.kind, ExprKind::Name(n) if n == "__fake") {
+                    if let Some(Arg { value: Expr { kind: ExprKind::Str(parts), .. }, .. }) = args.first() {
+                        if let [StrPiece::Lit(name)] = parts.as_slice() {
+                            self.fakes.push(name.clone());
+                        }
+                    }
+                }
+            }
+        });
         crate::checker::walk_stmts(&program.body, true, &mut |s| {
             if let StmtKind::Type(t) = &s.kind {
                 for m in &t.methods {
@@ -3864,6 +3879,38 @@ impl<'a> Gen<'a> {
         Ok(self.owned(v))
     }
 
+    /// A call to a name some `fake` replaces: the function and the
+    /// arguments are evaluated, then the runtime returns the fake value of
+    /// the running test, or makes the call.
+    fn faked_call(&mut self, func: &'a Expr, args: &'a [Arg], first: Option<Val>, sp: u32) -> GResult<Val> {
+        let f = self.expr(func, false)?;
+        let slot = self.spill(&f);
+        let mut vals = Vec::new();
+        let mut names: Vec<Option<&str>> = Vec::new();
+        if let Some(x) = &first {
+            vals.push(x.clone());
+            names.push(None);
+        }
+        let mut own_args = Vec::new();
+        for a in args {
+            let v = self.expr(&a.value, true)?;
+            vals.push(v.clone());
+            own_args.push(v);
+            names.push(a.name.as_deref());
+        }
+        let n = vals.len();
+        let arr = self.values_array(&vals);
+        let nm = self.names_array(&names);
+        let f = self.load(&slot);
+        let tf = self.tb(&f);
+        let na = self.strarg(&crate::checker::callee_name(func));
+        let r = self.call_v("nx_call_fake", &format!("{na}, {tf}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}"));
+        self.check();
+        self.drop_all(&own_args);
+        self.drop_slot(&slot);
+        Ok(self.owned(r))
+    }
+
     /// A call. `first` is the value a pipeline passes as first argument
     /// (the caller keeps ownership of it).
     fn call_expr(&mut self, e: &'a Expr, func: &'a Expr, args: &'a [Arg], first: Option<Val>, span: Span) -> GResult<Val> {
@@ -3882,6 +3929,9 @@ impl<'a> Gen<'a> {
             seen_named |= a.name.is_some();
         }
         let sp = self.span_id(span);
+        if !self.fakes.is_empty() && self.fakes.contains(&crate::checker::callee_name(func)) {
+            return self.faked_call(func, args, first, sp);
+        }
         // the function itself is evaluated before the arguments
         enum Target<'p> {
             Builtin(u32),
@@ -4523,6 +4573,7 @@ declare %V @nx_unit(ptr, i64, ptr, i64)
 declare %V @nx_builtin(i32)
 declare %V @nx_named(ptr, i64)
 declare %V @nx_clock(ptr, i64)
+declare %V @nx_call_fake(ptr, i64, i64, i64, ptr, ptr, i64, i32)
 declare %V @nx_list(ptr, i64)
 declare void @nx_list_push(i64, i64, i64, i64)
 declare %V @nx_map(ptr, ptr, ptr, i64)

@@ -22,7 +22,8 @@ from .errors import NexoError
 
 FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt",
                      "encrypt_file", "decrypt_file"}
-FALLIBLE_MEMBERS = {("json", "parse"), ("csv", "parse")}
+FALLIBLE_MEMBERS = {("json", "parse"), ("csv", "parse"), ("http", "get"), ("http", "post"), ("http", "put"),
+                    ("http", "patch"), ("http", "delete")}
 
 
 @dataclass

@@ -129,6 +129,7 @@ def run_tests(paths: list[str]) -> int:
             sys.stdout.flush()
         for test in interp.tests:
             total += 1
+            interp.fakes = {}
             try:
                 interp.exec_block(test.body, Env(interp.globals))
             except (NexoError, NexoFailure) as exc:

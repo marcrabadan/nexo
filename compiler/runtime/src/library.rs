@@ -27,10 +27,16 @@ static SIGS: &[Sig] = &[
     Sig { name: "decrypt_file", params: &[p("path"), p("key")] },
     Sig { name: "sign", params: &[p("document"), p("private")] },
     Sig { name: "verify", params: &[p("document"), p("signature"), p("public")] },
+    Sig { name: "http.get", params: &[] },
+    Sig { name: "http.post", params: &[] },
+    Sig { name: "http.put", params: &[] },
+    Sig { name: "http.patch", params: &[] },
+    Sig { name: "http.delete", params: &[] },
+    Sig { name: "__fake", params: &[p("name"), p("value")] },
 ];
 
 /// Namespaces of the library: their members are the SIGS named "ns.member".
-const NAMESPACES: &[&str] = &["password", "key", "keypair"];
+const NAMESPACES: &[&str] = &["password", "key", "keypair", "http"];
 
 fn id_of(name: &str) -> Option<u32> {
     SIGS.iter().position(|s| s.name == name).map(|i| BASE + i as u32)
@@ -67,11 +73,26 @@ pub fn member(ns: &str, name: &str, span: u32) -> Option<R<Val>> {
     })
 }
 
+static FAKES: std::sync::Mutex<Vec<(String, Val)>> = std::sync::Mutex::new(Vec::new());
+
+/// The value a `fake` of the running test gives calls of `name`.
+pub fn fake_value(name: &str) -> Option<Val> {
+    FAKES.lock().unwrap().iter().rev().find(|(n, _)| n == name).map(|(_, v)| v.clone())
+}
+
+pub fn clear_fakes() {
+    let old = std::mem::take(&mut *FAKES.lock().unwrap());
+    drop(old);
+}
+
 pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let sig = &SIGS[(id.0 - BASE) as usize];
     if sig.name == "render" {
         // render(path, name: value...): every named argument is a value
         return crate::text::render(args, names, span);
+    }
+    if let Some(m) = sig.name.strip_prefix("http.") {
+        return crate::http::request(&m.to_uppercase(), args, names, span);
     }
     let a = check_args(sig, args, names, span)?;
     let x = |i: usize| a.get(i).unwrap();
@@ -93,6 +114,12 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "decrypt_file" => c::decrypt_file(x(0), x(1), span),
         "sign" => c::sign(x(0), x(1), span),
         "verify" => c::verify(x(0), x(1), x(2), span),
+        "__fake" => {
+            let name = x(0).as_str().unwrap_or("").to_string();
+            let value = crate::pipe::bind(x(1))?;
+            FAKES.lock().unwrap().push((name, value));
+            Ok(Val::none())
+        }
         _ => unreachable!(),
     }
 }

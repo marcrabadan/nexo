@@ -92,6 +92,8 @@ pub const ERROR_KINDS: &[&str] = &[
     "ContractBroken",
     "Timeout",
     "InvalidValue",
+    "NetworkError",
+    "HTTPError",
 ];
 
 /// A declared type, decoded from the descriptor the compiler emits.

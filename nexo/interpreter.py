@@ -166,6 +166,8 @@ class Interpreter:
         self.checker_fns: dict[str, bool] = {}
         self.checker_methods: dict[str, bool] = {}
         self.handlers: dict[str, list] = {}
+        # `fake name returns value` of the running test (section 14)
+        self.fakes: dict[str, Any] = {}
         self.tests: list[A.TestDef] = []
         self.contracts: dict[int, tuple[list, list]] = {}
         # tasks of `parallel` (sequential in phase 0, D52) and of spawn
@@ -736,6 +738,11 @@ class Interpreter:
             return self.call_at(func, args, e)
         func = self.eval(e.func, env)
         args = self.eval_args(e.args, env)
+        if self.fakes:
+            from .checker import callee_name
+            name = callee_name(e.func)
+            if name in self.fakes:
+                return self.fakes[name]
         return self.call_at(func, args, e)
 
     # ------------------------------------------------------------ places

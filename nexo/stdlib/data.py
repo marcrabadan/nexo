@@ -188,9 +188,10 @@ def b_json_parse(call, text, as_=None):
     return as_type(call, value, as_)
 
 
-def to_json(value: Any, level: int = 0) -> str:
-    """JSON text of a value, indented with 2 spaces. Decimals keep all
-    their digits; money and quantities are written as text ("19.99 EUR")."""
+def to_json(value: Any, level: int = 0, compact: bool = False) -> str:
+    """JSON text of a value, indented with 2 spaces (or on one line without
+    spaces, `compact`, for HTTP). Decimals keep all their digits; money and
+    quantities are written as text ("19.99 EUR")."""
     pad = "  " * (level + 1)
     close = "  " * level
     if isinstance(value, Record):
@@ -200,11 +201,16 @@ def to_json(value: Any, level: int = 0) -> str:
     if isinstance(value, dict):
         if not value:
             return "{}"
+        if compact:
+            return "{" + ",".join(f"{json.dumps(show(k), ensure_ascii=False)}:{to_json(v, 0, True)}"
+                                  for k, v in value.items()) + "}"
         items = [f"{pad}{json.dumps(show(k), ensure_ascii=False)}: {to_json(v, level + 1)}" for k, v in value.items()]
         return "{\n" + ",\n".join(items) + "\n" + close + "}"
     if isinstance(value, list):
         if not value:
             return "[]"
+        if compact:
+            return "[" + ",".join(to_json(v, 0, True) for v in value) + "]"
         return "[\n" + ",\n".join(pad + to_json(v, level + 1) for v in value) + "\n" + close + "]"
     if value is None:
         return "null"

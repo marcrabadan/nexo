@@ -10,6 +10,7 @@ pub mod crypto;
 pub mod data;
 pub mod dec;
 pub mod fmt;
+pub mod http;
 pub mod library;
 pub mod num;
 pub mod par;

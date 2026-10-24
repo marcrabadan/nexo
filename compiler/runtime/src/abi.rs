@@ -646,6 +646,25 @@ pub unsafe extern "C" fn nx_call(t: u64, b: u64, args: *const V, nm: *const Name
     ret(call::call(v(t, b), values(args, n), &names, span))
 }
 
+/// A call to a name a `fake` may replace (section 14).
+#[no_mangle]
+pub unsafe extern "C" fn nx_call_fake(
+    name: *const u8,
+    len: usize,
+    t: u64,
+    b: u64,
+    args: *const V,
+    nm: *const NameRef,
+    n: u64,
+    span: u32,
+) -> V {
+    if let Some(v) = crate::library::fake_value(text(name, len)) {
+        return v.into_raw();
+    }
+    let names = names(nm, n);
+    ret(call::call(v(t, b), values(args, n), &names, span))
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn nx_call_method(
     t: u64,
@@ -1387,7 +1406,9 @@ pub extern "C" fn nx_run_tests() -> ! {
         nx_test_header();
     }
     for (name, f) in tests {
+        crate::library::clear_fakes();
         drop(call::call_value(f.v(), &[], 0));
+        crate::library::clear_fakes();
         unsafe { nx_test_result(name.as_ptr(), name.len()) };
     }
     nx_test_finish()

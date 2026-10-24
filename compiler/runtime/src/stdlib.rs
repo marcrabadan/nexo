@@ -491,6 +491,17 @@ fn conv_int(v: V, span: u32) -> R<Val> {
     }
 }
 
+/// An address with one @, a name before it and a domain with a dot after it.
+fn is_email(t: &str) -> bool {
+    let Some((user, domain)) = t.split_once('@') else { return false };
+    let bad = |c: char| c == '@' || c.is_whitespace();
+    !user.is_empty()
+        && !user.chars().any(bad)
+        && !domain.chars().any(bad)
+        && domain.contains('.')
+        && domain.split('.').all(|p| !p.is_empty())
+}
+
 fn is_int_text(t: &str) -> bool {
     let t = t.strip_prefix(['+', '-']).unwrap_or(t);
     !t.is_empty() && t.chars().all(|c| c.is_ascii_digit())
@@ -571,6 +582,12 @@ fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
                     _ => return Err(invalid()),
                 },
                 "str" => owned.clone(),
+                "email" => {
+                    if !is_email(text) {
+                        return Err(invalid());
+                    }
+                    Val::str(text)
+                }
                 "date" => crate::time::parse_date(text).ok_or_else(invalid)?,
                 "time" => crate::time::parse_time(text).ok_or_else(invalid)?,
                 _ => return Err(invalid()),
@@ -819,7 +836,7 @@ pub fn named_value(name: &str) -> Option<Val> {
         "int" | "float" | "decimal" | "money" | "str" | "bool" | "list" | "map" => {
             Obj::Type(TypeRef::Builtin(crate::num::intern(name)))
         }
-        "date" | "time" => Obj::Type(TypeRef::Builtin(crate::num::intern(name))),
+        "date" | "time" | "email" => Obj::Type(TypeRef::Builtin(crate::num::intern(name))),
         "half_up" | "half_even" => Obj::Symbol(crate::num::intern(name)),
         "json" | "csv" => Obj::Namespace(crate::num::intern(name)),
         "channel" => Obj::ChannelType(None),

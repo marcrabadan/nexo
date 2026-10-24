@@ -186,6 +186,8 @@ def b_fail(call, message):
 
 
 INT_RE = re.compile(r"^[+-]?\d+$")
+# an address with one @, a name before it and a domain with a dot after it
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
 FLOAT_RE = re.compile(r"^[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?$")
 
 
@@ -223,6 +225,10 @@ def b_validate(call, value, as_, range=None):
             result = text == "true"
         elif target.name == "str":
             result = value
+        elif target.name == "email":
+            if not EMAIL_RE.match(text):
+                raise invalid()
+            result = text
         elif target.name in ("date", "time"):
             from .clock import parse_date, parse_time
             result = parse_date(text) if target.name == "date" else parse_time(text)
@@ -266,6 +272,7 @@ def exports() -> dict:
     }
     for t in ("int", "float", "decimal", "money", "str", "bool", "list", "map"):
         names[t] = BuiltinType(t)
+    names["email"] = BuiltinType("email")
     for kind in ERROR_KINDS:
         names[kind] = ErrorKind(kind)
     for code in CURRENCIES:

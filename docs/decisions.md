@@ -861,3 +861,30 @@ signatures are base64 text; files are encrypted in place
   (section 1, rule 2). `encrypt(text, k)`, `decrypt(text, k)?` (an
   `InvalidData` error for another key or changed data), `sign(text,
   private)` and `verify(text, signature, public)`.
+
+**D98. `http`.** Section 15 lists "`http.get`, `http.post`, client with
+retries"; section 10 calls `http.get(EXCHANGE_API).json().usd`. The client
+has `http.get(url)`, `http.delete(url)`, `http.post(url, body)`,
+`http.put` and `http.patch`, with `headers:` (a map; a value can be a
+secret), `timeout:` (a duration, 30s by default) and `retries:`. A text
+body is sent as `text/plain`, anything else as JSON (on one line). The
+answer is a `response` with `status`, `text`, `headers` (lowercase names)
+and `json()` (or `json(as: T)`), which can fail like `json.parse`. Every
+call can fail (`T!`): `NetworkError` when nothing answers (refused,
+unknown host, no answer in time) and `HTTPError` for a status of 400 or
+more, so `http.get(url)?.json()?` never reads an error page as data. GET,
+PUT and DELETE are retried twice by default (POST and PATCH never are,
+since repeating them may repeat their effect) after a network error or a
+502, 503 or 504, waiting 0.25 s, then 0.5 s...; a GET follows up to 5
+redirects; other 3xx answers are returned as they are. The proxy of the
+environment (`HTTPS_PROXY`, `NO_PROXY`) is used. `.usd` on the parsed
+JSON is not allowed (a map is read with `["usd"]`, D44); `json(as: T)`
+gives a record. `validate(x, as: email)` (section 9) accepts a text with
+one `@`, something before it and a domain with a dot after it.
+
+**D99. `fake`.** Section 14 writes `fake ask returns "positive"` and
+`fake payments_api returns {ok: true}` inside a test. `fake name returns
+value` (a dotted name, `fake http.get returns ...`, works too) makes every
+call written as `name(...)` return the value until the test ends; the
+function and the arguments are still evaluated. It is only a statement
+inside `test` blocks; `fake` stays an ordinary name elsewhere.

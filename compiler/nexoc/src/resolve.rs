@@ -195,6 +195,8 @@ pub const ERROR_KINDS: &[&str] = &[
     "ContractBroken",
     "Timeout",
     "InvalidValue",
+    "NetworkError",
+    "HTTPError",
 ];
 
 /// Builtin names in the order the phase 0 interpreter defines them (this
@@ -202,7 +204,7 @@ pub const ERROR_KINDS: &[&str] = &[
 pub fn builtin_names() -> Vec<&'static str> {
     let mut v = vec![
         "print", "input", "len", "range", "set", "round", "split", "convert", "fail", "validate", "PI", "half_up",
-        "half_even", "int", "float", "decimal", "money", "str", "bool", "list", "map",
+        "half_even", "int", "float", "decimal", "money", "str", "bool", "list", "map", "email",
     ];
     v.extend(ERROR_KINDS);
     v.extend(crate::lexer::CURRENCIES.iter().map(|(c, _)| *c));
@@ -216,13 +218,13 @@ pub fn builtin_names() -> Vec<&'static str> {
 /// defines them.
 pub const LIBRARY_NAMES: &[&str] = &[
     "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair", "encrypt",
-    "decrypt", "encrypt_file", "decrypt_file", "sign", "verify",
+    "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "http", "__fake",
 ];
 
 /// Library names that are functions or namespaces (not types).
 pub const LIBRARY_FUNCTIONS: &[&str] = &[
     "move_file", "now", "today", "regex", "render", "secret", "password", "key", "keypair", "encrypt", "decrypt",
-    "encrypt_file", "decrypt_file", "sign", "verify",
+    "encrypt_file", "decrypt_file", "sign", "verify", "http", "email", "__fake",
 ];
 
 pub fn is_builtin(name: &str) -> bool {

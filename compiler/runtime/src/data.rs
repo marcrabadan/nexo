@@ -756,9 +756,18 @@ pub fn json_string(s: &str) -> String {
     out
 }
 
+/// JSON on one line without spaces (for HTTP).
+pub fn to_json_compact(v: V) -> String {
+    to_json_in(v, 0, true)
+}
+
 /// JSON text of a value, indented with 2 spaces. Decimals keep all their
 /// digits; money and quantities are written as text ("19.99 EUR").
 pub fn to_json(v: V, level: usize) -> String {
+    to_json_in(v, level, false)
+}
+
+fn to_json_in(v: V, level: usize, compact: bool) -> String {
     let pad = "  ".repeat(level + 1);
     let close = "  ".repeat(level);
     let pairs: Option<Vec<(String, Val)>> = match v.get() {
@@ -777,8 +786,12 @@ pub fn to_json(v: V, level: usize) -> String {
         if pairs.is_empty() {
             return "{}".into();
         }
+        if compact {
+            let items: Vec<String> = pairs.iter().map(|(k, x)| format!("{}:{}", json_string(k), to_json_in(x.v(), 0, true))).collect();
+            return format!("{{{}}}", items.join(","));
+        }
         let items: Vec<String> =
-            pairs.iter().map(|(k, x)| format!("{pad}{}: {}", json_string(k), to_json(x.v(), level + 1))).collect();
+            pairs.iter().map(|(k, x)| format!("{pad}{}: {}", json_string(k), to_json_in(x.v(), level + 1, false))).collect();
         return format!("{{\n{}\n{close}}}", items.join(",\n"));
     }
     if let Some(Obj::List(items)) = v.get() {
@@ -786,7 +799,11 @@ pub fn to_json(v: V, level: usize) -> String {
         if items.is_empty() {
             return "[]".into();
         }
-        let parts: Vec<String> = items.iter().map(|x| format!("{pad}{}", to_json(x.v(), level + 1))).collect();
+        if compact {
+            let parts: Vec<String> = items.iter().map(|x| to_json_in(x.v(), 0, true)).collect();
+            return format!("[{}]", parts.join(","));
+        }
+        let parts: Vec<String> = items.iter().map(|x| format!("{pad}{}", to_json_in(x.v(), level + 1, false))).collect();
         return format!("[\n{}\n{close}]", parts.join(",\n"));
     }
     match v.tag {

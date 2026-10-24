@@ -22,7 +22,15 @@ use crate::ast::*;
 
 const FALLIBLE_BUILTINS: &[&str] =
     &["read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt", "encrypt_file", "decrypt_file"];
-const FALLIBLE_MEMBERS: &[(&str, &str)] = &[("json", "parse"), ("csv", "parse")];
+const FALLIBLE_MEMBERS: &[(&str, &str)] = &[
+    ("json", "parse"),
+    ("csv", "parse"),
+    ("http", "get"),
+    ("http", "post"),
+    ("http", "put"),
+    ("http", "patch"),
+    ("http", "delete"),
+];
 
 #[derive(Clone, Copy)]
 enum FnRef<'a> {
