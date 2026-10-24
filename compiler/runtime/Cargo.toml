@@ -14,3 +14,4 @@ nexo-diag = { path = "../diag" }
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
+regex = { version = "1", default-features = false, features = ["std", "unicode", "perf"] }

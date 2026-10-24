@@ -273,6 +273,11 @@ def exports() -> dict:
     return names
 
 
+def _text():
+    from . import text
+    return text
+
+
 # ---------------------------------------------------- methods of values
 
 def m_sum(call, obj):
@@ -326,5 +331,6 @@ METHODS = {
         "replace": text_method("replace", lambda s, a, b: s.replace(a, b), 2),
         "starts_with": text_method("starts_with", lambda s, p: s.startswith(p), 1),
         "ends_with": text_method("ends_with", lambda s, p: s.endswith(p), 1),
+        "find": lambda call, obj, text: _text().m_find(call, obj, text),
     },
 }

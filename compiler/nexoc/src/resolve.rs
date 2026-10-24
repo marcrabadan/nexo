@@ -214,10 +214,10 @@ pub fn builtin_names() -> Vec<&'static str> {
 
 /// Names of the standard library added in phase 4, in the order phase 0
 /// defines them.
-pub const LIBRARY_NAMES: &[&str] = &["now", "today", "date", "time"];
+pub const LIBRARY_NAMES: &[&str] = &["move_file", "now", "today", "date", "time", "regex", "render"];
 
 /// Library names that are functions or namespaces (not types).
-pub const LIBRARY_FUNCTIONS: &[&str] = &["now", "today"];
+pub const LIBRARY_FUNCTIONS: &[&str] = &["move_file", "now", "today", "regex", "render"];
 
 pub fn is_builtin(name: &str) -> bool {
     builtin_names().contains(&name)

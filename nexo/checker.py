@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from . import ast as A
 from .errors import NexoError
 
-FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate"}
+FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate", "move_file", "render"}
 FALLIBLE_MEMBERS = {("json", "parse"), ("csv", "parse")}
 
 

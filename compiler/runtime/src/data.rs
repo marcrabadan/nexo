@@ -23,7 +23,7 @@ use crate::value::*;
 
 // ------------------------------------------------------------------- files
 
-fn os_failure(path: &str, e: &std::io::Error, span: u32) -> crate::state::Fail {
+pub fn os_failure(path: &str, e: &std::io::Error, span: u32) -> crate::state::Fail {
     let reason = os_reason(e);
     let cause = Val::str(reason.clone());
     if e.kind() == std::io::ErrorKind::NotFound {

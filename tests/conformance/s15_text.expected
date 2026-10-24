@@ -1,0 +1,20 @@
+4 none 3
+regex("[0-9]+") true false
+42 none ["42", "7"]
+a#b#c ["a", "b", "c"]
+["ana", "mail"] none
+true none HOLA
+["2026", "10"]
+<p>Hello &lt;Ana &amp; Luis&gt;, {literal}} and 3 items</p>
+
+Dear <Ana>,
+
+archive/draft.txt
+old report
+
+No se encuentra el archivo "missing.txt"
+InvalidData Datos no válidos: la plantilla letter.txt usa {name}, que no tiene valor
+Error en s15_text.nexo, línea 23:
+  r = regex("(?=a)b")
+      ^^^^^^^^^^^^^^^
+"(?=a)b" no es una expresión regular válida. Revisa los paréntesis, corchetes y escapes; no hay lookarounds como (?=...) ni referencias como \1.

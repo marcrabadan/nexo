@@ -655,6 +655,10 @@ MESSAGES: dict[str, dict[str, str]] = {
     "lsp_fix_all": {"es": "Aplica los arreglos seguros (nexo fix)", "en": "Apply the safe fixes (nexo fix)"},
     "check_ok": {"es": "No hay errores en {path}.", "en": "No errors in {path}."},
     # phase 4 (D89-)
+    "bad_regex": {"es": "\"{pattern}\" no es una expresión regular válida.", "en": "\"{pattern}\" is not a valid regular expression."},
+    "fix.bad_regex": {"es": "Revisa los paréntesis, corchetes y escapes; no hay lookarounds como (?=...) ni referencias como \\1.", "en": "Check the brackets and escapes; there are no lookarounds such as (?=...) nor backreferences such as \\1."},
+    "detail.template": {"es": "la plantilla {path} usa {{{name}}}, que no tiene valor", "en": "the template {path} uses {{{name}}}, which has no value"},
+    "detail.not_a_file": {"es": "no es un archivo", "en": "it is not a file"},
     "date_days": {"es": "Una fecha solo avanza días enteros, y {value} no lo es.", "en": "A date only moves by whole days, and {value} is not."},
     "fix.date_days": {"es": "Suma días (2 days) a una fecha, o usa un time (now + 3h) para horas y minutos.", "en": "Add days (2 days) to a date, or use a time (now + 3h) for hours and minutes."},
     "detail.zone": {"es": "\"{zone}\" no es una zona horaria conocida", "en": "\"{zone}\" is not a known time zone"},

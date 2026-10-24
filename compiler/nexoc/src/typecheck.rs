@@ -855,7 +855,7 @@ impl<'a> TypeChecker<'a> {
             Ty::List(_) => &["sum", "count", "add"],
             Ty::Set => &["add", "count"],
             Ty::Map => &["keys", "values", "count"],
-            Ty::Str => &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with"],
+            Ty::Str => &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with", "find"],
             _ => return None,
         })
     }

@@ -38,7 +38,7 @@ pub const B_JSON_PARSE: BuiltinId = BuiltinId(18);
 pub const B_CSV_PARSE: BuiltinId = BuiltinId(19);
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind {
+pub(crate) enum Kind {
     /// positional or named
     Pos,
     /// *values
@@ -47,31 +47,31 @@ enum Kind {
     KwOnly,
 }
 
-struct Param {
+pub(crate) struct Param {
     name: &'static str,
     kind: Kind,
     required: bool,
 }
 
-const fn p(name: &'static str) -> Param {
+pub(crate) const fn p(name: &'static str) -> Param {
     Param { name, kind: Kind::Pos, required: true }
 }
 
-const fn opt(name: &'static str) -> Param {
+pub(crate) const fn opt(name: &'static str) -> Param {
     Param { name, kind: Kind::Pos, required: false }
 }
 
-const fn var(name: &'static str) -> Param {
+pub(crate) const fn var(name: &'static str) -> Param {
     Param { name, kind: Kind::VarPos, required: false }
 }
 
-const fn kw(name: &'static str) -> Param {
+pub(crate) const fn kw(name: &'static str) -> Param {
     Param { name, kind: Kind::KwOnly, required: false }
 }
 
-struct Sig {
-    name: &'static str,
-    params: &'static [Param],
+pub(crate) struct Sig {
+    pub(crate) name: &'static str,
+    pub(crate) params: &'static [Param],
 }
 
 static SIGS: &[Sig] = &[
@@ -98,24 +98,27 @@ static SIGS: &[Sig] = &[
 ];
 
 pub fn builtin_name(id: BuiltinId) -> &'static str {
+    if id.0 >= crate::library::BASE {
+        return crate::library::name(id);
+    }
     SIGS[id.0 as usize].name
 }
 
 /// Arguments after checking them against the signature: one slot per
 /// parameter (MISSING when absent) and the extra positional values.
-struct Args {
-    slots: Vec<V>,
-    rest: Vec<V>,
+pub(crate) struct Args {
+    pub(crate) slots: Vec<V>,
+    pub(crate) rest: Vec<V>,
 }
 
 impl Args {
-    fn get(&self, i: usize) -> Option<V> {
+    pub(crate) fn get(&self, i: usize) -> Option<V> {
         let v = self.slots[i];
         (v.tag != T_MISSING).then_some(v)
     }
 }
 
-fn check_args(sig: &Sig, args: &[V], names: &[Option<&str>], span: u32) -> R<Args> {
+pub(crate) fn check_args(sig: &Sig, args: &[V], names: &[Option<&str>], span: u32) -> R<Args> {
     let fname = sig.name;
     let mut seen: Vec<&str> = Vec::new();
     for n in names.iter().flatten() {
@@ -204,7 +207,7 @@ fn check_args(sig: &Sig, args: &[V], names: &[Option<&str>], span: u32) -> R<Arg
     ))
 }
 
-fn bad_arg(fname: &str, detail: String, span: u32) -> crate::state::Fail {
+pub(crate) fn bad_arg(fname: &str, detail: String, span: u32) -> crate::state::Fail {
     diag(Diagnostic::new_spanless("bad_argument").arg("fn", fname).arg("detail", detail), span)
 }
 
@@ -212,12 +215,15 @@ pub fn expects(fname: &str, what: &str, v: V, span: u32) -> crate::state::Fail {
     bad_arg(fname, msg("detail.expects", &[("what", what.to_string()), ("vtype", type_name(v))]), span)
 }
 
-fn str_arg(fname: &str, v: V, span: u32) -> R<&'static str> {
+pub(crate) fn str_arg(fname: &str, v: V, span: u32) -> R<&'static str> {
     v.as_str().ok_or_else(|| expects(fname, "str", v, span))
 }
 
 /// Call builtin `id` with arguments checked against its signature.
 pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    if id.0 >= crate::library::BASE {
+        return crate::library::call(id, args, names, span);
+    }
     let sig = &SIGS[id.0 as usize];
     let a = check_args(sig, args, names, span)?;
     match id {
@@ -595,7 +601,7 @@ fn table(v: V) -> Option<(&'static str, &'static [&'static str])> {
         Obj::List(_) | Obj::Lazy(_) => ("list", &["sum", "count", "add"]),
         Obj::Set(_) => ("set", &["add", "count"]),
         Obj::Map(_) => ("map", &["keys", "values", "count"]),
-        Obj::Str(_) => ("str", &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with"]),
+        Obj::Str(_) => ("str", &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with", "find"]),
         Obj::Channel(_) => ("channel", &["send", "receive", "close"]),
         _ => return None,
     })
@@ -632,6 +638,9 @@ pub fn member(obj: V, name: &str, span: u32) -> R<Val> {
         return n.member(obj, name, span);
     }
     if let Some(Obj::Namespace(ns)) = obj.get() {
+        if let Some(v) = crate::library::member(ns, name, span) {
+            return v;
+        }
         return match (*ns, name) {
             ("json", "parse") => Ok(Val::new(Obj::Builtin(B_JSON_PARSE))),
             ("csv", "parse") => Ok(Val::new(Obj::Builtin(B_CSV_PARSE))),
@@ -731,13 +740,13 @@ pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>
         return crate::sync::call_method(c, obj, name, args, names, span);
     }
     let max = match name {
-        "add" | "starts_with" | "ends_with" | "split" => 1,
+        "add" | "starts_with" | "ends_with" | "split" | "find" => 1,
         "replace" => 2,
         _ => 0,
     };
     arity(name, args, names, max, span)?;
     let need = match name {
-        "add" | "starts_with" | "ends_with" => 1,
+        "add" | "starts_with" | "ends_with" | "find" => 1,
         "replace" => 2,
         _ => 0,
     };
@@ -792,6 +801,13 @@ pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>
         }
         (Obj::Str(s), "starts_with") => Ok(Val::bool(s.starts_with(str_arg("starts_with", args[0], span)?))),
         (Obj::Str(s), "ends_with") => Ok(Val::bool(s.ends_with(str_arg("ends_with", args[0], span)?))),
+        (Obj::Str(s), "find") => {
+            let sub = str_arg("find", args[0], span)?;
+            Ok(match s.find(sub) {
+                Some(i) => Val::int(s[..i].chars().count() as i64),
+                None => Val::none(),
+            })
+        }
         _ => Err(missing(&type_name(obj), name, &[], span)),
     }
 }
@@ -808,7 +824,7 @@ pub fn named_value(name: &str) -> Option<Val> {
         "channel" => Obj::ChannelType(None),
         _ if crate::types::ERROR_KINDS.contains(&name) => Obj::Type(TypeRef::ErrorKind(crate::num::intern(name))),
         _ if crate::num::is_currency(name) => Obj::Currency(crate::num::intern(name)),
-        _ => return None,
+        _ => return crate::library::value(name),
     };
     Some(Val::new(v))
 }

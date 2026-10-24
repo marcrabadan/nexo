@@ -4,11 +4,12 @@ phase 0."""
 from __future__ import annotations
 
 import inspect
+import keyword
 from typing import Any
 
 from ..errors import NexoError, Span, suggest
 from ..types import At, Builtin, Lazy, Native, NexoSet, plain, type_name
-from . import clock, core, data, io
+from . import clock, core, data, io, text
 
 
 class Namespace:
@@ -24,7 +25,7 @@ class Namespace:
 
 def install(interp) -> None:
     env = interp.builtins
-    for module in (core, io, data, clock):
+    for module in (core, io, data, clock, text):
         for name, value in module.exports().items():
             env.define(name, value)
     env.define("json", Namespace("json", data.json_exports()))
@@ -75,7 +76,7 @@ _SIGNATURES: dict = {}
 def check_arguments(fn: Builtin, positional: list, named: dict, span: Span) -> dict:
     """Validate a builtin call against its Python signature and return the
     named arguments renamed for Python (`as` -> `as_`)."""
-    named = {("as_" if k == "as" else k): v for k, v in named.items()}
+    named = {(k + "_" if keyword.iskeyword(k) else k): v for k, v in named.items()}
     sig = _SIGNATURES.get(fn.fn)
     if sig is None:
         sig = _SIGNATURES[fn.fn] = inspect.signature(fn.fn)

@@ -20,7 +20,7 @@ use nexo_diag::{Diagnostic, Span};
 
 use crate::ast::*;
 
-const FALLIBLE_BUILTINS: &[&str] = &["read", "write", "read_lines", "save", "validate"];
+const FALLIBLE_BUILTINS: &[&str] = &["read", "write", "read_lines", "save", "validate", "move_file", "render"];
 const FALLIBLE_MEMBERS: &[(&str, &str)] = &[("json", "parse"), ("csv", "parse")];
 
 #[derive(Clone, Copy)]

@@ -807,3 +807,29 @@ kept to the millisecond and print as `2026-10-24T09:30:00+02:00`
 (`Z` for UTC, `.250` when there are milliseconds); `validate(x, as: date)`
 and `as: time` read that form (a time needs its offset), and JSON and CSV
 write it. `1 year` is 365 days (D2).
+
+**D95. `text`.** Section 15 lists "interpolation, search, regular
+expressions, templates" without functions. The smallest set:
+- `s.find(sub)` is the position of the first `sub` in `s` (counted in
+  characters, from 0) or none.
+- `regex(pattern)` builds a regular expression; `r.matches(t)` (the whole
+  text), `r.find(t)` (the first match or none), `r.find_all(t)`,
+  `r.replace(t, with)` (every match, by a literal text), `r.split(t)` and
+  `r.groups(t)` (the groups of the first match, none for one that did not
+  take part, or none without a match). The syntax is the one both
+  implementations can run identically and in linear time: Rust's regex
+  crate without what Python lacks (`\p{..}`, `[[:alpha:]]`, `(?U)`) and
+  without what it lacks (lookarounds, backreferences, possessive
+  repetitions); `$` is the end of the text unless `(?m)` is given. Any
+  other pattern is an error when `regex` is called. Braces in a pattern
+  are written `{{` as in any text (`"\\d{{4}"`).
+- `render(path, name: value...)` reads a template file and replaces each
+  `{name}` with the text of the value of that name (`{{` is a brace); in a
+  `.html` file the values are escaped (section 9: "in web templates,
+  interpolation is escaped automatically"). A placeholder without a value
+  is an `InvalidData` error. Like `read`, it can fail.
+
+**D96. `move_file`.** Section 10 calls `move_file(path, to: "trash/")`:
+the file moves into the folder `to` (created when missing) keeping its
+name, and the call returns its new path. It can fail like `read`
+(`NotFound`, `IOError`).

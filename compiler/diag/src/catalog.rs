@@ -243,6 +243,10 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("too_deep", "Demasiadas llamadas anidadas (recursión infinita).", "Too many nested calls (infinite recursion)."),
     ("fix.too_deep", "Comprueba que la recursión tenga un caso base que la detenga.", "Check that the recursion has a base case that stops it."),
     // phase 4 (D89-)
+    ("bad_regex", "\"{pattern}\" no es una expresión regular válida.", "\"{pattern}\" is not a valid regular expression."),
+    ("fix.bad_regex", "Revisa los paréntesis, corchetes y escapes; no hay lookarounds como (?=...) ni referencias como \\1.", "Check the brackets and escapes; there are no lookarounds such as (?=...) nor backreferences such as \\1."),
+    ("detail.template", "la plantilla {path} usa {{{name}}}, que no tiene valor", "the template {path} uses {{{name}}}, which has no value"),
+    ("detail.not_a_file", "no es un archivo", "it is not a file"),
     ("date_days", "Una fecha solo avanza días enteros, y {value} no lo es.", "A date only moves by whole days, and {value} is not."),
     ("fix.date_days", "Suma días (2 days) a una fecha, o usa un time (now + 3h) para horas y minutos.", "Add days (2 days) to a date, or use a time (now + 3h) for hours and minutes."),
     ("detail.zone", "\"{zone}\" no es una zona horaria conocida", "\"{zone}\" is not a known time zone"),
