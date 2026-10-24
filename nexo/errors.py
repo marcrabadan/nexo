@@ -539,6 +539,123 @@ MESSAGES: dict[str, dict[str, str]] = {
         "en": "Check that the function returns an error in this case.",
     },
     "no_tests": {"es": "No hay bloques test en {path}.", "en": "There are no test blocks in {path}."},
+    # nexo lint (D86)
+    "header_warning": {
+        "es": "Aviso en {file}, línea {line}:",
+        "en": "Warning in {file}, line {line}:",
+    },
+    "lint.unused": {
+        "es": "\"{name}\" se asigna pero nunca se usa.",
+        "en": "\"{name}\" is assigned but never used.",
+    },
+    "fix.lint.unused": {
+        "es": "Bórralo o úsalo.",
+        "en": "Remove it or use it.",
+    },
+    "lint.var_never_changed": {
+        "es": "\"{name}\" se declara con var pero nunca cambia.",
+        "en": "\"{name}\" is declared with var but never changes.",
+    },
+    "fix.lint.var_never_changed": {
+        "es": "Quita var: un nombre que no cambia es inmutable.",
+        "en": "Remove var: a name that does not change is immutable.",
+    },
+    "lint.loop_var": {
+        "es": "\"{name}\" no se usa dentro del bucle.",
+        "en": "\"{name}\" is not used inside the loop.",
+    },
+    "fix.lint.loop_var": {
+        "es": "Usa repeat {count} para repetir el bloque.",
+        "en": "Use repeat {count} to repeat the block.",
+    },
+    "lint.compare_bool": {
+        "es": "Comparar con true o false sobra.",
+        "en": "Comparing with true or false is redundant.",
+    },
+    "fix.lint.compare_bool": {
+        "es": "Escribe {suggestion}.",
+        "en": "Write {suggestion}.",
+    },
+    "lint.double_not": {
+        "es": "Dos not seguidos se anulan.",
+        "en": "Two nots in a row cancel out.",
+    },
+    "fix.lint.double_not": {
+        "es": "Quita los dos not.",
+        "en": "Remove both nots.",
+    },
+    "lint.self_assign": {
+        "es": "\"{name}\" se asigna a sí mismo.",
+        "en": "\"{name}\" is assigned to itself.",
+    },
+    "fix.lint.self_assign": {
+        "es": "Borra esta línea.",
+        "en": "Remove this line.",
+    },
+    "lint.unreachable": {
+        "es": "Este código nunca se ejecuta.",
+        "en": "This code never runs.",
+    },
+    "fix.lint.unreachable": {
+        "es": "Va después de return o fail(); bórralo o muévelo antes.",
+        "en": "It comes after return or fail(); remove it or move it earlier.",
+    },
+    "lint.constant_condition": {
+        "es": "La condición de {word} es siempre {value}.",
+        "en": "The condition of {word} is always {value}.",
+    },
+    "fix.lint.constant_condition": {
+        "es": "Usa una condición que pueda cambiar, o quita el {word}.",
+        "en": "Use a condition that can change, or remove the {word}.",
+    },
+    "lint.unused_use": {
+        "es": "use {name} no se usa.",
+        "en": "use {name} is not used.",
+    },
+    "fix.lint.unused_use": {
+        "es": "Borra esta línea.",
+        "en": "Remove this line.",
+    },
+    "lint.useless_expr": {
+        "es": "El valor de esta expresión no se usa.",
+        "en": "The value of this expression is not used.",
+    },
+    "fix.lint.useless_expr": {
+        "es": "Guárdalo en una variable, pásalo a una función o bórralo.",
+        "en": "Store it in a variable, pass it to a function or remove it.",
+    },
+    "lint.lazy_pipeline": {
+        "es": "Este pipeline termina en {step}, así que nunca se ejecuta.",
+        "en": "This pipeline ends in {step}, so it never runs.",
+    },
+    "fix.lint.lazy_pipeline": {
+        "es": "Guarda el resultado o termina con |> each, |> save(...), |> count o |> sum.",
+        "en": "Store the result or end it with |> each, |> save(...), |> count or |> sum.",
+    },
+    "lint.duplicate_key": {
+        "es": "La clave {text} está repetida en este mapa.",
+        "en": "The key {text} is repeated in this map.",
+    },
+    "fix.lint.duplicate_key": {
+        "es": "Una clave repetida sustituye a la anterior; deja solo una.",
+        "en": "A repeated key replaces the earlier one; keep only one.",
+    },
+    "lint.unused_binding": {
+        "es": "\"{name}\" se captura en el patrón pero no se usa.",
+        "en": "\"{name}\" is bound by the pattern but never used.",
+    },
+    "fix.lint.unused_binding": {
+        "es": "Escribe _ en su lugar.",
+        "en": "Write _ instead.",
+    },
+    "lint_summary": {
+        "es": "Avisos: {n}. Arreglos seguros con nexo fix: {safe}.",
+        "en": "Warnings: {n}. Safe fixes with nexo fix: {safe}.",
+    },
+    "lint_none": {
+        "es": "No hay avisos en {path}.",
+        "en": "No warnings in {path}.",
+    },
     # failures (error values). The first sentence becomes e.message.
     "unhandled": {"es": "Error sin gestionar{kind}: {message}", "en": "Unhandled error{kind}: {message}"},
     "fix.unhandled": {"es": "Gestiónalo con try y else e.", "en": "Handle it with try and else e."},
@@ -650,11 +767,12 @@ class NexoError(Exception):
         return self.text()
 
 
-def render(span: Span | None, text: str) -> str:
-    """Render a message in the section 14 format."""
+def render(span: Span | None, text: str, header: str = "header") -> str:
+    """Render a message in the section 14 format (warnings of `nexo lint`
+    use the header "Warning in...")."""
     if span is None:
         return f"Error: {text}\n"
-    out = [msg("header", file=span.file, line=span.line)]
+    out = [msg(header, file=span.file, line=span.line)]
     source = SOURCES.get(span.file)
     if source is not None:
         lines = source.splitlines()

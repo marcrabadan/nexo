@@ -1,0 +1,4 @@
+Error en compile_errors.nexo, línea 18:
+  else:
+  ^^^^
+else en un try necesita un nombre para el error. Escribe else e: y usa e.message.

@@ -1,0 +1,65 @@
+Aviso en rules.nexo, línea 2:
+  use nexo.sync
+  ^^^^^^^^^^^^^
+use nexo.sync no se usa. Borra esta línea.
+Aviso en rules.nexo, línea 11:
+  Rect(w, h): return w * 2.0
+          ^
+"h" se captura en el patrón pero no se usa. Escribe _ en su lugar.
+Aviso en rules.nexo, línea 14:
+  var label = "number"
+  ^^^
+"label" se declara con var pero nunca cambia. Quita var: un nombre que no cambia es inmutable.
+Aviso en rules.nexo, línea 15:
+  unused = n * 2
+  ^^^^^^
+"unused" se asigna pero nunca se usa. Bórralo o úsalo.
+Aviso en rules.nexo, línea 16:
+  if n == true:
+     ^^^^^^^^^
+Comparar con true o false sobra. Escribe n.
+Aviso en rules.nexo, línea 19:
+  print("never")
+  ^^^^^^^^^^^^^^
+Este código nunca se ejecuta. Va después de return o fail(); bórralo o muévelo antes.
+Aviso en rules.nexo, línea 23:
+  if not not flag:
+     ^^^^^^^^^^^^
+Dos not seguidos se anulan. Quita los dos not.
+Aviso en rules.nexo, línea 25:
+  elif flag != false:
+       ^^^^^^^^^^^^^
+Comparar con true o false sobra. Escribe flag.
+Aviso en rules.nexo, línea 30:
+  for i in 1..3:
+  ^^^
+"i" no se usa dentro del bucle. Usa repeat 3 para repetir el bloque.
+Aviso en rules.nexo, línea 32:
+  for k in range(2):
+  ^^^
+"k" no se usa dentro del bucle. Usa repeat 2 para repetir el bloque.
+Aviso en rules.nexo, línea 34:
+  total = total
+  ^^^^^
+"total" se asigna a sí mismo. Borra esta línea.
+Aviso en rules.nexo, línea 35:
+  counts = {"a": 1, "b": 2, "a": 3}
+                            ^^^
+La clave "a" está repetida en este mapa. Una clave repetida sustituye a la anterior; deja solo una.
+Aviso en rules.nexo, línea 36:
+  if false:
+     ^^^^^
+La condición de if es siempre false. Usa una condición que pueda cambiar, o quita el if.
+Aviso en rules.nexo, línea 38:
+  while false:
+        ^^^^^
+La condición de while es siempre false. Usa una condición que pueda cambiar, o quita el while.
+Aviso en rules.nexo, línea 40:
+  total + 1
+  ^^^^^^^^^
+El valor de esta expresión no se usa. Guárdalo en una variable, pásalo a una función o bórralo.
+Aviso en rules.nexo, línea 41:
+  [1, 2] |> map it * 2
+            ^^^^^^^^^^
+Este pipeline termina en map, así que nunca se ejecuta. Guarda el resultado o termina con |> each, |> save(...), |> count o |> sum.
+Avisos: 16. Arreglos seguros con nexo fix: 8.

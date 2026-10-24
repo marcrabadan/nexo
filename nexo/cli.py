@@ -4,6 +4,8 @@
     nexo file.nexo       run a program
     nexo test [paths]    run the `test` blocks
     nexo fmt [paths]     format files in place (D85)
+    nexo lint [paths]    warn about questionable code (D86)
+    nexo fix [paths]     apply the safe fixes
     --lang es|en         language of messages (Spanish by default)
 """
 from __future__ import annotations
@@ -168,6 +170,63 @@ def run_fmt(paths: list[str]) -> int:
     return status
 
 
+# ----------------------------------------------------------- lint and fix
+
+def run_lint(paths: list[str]) -> int:
+    """`nexo lint`: every warning with its fix, then a summary."""
+    from .lint import lint_source, render_finding
+    total = safe = 0
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            findings = lint_source(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+            continue
+        for finding in findings:
+            sys.stdout.write(render_finding(finding))
+            total += 1
+            safe += finding.fix is not None and finding.fix.safe
+    if total:
+        print(errors.msg("lint_summary", n=total, safe=safe))
+        return 1
+    if status == 0:
+        print(errors.msg("lint_none", path=", ".join(paths) or "."))
+    return status
+
+
+def run_fix(paths: list[str]) -> int:
+    """`nexo fix`: apply the safe fixes in place and print the files changed."""
+    from .lint import fix_source
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            fixed, _count = fix_source(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+            continue
+        if fixed != source:
+            f.write_text(fixed, encoding="utf-8")
+            print(name)
+    return status
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -240,6 +299,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_tests(rest[1:])
     if rest[0] == "fmt":
         return run_fmt(rest[1:])
+    if rest[0] == "lint":
+        return run_lint(rest[1:])
+    if rest[0] == "fix":
+        return run_fix(rest[1:])
     if len(rest) > 1:
         print(USAGE[errors.LANG], file=sys.stderr)
         return 2

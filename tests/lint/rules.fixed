@@ -1,0 +1,38 @@
+## One case per rule of nexo lint (D86).
+
+type Shape:
+    Circle(radius: float)
+    Rect(w: float, h: float)
+
+fn area(s):
+    match s:
+        Circle(r): return PI * r * r
+        Rect(w, _): return w * 2.0
+
+fn describe(n):
+    label = "number"
+    unused = n * 2
+    if n == true:
+        return label
+    return "{label} {n}"
+
+fn check(flag):
+    if flag:
+        return 1
+    elif flag != false:
+        return 2
+    return 0
+
+var total = 0
+repeat 3:
+    total += 10
+repeat 2:
+    print("tick")
+counts = {"a": 1, "b": 2, "a": 3}
+if false:
+    print("off")
+while false:
+    print("off")
+total + 1
+[1, 2] |> map it * 2
+print(area(Circle(1.0)), area(Rect(2.0, 3.0)), describe(4), check(true), counts, total)

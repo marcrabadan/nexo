@@ -1,0 +1,20 @@
+## nexo fix also applies the safe fixes of compile errors.
+fn half(n: int) -> int!:
+    if n % 2 == 1:
+        fail("odd")
+    return n // 2
+
+fn twice(n: int) -> int!:
+    return half(n)? * 2
+
+fn plain(n):
+    return n + 1
+
+fn uses(n) -> int!:
+    return plain(n)
+
+try:
+    print(twice(4))
+else e:
+    print("failed")
+print(uses(1))

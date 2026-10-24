@@ -5,6 +5,8 @@
 //!         --trust-ensure                 (with --release) leave out unproven ensure checks
 //!     nexo test [paths...]               run the `test` blocks
 //!     nexo fmt [paths...]                format files in place (D85)
+//!     nexo lint [paths...]               warn about questionable code (D86)
+//!     nexo fix [paths...]                apply the safe fixes
 //!     --lang es|en                       language of messages (Spanish by default)
 
 mod ast;
@@ -12,6 +14,7 @@ mod checker;
 mod codegen;
 mod fmt;
 mod lexer;
+mod lint;
 mod narrow;
 mod parser;
 mod prove;
@@ -44,6 +47,53 @@ fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Resul
     let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
     let opts = codegen::Options { file: name.to_string(), lang, test_mode, trust_ensure };
     codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)
+}
+
+/// The checks of a compilation that happen before code generation.
+fn front_end(source: &str) -> Result<ast::Program, Diagnostic> {
+    let program = parser::parse(source)?;
+    checker::check(&program)?;
+    let res = resolve::resolve(&program)?;
+    typecheck::check(&program, &res)?;
+    Ok(program)
+}
+
+/// The warnings of a file, or the compile error that stops it (D86).
+fn lint_source(source: &str) -> Result<Vec<lint::Finding>, Diagnostic> {
+    let program = front_end(source)?;
+    let tokens = lexer::tokenize(source)?;
+    Ok(lint::Linter::new(source, &tokens, &program).run())
+}
+
+/// Apply every safe fix, again and again until none is left.
+fn fix_source(mut source: String) -> String {
+    for _ in 0..100 {
+        match lint_source(&source) {
+            Err(d) => match lint::error_fix(&d, &source) {
+                Some(fix) if fix.safe => source = lint::apply_edits(&source, &fix.edits),
+                _ => break,
+            },
+            Ok(findings) => {
+                let safe: Vec<&lint::Fix> = findings.iter().filter_map(|f| f.fix.as_ref()).filter(|f| f.safe).collect();
+                if safe.is_empty() {
+                    break;
+                }
+                // one fix per round when they could overlap
+                let mut chosen: Vec<&lint::Fix> = Vec::new();
+                let mut taken: Vec<(u32, u32)> = Vec::new();
+                for fix in safe {
+                    let (lo, hi) = (fix.edits[0].line, fix.edits.last().unwrap().end_line);
+                    if taken.iter().all(|&(a, b)| hi < a || lo > b) {
+                        chosen.push(fix);
+                        taken.push((lo, hi));
+                    }
+                }
+                let edits: Vec<lint::Edit> = chosen.iter().flat_map(|f| f.edits.iter().cloned()).collect();
+                source = lint::apply_edits(&source, &edits);
+            }
+        }
+    }
+    source
 }
 
 /// The runtime library: next to this executable, or NEXO_RUNTIME.
@@ -336,6 +386,77 @@ fn run_fmt(paths: &[String]) -> u8 {
     status
 }
 
+/// `nexo lint [paths]`: every warning with its fix, then a summary.
+fn run_lint(paths: &[String]) -> u8 {
+    let (mut total, mut safe, mut status) = (0usize, 0usize, 0u8);
+    for f in test_files(paths) {
+        let display = f.to_string_lossy().into_owned();
+        let source = match read_source(&display) {
+            Ok(s) => s,
+            Err(e) => {
+                eprint!("{e}");
+                status = 1;
+                continue;
+            }
+        };
+        let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
+        match lint_source(&source) {
+            Ok(findings) => {
+                for finding in &findings {
+                    print!("{}", nexo_diag::render_warning(&name, &source, finding.span, &finding.text()));
+                    total += 1;
+                    safe += finding.fix.as_ref().is_some_and(|f| f.safe) as usize;
+                }
+            }
+            Err(d) => {
+                eprint!("{}", render(&name, &source, d.span, &d.text()));
+                status = 1;
+            }
+        }
+    }
+    if total > 0 {
+        println!("{}", msg("lint_summary", &[("n", total.to_string()), ("safe", safe.to_string())]));
+        return 1;
+    }
+    if status == 0 {
+        let shown = if paths.is_empty() { ".".to_string() } else { paths.join(", ") };
+        println!("{}", msg("lint_none", &[("path", shown)]));
+    }
+    status
+}
+
+/// `nexo fix [paths]`: apply the safe fixes in place and print the files changed.
+fn run_fix(paths: &[String]) -> u8 {
+    let mut status = 0;
+    for f in test_files(paths) {
+        let display = f.to_string_lossy().into_owned();
+        let source = match read_source(&display) {
+            Ok(s) => s,
+            Err(e) => {
+                eprint!("{e}");
+                status = 1;
+                continue;
+            }
+        };
+        let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
+        let fixed = fix_source(source.clone());
+        if let Err(d) = lexer::tokenize(&fixed) {
+            eprint!("{}", render(&name, &fixed, d.span, &d.text()));
+            status = 1;
+            continue;
+        }
+        if fixed != source {
+            if let Err(e) = std::fs::write(&f, &fixed) {
+                eprintln!("Error: {e}");
+                status = 1;
+                continue;
+            }
+            println!("{name}");
+        }
+    }
+    status
+}
+
 /// Print the LLVM IR of a program (for the compiler's own tests).
 fn emit_ir(path: &str) -> u8 {
     let source = match read_source(path) {
@@ -387,6 +508,8 @@ fn main() -> ExitCode {
             "test" => run_tests(&rest[1..]),
             "build" => build(&rest[1..]),
             "fmt" => run_fmt(&rest[1..]),
+            "lint" => run_lint(&rest[1..]),
+            "fix" => run_fix(&rest[1..]),
             "--emit-llvm" if rest.len() == 2 => emit_ir(&rest[1]),
             a if a.starts_with('-') || rest.len() > 1 => {
                 eprintln!("{}", usage());

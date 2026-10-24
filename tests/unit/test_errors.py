@@ -17,7 +17,7 @@ def test_every_message_exists_in_spanish_and_english_with_the_same_placeholders(
 
 
 def test_every_diagnostic_has_a_fix_sentence():
-    exempt = {"header", "unexpected", "no_tests", "unhandled"}
+    exempt = {"header", "header_warning", "unexpected", "no_tests", "unhandled", "lint_summary", "lint_none"}
     for key in MESSAGES:
         if key.startswith(("fix.", "err.", "detail.")) or key in exempt:
             continue
@@ -71,7 +71,7 @@ def test_the_compiler_catalog_has_every_message():
 
 
 def test_every_compiler_diagnostic_has_a_fix_sentence():
-    exempt = {"header", "unexpected", "no_tests"}
+    exempt = {"header", "header_warning", "unexpected", "no_tests", "lint_summary", "lint_none"}
     compiled = compiler_catalog()
     for key in compiled:
         if key.startswith(("fix.", "detail.")) or key in exempt:

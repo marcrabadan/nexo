@@ -719,9 +719,15 @@ impl Checker {
         if let Some(FnRef::Def(f)) = ctx.func {
             if let Some(ret) = &f.ret {
                 if !ret.fallible() && !ctx.in_try {
-                    return Err(Diagnostic::new("fallible_needs_bang", span)
+                    let mut d = Diagnostic::new("fallible_needs_bang", span)
                         .arg("fn", f.name.clone())
-                        .arg("type", type_text(ret)));
+                        .arg("type", type_text(ret));
+                    // where `nexo fix` writes the `!` (D86)
+                    let end = ret.span();
+                    if !ret.optional() && matches!(ret, TypeExpr::Name(_)) && end.end_col < 100_000_000 {
+                        d = d.arg("ret_end", format!("{}:{}", end.line, end.end_col));
+                    }
+                    return Err(d);
                 }
             }
         }

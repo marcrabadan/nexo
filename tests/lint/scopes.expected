@@ -1,0 +1,5 @@
+Aviso en scopes.nexo, línea 51:
+  var once = 1
+  ^^^
+"once" se declara con var pero nunca cambia. Quita var: un nombre que no cambia es inmutable.
+Avisos: 1. Arreglos seguros con nexo fix: 1.
