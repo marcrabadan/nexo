@@ -305,7 +305,7 @@ class PlanError(Exception):
 
 
 def expects(entry, key: str, what: str):
-    return NexoError("infra_value", entry.span, key=key, what=errors.msg(f"word.infra_{what}"))
+    return NexoError("infra_value", entry.span, key=key, what=errors.msg(f"detail.infra_{what}"))
 
 
 def setting(entry, key: str, spec: dict, value):
