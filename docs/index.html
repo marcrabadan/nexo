@@ -31,9 +31,9 @@
 <div class="hero">
   <div class="wrap">
     <div>
-      <span class="badge">Edition 0.1 · phase 3</span>
+      <span class="badge">Edition 0.1 · phase 4</span>
       <h1>One way to do <em>each thing</em>.</h1>
-      <p class="lede">Nexo is a small programming language you can understand by reading it. Errors are values, money is exact, data flows through pipelines and functions state their contracts. It runs today as a Python interpreter and as a native compiler built on LLVM.</p>
+      <p class="lede">Nexo is a small programming language you can understand by reading it. Errors are values, money is exact, data flows through pipelines and functions state their contracts. Databases, web servers and AI come in the standard library. It runs today as a Python interpreter and as a native compiler built on LLVM.</p>
       <div class="actions">
         <a class="btn btn-primary" href="#start">Get started</a>
         <a class="btn btn-ghost" href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Read the specification</a>
@@ -79,7 +79,7 @@ for part in split(total + vat, 3):
 <section id="features">
   <div class="wrap">
     <p class="eyebrow">Features</p>
-    <h2>What the core gives you</h2>
+    <h2>What Nexo gives you</h2>
     <p class="section-intro">Every snippet on this page runs with the current implementation, and the output shown under it is what it prints.</p>
 
     <div class="feature">
@@ -263,6 +263,30 @@ A task cannot change a Counter created before it started: other tasks may be rea
         <p><code>nexo lsp</code> gives any editor errors as you type, quick fixes, formatting, go to definition, hover and completion. The VS Code extension uses it.</p>
       </div>
       <div class="card">
+        <h3>A standard library for real programs</h3>
+        <p>Dates, durations and time zones; <code>find</code>, <code>regex</code> and <code>render</code> templates; JSON and CSV with <code>convert</code>; an <code>http</code> client with retries; <code>log</code>, which hides <code>@private</code> fields.</p>
+      </div>
+      <div class="card">
+        <h3>Secrets that never leak</h3>
+        <p><code>secret("NAME")</code> can never be printed. <code>password.hash</code>, <code>encrypt</code> and <code>sign</code> are built in, and a key written in the code is a compile error.</p>
+      </div>
+      <div class="card">
+        <h3>Databases without SQL strings</h3>
+        <p>With <code>use nexo.db</code>, <code>@table</code> types are the schema. Pipelines on tables become parameterised SQL on SQLite, with transactions, and <code>nexo db diff</code> and <code>migrate</code> keep the database in step.</p>
+      </div>
+      <div class="card">
+        <h3>Web servers in a block</h3>
+        <p>A <code>server</code> block has typed routes, JWT <code>auth</code>, <code>@role</code>, <code>@limit</code> and secure headers. Errors become status codes, and <code>nexo test</code> serves the API on a free port.</p>
+      </div>
+      <div class="card">
+        <h3>AI as a function call</h3>
+        <p><code>ask</code> works with Anthropic, OpenAI and Ollama and checks typed answers. <code>@tool</code> functions and <code>agent</code> blocks call your code, and <code>fake ask</code> keeps tests offline.</p>
+      </div>
+      <div class="card">
+        <h3>C and Python when you need them</h3>
+        <p><code>use c</code> reads a C header and calls its functions. <code>use python</code> imports a Python module, so existing libraries stay within reach.</p>
+      </div>
+      <div class="card">
         <h3>Two implementations, one output</h3>
         <p>The interpreter and the compiler run the same conformance suite and a differential test, and must print the same thing for every program.</p>
       </div>
@@ -280,6 +304,7 @@ A task cannot change a Counter created before it started: other tasks may be rea
       <button class="tab" role="tab" id="tab-bank" aria-controls="panel-bank" aria-selected="false" tabindex="-1">Bank contracts</button>
       <button class="tab" role="tab" id="tab-grades" aria-controls="panel-grades" aria-selected="false" tabindex="-1">Grade book</button>
       <button class="tab" role="tab" id="tab-tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1">Tests</button>
+      <button class="tab" role="tab" id="tab-shop" aria-controls="panel-shop" aria-selected="false" tabindex="-1">Shop API</button>
     </div>
     <div class="panel" role="tabpanel" id="panel-sales" aria-labelledby="tab-sales">
       <p>Totals per region from a CSV file, with <code>where</code>, <code>group by</code>, <code>sum</code>, <code>sort by</code>, <code>take</code> and <code>save</code>.</p>
@@ -457,6 +482,128 @@ test &quot;int overflow is detected&quot;:
 ✓ int overflow is detected
 2 tests: 2 passed, 0 failed</code></pre></div></div>
     </div>
+    <div class="panel" role="tabpanel" id="panel-shop" aria-labelledby="tab-shop" hidden>
+      <p>The exit criterion of phase 4: a web API with a database and <code>ask</code>, written in Nexo alone. Its tests fake the AI, so they run without a key.</p>
+      <div class="code"><div class="code-bar"><span>examples/shop_api/shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># A shop&#x27;s web API with a database and AI, written in Nexo alone (the exit
+# criterion of phase 4). Run it with
+#     SHOP_JWT_KEY=... ANTHROPIC_KEY=... nexo shop.nexo
+# and test it, with the AI faked, with `nexo test shop.nexo`.
+use nexo.db
+
+db = connect(&quot;shop.db&quot;)
+tokens = jwt(key: secret(&quot;SHOP_JWT_KEY&quot;))
+
+ai:
+    provider = &quot;anthropic&quot;
+    model = &quot;claude-opus&quot;
+    key = secret(&quot;ANTHROPIC_KEY&quot;)
+
+@table
+type Product:
+    id: id
+    name: str @unique
+    price: decimal
+
+@table
+type Review:
+    id: id
+    product: ref Product
+    text: str
+    tone: str
+    score: int
+
+type NewProduct:
+    name: str
+    price: decimal
+
+type NewReview:
+    text: str
+
+type Opinion:
+    tone: &quot;positive&quot; | &quot;negative&quot; | &quot;neutral&quot;
+    score: 1..5
+
+## What the AI thinks of a review: its tone and a score from 1 to 5.
+fn opinion(text: str) -&gt; Opinion!:
+    o: Opinion = ask(&quot;Analyse this review of a product&quot;, text, creativity: low)?
+    return o
+
+## A short summary of the reviews of a product.
+fn summary(reviews: list[Review]) -&gt; str!:
+    if len(reviews) == 0:
+        return &quot;No reviews yet.&quot;
+    texts = reviews |&gt; map it.text
+    return ask(&quot;Summarise these reviews in one sentence&quot;, texts, max: 40 words)?
+
+server shop:
+    port = 8080
+    auth = tokens
+
+    @public
+    post &quot;/login&quot;(name: str):
+        return {&quot;token&quot;: tokens.sign({&quot;sub&quot;: name, &quot;role&quot;: &quot;admin&quot;}, expires: 1h)}
+
+    @public
+    get &quot;/products&quot;():
+        return db.Product |&gt; sort by name
+
+    @public
+    get &quot;/products/{id}&quot;(id: int):
+        return db.Product.find(id: id)?
+
+    @role(&quot;admin&quot;)
+    post &quot;/products&quot;(product: NewProduct):
+        return db.Product.add(name: product.name, price: product.price)
+
+    @public
+    @limit(10 per minute per ip)
+    post &quot;/products/{id}/reviews&quot;(id: int, review: NewReview):
+        product = db.Product.find(id: id)?
+        o = opinion(review.text)?
+        return db.Review.add(product: product, text: review.text, tone: o.tone, score: o.score)
+
+    @public
+    get &quot;/products/{id}/summary&quot;(id: int):
+        product = db.Product.find(id: id)?
+        reviews = db.Review |&gt; where product == product
+        scores = reviews |&gt; map it.score
+        var average = 0.0
+        if len(scores) &gt; 0:
+            average = float(scores |&gt; sum) / len(scores)
+        return {&quot;product&quot;: product.name, &quot;reviews&quot;: len(scores), &quot;score&quot;: average, &quot;summary&quot;: summary(reviews)?}
+
+test &quot;products need an admin&quot;:
+    try:
+        http.post(&quot;{shop.url}/products&quot;, {&quot;name&quot;: &quot;Lamp&quot;, &quot;price&quot;: 25}, retries: 0)
+    else e is HTTPError:
+        assert e.message.ends_with(&quot;401 Unauthorized&quot;)
+    login = http.post(&quot;{shop.url}/login?name=ana&quot;, none).json()
+    headers = {&quot;Authorization&quot;: &quot;Bearer {login[&quot;token&quot;]}&quot;}
+    lamp = http.post(&quot;{shop.url}/products&quot;, {&quot;name&quot;: &quot;Lamp&quot;, &quot;price&quot;: 25.50}, headers: headers)
+    assert lamp.status == 201
+    assert lamp.json()[&quot;name&quot;] == &quot;Lamp&quot;
+    assert http.get(&quot;{shop.url}/products&quot;).json()[0][&quot;price&quot;] == 25.5
+
+test &quot;reviews are analysed by the AI&quot;:
+    fake ask returns Opinion(tone: &quot;positive&quot;, score: 5)
+    login = http.post(&quot;{shop.url}/login?name=ana&quot;, none).json()
+    headers = {&quot;Authorization&quot;: &quot;Bearer {login[&quot;token&quot;]}&quot;}
+    chair = http.post(&quot;{shop.url}/products&quot;, {&quot;name&quot;: &quot;Chair&quot;, &quot;price&quot;: 80}, headers: headers).json()
+    review = http.post(&quot;{shop.url}/products/{chair[&quot;id&quot;]}/reviews&quot;, {&quot;text&quot;: &quot;Comfortable!&quot;}).json()
+    assert review[&quot;tone&quot;] == &quot;positive&quot; and review[&quot;score&quot;] == 5
+    fake ask returns &quot;Buyers love it.&quot;
+    s = http.get(&quot;{shop.url}/products/{chair[&quot;id&quot;]}/summary&quot;).json()
+    assert s[&quot;summary&quot;] == &quot;Buyers love it.&quot; and s[&quot;reviews&quot;] == 1 and s[&quot;score&quot;] == 5.0
+
+test &quot;a missing product is a 404&quot;:
+    try:
+        http.get(&quot;{shop.url}/products/999&quot;, retries: 0)
+    else e is HTTPError:
+        assert e.message.ends_with(&quot;404 Not Found&quot;)</code></pre><div class="out"><div class="out-label">$ SHOP_JWT_KEY=... nexo --lang en test shop.nexo</div><pre><code>✓ products need an admin
+✓ reviews are analysed by the AI
+✓ a missing product is a 404
+3 tests: 3 passed, 0 failed</code></pre></div></div>
+    </div>
   </div>
 </section>
 
@@ -511,7 +658,7 @@ compiler/target/release/nexo build --release app.nexo -o app
   <div class="wrap">
     <p class="eyebrow">Roadmap</p>
     <h2>Where Nexo is today</h2>
-    <p class="section-intro">Nexo is built in phases, and each one ends with something usable. The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> describes the whole language, including modules for AI, web, infrastructure and CI that are not implemented yet. Every choice made where it was ambiguous is recorded in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>.</p>
+    <p class="section-intro">Nexo is built in phases, and each one ends with something usable. The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> describes the whole language, including modules for infrastructure, CI and streams that are not implemented yet. Every choice made where it was ambiguous is recorded in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>.</p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Phase</th><th>Deliverable</th><th>Status</th></tr></thead>
@@ -520,7 +667,7 @@ compiler/target/release/nexo build --release app.nexo -o app
           <tr><td>1. Base compiler</td><td>Rust compiler: lexer, parser, gradual type checking, LLVM code generation</td><td><span class="status done">Done</span></td></tr>
           <tr><td>2. Memory and concurrency</td><td>Memory model, real <code>parallel</code>, <code>nexo.sync</code>, contracts the compiler proves</td><td><span class="status done">Done</span></td></tr>
           <tr><td>3. Tooling</td><td><code>nexo fmt</code>, <code>lint</code>, <code>fix</code>, <code>check</code>, <code>lsp</code>, a REPL in the compiler, the VS Code extension, a fix for every error</td><td><span class="status done">Done</span></td></tr>
-          <tr><td>4. Library and modules</td><td>Standard library, <code>nexo.ai</code>, <code>nexo.web</code>, <code>nexo.db</code>, C and Python interop</td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>4. Library and modules</td><td>Standard library, <code>nexo.ai</code>, <code>nexo.web</code>, <code>nexo.db</code>, C and Python interop</td><td><span class="status done">Done</span></td></tr>
           <tr><td>5. Cloud and operations</td><td><code>nexo.infra</code>, <code>nexo.ci</code>, <code>nexo.stream</code>, feature flags, privacy</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>6. Optimisation and 1.0</td><td>Performance goals, external audit, user studies</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>7. Self-hosting</td><td>The compiler rewritten in Nexo</td><td><span class="status next">Planned</span></td></tr>
