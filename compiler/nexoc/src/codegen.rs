@@ -29,6 +29,13 @@ pub struct Options {
     pub test_mode: bool,
     /// `--trust-ensure`: unproven `ensure` checks are not compiled
     pub trust_ensure: bool,
+    /// The REPL (D88): the line where the new input starts (0: not the
+    /// REPL). Its top-level expressions show their value, and the inputs
+    /// before it replay (`nx_repl_live` marks where it starts).
+    pub repl_line: u32,
+    /// The text error messages show (the new input in the REPL); its lines
+    /// are counted from `repl_line`.
+    pub shown_source: Option<String>,
 }
 
 pub type GResult<T> = Result<T, Diagnostic>;
@@ -141,6 +148,11 @@ enum FrameSrc<'a> {
 
 pub struct Gen<'a> {
     src: &'a str,
+    /// the program's own statements (to find the top level in the REPL)
+    top_body: *const Stmt,
+    repl_live: bool,
+    /// the statement about to be compiled is at the top level of the new REPL input
+    echo_next: bool,
     res: &'a Resolution,
     opts: &'a Options,
     consts: String,
@@ -289,6 +301,9 @@ impl<'a> Gen<'a> {
     pub fn new(src: &'a str, res: &'a Resolution, opts: &'a Options) -> Gen<'a> {
         Gen {
             src,
+            top_body: std::ptr::null(),
+            repl_live: false,
+            echo_next: false,
             res,
             opts,
             consts: String::new(),
@@ -1677,10 +1692,12 @@ impl<'a> Gen<'a> {
         st.unwind = vec![("UNHANDLED".into(), 0)];
         self.fs.push(st);
         self.frame_slots(GLOBAL_FRAME);
-        let src_c = self.cstr(self.src);
+        let shown = self.opts.shown_source.clone().unwrap_or_else(|| self.src.to_string());
+        let src_c = self.cstr(&shown);
         let file_c = self.cstr(&self.opts.file.clone());
         let file_len = self.opts.file.len();
-        let src_len = self.src.len();
+        let src_len = shown.len();
+        self.top_body = program.body.as_ptr();
         self.emit(&format!(
             "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, i32 {}, ptr @nexo_cleanup)",
             self.opts.lang
@@ -1732,7 +1749,12 @@ impl<'a> Gen<'a> {
         let spans: Vec<String> = self
             .spans
             .iter()
-            .map(|s| format!("[3 x i32] [i32 {}, i32 {}, i32 {}]", s.line, s.col, s.end_col.min(i32::MAX as u32)))
+            .map(|s| {
+                // in the REPL, lines are counted from the new input
+                let shift = self.opts.repl_line.saturating_sub(1);
+                let line = if s.line > shift { s.line - shift } else { 0 };
+                format!("[3 x i32] [i32 {}, i32 {}, i32 {}]", line, s.col, s.end_col.min(i32::MAX as u32))
+            })
             .collect();
         let _ = writeln!(
             out,
@@ -1758,8 +1780,14 @@ impl<'a> Gen<'a> {
         // names assigned so far in this statement list (for the static
         // "immutable" check of straight-line code)
         let mut assigned: Vec<&str> = Vec::new();
+        let top = body.as_ptr() == self.top_body;
         for s in body {
+            if top && self.opts.repl_line > 0 && !self.repl_live && s.span.line >= self.opts.repl_line {
+                self.call_void("nx_repl_live", "");
+                self.repl_live = true;
+            }
             self.static_assign_check(s, &mut assigned)?;
+            self.echo_next = top && self.repl_live;
             self.deadline_tick();
             let before = self.f().live.len();
             // a statement that uses a shared variable holds its lock
@@ -1822,7 +1850,16 @@ impl<'a> Gen<'a> {
     }
 
     fn stmt(&mut self, s: &'a Stmt) -> GResult<()> {
+        let echo = std::mem::take(&mut self.echo_next);
         match &s.kind {
+            StmtKind::Expr(e) if echo => {
+                // the REPL shows the value of an expression of the new input
+                let v = self.expr(e, false)?;
+                let v = self.bind(v, e);
+                let tb = self.tb(&v);
+                self.call_void("nx_repl_show", &tb);
+                self.drop_val(&v);
+            }
             StmtKind::Expr(e) => {
                 let v = self.expr(e, false)?;
                 self.drop_val(&v);
@@ -4430,6 +4467,8 @@ declare void @nx_task_write(ptr, i64, i32)
 declare void @nx_spawn(i64, i64, ptr, ptr, i64, i32)
 declare i64 @nx_select(ptr, i64, i64, i64, ptr, i32)
 declare void @nx_shared_lock()
+declare void @nx_repl_live()
+declare void @nx_repl_show(i64, i64)
 declare void @nx_shared_unlock()
 declare %V @nx_shared_read(i64, i64)
 declare %V @nx_shared_store(i64, i64)

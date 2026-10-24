@@ -22,8 +22,8 @@ from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
 USAGE = {
-    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test [rutas...]]",
-    "en": "Usage: nexo [--lang es|en] [file.nexo | test [paths...]]",
+    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp]",
+    "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp]",
 }
 BANNER = {
     "es": "Nexo {v} (fase 0). Escribe código y pulsa Intro; Ctrl-D para salir.",

@@ -1,5 +1,6 @@
 //! `nexo`, the compiler driver (sections 7 and 14):
 //!
+//!     nexo                               the REPL (D88)
 //!     nexo file.nexo                     compile in development mode and run
 //!     nexo build [--release] file.nexo   compile to a native program
 //!         --trust-ensure                 (with --release) leave out unproven ensure checks
@@ -32,9 +33,9 @@ use nexo_diag::{msg, render, Diagnostic, Lang};
 
 fn usage() -> &'static str {
     if nexo_diag::lang() == Lang::En {
-        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test [paths...]]"
+        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp]"
     } else {
-        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test [rutas...]]"
+        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp]"
     }
 }
 
@@ -49,8 +50,134 @@ fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Resul
     let res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
     let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
-    let opts = codegen::Options { file: name.to_string(), lang, test_mode, trust_ensure };
+    let opts = codegen::Options { file: name.to_string(), lang, test_mode, trust_ensure, repl_line: 0, shown_source: None };
     codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)
+}
+
+/// One line of the standard input, newline included, read byte by byte.
+fn unbuffered_line() -> Option<Vec<u8>> {
+    use std::io::Read;
+    use std::os::fd::FromRawFd;
+    let mut stdin = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(0) });
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match stdin.read(&mut byte) {
+            Ok(1) => {
+                line.push(byte[0]);
+                if byte[0] == b'\n' {
+                    return Some(line);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            _ => return if line.is_empty() { None } else { Some(line) },
+        }
+    }
+}
+
+/// `nexo` with no arguments: the REPL (D88). The session is a program;
+/// each input is added to it and the program runs again, the earlier
+/// inputs replaying from a journal (see runtime/src/repl.rs).
+fn repl() -> u8 {
+    use std::io::Write;
+    let banner = if nexo_diag::lang() == Lang::En {
+        "Nexo {v} (compiler). Type code and press Enter; Ctrl-D to exit."
+    } else {
+        "Nexo {v} (compilador). Escribe código y pulsa Intro; Ctrl-D para salir."
+    };
+    println!("{}", banner.replace("{v}", env!("CARGO_PKG_VERSION")));
+    let dir = work_dir();
+    let journal = dir.join("journal");
+    let _ = std::fs::write(&journal, "");
+    let exe = dir.join("session");
+    // stdin is read one byte at a time: a program that calls input() reads
+    // the lines that follow, as in phase 0
+    let prompt = |text: &str| -> Option<String> {
+        print!("{text}");
+        let _ = std::io::stdout().flush();
+        let mut line = String::from_utf8_lossy(&unbuffered_line()?).into_owned();
+        while line.ends_with('\n') || line.ends_with('\r') {
+            line.pop();
+        }
+        Some(line)
+    };
+    let mut session = String::new();
+    let mut session_lines = 0u32;
+    let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
+    loop {
+        let Some(line) = prompt(">>> ") else {
+            println!();
+            break;
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let mut cell = vec![line.clone()];
+        let trimmed = line.trim_end();
+        if trimmed.ends_with(':') || trimmed.ends_with(',') {
+            while let Some(more) = prompt("... ") {
+                if more.trim().is_empty() {
+                    break;
+                }
+                cell.push(more);
+            }
+        }
+        let cell = cell.join("\n") + "\n";
+        let first = session_lines + 1;
+        let candidate = format!("{session}{cell}");
+        let opts = codegen::Options {
+            file: "<repl>".into(),
+            lang,
+            test_mode: false,
+            trust_ensure: false,
+            repl_line: first,
+            shown_source: Some(cell.clone()),
+        };
+        let compiled = (|| {
+            let program = parser::parse(&candidate)?;
+            checker::check(&program)?;
+            let res = resolve::resolve(&program)?;
+            typecheck::check(&program, &res)?;
+            codegen::Gen::new(&candidate, &res, &opts).program(&program)
+        })();
+        let ir = match compiled {
+            Ok(ir) => ir,
+            Err(mut d) => {
+                // errors point into the new input, counted from its first line
+                let shown = match d.span {
+                    Some(sp) if sp.line >= first => {
+                        d.span = Some(nexo_diag::Span::new(sp.line - first + 1, sp.col, sp.end_col));
+                        render("<repl>", &cell, d.span, &d.text())
+                    }
+                    _ => render("<repl>", &candidate, d.span, &d.text()),
+                };
+                let _ = std::io::stdout().flush();
+                eprint!("{shown}");
+                continue;
+            }
+        };
+        if let Err(e) = link_at(&ir, &exe, "-O0") {
+            eprintln!("Error: {e}");
+            continue;
+        }
+        let before = std::fs::metadata(&journal).map(|m| m.len()).unwrap_or(0);
+        let status = Command::new(&exe).env("NEXO_REPL_JOURNAL", &journal).status();
+        match status {
+            Ok(s) if s.success() => {
+                session = candidate;
+                session_lines += cell.matches('\n').count() as u32;
+            }
+            Ok(_) => {
+                // a failed input is left out of the session, with what it did
+                if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&journal) {
+                    let _ = f.set_len(before);
+                }
+            }
+            Err(e) => eprintln!("Error: {e}"),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    0
 }
 
 /// The checks of a compilation that happen before code generation.
@@ -117,11 +244,16 @@ fn work_dir() -> PathBuf {
 
 /// Compile IR and link it with the runtime into a native executable.
 fn link(ir: &str, out: &Path, release: bool) -> Result<(), String> {
+    link_at(ir, out, if release { "-O2" } else { "-O1" })
+}
+
+/// The same with a given optimisation level (the REPL uses -O0: it
+/// compiles the session again for every input).
+fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     let dir = work_dir();
     let ll = dir.join(format!("{}.ll", out.file_name().unwrap_or_default().to_string_lossy()));
     std::fs::write(&ll, ir).map_err(|e| e.to_string())?;
     let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
-    let opt = if release { "-O2" } else { "-O1" };
     let output = Command::new(&cc)
         .arg(opt)
         .arg("-Wno-override-module")
@@ -533,9 +665,11 @@ fn main() -> ExitCode {
     }
     let parsed = nexo_diag::parse_lang(&lang);
     nexo_diag::set_lang(parsed.unwrap_or(Lang::Es));
-    let code = if parsed.is_none() || rest.is_empty() {
+    let code = if parsed.is_none() {
         eprintln!("{}", usage());
         2
+    } else if rest.is_empty() {
+        repl()
     } else {
         match rest[0].as_str() {
             "test" => run_tests(&rest[1..]),
