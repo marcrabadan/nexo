@@ -12,6 +12,7 @@ pub mod fmt;
 pub mod num;
 pub mod par;
 pub mod pipe;
+pub mod repl;
 pub mod state;
 pub mod stdlib;
 pub mod sync;

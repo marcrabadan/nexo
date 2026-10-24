@@ -30,7 +30,9 @@ Total with VAT: 350.65 EUR
 > implementations: a Python tree-walking interpreter (phase 0) and a Rust
 > compiler that produces native code through LLVM (phase 1). Both run the
 > same programs with the same output. Phase 2 adds the memory model,
-> real `parallel`, `nexo.sync` and contracts the compiler proves. Modules
+> real `parallel`, `nexo.sync` and contracts the compiler proves. Phase 3
+> adds the tools: `nexo fmt`, `lint`, `fix`, `check`, `lsp`, a REPL in the
+> compiler and a VS Code extension. Modules
 > such as `nexo.ai`, `nexo.web`, `nexo.db` and `nexo.infra` are described
 > in the specification but not implemented yet.
 
@@ -147,7 +149,12 @@ The command line:
 | `nexo file.nexo` | run a program (the compiler builds it first) |
 | `nexo test [paths]` | run the `test` blocks in the given files |
 | `nexo build --release file.nexo -o app` | build an optimised native binary (compiler only) |
-| `nexo` | open the REPL (interpreter only) |
+| `nexo` | open the REPL |
+| `nexo fmt [paths]` | format the files in place (no options) |
+| `nexo lint [paths]` | warn about questionable code, each warning with its fix |
+| `nexo fix [paths]` | apply the safe fixes of warnings and errors |
+| `nexo check [paths]` | report compile errors without running anything |
+| `nexo lsp` | language server for any editor (the VS Code extension uses it) |
 | `nexo --lang en ...` | show messages in English; Spanish is the default |
 
 Make a mistake and Nexo tells you how to fix it:
@@ -323,7 +330,7 @@ cd examples
 
 ## What is implemented
 
-This repository covers phases 0, 1 and 2 of the plan in section 25 of
+This repository covers phases 0 to 3 of the plan in section 25 of
 the specification.
 
 **Included:** constants and `var`; `type` (records, unions, enums with
@@ -353,6 +360,39 @@ the standard library functions `print`, `input`, `read`, `write`,
   run time (D83), and `nexo build --release --trust-ensure` leaves out
   the checks it could not prove.
 
+**Phase 3: tooling.** Every tool exists in both implementations and gives
+the same output in both:
+
+- **`nexo fmt`** formats with no options (D85). It works on tokens, so a
+  formatted file always means the same as before, and it keeps your line
+  breaks. `|>` lines sit two spaces under their statement, as in the
+  specification.
+- **`nexo lint`** reports unused names, `var` that never changes,
+  `for i in 1..n` that should be `repeat n`, unreachable code, a pipeline
+  that never runs, `== true`, duplicate map keys and more (D86). Each
+  warning says how to fix it. **`nexo fix`** applies the fixes that cannot
+  change what a correct program does, including the safe fixes of compile
+  errors (a missing `!`, a superfluous `?`, `else:` without a name).
+- **Every error has a proposed fix:** each message in the catalog has a
+  second sentence that says how to correct it, and the tests check it.
+- **`nexo lsp`** is a language server (D87): errors and warnings as you
+  type, quick fixes, "apply the safe fixes", formatting, go to definition,
+  hover with the `##` comments, the outline and completion.
+- **[VS Code extension](editors/vscode):** highlighting, the language
+  server and commands to run a file and its tests.
+- **A REPL in the compiler** (D88): each input recompiles and reruns the
+  session. Earlier inputs replay silently from a journal, so their output,
+  `input()` answers and file writes do not happen again.
+
+```
+$ nexo --lang en lint app.nexo
+Warning in app.nexo, line 3:
+  var total = 0
+  ^^^
+"total" is declared with var but never changes. Remove var: a name that does not change is immutable.
+Warnings: 1. Safe fixes with nexo fix: 1.
+```
+
 **Not yet:** the other official modules (`ai`, `web`, `db`, `infra`,
 `ci`, `stream`, `ml`) and `when`/`every`/`lifecycle`. Using them gives a
 clear "not available in this phase" error rather than being silently
@@ -381,9 +421,11 @@ details are in D84.
 **Interpreter and compiler differences.** The two implementations print
 the same output for every program. The compiler catches some mistakes
 earlier (unknown names and certain type errors are reported before the
-program runs), has no REPL, and fixes the message language when the
-program is compiled. Each difference is recorded in
-[`docs/decisions.md`](docs/decisions.md) (D67 to D75).
+program runs; `nexo lint`, `check` and the language server report them
+too) and fixes the message language when the program is compiled. Its
+REPL drops an input that fails when it runs, while phase 0 keeps what
+that input assigned before the error (D88). Each difference is recorded
+in [`docs/decisions.md`](docs/decisions.md) (D67 to D75, D88).
 
 ## Repository layout
 
@@ -395,16 +437,21 @@ nexo/                 phase 0: Python interpreter
   numbers.py types.py arithmetic, money, units and runtime values
   errors.py           error renderer and es/en messages
   stdlib/             builtins, io, JSON/CSV
+  fmt.py lint.py      nexo fmt, nexo lint and nexo fix
+  lsp.py              nexo lsp, the language server
   cli.py              the `nexo` command
 compiler/             phase 1: Rust compiler
-  nexoc/              driver, lexer, parser, resolver, type checker, LLVM codegen
-  runtime/            static library linked into every program
+  nexoc/              driver, lexer, parser, resolver, type checker, LLVM codegen,
+                      fmt, lint, lsp (with json) and the REPL
+  runtime/            static library linked into every program (repl.rs: the REPL journal)
   diag/               es/en message catalog
   scripts/            conformance and differential test runners
   bench/              benchmarks
 tests/
   conformance/        .nexo programs with their exact .expected output
+  fmt/ lint/          formatter and linter cases (.formatted, .expected, .fixed)
   unit/               pytest unit tests per layer
+editors/vscode/       the VS Code extension
 examples/             complete programs with expected output
 docs/
   especificacion-nexo.md  the specification (source of truth)

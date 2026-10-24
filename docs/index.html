@@ -31,7 +31,7 @@
 <div class="hero">
   <div class="wrap">
     <div>
-      <span class="badge">Edition 0.1 · phase 2</span>
+      <span class="badge">Edition 0.1 · phase 3</span>
       <h1>One way to do <em>each thing</em>.</h1>
       <p class="lede">Nexo is a small programming language you can understand by reading it. Errors are values, money is exact, data flows through pipelines and functions state their contracts. It runs today as a Python interpreter and as a native compiler built on LLVM.</p>
       <div class="actions">
@@ -249,6 +249,18 @@ A task cannot change a Counter created before it started: other tasks may be rea
       <div class="card">
         <h3>Contracts the compiler proves</h3>
         <p>When the compiler can prove an <code>ensure</code>, it costs nothing at run time. <code>nexo build --release --trust-ensure</code> also drops the checks it could not prove.</p>
+      </div>
+      <div class="card">
+        <h3>One formatter, no options</h3>
+        <p><code>nexo fmt</code> makes all Nexo code look the same. It works on tokens and keeps your line breaks, so formatting never changes what a program does.</p>
+      </div>
+      <div class="card">
+        <h3>A linter with fixes</h3>
+        <p><code>nexo lint</code> warns about unused names, <code>var</code> that never changes, unreachable code and pipelines that never run, each with a fix. <code>nexo fix</code> applies the safe ones.</p>
+      </div>
+      <div class="card">
+        <h3>Your editor understands Nexo</h3>
+        <p><code>nexo lsp</code> gives any editor errors as you type, quick fixes, formatting, go to definition, hover and completion. The VS Code extension uses it.</p>
       </div>
       <div class="card">
         <h3>Two implementations, one output</h3>
@@ -476,6 +488,10 @@ print(&quot;Hello, {name}!&quot;)</code></pre><div class="out"><div class="out-l
 .venv/bin/nexo --lang en app.nexo
 # run the test blocks
 .venv/bin/nexo test examples/
+# format, lint and apply the safe fixes
+.venv/bin/nexo fmt app.nexo
+.venv/bin/nexo lint app.nexo
+.venv/bin/nexo fix app.nexo
 # interactive REPL
 .venv/bin/nexo</code></pre></div>
       </div>
@@ -503,7 +519,7 @@ compiler/target/release/nexo build --release app.nexo -o app
           <tr><td>0. Prototype</td><td>Python tree-walking interpreter for the core</td><td><span class="status done">Done</span></td></tr>
           <tr><td>1. Base compiler</td><td>Rust compiler: lexer, parser, gradual type checking, LLVM code generation</td><td><span class="status done">Done</span></td></tr>
           <tr><td>2. Memory and concurrency</td><td>Memory model, real <code>parallel</code>, <code>nexo.sync</code>, contracts the compiler proves</td><td><span class="status done">Done</span></td></tr>
-          <tr><td>3. Tooling</td><td><code>nexo fmt</code>, <code>lint</code>, <code>lsp</code>, editor extension</td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>3. Tooling</td><td><code>nexo fmt</code>, <code>lint</code>, <code>fix</code>, <code>check</code>, <code>lsp</code>, a REPL in the compiler, the VS Code extension, a fix for every error</td><td><span class="status done">Done</span></td></tr>
           <tr><td>4. Library and modules</td><td>Standard library, <code>nexo.ai</code>, <code>nexo.web</code>, <code>nexo.db</code>, C and Python interop</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>5. Cloud and operations</td><td><code>nexo.infra</code>, <code>nexo.ci</code>, <code>nexo.stream</code>, feature flags, privacy</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>6. Optimisation and 1.0</td><td>Performance goals, external audit, user studies</td><td><span class="status next">Planned</span></td></tr>

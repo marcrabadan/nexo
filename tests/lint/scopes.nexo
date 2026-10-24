@@ -1,0 +1,52 @@
+## Scopes (D25, D26): what counts as declared, changed and used.
+var hits = 0
+fn hit():
+    hits += 1
+
+base = 10
+fn shifted(n):
+    base = n * 2
+    return base
+
+fn shadow():
+    var hits = 5
+    return hits
+
+try:
+    data = read("missing.txt")
+else e is NotFound:
+    data = ""
+print(data, shifted(1), shadow())
+
+fn first(xs):
+    for x in xs:
+        var seen = 0
+        seen += x
+        return seen
+    return 0
+
+fn later():
+    return total_later
+total_later = 3
+print(later(), first([1]))
+
+var items = []
+items.add(1)
+print(items)
+
+fn pick(v):
+    match v:
+        Some(n) if n > 0:
+            found = n
+        _:
+            found = 0
+    return found
+
+type Opt:
+    Some(value: int)
+    Nothing
+
+print(pick(Some(2)), pick(Nothing))
+hit()
+var once = 1
+print(once)

@@ -1,0 +1,103 @@
+{
+  "name": "nexo",
+  "displayName": "Nexo",
+  "description": "Nexo language support: highlighting, errors and warnings as you type with their fixes, formatting, go to definition, hover, outline and completion (nexo lsp).",
+  "version": "0.3.0",
+  "publisher": "nexo-lang",
+  "license": "Apache-2.0 WITH LLVM-exception",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/marcrabadan/nexo.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "nexo"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.nexo"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "nexo",
+        "aliases": [
+          "Nexo",
+          "nexo"
+        ],
+        "extensions": [
+          ".nexo"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nexo",
+        "scopeName": "source.nexo",
+        "path": "./syntaxes/nexo.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Nexo",
+      "properties": {
+        "nexo.path": {
+          "type": "string",
+          "default": "nexo",
+          "description": "The nexo command: the compiler (compiler/target/release/nexo) or the phase 0 interpreter (.venv/bin/nexo)."
+        },
+        "nexo.lang": {
+          "type": "string",
+          "enum": [
+            "",
+            "es",
+            "en"
+          ],
+          "default": "",
+          "description": "Language of messages. Empty: the language of VS Code (Spanish or English)."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "nexo.run",
+        "title": "Nexo: Run file"
+      },
+      {
+        "command": "nexo.test",
+        "title": "Nexo: Run tests of file"
+      },
+      {
+        "command": "nexo.restart",
+        "title": "Nexo: Restart language server"
+      }
+    ],
+    "configurationDefaults": {
+      "[nexo]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.detectIndentation": false
+      }
+    }
+  },
+  "scripts": {
+    "test": "node test/grammar.test.js && node test/extension.test.js && node test/server.test.js",
+    "package": "vsce package --out nexo.vsix"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "3.6.2",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.3.2"
+  }
+}

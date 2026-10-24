@@ -1,0 +1,22 @@
+## Cases from the review of the lint rules (D86).
+fn range(n):
+    print("custom range")
+    return [1, 2]
+
+for i in range(3):
+    print("tick")
+
+x = [1]
+fn local_copy():
+    x = x
+    x.add(2)
+    return x
+print(local_copy(), x)
+
+var y = 1
+y = (
+    y
+)
+print(y)
+z = 2
+print(z)

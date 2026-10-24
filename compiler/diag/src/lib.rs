@@ -175,10 +175,19 @@ impl Diagnostic {
 
 /// Render a message in the section 14 format.
 pub fn render(file: &str, source: &str, span: Option<Span>, text: &str) -> String {
+    render_with("header", file, source, span, text)
+}
+
+/// The same format with the header of a `nexo lint` warning.
+pub fn render_warning(file: &str, source: &str, span: Span, text: &str) -> String {
+    render_with("header_warning", file, source, Some(span), text)
+}
+
+fn render_with(header: &str, file: &str, source: &str, span: Option<Span>, text: &str) -> String {
     let Some(span) = span else {
         return format!("Error: {text}\n");
     };
-    let mut out = vec![msg("header", &[("file", file.to_string()), ("line", span.line.to_string())])];
+    let mut out = vec![msg(header, &[("file", file.to_string()), ("line", span.line.to_string())])];
     let lines: Vec<&str> = source.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
     let count = if source.ends_with('\n') { lines.len() - 1 } else { lines.len() };
     if span.line >= 1 && (span.line as usize) <= count {

@@ -175,7 +175,10 @@ class Checker:
     def bang_check(self, ctx: Ctx, span) -> None:
         fn = ctx.fn
         if isinstance(fn, A.FnDef) and fn.ret is not None and not getattr(fn.ret, "fallible", False) and not ctx.in_try:
-            raise NexoError("fallible_needs_bang", span, fn=fn.name, type=type_text(fn.ret))
+            ret_end = None
+            if isinstance(fn.ret, A.TypeName) and not fn.ret.optional and fn.ret.span.end_col < 10**8:
+                ret_end = (fn.ret.span.line, fn.ret.span.end_col)
+            raise NexoError("fallible_needs_bang", span, fn=fn.name, type=type_text(fn.ret), ret_end=ret_end)
 
     def expr(self, e: A.Expr | None, ctx: Ctx, propagated: bool = False) -> None:
         if e is None:

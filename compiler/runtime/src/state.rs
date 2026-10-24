@@ -269,6 +269,9 @@ pub fn flush() {
 }
 
 pub fn write_out(text: &str) {
+    if crate::repl::replaying() {
+        return;
+    }
     let buffered = with_task(|s| match s.buffer.as_mut() {
         Some(b) => {
             b.push_str(text);

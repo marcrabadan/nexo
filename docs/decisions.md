@@ -407,7 +407,7 @@ runs. The message now says "phase 1".
 
 **D72. No REPL in the compiler.** The REPL is part of phase 3 (tooling); in
 phase 1 `nexo` with no arguments shows the usage. The phase 0 interpreter
-keeps its REPL.
+keeps its REPL. (Phase 3 adds it to the compiler, D88.)
 
 **D73. Nested calls.** A compiled program allows 10,000 nested calls (the
 limit phase 0 set for Python) and runs on a 1 GB stack; beyond that it
@@ -599,3 +599,110 @@ none of these changes what a program prints.
   `std::hint::black_box`: rustc removes the allocation otherwise, and a
   Nexo record is always a heap value (section 7), so without it the
   comparison would measure nothing.
+
+## Phase 3: tooling (section 25)
+
+**D85. `nexo fmt`.** Section 14 says the formatter "has no options, so all
+Nexo code looks the same", without the rules. The simplest formatter that
+cannot change a program works on the lexer's tokens: the formatted text
+must have exactly the same tokens as the original (it is checked before
+anything is written), and the line breaks are the author's. The rules:
+one space around binary operators, `=`, `->`, `|>` and keywords; one
+after `,` and `:`; none inside brackets, before the `(` or `[` of a call
+or an index, around `.` and `..`, after a unary `-`, before a postfix `?`
+or `!`. After `|>`, a step word keeps its space before `(` or `[` (`|>
+map [..]` is not a call, `|> save(...)` is, D13). Indentation of
+statements is already fixed by the lexer (D9); a continuation line that
+starts with `|>` goes two spaces deeper than its statement, as in every
+example of section 6, and a line inside brackets four spaces deeper than
+the line that opened the bracket (a line that starts by closing it, at
+that line's indentation). A comment on its own line takes the
+indentation of the code it comes before (or of the block it closes); the
+trailing comments of consecutive lines are aligned two spaces after the
+longest of them. Blank lines: at most one in a row, none at the start of
+the file or right after a line that opens a block; no trailing spaces;
+one newline at the end. `nexo fmt [paths]` rewrites the files in place
+and prints the ones it changed; a file that does not lex is reported and
+left alone. Two parts of section 14 and 16 wait for their modules: the
+"implicit `use` lines" belong to `nexo.ai`, `nexo.web`, `nexo.infra` and
+`nexo.ci`, none of which exists yet, so there is nothing to add; and
+`--view es` needs the official translation of every keyword (section 16,
+rule 1), which the specification does not give beyond three examples.
+Both phases format alike (`tests/test_fmt.py`).
+
+**D86. `nexo lint` and `nexo fix`.** Section 14 says `lint` "warns about
+questionable code with a proposed fix" and `fix` "applies the linter's
+safe fixes", without a list of warnings. Lint first runs the checks a
+compilation makes before the program starts (phase 0: lexer, parser and
+checker; phase 1 also names and types, D67, D68): a file with an error is
+reported like `nexo check` would, with its fix. Otherwise each warning is
+written like an error (section 14 format, "Warning in ..."), with what is
+questionable and how to fix it, and the exit code is 1 when there are
+warnings. The warnings are the ones that follow from the rules of the
+specification:
+- a name assigned and never read (`unused`), and a name a pattern binds
+  and never uses (`unused_binding`; fix: `_`);
+- `var` on a name that is never changed, neither assigned nor changed
+  through a place or a method (`var_never_changed`; fix: drop `var`,
+  only offered when no outer name has the same spelling, since `x = v`
+  could then change it, D26);
+- `for i in 1..n` or `range(n)` whose variable the body never reads
+  (`loop_var`; fix: `repeat n`, "one way to do each thing");
+- comparing with `true` or `false` (`compare_bool`), `not not x`
+  (`double_not`), `x = x` (`self_assign`);
+- code after `return` or `fail()` in the same block (`unreachable`);
+- `if`, `elif` or `while` on the literal `true`/`false` (`while true` is
+  allowed: there is no `break`, D36);
+- `use nexo.sync` when nothing of it is used (`unused_use`);
+- an expression statement that only computes a value (`useless_expr`),
+  and a pipeline statement whose last step is lazy, so it never runs
+  (`lazy_pipeline`, D50);
+- a key written twice in a map literal (`duplicate_key`).
+An edit is safe when it does not change what a correct program does:
+removing `var`, `?` on a call that cannot fail, unreachable code, an
+unused `use` or a self-assignment, writing `_`, `repeat n`, dropping `not
+not`, and adding the `!` a function that fails needs, or the `e` of
+`else:`. Replacing `x == true` by `x` is not (it differs when `x` is not
+a bool), nor a "Did you mean" suggestion or adding `?`: these are
+offered by the editor (D87) and left to the person. `nexo fix` applies
+the safe edits, checking the file again after each round, and prints the
+files it changed. Both phases warn alike on every program the compiler
+accepts (`tests/test_lint.py`). The warnings that depend on modules
+(expired flags, section 22; `@personal` without `keep`, section 23) wait
+for them.
+
+**D87. `nexo lsp` and `nexo check`.** `nexo lsp` is a language server
+(section 14) over standard input and output, for any editor. It
+publishes the compile error of each open file, or its warnings (D86),
+with their edits; offers them as quick fixes and "apply the safe fixes"
+(`nexo fix`); formats with `nexo fmt`; and gives go to definition, hover
+(the definition line and its `##` comments), the outline of the file and
+completion (names of the file, builtins and keywords; fields and methods
+after `.`). Messages use `--lang` or, without it, the language of the
+editor when it is Spanish or English (section 16), Spanish otherwise
+(D55). Definitions are found by scope the way D25 describes them,
+without types: `p.norm` goes to the first field or method of that name.
+`nexo check [paths]` runs the same checks without running anything
+(section "Goals and guarantees" names it; `--intent` needs `nexo.ai`).
+The VS Code extension (`editors/vscode`) starts `nexo lsp` of either
+phase; publishing it needs the publisher's account and token, so the
+repository only builds, tests and packages it
+(`.github/workflows/vscode-extension.yml` publishes on a `vscode-v*` tag).
+
+**D88. The compiler's REPL.** A compiled program cannot take new code
+while it runs, so `nexo` with no arguments keeps the session as a
+program: each input is added to it and the whole program is compiled and
+run again. The inputs before the new one replay without being seen: until
+the first statement of the new input nothing is written to the output,
+and `input()`, reading a file and writing one give the answers they gave
+the first time, from a journal, instead of happening again. The new input
+then runs for real; the value of each of its top-level expressions is
+shown as in phase 0 (D57). An input with a compile error is reported
+(counting its own lines, as phase 0 does) and not added. One that fails
+when it runs is reported and left out of the session, together with what
+it did: phase 0 keeps the names its statements assigned before the
+error. Standard input is read one byte at a time, so a program that calls
+`input()` reads the lines that follow it. Concurrent tasks that read or
+write files in a different order on each run, and timing (`select` with
+`after`), may replay differently; the REPL is for trying code, and a
+program file has none of these limits.

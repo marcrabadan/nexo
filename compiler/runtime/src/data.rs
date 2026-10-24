@@ -54,8 +54,12 @@ fn universal(text: String) -> String {
 
 pub fn read_text(path: &str, span: u32) -> R<String> {
     let mut bytes = Vec::new();
-    match std::fs::File::open(path).and_then(|mut f| f.read_to_end(&mut bytes)) {
-        Ok(_) => {}
+    let read = crate::repl::read_file(|| {
+        std::fs::File::open(path).and_then(|mut f| f.read_to_end(&mut bytes))?;
+        Ok(std::mem::take(&mut bytes))
+    });
+    match read {
+        Ok(b) => bytes = b,
         Err(e) => return Err(os_failure(path, &e, span)),
     }
     match String::from_utf8(bytes) {
@@ -65,11 +69,14 @@ pub fn read_text(path: &str, span: u32) -> R<String> {
 }
 
 pub fn write_text(path: &str, text: &str, span: u32) -> R<()> {
-    std::fs::write(path, text).map_err(|e| os_failure(path, &e, span))
+    crate::repl::write_file(|| std::fs::write(path, text)).map_err(|e| os_failure(path, &e, span))
 }
 
 /// The lines of a file, read lazily one by one.
 pub fn read_lines(path: &str, span: u32) -> R<Val> {
+    if crate::repl::active() {
+        return read_lines_journaled(path, span);
+    }
     if let Err(e) = std::fs::File::open(path) {
         return Err(os_failure(path, &e, span));
     }
@@ -97,6 +104,33 @@ pub fn read_lines(path: &str, span: u32) -> R<Val> {
                 }
                 Err(e) => Some(Err(os_failure(&path, &e, span))),
             }
+        })))
+    }))
+}
+
+/// `read_lines` inside the REPL (D88): the file is read when the call runs,
+/// through the journal, and its lines are taken from memory.
+fn read_lines_journaled(path: &str, span: u32) -> R<Val> {
+    let bytes = crate::repl::read_file(|| {
+        let mut bytes = Vec::new();
+        std::fs::File::open(path).and_then(|mut f| f.read_to_end(&mut bytes))?;
+        Ok(bytes)
+    })
+    .map_err(|e| os_failure(path, &e, span))?;
+    let path = path.to_string();
+    Ok(lazy(move || {
+        let mut lines: Vec<Vec<u8>> = bytes.split_inclusive(|&b| b == b'\n').map(|l| l.to_vec()).collect();
+        lines.reverse();
+        let path = path.clone();
+        Ok(Box::new(std::iter::from_fn(move || {
+            let mut buf = lines.pop()?;
+            while buf.last() == Some(&b'\n') || buf.last() == Some(&b'\r') {
+                buf.pop();
+            }
+            Some(match String::from_utf8(buf) {
+                Ok(s) => Ok(Val::str(s)),
+                Err(_) => Err(failure("InvalidData", span, &[("detail", msg("detail.encoding", &[("path", path.clone())]))])),
+            })
         })))
     }))
 }

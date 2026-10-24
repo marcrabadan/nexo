@@ -241,11 +241,14 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
                 write_out(&show(prompt));
             }
             crate::state::flush();
-            let mut line = String::new();
-            let _ = std::io::stdin().lock().read_line(&mut line);
-            while line.ends_with('\n') || line.ends_with('\r') {
-                line.pop();
-            }
+            let line = crate::repl::input_line(|| {
+                let mut line = String::new();
+                let _ = std::io::stdin().lock().read_line(&mut line);
+                while line.ends_with('\n') || line.ends_with('\r') {
+                    line.pop();
+                }
+                line
+            });
             Ok(Val::str(line))
         }
         B_LEN => {

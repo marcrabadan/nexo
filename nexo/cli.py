@@ -3,6 +3,11 @@
     nexo                 interactive REPL
     nexo file.nexo       run a program
     nexo test [paths]    run the `test` blocks
+    nexo fmt [paths]     format files in place (D85)
+    nexo lint [paths]    warn about questionable code (D86)
+    nexo fix [paths]     apply the safe fixes
+    nexo check [paths]   the compile checks, without running anything
+    nexo lsp             language server on standard input and output (D87)
     --lang es|en         language of messages (Spanish by default)
 """
 from __future__ import annotations
@@ -17,8 +22,8 @@ from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
 USAGE = {
-    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test [rutas...]]",
-    "en": "Usage: nexo [--lang es|en] [file.nexo | test [paths...]]",
+    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp]",
+    "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp]",
 }
 BANNER = {
     "es": "Nexo {v} (fase 0). Escribe código y pulsa Intro; Ctrl-D para salir.",
@@ -66,8 +71,7 @@ def run_file(path: str) -> int:
         return 1
     except RecursionError:
         sys.stdout.flush()
-        sys.stderr.write("Error: " + ("demasiadas llamadas anidadas (recursión infinita)."
-                                      if errors.LANG == "es" else "too many nested calls (infinite recursion).") + "\n")
+        sys.stderr.write(errors.render(None, NexoError("too_deep").text()))
         return 1
     finally:
         sys.stdout.flush()
@@ -142,6 +146,111 @@ def run_tests(paths: list[str]) -> int:
     return 0 if passed == total and not broken_files else 1
 
 
+# ------------------------------------------------------------------ fmt
+
+def run_fmt(paths: list[str]) -> int:
+    """`nexo fmt`: format the files in place and print the ones it changed."""
+    from .fmt import format_source
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            formatted = format_source(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+            continue
+        if formatted != source:
+            f.write_text(formatted, encoding="utf-8")
+            print(name)
+    return status
+
+
+# ----------------------------------------------------------- lint and fix
+
+def run_lint(paths: list[str]) -> int:
+    """`nexo lint`: every warning with its fix, then a summary."""
+    from .lint import lint_source, render_finding
+    total = safe = 0
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            findings = lint_source(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+            continue
+        for finding in findings:
+            sys.stdout.write(render_finding(finding))
+            total += 1
+            safe += finding.fix is not None and finding.fix.safe
+    if total:
+        print(errors.msg("lint_summary", n=total, safe=safe))
+        return 1
+    if status == 0:
+        print(errors.msg("lint_none", path=", ".join(paths) or "."))
+    return status
+
+
+def run_fix(paths: list[str]) -> int:
+    """`nexo fix`: apply the safe fixes in place and print the files changed."""
+    from .lint import fix_source
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            fixed, _count = fix_source(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+            continue
+        if fixed != source:
+            f.write_text(fixed, encoding="utf-8")
+            print(name)
+    return status
+
+
+def run_check(paths: list[str]) -> int:
+    """`nexo check`: report the compile error of each file, if any."""
+    from .lint import front_end
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            front_end(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+    if status == 0:
+        print(errors.msg("check_ok", path=", ".join(paths) or "."))
+    return status
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -181,23 +290,27 @@ def repl() -> int:
         except (NexoError, NexoFailure) as exc:
             report(exc)
         except RecursionError:
-            print("Error: recursion")
+            sys.stdout.flush()
+            sys.stderr.write(errors.render(None, NexoError("too_deep").text()))
         sys.stdout.flush()
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     lang = "es"
+    lang_given = False
     rest = []
     i = 0
     while i < len(args):
         a = args[i]
         if a == "--lang" and i + 1 < len(args):
             lang = args[i + 1]
+            lang_given = True
             i += 2
             continue
         if a.startswith("--lang="):
             lang = a.split("=", 1)[1]
+            lang_given = True
             i += 1
             continue
         rest.append(a)
@@ -211,6 +324,17 @@ def main(argv: list[str] | None = None) -> int:
         return repl()
     if rest[0] == "test":
         return run_tests(rest[1:])
+    if rest[0] == "fmt":
+        return run_fmt(rest[1:])
+    if rest[0] == "lint":
+        return run_lint(rest[1:])
+    if rest[0] == "fix":
+        return run_fix(rest[1:])
+    if rest[0] == "check":
+        return run_check(rest[1:])
+    if rest == ["lsp"]:
+        from .lsp import serve
+        return serve(lang_given)
     if len(rest) > 1:
         print(USAGE[errors.LANG], file=sys.stderr)
         return 2

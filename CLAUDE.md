@@ -1,4 +1,4 @@
-# Nexo — phases 0, 1 and 2
+# Nexo — phases 0 to 3
 
 The core of Nexo, a new programming language, in two implementations
 (section 25 of the specification):
@@ -9,7 +9,10 @@ The core of Nexo, a new programming language, in two implementations
   except for the differences recorded in docs/decisions.md (D67-D75);
 - phase 2, in both: the memory model of section 7 (reference counting,
   copy-on-write, `weak`), real `parallel`, `nexo.sync` and contracts the
-  compiler proves (D76-D84).
+  compiler proves (D76-D84);
+- phase 3, in both: the tools of section 14 — `nexo fmt`, `lint`, `fix`,
+  `check`, `lsp`, the compiler's REPL — and the VS Code extension in
+  `editors/vscode` (D85-D88).
 
 ## Source of truth
 
@@ -32,20 +35,28 @@ nexo/
   types.py        runtime values: decimal/money/units, records, enums, errors
   errors.py       error type + section 14 renderer + i18n (es default, en)
   stdlib/         builtins, io, data (JSON/CSV), sync (nexo.sync)
-  cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test`
+  fmt.py          `nexo fmt`: token-preserving formatter (D85)
+  lint.py         `nexo lint` / `nexo fix`: warnings and safe fixes (D86)
+  lsp.py          `nexo lsp`: language server (D87)
+  cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test|fmt|lint|fix|check|lsp`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text)
+  fmt/            NAME.nexo + NAME.formatted (nexo fmt)
+  lint/           NAME.nexo + NAME.expected (nexo lint) + NAME.fixed (nexo fix)
   unit/           pytest unit tests per layer
 compiler/
   diag/           es/en message catalog and the section 14 renderer
   nexoc/          the `nexo` driver: lexer, parser, checker, resolve
-                  (scopes, closures), typecheck (gradual), codegen (LLVM IR)
+                  (scopes, closures), typecheck (gradual), codegen (LLVM IR),
+                  fmt, lint, lsp (+ json), the REPL
   runtime/        static library linked into every compiled program
+                  (repl.rs: the journal the REPL replays)
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py
   bench/          benchmarks (run.sh; compare.py against rust/*.rs)
 examples/         real programs; NAME.expected (and NAME.stdin) checked by
-                  tests/test_examples.py
+                  tests/test_examples.py; they are formatted and lint-clean
+editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 ```
 
@@ -57,6 +68,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/nexo examples/x.nexo   # run a program
 .venv/bin/nexo                   # REPL
 .venv/bin/nexo test [path]       # run `test` blocks
+.venv/bin/nexo fmt|lint|fix|check [path]
+.venv/bin/nexo lsp               # language server on stdio
 .venv/bin/nexo --lang en file.nexo
 ```
 
@@ -80,7 +93,7 @@ in Spanish (the default); a `NAME.args` file holds extra CLI arguments
 placed before the file name, such as `--lang en` (see `tests/conformance/en/`)
 or `test`.
 
-## Scope (phases 0, 1 and 2)
+## Scope (phases 0 to 3)
 
 Included: lexer/parser per section 24; constants and `var`; `type`
 (records, unions, enums with data, methods); `trait`; `fn` with named and
@@ -100,6 +113,14 @@ rules of D80-D81); `use nexo.sync` with `spawn`, `channel`, `select`,
 `shared` (D82); proven contracts and `--trust-ensure` (D83); the fast
 paths of D84 (`compiler/bench/compare.py`).
 
+Phase 3: `nexo fmt` (no options, same tokens, D85); `nexo lint` and
+`nexo fix` (the warnings and safe fixes of D86, also safe fixes of
+compile errors); `nexo check`; `nexo lsp` (D87); the compiler's REPL
+(D88); the VS Code extension. Every message has its fix sentence (tests
+in tests/unit/test_errors.py check both catalogs). Both phases format,
+lint and answer LSP requests alike (tests/test_fmt.py, test_lint.py,
+test_lsp.py, test_repl.py).
+
 Excluded (do not implement yet): ask, infra, CI pipelines, server, db,
 stream, ml, policy.
 
@@ -109,7 +130,9 @@ stream, ml, policy.
   differential test without unexpected differences; a new intended
   difference goes to compiler/tests/differences.txt and docs/decisions.md.
 - Messages exist in nexo/errors.py and compiler/diag/src/catalog.rs; keep
-  them in sync.
+  them in sync. Every message that reports a problem has its `fix.` sentence.
+- Phase 3: fmt, lint/fix and lsp give the same output in both phases; a
+  change to one goes to the other in the same commit.
 - Build in layers (lexer, parser, interpreter, stdlib); each layer has
   passing tests before moving on.
 - Conformance tests come from the examples in the specification.
