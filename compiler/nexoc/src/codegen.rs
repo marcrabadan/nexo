@@ -2968,14 +2968,23 @@ impl<'a> Gen<'a> {
                     self.str_value(&s)
                 } else {
                     let mut vals = Vec::new();
+                    let mut spans = Vec::new();
                     for p in parts {
                         match p {
-                            StrPiece::Lit(s) => vals.push(self.str_value(s)),
-                            StrPiece::Expr(x) => vals.push(self.expr(x, false)?),
+                            StrPiece::Lit(s) => {
+                                vals.push(self.str_value(s));
+                                spans.push("i32 0".to_string());
+                            }
+                            StrPiece::Expr(x) => {
+                                vals.push(self.expr(x, false)?);
+                                spans.push(format!("i32 {}", self.span_id(x.span)));
+                            }
                         }
                     }
                     let arr = self.values_array(&vals);
-                    let r = self.call_v("nx_interp", &format!("ptr {arr}, i64 {}", vals.len()));
+                    let g = format!("@isp.{}", self.next());
+                    let _ = writeln!(self.consts, "{g} = private constant [{} x i32] [{}]", spans.len(), spans.join(", "));
+                    let r = self.call_v("nx_interp", &format!("ptr {arr}, i64 {}, ptr {g}", vals.len()));
                     self.check();
                     self.drop_all(&vals);
                     self.owned(r)
@@ -4528,7 +4537,7 @@ declare i8 @nx_eq(i64, i64, i64, i64, i32)
 declare i8 @nx_order(i32, i64, i64, i64, i64, i32)
 declare i8 @nx_in(i64, i64, i64, i64, i32)
 declare i8 @nx_is(i64, i64, i64, i64, i32)
-declare %V @nx_interp(ptr, i64)
+declare %V @nx_interp(ptr, i64, ptr)
 declare %V @nx_bind(i64, i64)
 declare %V @nx_force(i64, i64)
 declare ptr @nx_func_ptr(i64, i64)

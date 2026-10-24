@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from . import ast as A
 from .errors import NexoError
 
-FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate", "move_file", "render"}
+FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt",
+                     "encrypt_file", "decrypt_file"}
 FALLIBLE_MEMBERS = {("json", "parse"), ("csv", "parse")}
 
 
@@ -208,6 +209,9 @@ class Checker:
                 raise NexoError("ignored_error", e.span, name=name)
             self.expr(e.func, ctx)
             for a in e.args:
+                # section 9: a key written in the code is a compile error
+                if a.name == "key" and isinstance(a.value, A.Str):
+                    raise NexoError("secret_literal", a.value.span)
                 self.expr(a.value, ctx)
             return
         if isinstance(e, A.Coalesce):

@@ -233,10 +233,10 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
                 if i > 0 {
                     text.push(' ');
                 }
-                text.push_str(&show(bind(*v)?.v()));
+                text.push_str(&crate::fmt::show_checked(bind(*v)?.v(), span)?);
             }
             match a.get(1) {
-                Some(end) => text.push_str(&show(end)),
+                Some(end) => text.push_str(&crate::fmt::show_checked(end, span)?),
                 None => text.push('\n'),
             }
             write_out(&text);
@@ -323,14 +323,14 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
             if let Some(Obj::Error(_)) = m.get() {
                 return Err(raise_value(Val::from(m)));
             }
-            let text = show(bind(m)?.v());
+            let text = crate::fmt::show_checked(bind(m)?.v(), span)?;
             Err(raise_error("Error", text, Val::none(), span))
         }
         B_VALIDATE => validate(a.get(0).unwrap(), a.get(1).unwrap(), a.get(2), span),
         B_DECIMAL => conv_decimal(a.get(0).unwrap(), span),
         B_FLOAT => conv_float(a.get(0).unwrap(), span),
         B_INT => conv_int(a.get(0).unwrap(), span),
-        B_STR => Ok(Val::str(show(bind(a.get(0).unwrap())?.v()))),
+        B_STR => Ok(Val::str(crate::fmt::show_checked(bind(a.get(0).unwrap())?.v(), span)?)),
         B_READ => {
             let path = str_arg("read", a.get(0).unwrap(), span)?;
             let text = data::read_text(path, span)?;
@@ -341,7 +341,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         }
         B_WRITE => {
             let path = str_arg("write", a.get(0).unwrap(), span)?;
-            let content = show(bind(a.get(1).unwrap())?.v());
+            let content = crate::fmt::show_checked(bind(a.get(1).unwrap())?.v(), span)?;
             data::write_text(path, &content, span)?;
             Ok(Val::none())
         }
@@ -352,6 +352,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_SAVE => {
             let value = bind(a.get(0).unwrap())?;
             let path = str_arg("save", a.get(1).unwrap(), span)?;
+            crate::fmt::show_checked(value.v(), span)?;
             data::save(value.v(), path, span)?;
             Ok(Val::none())
         }

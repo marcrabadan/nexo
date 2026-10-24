@@ -20,7 +20,8 @@ use nexo_diag::{Diagnostic, Span};
 
 use crate::ast::*;
 
-const FALLIBLE_BUILTINS: &[&str] = &["read", "write", "read_lines", "save", "validate", "move_file", "render"];
+const FALLIBLE_BUILTINS: &[&str] =
+    &["read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt", "encrypt_file", "decrypt_file"];
 const FALLIBLE_MEMBERS: &[(&str, &str)] = &[("json", "parse"), ("csv", "parse")];
 
 #[derive(Clone, Copy)]
@@ -766,6 +767,10 @@ impl Checker {
                 }
                 self.expr(func, ctx, false)?;
                 for a in args {
+                    // section 9: a key written in the code is a compile error
+                    if a.name.as_deref() == Some("key") && matches!(a.value.kind, ExprKind::Str(_)) {
+                        return Err(Diagnostic::new("secret_literal", a.value.span));
+                    }
                     self.expr(&a.value, ctx, false)?;
                 }
                 Ok(())

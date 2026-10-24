@@ -6,6 +6,7 @@ pub mod abi;
 pub mod call;
 pub mod coll;
 pub mod cow;
+pub mod crypto;
 pub mod data;
 pub mod dec;
 pub mod fmt;

@@ -649,7 +649,16 @@ class Interpreter:
     def eval_Str(self, e: A.Str, env: Env) -> str:
         out = []
         for part in e.parts:
-            out.append(part if isinstance(part, str) else show(self.bind_value(self.eval(part, env))))
+            if isinstance(part, str):
+                out.append(part)
+                continue
+            value = self.bind_value(self.eval(part, env))
+            try:
+                out.append(show(value))
+            except NexoError as err:
+                if err.span is None:
+                    err.span = part.span
+                raise
         return "".join(out)
 
     def eval_Bool(self, e: A.Bool, env: Env) -> bool:

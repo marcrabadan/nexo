@@ -9,7 +9,7 @@ from typing import Any
 
 from ..errors import NexoError, Span, suggest
 from ..types import At, Builtin, Lazy, Native, NexoSet, plain, type_name
-from . import clock, core, data, io, text
+from . import clock, core, data, io, text  # noqa: E402
 
 
 class Namespace:
@@ -24,8 +24,9 @@ class Namespace:
 
 
 def install(interp) -> None:
+    from . import crypto
     env = interp.builtins
-    for module in (core, io, data, clock, text):
+    for module in (core, io, data, clock, text, crypto):
         for name, value in module.exports().items():
             env.define(name, value)
     env.define("json", Namespace("json", data.json_exports()))

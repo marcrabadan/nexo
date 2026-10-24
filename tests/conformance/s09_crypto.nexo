@@ -1,0 +1,37 @@
+# crypto: passwords, encryption, signatures and secrets (section 9, D97)
+stored = password.hash("hunter2")
+print(stored.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"))
+if password.check("hunter2", stored):
+    print("login")
+print(password.check("hunter3", stored), password.check("hunter2", "not a hash"))
+print(len(password.generate(length: 32)), len(password.generate()))
+
+k = key.new()
+hidden = encrypt("Ana's data", k)
+print(hidden == encrypt("Ana's data", k), decrypt(hidden, k))
+print(decrypt(hidden, key.load(k.export())))
+try:
+    decrypt(hidden, key.new())
+else e is InvalidData:
+    print(e.message)
+encrypt_file("cards.csv", k)
+try:
+    read("cards.csv")
+else e:
+    print(e.kind)
+decrypt_file("cards.csv", k)
+print(read("cards.csv"))
+
+pair = keypair.new()
+signature = sign("contract v1", pair.private)
+if verify("contract v1", signature, pair.public):
+    print("Authentic")
+print(verify("contract v2", signature, pair.public), verify("contract v1", "bad", pair.public))
+print(sign("contract v1", keypair.load(pair.private.export()).private) == signature)
+
+db_pass = secret("NEXO_UNSET_SECRET")
+try:
+    key.load(db_pass)
+else e is NotFound:
+    print(e.message)
+print("the password is {db_pass}")

@@ -387,9 +387,12 @@ class NexoFailure(Exception):
         self.error = error
 
 
-def failure(kind: str, span: Span | None = None, cause: Any = None, **args) -> NexoFailure:
-    message = errors.msg("err." + kind, **args)
-    fix = "fix." + kind if errors.has("fix." + kind) else None
+def failure(kind: str, span: Span | None = None, cause: Any = None, key: str | None = None, **args) -> NexoFailure:
+    """An error value; `key` picks another message of the same kind
+    ("err.<key>" and its "fix.<key>")."""
+    key = key or kind
+    message = errors.msg("err." + key, **args)
+    fix = "fix." + key if errors.has("fix." + key) else ("fix." + kind if errors.has("fix." + kind) else None)
     return NexoFailure(ErrorValue(kind, message, cause, span, fix))
 
 

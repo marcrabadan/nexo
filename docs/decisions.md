@@ -833,3 +833,31 @@ expressions, templates" without functions. The smallest set:
 the file moves into the folder `to` (created when missing) keeping its
 name, and the call returns its new path. It can fail like `read`
 (`NotFound`, `IOError`).
+
+**D97. `crypto`.** Section 9 fixes the algorithms per edition; edition
+0.1 uses Argon2id (19 MiB, 2 passes, 1 lane, a 16-byte salt, written as a
+PHC string, so a hash made by one implementation is checked by the
+other), AES-256-GCM (a random 12-byte nonce, then the ciphertext and its
+tag) and Ed25519. Nexo has no bytes type, so keys, ciphertexts and
+signatures are base64 text; files are encrypted in place
+(`encrypt_file(path, k)`, `decrypt_file(path, k)?`).
+- `secret(name)` reads the environment variable `name` when the value is
+  used, not when it is created, so a missing one fails where it is needed
+  (`NotFound`: 'The secret "DB_PASS" is not set'). The system keychain and
+  `from: vault | aws | azure | gcp` belong to `nexo.infra` (phase 5) and
+  are reported as unavailable.
+- A secret, a key and a key pair cannot be shown: `print`, interpolation,
+  `str()`, `write`, `save` and `fail` stop with a compile-style
+  diagnostic (the compiler cannot always know a value is a secret, so
+  both phases check it when the value is shown). A `key:` argument (or a
+  `key =` of a module block) written as a text literal is a compile error
+  ("writing a literal key in the code is a compile error").
+- `password.hash(p)`, `password.check(p, stored)` (false for anything
+  that is not an Argon2id hash) and `password.generate(length: 20)`
+  (letters and digits, from the system's random source).
+- `key.new()`, `key.load(text)` and `k.export()`; `keypair.new()`,
+  `keypair.load(private)`, `pair.public` (text), `pair.private` and its
+  `export()`. Exporting is the visible, explicit way to store a key
+  (section 1, rule 2). `encrypt(text, k)`, `decrypt(text, k)?` (an
+  `InvalidData` error for another key or changed data), `sign(text,
+  private)` and `verify(text, signature, public)`.

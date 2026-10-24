@@ -558,11 +558,12 @@ pub extern "C" fn nx_is(at: u64, ab: u64, tt: u64, tb: u64, span: u32) -> u8 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_interp(parts: *const V, n: u64) -> V {
+pub unsafe extern "C" fn nx_interp(parts: *const V, n: u64, spans: *const u32) -> V {
     let mut out = String::new();
-    for p in values(parts, n) {
-        match pipe::bind(*p) {
-            Ok(b) => out.push_str(&show(b.v())),
+    let spans = std::slice::from_raw_parts(spans, n as usize);
+    for (p, span) in values(parts, n).iter().zip(spans) {
+        match pipe::bind(*p).and_then(|b| crate::fmt::show_checked(b.v(), *span)) {
+            Ok(text) => out.push_str(&text),
             Err(_) => return NONE,
         }
     }
