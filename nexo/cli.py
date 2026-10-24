@@ -69,6 +69,10 @@ def run_file(path: str) -> int:
         # the program ends when every spawned task has ended
         from .stdlib.sync import wait_all
         wait_all()
+        # then its servers answer until it is stopped (D102)
+        from .stdlib.web import serve_forever
+        if not serve_forever(interp):
+            return 1
     except (NexoError, NexoFailure) as exc:
         report(exc)
         return 1
@@ -127,6 +131,13 @@ def run_tests(paths: list[str]) -> int:
             continue
         if not interp.tests:
             continue
+        from .stdlib.web import serve_in_background
+        try:
+            serve_in_background(interp)
+        except NexoError as exc:
+            report(exc)
+            broken_files += 1
+            continue
         if len(files) > 1:
             print(name)
             sys.stdout.flush()
@@ -142,6 +153,11 @@ def run_tests(paths: list[str]) -> int:
             passed += 1
             print(f"✓ {test.name}")
             sys.stdout.flush()
+        # a mistake in a handler of a server is a broken program (D102)
+        from .stdlib import web
+        if web.MISTAKES:
+            broken_files += 1
+            web.MISTAKES.clear()
     if total == 0 and not broken_files:
         print(errors.msg("no_tests", path=", ".join(paths) or "."))
         return 0

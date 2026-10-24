@@ -24,3 +24,4 @@ pub mod text;
 pub mod time;
 pub mod types;
 pub mod value;
+pub mod web;

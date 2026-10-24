@@ -356,7 +356,7 @@ class Parser:
 
     def use_stmt(self) -> A.Use:
         """use_stmt = "use" [ IDENT ] dotted_name [ "as" IDENT ], and
-        `use c "library"` (section 18, D103)"""
+        `use c "library"` (section 18, D105)"""
         tok = self.advance()
         first_tok = self.expect_name()
         first = first_tok.value

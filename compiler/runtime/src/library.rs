@@ -39,6 +39,13 @@ static SIGS: &[Sig] = &[
     Sig { name: "__db_commit", params: &[p("tx")] },
     Sig { name: "__db_rollback", params: &[p("tx")] },
     Sig { name: "__sql_text", params: &[p("parts"), p("values")] },
+    Sig { name: "jwt", params: &[p("key")] },
+    Sig { name: "__rate", params: &[] },
+    Sig { name: "__web_server", params: &[p("name"), opt("port"), opt("auth")] },
+    Sig {
+        name: "__web_route",
+        params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
+    },
 ];
 
 /// Namespaces of the library: their members are the SIGS named "ns.member".
@@ -90,6 +97,7 @@ pub fn fake_value(name: &str) -> Option<Val> {
 pub fn release_all() {
     clear_fakes();
     crate::db::release_all();
+    crate::web::release_all();
 }
 
 pub fn clear_fakes() {
@@ -102,6 +110,10 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
     if sig.name == "render" {
         // render(path, name: value...): every named argument is a value
         return crate::text::render(args, names, span);
+    }
+    if sig.name == "__rate" {
+        // __rate(amount, words...): the words of `10 per minute per ip`
+        return crate::web::rate(args, span);
     }
     if let Some(m) = sig.name.strip_prefix("http.") {
         return crate::http::request(&m.to_uppercase(), args, names, span);
@@ -132,6 +144,9 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__db_commit" => crate::db::end(x(0), true, span),
         "__db_rollback" => crate::db::end(x(0), false, span),
         "__sql_text" => crate::db::sql_text(x(0), x(1), span),
+        "jwt" => crate::web::jwt(x(0), span),
+        "__web_server" => crate::web::server(x(0), a.get(1), a.get(2), span),
+        "__web_route" => crate::web::route(x(0), x(1), x(2), x(3), x(4), a.get(5), a.get(6), a.get(7), span),
         "__fake" => {
             let name = x(0).as_str().unwrap_or("").to_string();
             let value = crate::pipe::bind(x(1))?;

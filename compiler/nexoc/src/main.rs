@@ -616,12 +616,13 @@ fn run_tests(paths: &[String]) -> u8 {
         let ok = cmd.status().map(|s| s.success()).unwrap_or(false);
         let counts = std::fs::read_to_string(&report).unwrap_or_default();
         let nums: Vec<u32> = counts.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+        if nums.len() == 2 {
+            total += nums[0];
+            passed += nums[1];
+        }
         if !ok || nums.len() != 2 {
             broken += 1;
-            continue;
         }
-        total += nums[0];
-        passed += nums[1];
     }
     let _ = std::fs::remove_dir_all(work_dir());
     if total == 0 && broken == 0 {

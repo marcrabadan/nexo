@@ -116,6 +116,11 @@ pub extern "C" fn nx_too_deep() {
 pub extern "C" fn nx_exit(code: i32) -> ! {
     // the program ends when every spawned task has ended
     crate::sync::wait_all();
+    // then its servers answer until it is stopped (D102)
+    let mut code = code;
+    if code == 0 && !crate::web::serve_forever() {
+        code = 1;
+    }
     if leakcheck_enabled() {
         check_leaks();
     }
@@ -1381,7 +1386,8 @@ pub extern "C" fn nx_test_finish() -> ! {
     if let Ok(path) = std::env::var("NEXO_TEST_REPORT") {
         let _ = std::fs::write(path, format!("{run} {passed}\n"));
     }
-    nx_exit(0)
+    // a mistake in a handler of a server is a broken program (D102)
+    nx_exit(if crate::web::MISTAKE.load(std::sync::atomic::Ordering::SeqCst) { 1 } else { 0 })
 }
 
 static TEST_COUNTS: Mutex<(u32, u32)> = Mutex::new((0, 0));
@@ -1460,6 +1466,10 @@ pub unsafe extern "C" fn nx_test_register(name: *const u8, len: usize, t: u64, b
 pub extern "C" fn nx_run_tests() -> ! {
     let tests: Vec<(String, Val)> = TESTS.lock().unwrap().clone();
     if !tests.is_empty() {
+        if !crate::web::serve_in_background() {
+            state::report_pending();
+            std::process::exit(1);
+        }
         nx_test_header();
     }
     for (name, f) in tests {

@@ -222,7 +222,7 @@ pub fn builtin_names() -> Vec<&'static str> {
 pub const LIBRARY_NAMES: &[&str] = &[
     "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair", "encrypt",
     "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "http", "__fake", "__db_table", "__db_begin",
-    "__db_commit", "__db_rollback", "__sql_text",
+    "__db_commit", "__db_rollback", "__sql_text", "jwt", "__rate", "__web_server", "__web_route",
 ];
 
 /// Library names that are functions or namespaces (not types).
@@ -230,7 +230,7 @@ pub const LIBRARY_FUNCTIONS: &[&str] = &[
     "connect",
     "move_file", "now", "today", "regex", "render", "secret", "password", "key", "keypair", "encrypt", "decrypt",
     "encrypt_file", "decrypt_file", "sign", "verify", "http", "email", "__fake", "__db_table",
-    "__db_begin", "__db_commit", "__db_rollback", "__sql_text",
+    "__db_begin", "__db_commit", "__db_rollback", "__sql_text", "jwt", "__rate", "__web_server", "__web_route",
 ];
 
 pub fn is_builtin(name: &str) -> bool {

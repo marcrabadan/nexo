@@ -1,0 +1,12 @@
+# an int answer is an HTTP status code (D104)
+server api:
+    port = 8080
+
+    get "/odd"():
+        return 999
+
+test "a wrong status fails the request":
+    try:
+        http.get("{api.url}/odd", retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(api.url, "URL"))

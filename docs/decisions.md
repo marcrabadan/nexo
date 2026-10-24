@@ -784,7 +784,7 @@ print as their type and name.
 (section 8) have no rule in the grammar; `per` is read as a contextual
 word only in annotation arguments and the values of module blocks, where
 it builds a rate: an amount, the unit of time (`second`, `minute`,
-`hour`, `day`) and what it is counted per (`ip`, `user`).
+`hour`, `day`, `month`) and what it is counted per (`ip`, `user`).
 
 **D94. `time`.** Section 15 names `now`, `today`, durations and time
 zones. `today` is a `date` and `now` a `time`; section 6 writes
@@ -960,3 +960,72 @@ the table again). A column whose type changed gets a comment to change
 it by hand. `nexo db migrate app.nexo` applies the files not applied yet
 (recorded in the table `nexo_migrations`), each in a transaction; a file
 that drops data needs `--allow-drop`.
+
+## nexo.web (section 15)
+
+**D102. Servers and routes.** Section 15 shows one `server` block and
+says HTTPS, secure headers and CSRF protection are on and cannot be
+turned off; how a server starts is not written. A `server NAME:` block
+(D90) holds `port` (default 8080) and `auth` (a `jwt`, optional), then
+routes: `get|post|put|patch|delete "/path/{param}"(params):` with a
+block. The servers start when the top level of the program has run (and
+its spawned tasks have ended), and answer until the program is stopped;
+the line `api escucha en http://127.0.0.1:8080` goes to the standard
+error output. `PORT` in the environment replaces the port when there is
+one server. Under `nexo test` every server listens on a free port before
+the tests, and `api.url` (also `api.port`, `api.name`) is its address,
+so a test calls it with `http`. `NEXO_WEB_LOCAL=1` listens on 127.0.0.1
+only; otherwise on every address.
+- A server answers HTTP/1.1 one request at a time and closes each
+  connection after its answer (`Connection: close`); heads are limited to
+  64 KB and bodies to 1 MB.
+- Parameters: a `{name}` of the path, then a parameter whose type is a
+  record, list or map, read from the JSON body (`json.parse(as: T)`),
+  then the query (`?limit=5`), converted to the parameter's type as
+  `validate` does; a parameter named `request` receives the request
+  (`method`, `path`, `headers`, `query`, `body`, `json()`, `user`, `ip`).
+  A parameter that is missing and has no default answers 400.
+- HTTPS: Nexo does not terminate TLS itself in this phase (a certificate
+  needs a host name). Every answer carries `Strict-Transport-Security`,
+  and a request that a proxy marks `X-Forwarded-Proto: http` is
+  redirected with 308 to `https://`. The other secure headers are
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`,
+  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY` and `Cache-Control: no-store`.
+- CSRF: a POST, PUT, PATCH or DELETE whose `Origin` is not the host it
+  was sent to answers 403. Tokens travel in `Authorization`, never in
+  cookies, so a page of another site cannot use them.
+- A path that no route has answers 404; one that another method has
+  answers 405 with `Allow`. A route defined twice, or `@role` on a server
+  without `auth`, is an error when the program starts.
+- `@limit(10 per minute per ip)` (D93; the units are `second`, `minute`,
+  `hour`, `day` and `month`) counts requests per route in windows of the
+  clock, per address (`per ip`, the default) or per token subject
+  (`per user`); one more answers 429 with `Retry-After`.
+- A mistake in a handler (a diagnostic) answers 500 and stops the program
+  with its message, as everywhere else (D17); under `nexo test` it fails
+  that request and is shown, the tests go on, and `nexo test` ends with
+  status 1.
+
+**D103. Authentication.** Section 15 writes `auth = jwt(key: ...)` and
+`@role("admin")` and nothing else. `jwt(key:)` takes a secret or a text
+and signs tokens with HS256 (the one algorithm, so there is nothing to
+choose and the `none` algorithm is never accepted): `tokens.sign(claims,
+expires: 1h)` adds `exp`; `tokens.verify(token)` gives the claims or
+fails with InvalidValue. With `auth`, every route needs
+`Authorization: Bearer <token>` (401 otherwise) unless it has `@public`;
+`@role("admin")` needs the claim `role` to be that text, or the claim
+`roles` to contain it (403 otherwise). `request.user` holds the claims
+(`none` on a public route without a token).
+
+**D104. Answers.** Section 15 returns a record, `204` and `?? 404`. The
+value a handler returns is the answer: `none` is 204; an int is the
+status (100 to 599, another number is an error), with a JSON body
+`{"error": "Not Found"}` from 400 up; a text is `text/plain`; anything
+else is compact JSON (D58), with status 201 for POST and 200 otherwise.
+An error that leaves the handler is an answer too: NotFound is 404,
+InvalidValue and InvalidData are 400, a `@unique` that is repeated is
+409, each with `{"error": message}`; any other error is 500, and the
+program shows it on the standard error output as an unhandled error
+without stopping. Request parameters that cannot be converted answer 400
+with the message of the conversion.

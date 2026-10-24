@@ -320,7 +320,7 @@ fn to_csv(value: V, span: u32) -> R<String> {
 
 // -------------------------------------------------------------------- json
 
-enum Json {
+pub(crate) enum Json {
     Null,
     Bool(bool),
     Int(BigInt),
@@ -554,7 +554,7 @@ impl<'a> JsonParser<'a> {
     }
 }
 
-fn parse_json(text: &str) -> Result<Json, (usize, usize)> {
+pub(crate) fn parse_json(text: &str) -> Result<Json, (usize, usize)> {
     let chars: Vec<char> = text.chars().collect();
     let mut p = JsonParser { s: &chars, i: 0 };
     p.ws();
@@ -576,7 +576,7 @@ fn parse_json(text: &str) -> Result<Json, (usize, usize)> {
     })
 }
 
-fn from_json(j: Json, span: u32) -> R<Val> {
+pub(crate) fn from_json(j: Json, span: u32) -> R<Val> {
     Ok(match j {
         Json::Null => Val::none(),
         Json::Bool(b) => Val::bool(b),

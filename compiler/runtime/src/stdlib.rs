@@ -536,7 +536,7 @@ pub fn is_float_text(t: &str, allow_plus: bool) -> bool {
 
 /// `validate(value, as: type, range: a..b)?` turns external text into a
 /// checked value (section 9).
-fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
+pub fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
     let owned = bind(value)?;
     let value = owned.v();
     let tname = match target.get() {

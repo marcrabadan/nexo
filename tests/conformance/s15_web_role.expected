@@ -1,0 +1,4 @@
+Error en s15_web_role.nexo, línea 6:
+  get "/admin"():
+  ^^^
+@role necesita que el server api tenga auth. Añade auth = jwt(key: secret("JWT_KEY")) al server.

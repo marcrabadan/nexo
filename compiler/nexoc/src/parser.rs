@@ -514,7 +514,7 @@ impl<'s> Parser<'s> {
     }
 
     /// use_stmt = "use" [ IDENT ] dotted_name [ "as" IDENT ], and
-    /// `use c "library"` (section 18, D103)
+    /// `use c "library"` (section 18, D105)
     fn use_stmt(&mut self) -> PResult<Stmt> {
         let tok = self.advance();
         let (first, _) = self.expect_name()?;

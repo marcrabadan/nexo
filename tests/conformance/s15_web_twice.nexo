@@ -1,0 +1,9 @@
+# a route is defined once (D102)
+server api:
+    port = 8080
+
+    get "/users"():
+        return []
+
+    get "/users"():
+        return [1]
