@@ -144,12 +144,13 @@ impl Jwt {
     /// The claims of a valid token, or None.
     pub fn claims(&self, token: &str, span: u32) -> R<Option<Val>> {
         let parts: Vec<&str> = token.split('.').collect();
-        if parts.len() != 3 {
+        if parts.len() != 3 || !token.is_ascii() {
             return Ok(None);
         }
         let mac = self.mac(&format!("{}.{}", parts[0], parts[1]), span)?;
         match unb64url(parts[2]) {
-            Some(g) if g == mac => {}
+            // compared in constant time, as phase 0's hmac.compare_digest
+            Some(g) if g.len() == mac.len() && g.iter().zip(&mac).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0 => {}
             _ => return Ok(None),
         }
         let decode = |p: &str| unb64url(p).and_then(|b| String::from_utf8(b).ok()).and_then(|t| crate::data::parse_json(&t).ok());

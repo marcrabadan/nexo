@@ -114,6 +114,8 @@ def test_web_api(phase, tmp_path):
         status, headers, body = request(port, "GET", "/me", headers=auth)
         assert (status, headers["Content-Type"], body) == (200, "text/plain; charset=utf-8", "ana")
         assert request(port, "GET", "/me", headers={"Authorization": "Bearer x.y.z"})[0] == 401
+        # a token that is not ASCII is not valid (and the server goes on)
+        assert request(port, "GET", "/me", headers={"Authorization": "Bearer é.e.e"})[0] == 401
         assert request(port, "DELETE", "/users/1", headers=auth)[0] == 204
         assert request(port, "DELETE", "/users/1", headers=auth)[0] == 204
         status, headers, _ = request(port, "DELETE", "/users/1", headers=auth)

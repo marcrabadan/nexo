@@ -131,7 +131,9 @@ class Jwt(Native):
 
     def claims(self, call, token) -> dict | None:
         """The claims of a valid token, or None."""
-        if not isinstance(token, str) or token.count(".") != 2:
+        # a token is base64url text: anything else is not valid (and would
+        # not encode as ASCII)
+        if not isinstance(token, str) or token.count(".") != 2 or not token.isascii():
             return None
         head, payload, sig = token.split(".")
         mac = hmac.new(self.secret(call), f"{head}.{payload}".encode("ascii"), hashlib.sha256).digest()

@@ -1018,7 +1018,8 @@ fails with InvalidValue. With `auth`, every route needs
 `Authorization: Bearer <token>` (401 otherwise) unless it has `@public`;
 `@role("admin")` needs the claim `role` to be that text, or the claim
 `roles` to contain it (403 otherwise). `request.user` holds the claims
-(`none` on a public route without a token).
+(`none` on a public route without a token). A token that is not
+base64url text (three ASCII parts) is simply not valid.
 
 **D104. Answers.** Section 15 returns a record, `204` and `?? 404`. The
 value a handler returns is the answer: `none` is 204; an int is the
