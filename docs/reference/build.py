@@ -1,4 +1,5 @@
-"""Build docs/reference.html from docs/reference/page.html.
+"""Build docs/reference.html from docs/reference/page.tmpl (not .html, so
+GitHub Pages does not publish the template).
 
 Every example in the page is a program in this folder. `{{run:NAME}}`
 shows NAME and what `nexo NAME` prints, `{{test:NAME}}` what `nexo test
@@ -61,7 +62,7 @@ def expand(m):
     return window(shown, code, f"$ nexo {shown}", run([], name))
 
 
-page = (HERE / "page.html").read_text(encoding="utf-8")
+page = (HERE / "page.tmpl").read_text(encoding="utf-8")
 out = re.sub(r"\{\{(run|test|src):([\w./]+)\}\}", expand, page)
 (ROOT / "docs" / "reference.html").write_text(out, encoding="utf-8")
 print("wrote docs/reference.html")

@@ -84,7 +84,7 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 docs/index.html, reference.html  the GitHub Pages site; reference.html is built from
-                  docs/reference/ (page.html + the programs it runs) by
+                  docs/reference/ (page.tmpl + the programs it runs) by
                   docs/reference/build.py
 ```
 
