@@ -1,16 +1,16 @@
-Plan de data (gcp, europe-west1, etapa default):
+Plan for data (gcp, europe-west1, stage default):
   + database customers
       + sqladmin.instances data-customers
       + sqladmin.databases customers
-Crear: 2, cambiar: 0, borrar: 0.
-Coste estimado: 28.20 EUR al mes.
-Disponibilidad estimada: 99.95 %.
-Plan de web (k8s, etapa default):
+To create: 2, to change: 0, to delete: 0.
+Estimated cost: 28.20 EUR per month.
+Estimated availability: 99.95 %.
+Plan for web (k8s, stage default):
   + infra web
       + Namespace web
   + app api
       + Deployment web-api
       + Service web-api
-Crear: 3, cambiar: 0, borrar: 0.
-Coste estimado: 0.00 EUR al mes.
-Disponibilidad estimada: 99.90 %.
+To create: 3, to change: 0, to delete: 0.
+Estimated cost: 0.00 EUR per month.
+Estimated availability: 99.90 %.

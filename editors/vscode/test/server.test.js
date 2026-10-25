@@ -9,7 +9,7 @@ const command = process.env.NEXO || path.resolve(__dirname, "..", "..", "..", "c
 const args = process.env.NEXO_ARGS ? process.env.NEXO_ARGS.split(" ") : [];
 
 (async () => {
-  const child = spawn(command, [...args, "--lang", "en", "lsp"]);
+  const child = spawn(command, [...args, "lsp"]);
   const connection = rpc.createMessageConnection(
     new rpc.StreamMessageReader(child.stdout),
     new rpc.StreamMessageWriter(child.stdin)

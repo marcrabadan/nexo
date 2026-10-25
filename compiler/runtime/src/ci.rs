@@ -289,10 +289,9 @@ pub fn run(command: V, span: u32) -> R<Val> {
 pub fn test(span: u32) -> R<Val> {
     current("test", span)?;
     let driver = std::env::var("NEXO_DRIVER").unwrap_or_else(|_| "nexo".into());
-    let lang = if nexo_diag::lang() == nexo_diag::Lang::En { " --lang en" } else { "" };
     crate::state::flush();
     // stdout and stderr together, as they are written
-    let out = std::process::Command::new("sh").arg("-c").arg(format!("exec 2>&1\n'{}'{lang} test", driver.replace('\'', "'\\''"))).output();
+    let out = std::process::Command::new("sh").arg("-c").arg(format!("exec 2>&1\n'{}' test", driver.replace('\'', "'\\''"))).output();
     let ok = match out {
         Ok(o) => {
             crate::state::write_out(&String::from_utf8_lossy(&o.stdout));
@@ -391,7 +390,7 @@ pub fn approve(by: V, span: u32) -> R<Val> {
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     let answer = line.trim().to_lowercase();
-    if !["sí", "si", "s", "yes", "y"].contains(&answer.as_str()) {
+    if !["yes", "y"].contains(&answer.as_str()) {
         if !line.ends_with('\n') {
             crate::state::write_out("\n");
         }

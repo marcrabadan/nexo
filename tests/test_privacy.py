@@ -128,21 +128,21 @@ infra shop:
     database customers
 """
 
-REPORT = """Datos personales de app.nexo:
+REPORT = """Personal data of app.nexo:
 
-Contact: no se guarda en una base de datos
+Contact: not stored in a database
   phone  personal
-  se guarda: (sin declarar)
-  finalidad: (sin declarar)
-  lo leen: el programa
+  kept: (not declared)
+  purpose: (not declared)
+  read by: the program
 
-Customer: tabla customer en shop.db
+Customer: table customer in shop.db
   name         personal
   email        personal
-  national_id  sensible, cifrado en reposo
-  se guarda: 5 years after last_activity
-  finalidad: billing and shipping
-  lo leen: el programa, api_id (infra shop, database customers)
+  national_id  sensitive, encrypted at rest
+  kept: 5 years after last_activity
+  purpose: billing and shipping
+  read by: the program, api_id (infra shop, database customers)
 """
 
 
@@ -165,7 +165,7 @@ def test_release_build_needs_keep_and_purpose(tmp_path):
                                        encoding="utf-8")
     proc = run([str(nexo)], ["build", "--release", "app.nexo"], tmp_path)
     assert proc.returncode == 1
-    assert 'El type "Contact" tiene datos personales sin keep.' in proc.stdout.decode()
+    assert 'The type "Contact" has personal data without keep.' in proc.stdout.decode()
 
 
 UNIQUE = """use nexo.db

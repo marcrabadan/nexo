@@ -1,4 +1,4 @@
-Error en s19_kafka_servers.nexo, línea 1:
+Error in s19_kafka_servers.nexo, line 1:
   orders = kafka("orders", servers: "broker-1:9092")
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-"kafka(..., servers: ...)" no está disponible en la fase 5 de Nexo. Esta versión incluye el núcleo, la biblioteca estándar, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, los flags y la privacidad; quítalo para ejecutar el programa.
+"kafka(..., servers: ...)" is not available in phase 5 of Nexo. This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, flags and privacy; remove it to run the program.

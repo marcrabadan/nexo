@@ -64,7 +64,7 @@ def test_cli_formats_in_place_and_lists_changed_files(tmp_path, capsys, monkeypa
 def test_cli_reports_a_file_that_does_not_lex(tmp_path, capsys, monkeypatch):
     (tmp_path / "bad.nexo").write_text('x = "open\n', encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    assert main(["--lang", "en", "fmt", "bad.nexo"]) == 1
+    assert main(["fmt", "bad.nexo"]) == 1
     err = capsys.readouterr().err
     assert err.startswith("Error in bad.nexo, line 1:")
     assert (tmp_path / "bad.nexo").read_text(encoding="utf-8") == 'x = "open\n'

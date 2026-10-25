@@ -75,7 +75,7 @@ def test_the_safe_fixes_keep_what_the_program_prints(tmp_path):
 
 def test_lint_without_warnings(tmp_path):
     (tmp_path / "ok.nexo").write_text('print("hi")\n', encoding="utf-8")
-    code, out = run(interpreter() + ["--lang", "en", "lint", "ok.nexo"], tmp_path)
+    code, out = run(interpreter() + ["lint", "ok.nexo"], tmp_path)
     assert (code, out) == (0, "No warnings in ok.nexo.\n")
 
 
@@ -101,7 +101,7 @@ def test_both_phases_warn_alike(compiled, tmp_path):
         work.mkdir()
         shutil.copy(path, work / path.name)
         rs_code, rs_out = run([str(compiled), "lint", path.name], work)
-        if rs_out.startswith(("Error en ", "Error:")):
+        if rs_out.startswith(("Error in ", "Error:")):
             continue  # a compile error only phase 1 finds (D67, D68)
         py_code, py_out = run(interpreter() + ["lint", path.name], work)
         assert (rs_code, rs_out) == (py_code, py_out), str(path)

@@ -1,4 +1,4 @@
-Error en modules_top_level.nexo, línea 3:
+Error in modules_top_level.nexo, line 3:
   use shop.tax
   ^^^^^^^^^^^^
-use shop.tax solo puede ir en el nivel superior del archivo. Mueve la línea al principio del archivo, fuera de funciones y bloques.
+use shop.tax can only be written at the top level of the file. Move the line to the start of the file, outside functions and blocks.

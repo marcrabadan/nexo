@@ -9,7 +9,6 @@
     nexo check [paths]   the compile checks, without running anything
     nexo lsp             language server on standard input and output (D87)
     nexo db diff|migrate file.nexo [--db path] [--allow-drop]   migrations (D101)
-    --lang es|en         language of messages (Spanish by default)
 """
 from __future__ import annotations
 
@@ -22,18 +21,10 @@ from .errors import NexoError
 from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
-USAGE = {
-    "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp"
-          " | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage"
-          " | plan|apply|destroy|drift|cost [archivo.nexo] [--stage etapa] [--yes] | import nube recurso id [archivo.nexo] | ci run [pipeline] [archivo.nexo] [--step paso | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [archivo.nexo] | flags set nombre valor [archivo.nexo] [--stage etapa] | privacy report [archivo.nexo]]",
-    "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp"
-          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
-          " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]",
-}
-BANNER = {
-    "es": "Nexo {v} (fase 0). Escribe código y pulsa Intro; Ctrl-D para salir.",
-    "en": "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit.",
-}
+USAGE = ("Usage: nexo [file.nexo | test|fmt|lint|fix|check [paths...] | lsp"
+         " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
+         " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]")
+BANNER = "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit."
 
 
 def failure_text(error) -> str:
@@ -98,10 +89,6 @@ def run_file(path: str) -> int:
 # ---------------------------------------------------------------- tests
 
 def summary(total: int, passed: int, failed: int) -> str:
-    if errors.LANG == "es":
-        return (f"{total} {'prueba' if total == 1 else 'pruebas'}: "
-                f"{passed} {'correcta' if passed == 1 else 'correctas'}, "
-                f"{failed} {'fallida' if failed == 1 else 'fallidas'}")
     return f"{total} {'test' if total == 1 else 'tests'}: {passed} passed, {failed} failed"
 
 
@@ -311,7 +298,7 @@ def run_db(args: list[str]) -> int:
             break
         i += 1
     if command not in ("diff", "migrate") or file is None:
-        print(USAGE[errors.LANG], file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     try:
         source = Path(file).read_text(encoding="utf-8")
@@ -395,7 +382,7 @@ def run_flags(args: list[str]) -> int:
     from .stdlib import flags
     parsed = split_options(args[1:], values=("--stage",))
     if args[:1] != ["set"] or parsed is None or len(parsed[0]) not in (2, 3):
-        print(USAGE[errors.LANG], file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     pos, opts = parsed
     path = program_file("flags", pos[2] if len(pos) == 3 else None)
@@ -411,7 +398,7 @@ def run_privacy(args: list[str]) -> int:
     """`nexo privacy report [file.nexo]` (section 23, rule 4)."""
     from .stdlib import db, privacy
     if args[:1] != ["report"] or len(args) > 2 or any(a.startswith("-") for a in args):
-        print(USAGE[errors.LANG], file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     path = program_file("@personal", args[1] if len(args) == 2 else None, r"@personal\b|@private\b")
     if path is None:
@@ -469,12 +456,12 @@ def run_infra(command: str, args: list[str]) -> int:
     from .stdlib import infra, infra_cloud
     parsed = split_options(args, flags=("--yes",) if command == "apply" else (), values=("--stage",))
     if parsed is None:
-        print(USAGE[errors.LANG], file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     pos, opts = parsed
     extra = 3 if command == "import" else 0
     if len(pos) not in (extra, extra + 1):
-        print(USAGE[errors.LANG], file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     path = program_file("infra", pos[extra] if len(pos) > extra else None)
     if path is None:
@@ -550,13 +537,13 @@ def run_ci(args: list[str]) -> int:
     else:
         parsed = None
     if parsed is None:
-        print(USAGE[errors.LANG], file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     pos, opts = parsed
     target = None
     if sub == "export":
         if not pos:
-            print(USAGE[errors.LANG], file=sys.stderr)
+            print(USAGE, file=sys.stderr)
             return 2
         target, pos = pos[0], pos[1:]
     files = [a for a in pos if a.endswith(".nexo")]
@@ -564,7 +551,7 @@ def run_ci(args: list[str]) -> int:
     after = opts.get("--after")
     if (len(files) > 1 or len(names) > 1 or ("--step" in opts and after is not None)
             or after not in (None, "success", "failure")):
-        print(USAGE[errors.LANG], file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     path = program_file("pipeline", files[0] if files else None)
     if path is None:
@@ -598,7 +585,7 @@ def run_ci(args: list[str]) -> int:
 
 def repl() -> int:
     interp = Interpreter()
-    print(BANNER[errors.LANG].format(v=__version__))
+    print(BANNER.format(v=__version__))
     count = 0
     while True:
         try:
@@ -640,40 +627,22 @@ def repl() -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    lang = "es"
-    lang_given = False
-    rest = []
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a == "--lang" and i + 1 < len(args):
-            lang = args[i + 1]
-            lang_given = True
-            i += 2
-            continue
-        if a.startswith("--lang="):
-            lang = a.split("=", 1)[1]
-            lang_given = True
-            i += 1
-            continue
-        rest.append(a)
-        i += 1
-    errors.set_lang(lang)
-    if rest[:1] == ["db"] and lang in ("es", "en"):
+    rest = args
+    if rest[:1] == ["db"]:
         return run_db(rest[1:])
-    if rest[:1] == ["flags"] and lang in ("es", "en"):
+    if rest[:1] == ["flags"]:
         return run_flags(rest[1:])
-    if rest[:1] and rest[0] in INFRA_COMMANDS and lang in ("es", "en"):
+    if rest[:1] and rest[0] in INFRA_COMMANDS:
         return run_infra(rest[0], rest[1:])
-    if rest[:1] == ["ci"] and lang in ("es", "en"):
+    if rest[:1] == ["ci"]:
         return run_ci(rest[1:])
-    if rest[:1] == ["privacy"] and lang in ("es", "en"):
+    if rest[:1] == ["privacy"]:
         return run_privacy(rest[1:])
-    if rest in (["ai", "setup"], ["ai", "usage"]) and lang in ("es", "en"):
+    if rest in (["ai", "setup"], ["ai", "usage"]):
         from .stdlib import ai
         return ai.setup_command() if rest[1] == "setup" else ai.usage_command()
-    if lang not in ("es", "en") or any(a.startswith("-") for a in rest):
-        print(USAGE[errors.LANG], file=sys.stderr)
+    if any(a.startswith("-") for a in rest):
+        print(USAGE, file=sys.stderr)
         return 2
     sys.setrecursionlimit(10000)
     if not rest:
@@ -690,9 +659,9 @@ def main(argv: list[str] | None = None) -> int:
         return run_check(rest[1:])
     if rest == ["lsp"]:
         from .lsp import serve
-        return serve(lang_given)
+        return serve()
     if len(rest) > 1:
-        print(USAGE[errors.LANG], file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return 2
     return run_file(rest[0])
 

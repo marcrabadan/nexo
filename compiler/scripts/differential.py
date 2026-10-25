@@ -32,7 +32,7 @@ flt = args[0] if args else ""
 
 import helpers  # noqa: E402
 
-programs = []  # (name, source, lang, files, stdin)
+programs = []  # (name, source, files, stdin)
 _real_run, _real_error_of = helpers.run, helpers.error_of
 current = {"name": "", "stdin": ""}
 
@@ -45,14 +45,14 @@ def snapshot():
     return files
 
 
-def rec_run(src, lang="es"):
-    programs.append((current["name"], src, lang, snapshot(), current["stdin"]))
-    return _real_run(src, lang)
+def rec_run(src):
+    programs.append((current["name"], src, snapshot(), current["stdin"]))
+    return _real_run(src)
 
 
-def rec_error_of(src, lang="es"):
-    programs.append((current["name"], src, lang, snapshot(), current["stdin"]))
-    return _real_error_of(src, lang)
+def rec_error_of(src):
+    programs.append((current["name"], src, snapshot(), current["stdin"]))
+    return _real_error_of(src)
 
 
 helpers.run = rec_run
@@ -87,8 +87,6 @@ for mod_name in ["test_interpreter", "test_numbers", "test_checker", "test_stdli
                     saved = sys.stdin
                     kwargs["monkeypatch"] = MP()
                 try:
-                    from nexo import errors
-                    errors.set_lang("es")
                     fn(**kwargs)
                 except Exception:
                     pass
@@ -99,9 +97,8 @@ for mod_name in ["test_interpreter", "test_numbers", "test_checker", "test_stdli
                 os.chdir(old)
 
 for p in sorted((ROOT / "compiler" / "tests" / "programs").glob("*.nexo")):
-    lang = "en" if p.stem.endswith("_en") else "es"
     stdin_file = p.with_suffix(".stdin")
-    programs.append((f"programs/{p.stem}", p.read_text(encoding="utf-8"), lang, {}, stdin_file.read_text() if stdin_file.exists() else ""))
+    programs.append((f"programs/{p.stem}", p.read_text(encoding="utf-8"), {}, stdin_file.read_text() if stdin_file.exists() else ""))
 
 # ---------------------------------------------------------------- running
 
@@ -128,8 +125,8 @@ def run(cmd, cwd, stdin):
 seen = set()
 failures = []
 count = 0
-for name, src, lang, files, stdin in programs:
-    key = (src, lang)
+for name, src, files, stdin in programs:
+    key = src
     if key in seen:
         continue
     seen.add(key)
@@ -137,9 +134,8 @@ for name, src, lang, files, stdin in programs:
     if flt and flt not in name:
         continue
     count += 1
-    lang_args = ["--lang", "en"] if lang == "en" else []
     outs = []
-    for cmd in ([sys.executable, "-m", "nexo.cli", *lang_args, "t.nexo"], [str(nexo), *lang_args, "t.nexo"]):
+    for cmd in ([sys.executable, "-m", "nexo.cli", "t.nexo"], [str(nexo), "t.nexo"]):
         with tempfile.TemporaryDirectory() as tmp:
             for fname, data in files.items():
                 (Path(tmp) / fname).write_bytes(data)

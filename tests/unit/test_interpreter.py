@@ -37,10 +37,10 @@ def test_builtins_can_be_shadowed():
 def test_name_error_with_suggestion():
     e = error_of('name = "Ana"\nprint(nmae)\n')
     assert e.key == "name_not_found" and e.args_["suggestion"] == "name"
-    assert e.text() == '"nmae" no existe. ¿Quisiste decir "name"?'
-    e = error_of('name = "Ana"\nprint(nmae)\n', lang="en")
     assert e.text() == '"nmae" does not exist. Did you mean "name"?'
-    assert error_of("print(zzzzzz)\n").text() == '"zzzzzz" no existe. Defínelo antes de usarlo.'
+    e = error_of('name = "Ana"\nprint(nmae)\n')
+    assert e.text() == '"nmae" does not exist. Did you mean "name"?'
+    assert error_of("print(zzzzzz)\n").text() == '"zzzzzz" does not exist. Define it before using it.'
 
 
 def test_type_annotations_are_checked():
@@ -161,7 +161,7 @@ def test_comprehensions():
 def test_error_values_carry_message_cause_and_line():
     src = 'try:\n    x = read("missing.txt")\nelse e:\n    print(e.message)\n    print(e.line)\n    print(e.kind)\n    print(e is NotFound)\n'
     out = run(src)
-    assert out.splitlines() == ['No se encuentra el archivo "missing.txt"', "2", "NotFound", "true"]
+    assert out.splitlines() == ['File "missing.txt" not found', "2", "NotFound", "true"]
 
 
 def test_specific_handlers_in_order():
@@ -192,8 +192,7 @@ def test_try_within():
 def test_expect_and_ensure():
     src = ("fn withdraw(balance, amount):\n    expect amount > 0\n    ensure balance >= 0\n    return balance - amount\n"
            "print(withdraw(10, 3))\ntry:\n    withdraw(10, -1)\nelse e is ContractBroken:\n    print(e.message)\n")
-    assert run(src) == "7\nNo se cumple expect amount > 0 (amount = -1)\n"
-    assert run(src, lang="en").splitlines()[1] == "expect amount > 0 does not hold (amount = -1)"
+    assert run(src) == "7\nexpect amount > 0 does not hold (amount = -1)\n"
 
 
 def test_old_keeps_the_entry_value():

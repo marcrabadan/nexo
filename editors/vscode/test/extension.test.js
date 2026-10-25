@@ -6,7 +6,7 @@ const pkg = require("../package.json");
 
 const registered = [];
 const started = [];
-let settings = { path: "/opt/nexo/bin/nexo", lang: "en" };
+let settings = { path: "/opt/nexo/bin/nexo" };
 
 const vscode = {
   workspace: {
@@ -38,11 +38,11 @@ Module._load = function (request, parent, isMain) {
   const context = { subscriptions: [] };
   await ext.activate(context);
   assert.strictEqual(started.length, 1);
-  assert.deepStrictEqual(started[0].server.run, { command: "/opt/nexo/bin/nexo", args: ["--lang", "en", "lsp"] });
+  assert.deepStrictEqual(started[0].server.run, { command: "/opt/nexo/bin/nexo", args: ["lsp"] });
   assert.deepStrictEqual(started[0].options.documentSelector, [{ language: "nexo" }]);
   const declared = pkg.contributes.commands.map((c) => c.command).sort();
   assert.deepStrictEqual(registered.slice().sort(), declared);
-  settings = { path: "", lang: "" };
+  settings = { path: "" };
   await ext.activate({ subscriptions: [] });
   assert.deepStrictEqual(started[1].server.run, { command: "nexo", args: ["lsp"] });
   assert.ok(pkg.contributes.languages[0].extensions.includes(".nexo"));

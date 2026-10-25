@@ -1,4 +1,4 @@
-Error en s02_trait_error.nexo, línea 4:
+Error in s02_trait_error.nexo, line 4:
   type Square is Shape:
        ^^^^^^
-"Square" dice ser Shape pero no define fn area. Añade fn area a Square.
+"Square" says it is Shape but does not define fn area. Add fn area to Square.

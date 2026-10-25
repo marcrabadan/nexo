@@ -74,7 +74,7 @@ def start(prefix, tmp_path, port):
     proc = subprocess.Popen([*prefix, "api.nexo"], cwd=tmp_path, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     line = proc.stderr.readline().decode("utf-8")
-    assert line == f"api escucha en http://127.0.0.1:{port}\n", line + proc.stderr.read().decode()
+    assert line == f"api listens on http://127.0.0.1:{port}\n", line + proc.stderr.read().decode()
     return proc
 
 
@@ -93,7 +93,7 @@ def test_web_api(phase, tmp_path):
     proc = start(phase[1], tmp_path, port)
     try:
         status, headers, body = request(port, "GET", "/users/1")
-        assert (status, body) == (404, '{"error":"No hay ningún User con id = 1"}')
+        assert (status, body) == (404, '{"error":"There is no User with id = 1"}')
         assert headers["Content-Type"] == "application/json"
         assert headers["X-Frame-Options"] == "DENY"
         assert headers["X-Content-Type-Options"] == "nosniff"
@@ -104,12 +104,12 @@ def test_web_api(phase, tmp_path):
         assert request(port, "POST", "/users", '{"name":"Ana","email":"a@x"}', auth)[::2] == (
             201, '{"id":1,"name":"Ana","email":"a@x"}')
         assert request(port, "POST", "/users", '{"name":"Ana","email":"a@x"}', auth)[::2] == (
-            409, '{"error":"Ya hay un User con email = \\"a@x\\""}')
+            409, '{"error":"There is already a User with email = \\"a@x\\""}')
         assert request(port, "POST", "/users", '{"name":"Ana"}', auth)[::2] == (
-            400, '{"error":"Datos no válidos: falta el campo \\"email\\" de NewUser"}')
+            400, '{"error":"Invalid data: the field \\"email\\" of NewUser is missing"}')
         assert request(port, "POST", "/users", None, auth)[::2] == (
-            400, '{"error":"falta el cuerpo JSON de la petición"}')
-        assert request(port, "GET", "/users/abc")[::2] == (400, '{"error":"\\"abc\\" no es un valor int válido"}')
+            400, '{"error":"the JSON body of the request is missing"}')
+        assert request(port, "GET", "/users/abc")[::2] == (400, '{"error":"\\"abc\\" is not a valid int"}')
         assert request(port, "GET", "/users?limit=1")[::2] == (200, '[{"id":1,"name":"Ana","email":"a@x"}]')
         status, headers, body = request(port, "GET", "/me", headers=auth)
         assert (status, headers["Content-Type"], body) == (200, "text/plain; charset=utf-8", "ana")
@@ -124,7 +124,7 @@ def test_web_api(phase, tmp_path):
         assert (status, headers["Allow"]) == (405, "GET, DELETE")
         assert request(port, "GET", "/nothing")[::2] == (404, '{"error":"Not Found"}')
         assert request(port, "POST", "/users", "{}", {**auth, "Origin": "http://evil.com"})[::2] == (
-            403, '{"error":"la petición viene de otro origen"}')
+            403, '{"error":"the request comes from another origin"}')
         status, headers, _ = request(port, "GET", "/users/1", headers={"X-Forwarded-Proto": "http"})
         assert (status, headers["Location"]) == (308, f"https://127.0.0.1:{port}/users/1")
         with socket.create_connection(("127.0.0.1", port), timeout=20) as s:
@@ -135,11 +135,11 @@ def test_web_api(phase, tmp_path):
         assert request(port, "GET", "/broken")[0] == 500
         assert proc.wait(timeout=20) == 1
         assert proc.stderr.read().decode("utf-8") == (
-            "Error en api.nexo, línea 45:\n"
+            "Error in api.nexo, line 45:\n"
             '  get "/broken"():\n'
             "  ^^^\n"
-            "1000 no es un código de estado HTTP. Devuelve un número entre 100 y 599 (204, 404...), "
-            "o el valor que se envía como JSON.\n")
+            "1000 is not an HTTP status code. Return a number between 100 and 599 (204, 404...), "
+            "or the value to send as JSON.\n")
     finally:
         proc.kill()
         proc.wait()

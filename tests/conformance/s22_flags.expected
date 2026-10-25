@@ -3,7 +3,7 @@ true false
 true
 107
 false false
-Error en s22_flags.nexo, línea 25:
+Error in s22_flags.nexo, line 25:
   flag("new_checkout")
   ^^^^^^^^^^^^^^^^^^^^
-El flag "new_checkout" depende del usuario, y flag() no lo recibe. Pásale el usuario: flag("new_checkout", user).
+The flag "new_checkout" depends on the user, and flag() does not get one. Pass it the user: flag("new_checkout", user).

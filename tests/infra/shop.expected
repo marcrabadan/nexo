@@ -1,4 +1,4 @@
-Plan de shop (aws, eu-west-1, etapa default):
+Plan for shop (aws, eu-west-1, stage default):
   + network net
       + AWS::EC2::VPC shop-net
       + AWS::EC2::Subnet shop-net-a
@@ -29,6 +29,6 @@ Plan de shop (aws, eu-west-1, etapa default):
       + AWS::Route53::RecordSet api.shop.com
   + native firewall
       + AWS::WAFv2::WebACL firewall
-Crear: 22, cambiar: 0, borrar: 0.
-Coste estimado: 167.95 EUR al mes (presupuesto: 300.00 EUR al mes).
-Disponibilidad estimada: 99.29 %.
+To create: 22, to change: 0, to delete: 0.
+Estimated cost: 167.95 EUR per month (budget: 300.00 EUR per month).
+Estimated availability: 99.29 %.

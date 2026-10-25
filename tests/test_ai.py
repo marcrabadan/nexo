@@ -60,7 +60,7 @@ Opinion(tone: "positive", score: 4) 4
 Once| upon| a time|
 [ollama llama] Describe
 [openai gpt-mini] Down
-InvalidData Datos no válidos: el campo "score" debe ser 1..5, pero es int
+InvalidData Invalid data: the field "score" must be 1..5, but it is int
 HTTPError
 """
 
@@ -153,8 +153,8 @@ def test_ask(phase, server, tmp_path):
     assert len(retried) == 2
     assert retried[1]["messages"][1:] == [
         {"role": "assistant", "content": '{"tone": "neutral", "score": 9}'},
-        {"role": "user", "content": 'That answer is not valid: Datos no válidos: el campo "score" debe ser 1..5, '
-                                    'pero es int. Answer again with only the JSON.'}]
+        {"role": "user", "content": 'That answer is not valid: Invalid data: the field "score" must be 1..5, '
+                                    'but it is int. Answer again with only the JSON.'}]
     usage = (config / "nexo" / "usage.csv").read_text(encoding="utf-8").splitlines()
     assert len(usage) == len(Provider.seen) - 3  # the 500 (tried twice) and the 401 have no usage
     assert usage[0].endswith(",anthropic:claude-opus,10,5")
@@ -170,14 +170,14 @@ else e is AIError:
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
 def test_ask_without_provider(phase, tmp_path):
     (tmp_path / "app.nexo").write_text(NO_PROVIDER, encoding="utf-8")
-    proc = run(phase[1], ["--lang", "en", "app.nexo"], tmp_path, env={"XDG_CONFIG_HOME": str(tmp_path)})
+    proc = run(phase[1], ["app.nexo"], tmp_path, env={"XDG_CONFIG_HOME": str(tmp_path)})
     assert proc.stdout.decode("utf-8") == "No AI provider is configured. Run: nexo ai setup\n"
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
 def test_ai_setup_and_usage(phase, tmp_path):
     env = {"XDG_CONFIG_HOME": str(tmp_path)}
-    proc = run(phase[1], ["--lang", "en", "ai", "setup"], tmp_path, b"anthropic\nclaude-opus\nANTHROPIC_KEY\n\n", env)
+    proc = run(phase[1], ["ai", "setup"], tmp_path, b"anthropic\nclaude-opus\nANTHROPIC_KEY\n\n", env)
     path = tmp_path / "nexo" / "ai.toml"
     assert proc.stdout.decode() == (
         "Provider (anthropic, openai or ollama): Model (for example claude-opus): "
@@ -188,13 +188,13 @@ def test_ai_setup_and_usage(phase, tmp_path):
     assert path.read_text() == '[ai]\nprovider = "ollama"\nmodel = "llama"\nurl = "http://gpu:11434"\n'
     proc = run(phase[1], ["ai", "setup"], tmp_path, b"antropic\n", env)
     assert proc.returncode == 1
-    assert proc.stdout.decode().endswith('Error: "antropic" no es un proveedor de IA. ¿Quisiste decir "anthropic"?\n')
+    assert proc.stdout.decode().endswith('Error: "antropic" is not an AI provider. Did you mean "anthropic"?\n')
     proc = run(phase[1], ["ai", "setup"], tmp_path, b"openai\ngpt\nsk-123 456\n", env)
-    assert proc.stdout.decode().endswith('Error: "sk-123 456" no es un nombre de variable de entorno. Escribe solo letras, '
-                                         'números y _, por ejemplo ANTHROPIC_KEY; la clave nunca se guarda en un archivo.\n')
-    assert run(phase[1], ["ai", "usage"], tmp_path, env=env).stdout.decode() == "Todavía no hay llamadas a ask.\n"
+    assert proc.stdout.decode().endswith('Error: "sk-123 456" is not the name of an environment variable. Write only letters, '
+                                         'digits and _, for example ANTHROPIC_KEY; the key is never saved in a file.\n')
+    assert run(phase[1], ["ai", "usage"], tmp_path, env=env).stdout.decode() == "There are no calls to ask yet.\n"
     (tmp_path / "nexo" / "usage.csv").write_text("2026-10-24,a:b,3,4\n2026-10-24,a:b,1,1\nbroken\n2026-10-23,c:d,1,1\n")
-    assert run(phase[1], ["--lang", "en", "ai", "usage"], tmp_path, env=env).stdout.decode() == (
+    assert run(phase[1], ["ai", "usage"], tmp_path, env=env).stdout.decode() == (
         "2026-10-23 c:d: 1 calls, 1 input tokens, 1 output\n"
         "2026-10-24 a:b: 2 calls, 4 input tokens, 5 output\n")
 
@@ -244,11 +244,11 @@ else e is AIError:
 """
 
 AGENT_EXPECTED = """agent(support)
-¿Usar send_email(to: "ana@mail.com", text: "Your order 42 was sent")? (s/n): email to ana@mail.com: Your order 42 was sent
+Use send_email(to: "ana@mail.com", text: "Your order 42 was sent")? (y/n): email to ana@mail.com: Your order 42 was sent
 Your order 42 was sent.
-¿Usar send_email(to: "ana@mail.com", text: "Sorry")? (s/n): Sorry, I could not find order 7.
+Use send_email(to: "ana@mail.com", text: "Sorry")? (y/n): Sorry, I could not find order 7.
 [ollama] Order 42?
-local no termina en 2 pasos
+local does not finish in 2 steps
 """
 
 
@@ -305,7 +305,7 @@ def test_agent(phase, agent_server, tmp_path):
     AgentProvider.seen.clear()
     (tmp_path / "nexo.toml").write_text(f'[ai]\nprovider = "ollama"\nurl = "{agent_server}"\n', encoding="utf-8")
     (tmp_path / "app.nexo").write_text(AGENT.format(base=agent_server), encoding="utf-8")
-    proc = run(phase[1], ["app.nexo"], tmp_path, b"s\nn\n",
+    proc = run(phase[1], ["app.nexo"], tmp_path, b"y\nn\n",
                env={"NEXO_AI_KEY": "k3y", "XDG_CONFIG_HOME": str(tmp_path / "config")})
     assert proc.stdout.decode("utf-8") == AGENT_EXPECTED
     first = AgentProvider.seen[0][1]

@@ -1,4 +1,4 @@
-Error en s15_web_rate.nexo, línea 5:
+Error in s15_web_rate.nexo, line 5:
   @limit(5 per week)
          ^^^^^^^^^^
-"week" no es una unidad de tiempo para un límite. Escribe per second, per minute, per hour, per day o per month.
+"week" is not a unit of time for a limit. Write per second, per minute, per hour, per day or per month.

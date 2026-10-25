@@ -715,7 +715,7 @@ def use_tool(call, agent: Agent, name: str, args: dict) -> tuple[str, bool]:
         except Exception:
             pass
         answer = sys.stdin.readline().strip().lower()
-        if answer not in ("s", "si", "sí", "y", "yes"):
+        if answer not in ("y", "yes"):
             return DENIED, False
     try:
         result = interp.bind_value(interp.call(tool.fn, values, tool.fn.decl))

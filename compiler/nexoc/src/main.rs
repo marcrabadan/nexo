@@ -11,7 +11,6 @@
 //!     nexo check [paths...]              the compile checks, without running anything
 //!     nexo lsp                           language server on standard input and output (D87)
 //!     nexo db diff|migrate file.nexo     migrations of nexo.db (D101): --db path, --allow-drop
-//!     --lang es|en                       language of messages (Spanish by default)
 
 mod ai_cmd;
 mod ast;
@@ -34,14 +33,10 @@ mod typecheck;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
-use nexo_diag::{msg, render, Diagnostic, Lang};
+use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    if nexo_diag::lang() == Lang::En {
-        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]"
-    } else {
-        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [archivo.nexo] [--stage etapa] [--yes] | import nube recurso id [archivo.nexo] | ci run [pipeline] [archivo.nexo] [--step paso | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [archivo.nexo] | flags set nombre valor [archivo.nexo] [--stage etapa] | privacy report [archivo.nexo]]"
-    }
+    "Usage: nexo [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]"
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -61,10 +56,8 @@ fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Resul
     program.files = linker.files;
     let res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
-    let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
     let opts = codegen::Options {
         file: name.to_string(),
-        lang,
         test_mode,
         trust_ensure,
         repl_line: 0,
@@ -125,10 +118,8 @@ fn run_db(args: &[String]) -> u8 {
         });
         let res = resolve::resolve(&program).map_err(fail)?;
         typecheck::check(&program, &res).map_err(fail)?;
-        let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
         let opts = codegen::Options {
             file: file.clone(),
-            lang,
             test_mode: false,
             trust_ensure: false,
             repl_line: 0,
@@ -220,10 +211,8 @@ pub fn module_command(file: &str, env: &[(&str, String)], keep: &[&str], literal
         });
         let res = resolve::resolve(&program).map_err(fail)?;
         typecheck::check(&program, &res).map_err(fail)?;
-        let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
         let opts = codegen::Options {
             file: file.to_string(),
-            lang,
             test_mode: false,
             trust_ensure: false,
             repl_line: 0,
@@ -332,11 +321,7 @@ fn unbuffered_line() -> Option<Vec<u8>> {
 /// inputs replaying from a journal (see runtime/src/repl.rs).
 fn repl() -> u8 {
     use std::io::Write;
-    let banner = if nexo_diag::lang() == Lang::En {
-        "Nexo {v} (compiler). Type code and press Enter; Ctrl-D to exit."
-    } else {
-        "Nexo {v} (compilador). Escribe código y pulsa Intro; Ctrl-D para salir."
-    };
+    let banner = "Nexo {v} (compiler). Type code and press Enter; Ctrl-D to exit.";
     println!("{}", banner.replace("{v}", env!("CARGO_PKG_VERSION")));
     let dir = work_dir();
     let journal = dir.join("journal");
@@ -355,7 +340,6 @@ fn repl() -> u8 {
     };
     let mut session = String::new();
     let mut session_lines = 0u32;
-    let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
     loop {
         let Some(line) = prompt(">>> ") else {
             println!();
@@ -379,7 +363,6 @@ fn repl() -> u8 {
         let candidate = format!("{session}{cell}");
         let opts = codegen::Options {
             file: "<repl>".into(),
-            lang,
             test_mode: false,
             trust_ensure: false,
             repl_line: first,
@@ -643,16 +626,7 @@ fn build(args: &[String]) -> u8 {
 }
 
 fn summary(total: u32, passed: u32, failed: u32) -> String {
-    if nexo_diag::lang() == Lang::Es {
-        format!(
-            "{total} {}: {passed} {}, {failed} {}",
-            if total == 1 { "prueba" } else { "pruebas" },
-            if passed == 1 { "correcta" } else { "correctas" },
-            if failed == 1 { "fallida" } else { "fallidas" }
-        )
-    } else {
-        format!("{total} {}: {passed} passed, {failed} failed", if total == 1 { "test" } else { "tests" })
-    }
+    format!("{total} {}: {passed} passed, {failed} failed", if total == 1 { "test" } else { "tests" })
 }
 
 fn test_files(paths: &[String]) -> Vec<PathBuf> {
@@ -913,34 +887,8 @@ fn emit_ir(path: &str) -> u8 {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut lang = "es".to_string();
-    let mut lang_given = false;
-    let mut rest = Vec::new();
-    let mut i = 0;
-    while i < args.len() {
-        let a = &args[i];
-        if a == "--lang" && i + 1 < args.len() {
-            lang = args[i + 1].clone();
-            lang_given = true;
-            i += 2;
-            continue;
-        }
-        if let Some(l) = a.strip_prefix("--lang=") {
-            lang = l.to_string();
-            lang_given = true;
-            i += 1;
-            continue;
-        }
-        rest.push(a.clone());
-        i += 1;
-    }
-    let parsed = nexo_diag::parse_lang(&lang);
-    nexo_diag::set_lang(parsed.unwrap_or(Lang::Es));
-    let code = if parsed.is_none() {
-        eprintln!("{}", usage());
-        2
-    } else if rest.is_empty() {
+    let rest: Vec<String> = std::env::args().skip(1).collect();
+    let code = if rest.is_empty() {
         repl()
     } else {
         match rest[0].as_str() {
@@ -957,7 +905,7 @@ fn main() -> ExitCode {
             "ci" => phase5::run_ci(&rest[1..]),
             "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),
             "ai" if rest.len() == 2 && rest[1] == "usage" => ai_cmd::usage(),
-            "lsp" if rest.len() == 1 => lsp::serve(lang_given),
+            "lsp" if rest.len() == 1 => lsp::serve(),
             "--emit-llvm" if rest.len() == 2 => emit_ir(&rest[1]),
             a if a.starts_with('-') || rest.len() > 1 => {
                 eprintln!("{}", usage());

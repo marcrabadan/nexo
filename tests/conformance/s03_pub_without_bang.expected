@@ -1,4 +1,4 @@
-Error en s03_pub_without_bang.nexo, línea 1:
+Error in s03_pub_without_bang.nexo, line 1:
   pub fn load(path: str):
          ^^^^
-La función pub "load" puede fallar, pero no declara su tipo de retorno. Añade -> T! antes de los dos puntos, con el tipo que devuelve.
+The pub function "load" can fail, but does not declare its return type. Add -> T! before the colon, with the type it returns.

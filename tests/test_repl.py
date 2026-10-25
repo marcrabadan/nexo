@@ -45,7 +45,7 @@ def run(cmd, cwd):
 
 
 def test_phase_0_session(tmp_path):
-    code, out = run([sys.executable, "-m", "nexo.cli", "--lang", "en"], tmp_path)
+    code, out = run([sys.executable, "-m", "nexo.cli"], tmp_path)
     assert code == 0
     assert ">>> 42\n" in out and ">>> 82\n" in out and ">>> 5\n" in out
     assert "Name? >>> Hello Ana\n" in out
@@ -61,8 +61,8 @@ def test_the_compiled_repl_shows_what_phase_0_shows(tmp_path):
     subprocess.run(["cargo", "build", "--quiet"], cwd=COMPILER, check=True, timeout=1200)
     (tmp_path / "py").mkdir()
     (tmp_path / "rs").mkdir()
-    _, expected = run([sys.executable, "-m", "nexo.cli", "--lang", "en"], tmp_path / "py")
-    code, out = run([str(COMPILER / "target" / "debug" / "nexo"), "--lang", "en"], tmp_path / "rs")
+    _, expected = run([sys.executable, "-m", "nexo.cli"], tmp_path / "py")
+    code, out = run([str(COMPILER / "target" / "debug" / "nexo")], tmp_path / "rs")
     assert code == 0
     assert out.splitlines()[0] == "Nexo 0.1.0 (compiler). Type code and press Enter; Ctrl-D to exit."
     assert out.splitlines()[1:] == expected.splitlines()[1:]
@@ -74,7 +74,7 @@ def test_the_compiled_repl_shows_what_phase_0_shows(tmp_path):
 def test_a_failed_input_is_left_out(tmp_path):
     subprocess.run(["cargo", "build", "--quiet"], cwd=COMPILER, check=True, timeout=1200)
     session = 'print("once")\nif true:\n    z = 5\n    fail("e")\n\nprint("after")\n'
-    proc = subprocess.run([str(COMPILER / "target" / "debug" / "nexo"), "--lang", "en"], cwd=tmp_path,
+    proc = subprocess.run([str(COMPILER / "target" / "debug" / "nexo")], cwd=tmp_path,
                           input=session.encode(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
     out = proc.stdout.decode()
     assert out.count("once") == 1  # not printed again by the replays

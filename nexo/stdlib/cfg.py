@@ -166,6 +166,3 @@ def exports() -> dict:
         "__cond": Builtin("__cond", b_cond),
     }
 
-
-def lang() -> str:
-    return errors.LANG

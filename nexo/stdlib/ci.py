@@ -170,8 +170,6 @@ def b_run(call, command):
 def b_test(call):
     current(call, "test")
     command = [sys.executable, "-m", "nexo.cli"]
-    if errors.LANG != "es":
-        command += ["--lang", errors.LANG]
     sys.stdout.flush()
     p = subprocess.run(command + ["test"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2])))
@@ -243,7 +241,7 @@ def b_approve(call, by):
     call.interp.write(m("info.ci_approve", step=step, names=names))
     sys.stdout.flush()
     line = sys.stdin.readline()
-    if line.strip().lower() not in ("sí", "si", "s", "yes", "y"):
+    if line.strip().lower() not in ("yes", "y"):
         if not line.endswith("\n"):
             call.interp.write("\n")
         raise failure("Error", call.span, key="ci_approve", step=step)

@@ -627,7 +627,7 @@ def apply(plan, store, yes: bool) -> int:
     if not yes:
         if os.environ.get("CI"):
             raise NexoError("apply_needs_yes", None)
-        if not confirm(I.m("info.apply_confirm"), ("sí", "si", "s", "yes", "y")):
+        if not confirm(I.m("info.apply_confirm"), ("yes", "y")):
             say(I.m("info.apply_cancelled"))
             return 1
     take_lock(plan, store)

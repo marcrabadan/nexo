@@ -1,4 +1,4 @@
-Error en s17_mix_float_decimal.nexo, línea 3:
+Error in s17_mix_float_decimal.nexo, line 3:
   print(x + y)
         ^^^^^
-No se pueden mezclar decimal y float. Convierte uno de los dos con decimal(x) o float(x).
+decimal and float cannot be mixed. Convert one of them with decimal(x) or float(x).

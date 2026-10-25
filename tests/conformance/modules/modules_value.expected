@@ -1,4 +1,4 @@
-Error en modules_value.nexo, línea 4:
+Error in modules_value.nexo, line 4:
   t = tax
       ^^^
-"tax" es un módulo, no un valor. Usa uno de sus nombres, como tax.nombre(...).
+"tax" is a module, not a value. Use one of its names, such as tax.name(...).

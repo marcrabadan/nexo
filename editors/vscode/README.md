@@ -26,7 +26,6 @@ command. Both implementations have it: the compiler
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `nexo.path` | `nexo` | the `nexo` command to run |
-| `nexo.lang` | (empty) | `es` or `en`; empty follows the language of VS Code |
 
 ## Building the extension
 

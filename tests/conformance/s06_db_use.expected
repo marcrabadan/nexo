@@ -1,4 +1,4 @@
-Error en s06_db_use.nexo, línea 1:
+Error in s06_db_use.nexo, line 1:
   db = connect("data.db")
        ^^^^^^^
-"connect" es parte de nexo.db, que no está cargado. Añade use nexo.db al principio del archivo.
+"connect" belongs to nexo.db, which is not loaded. Add use nexo.db at the start of the file.

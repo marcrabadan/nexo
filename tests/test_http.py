@@ -57,12 +57,12 @@ text/plain; charset=utf-8
 {{"auth": "Bearer t0k3n", "cookie": none, "trace": none}}
 {{"auth": none, "cookie": none, "trace": "7"}}
 ok at last
-GET {base}/missing respondió 404 Not Found
-POST {base}/fail respondió 503 Service Unavailable
-No se puede conectar con http://127.0.0.1:{closed}/x: rechaza la conexión
-NetworkError No se puede conectar con ftp://x: la dirección debe empezar por http:// o https://
+GET {base}/missing answered 404 Not Found
+POST {base}/fail answered 503 Service Unavailable
+Cannot reach http://127.0.0.1:{closed}/x: it refuses the connection
+NetworkError Cannot reach ftp://x: the address must start with http:// or https://
 ana@mail.com
-"ana@mail" no es un valor email válido
+"ana@mail" is not a valid email
 """
 
 

@@ -648,7 +648,7 @@ class Interpreter:
         for a in call.args:
             if not isinstance(a.value, A.Name):
                 raise NexoError("unexpected", a.span, fix="expected", got=f'"{source_text(a.span)}"',
-                                expected="un nombre" if errors.LANG == "es" else "a name")
+                                expected="a name")
             params.append(a.value.name)
         self.handlers.setdefault(name, []).append((params, s.body, env))
 
@@ -1110,7 +1110,7 @@ class Interpreter:
         return None
 
     def word_name(self) -> str:
-        return "un nombre de columna" if errors.LANG == "es" else "a column name"
+        return "a column name"
 
     def apply_expr(self, expr: A.Expr, item: Any, env: Env) -> Any:
         """Evaluate a step expression for one element. If it names a

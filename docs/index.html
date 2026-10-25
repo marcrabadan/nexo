@@ -68,7 +68,7 @@ vat = total * 21%
 
 print(&quot;Total: {total + vat} (VAT {vat})&quot;)
 for part in split(total + vat, 3):
-    print(&quot;  instalment: {part}&quot;)</code></pre><div class="out"><div class="out-label">$ nexo --lang en invoice.nexo</div><pre><code>Total: 350.65 EUR (VAT 60.86 EUR)
+    print(&quot;  instalment: {part}&quot;)</code></pre><div class="out"><div class="out-label">$ nexo invoice.nexo</div><pre><code>Total: 350.65 EUR (VAT 60.86 EUR)
   instalment: 116.89 EUR
   instalment: 116.88 EUR
   instalment: 116.88 EUR</code></pre></div></div>
@@ -79,7 +79,7 @@ for part in split(total + vat, 3):
       <div><dt>2</dt><dd>implementations, one output: a Python interpreter and an LLVM compiler</dd></div>
       <div><dt>0</dt><dd>garbage collectors: values are freed by reference counting</dd></div>
       <div><dt>4</dt><dd>clouds from one file: AWS, Azure, GCP and Kubernetes</dd></div>
-      <div><dt>es / en</dt><dd>every error says how to fix it, in Spanish or English</dd></div>
+      <div><dt>1</dt><dd>shape for every error: where, what went wrong and how to fix it</dd></div>
     </dl>
   </div>
 </div>
@@ -137,7 +137,7 @@ try:
     print(divide(10, 4))
     print(divide(1, 0))
 else e:
-    print(e.message)</code></pre><div class="out"><div class="out-label">$ nexo --lang en errors.nexo</div><pre><code>2.5
+    print(e.message)</code></pre><div class="out"><div class="out-label">$ nexo errors.nexo</div><pre><code>2.5
 Cannot divide by zero</code></pre></div></div>
         </div>
 
@@ -153,7 +153,7 @@ print(price * 3)                  # decimal: exact
 
 total = 100.00 EUR
 for part in split(total, 3):
-    print(part)                   # no cent is lost</code></pre><div class="out"><div class="out-label">$ nexo --lang en money.nexo</div><pre><code>0.30000000000000004
+    print(part)                   # no cent is lost</code></pre><div class="out"><div class="out-label">$ nexo money.nexo</div><pre><code>0.30000000000000004
 0.30
 33.34 EUR
 33.33 EUR
@@ -173,7 +173,7 @@ sales
   |&gt; sum amount
   |&gt; sort by amount desc
   |&gt; take 2
-  |&gt; each print(&quot;{it[&quot;region&quot;]}: {it[&quot;amount&quot;]}&quot;)</code></pre><div class="out"><div class="out-label">$ nexo --lang en pipeline.nexo</div><pre><code>north: 1564.5
+  |&gt; each print(&quot;{it[&quot;region&quot;]}: {it[&quot;amount&quot;]}&quot;)</code></pre><div class="out"><div class="out-label">$ nexo pipeline.nexo</div><pre><code>north: 1564.5
 east: 1460.0</code></pre></div></div>
         </div>
 
@@ -188,7 +188,7 @@ east: 1460.0</code></pre></div></div>
     return balance - amount
 
 print(withdraw(50.00 EUR, 20.00 EUR))
-print(withdraw(50.00 EUR, 80.00 EUR))</code></pre><div class="out"><div class="out-label">$ nexo --lang en contracts.nexo</div><pre><code>30.00 EUR
+print(withdraw(50.00 EUR, 80.00 EUR))</code></pre><div class="out"><div class="out-label">$ nexo contracts.nexo</div><pre><code>30.00 EUR
 Error in contracts.nexo, line 3:
   expect amount &lt;= balance
          ^^^^^^^^^^^^^^^^^
@@ -210,19 +210,19 @@ fn area(s: Shape) -&gt; float:
         Rect(w, h): return w * h
 
 shapes = [Circle(1.0), Rect(2.0, 3.0)]
-print(shapes |&gt; map area(it))</code></pre><div class="out"><div class="out-label">$ nexo --lang en types.nexo</div><pre><code>[3.14159, 6.0]</code></pre></div></div>
+print(shapes |&gt; map area(it))</code></pre><div class="out"><div class="out-label">$ nexo types.nexo</div><pre><code>[3.14159, 6.0]</code></pre></div></div>
         </div>
 
         <div class="fpanel" role="tabpanel" id="fp-msgs" aria-labelledby="ft-msgs" hidden>
           <div class="fpanel-text">
             <h3>Errors that tell you how to fix them</h3>
-            <p>Every message has the same shape: file and line, the highlighted snippet, what went wrong and how to fix it, with a "Did you mean...?" when there is a likely candidate. Messages are in Spanish by default and in English with <code>--lang en</code>.</p>
+            <p>Every message has the same shape: file and line, the highlighted snippet, what went wrong and how to fix it, with a "Did you mean...?" when there is a likely candidate.</p>
           </div>
 <div class="code"><div class="code-bar"><span>typo.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = &quot;Ana&quot;
-print(nmae)</code></pre><div class="out"><div class="out-label">$ nexo typo.nexo  (default: Spanish)</div><pre><code>Error en typo.nexo, línea 2:
+print(nmae)</code></pre><div class="out"><div class="out-label">$ nexo typo.nexo</div><pre><code>Error in typo.nexo, line 2:
   print(nmae)
         ^^^^
-&quot;nmae&quot; no existe. ¿Quisiste decir &quot;name&quot;?</code></pre></div></div>
+&quot;nmae&quot; does not exist. Did you mean &quot;name&quot;?</code></pre></div></div>
         </div>
 
         <div class="fpanel" role="tabpanel" id="fp-conc" aria-labelledby="ft-conc" hidden>
@@ -248,7 +248,7 @@ print(&quot;sum of squares: {total}&quot;)
 
 sizes = parallel for word in [&quot;one&quot;, &quot;three&quot;, &quot;seven&quot;]:
     return len(word)
-print(sizes)</code></pre><div class="out"><div class="out-label">$ nexo --lang en tasks.nexo</div><pre><code>sum of squares: 55
+print(sizes)</code></pre><div class="out"><div class="out-label">$ nexo tasks.nexo</div><pre><code>sum of squares: 55
 [3, 5, 5]</code></pre></div></div>
         </div>
 
@@ -263,7 +263,7 @@ print(sizes)</code></pre><div class="out"><div class="out-label">$ nexo --lang e
 
 counters = [Counter(1), Counter(2)]
 parallel for c in counters:
-    c.n += 1</code></pre><div class="out"><div class="out-label">$ nexo --lang en race.nexo</div><pre><code>Error in race.nexo, line 6:
+    c.n += 1</code></pre><div class="out"><div class="out-label">$ nexo race.nexo</div><pre><code>Error in race.nexo, line 6:
   c.n += 1
     ^
 A task cannot change a Counter created before it started: other tasks may be reading it. Create the Counter inside the task, or return the change and apply it when the parallel ends.</code></pre></div></div>
@@ -371,7 +371,7 @@ refunds = sales |&gt; where amount &lt; 0 |&gt; count
 print(&quot;Refunds: {refunds}&quot;)
 
 by_region |&gt; save(&quot;sales_summary.out.csv&quot;)
-print(&quot;Saved sales_summary.out.csv&quot;)</code></pre><div class="out"><div class="out-label">$ nexo --lang en sales_report.nexo</div><pre><code>Rows read: 10
+print(&quot;Saved sales_summary.out.csv&quot;)</code></pre><div class="out"><div class="out-label">$ nexo sales_report.nexo</div><pre><code>Rows read: 10
 Sales per region:
   north: 1564.5 EUR
   east: 1460.0 EUR
@@ -433,7 +433,7 @@ test &quot;a transfer keeps the total&quot;:
 test &quot;cannot transfer more than the balance&quot;:
     a = Account(owner: &quot;A&quot;, balance: 1.00 EUR)
     b = Account(owner: &quot;B&quot;, balance: 0.00 EUR)
-    assert transfer(a, b, 2.00 EUR) fails</code></pre><div class="out"><div class="out-label">$ nexo --lang en bank.nexo</div><pre><code>Ana: 80.00 EUR
+    assert transfer(a, b, 2.00 EUR) fails</code></pre><div class="out"><div class="out-label">$ nexo bank.nexo</div><pre><code>Ana: 80.00 EUR
 Luis: 90.00 EUR
 Rejected: expect source.balance &gt;= amount does not hold (source.balance = 90.00 EUR, amount = 500.00 EUR)
 Rejected: expect amount &gt; 0.00 EUR does not hold (amount = -5.00 EUR)</code></pre></div></div>
@@ -498,7 +498,7 @@ test &quot;grades follow the average&quot;:
     assert grade(4.9) == Fail
 
 test &quot;average of a student&quot;:
-    assert Student(&quot;X&quot;, [5, 7]).average() == 6.0</code></pre><div class="out"><div class="out-label">$ nexo --lang en grades.nexo</div><pre><code>Ana (3 exams): 9.3 -&gt; excellent
+    assert Student(&quot;X&quot;, [5, 7]).average() == 6.0</code></pre><div class="out"><div class="out-label">$ nexo grades.nexo</div><pre><code>Ana (3 exams): 9.3 -&gt; excellent
 Luis (3 exams): 6.0 -&gt; pass
 Eva (3 exams): 4.3 -&gt; fail
 Marc (3 exams): 8.0 -&gt; good
@@ -635,7 +635,7 @@ test &quot;a missing product is a 404&quot;:
     try:
         http.get(&quot;{shop.url}/products/999&quot;, retries: 0)
     else e is HTTPError:
-        assert e.message.ends_with(&quot;404 Not Found&quot;)</code></pre><div class="out"><div class="out-label">$ SHOP_JWT_KEY=... nexo --lang en test shop.nexo</div><pre><code>✓ products need an admin
+        assert e.message.ends_with(&quot;404 Not Found&quot;)</code></pre><div class="out"><div class="out-label">$ SHOP_JWT_KEY=... nexo test shop.nexo</div><pre><code>✓ products need an admin
 ✓ reviews are analysed by the AI
 ✓ a missing product is a 404
 3 tests: 3 passed, 0 failed</code></pre></div></div>
@@ -745,7 +745,7 @@ pipeline main:
 
     step deploy:
         approve(by: [&quot;ops@shop.example&quot;])
-        apply(stage: &quot;prod&quot;, image: image)</code></pre><div class="out"><div class="out-label">$ nexo --lang en ci export github shop.nexo</div><pre><code>Wrote .github/workflows/main.yml.</code></pre></div></div>
+        apply(stage: &quot;prod&quot;, image: image)</code></pre><div class="out"><div class="out-label">$ nexo ci export github shop.nexo</div><pre><code>Wrote .github/workflows/main.yml.</code></pre></div></div>
     </div>
   </div>
 </section>
@@ -770,15 +770,13 @@ python3.12 -m venv .venv
         <h3>Write and run a program</h3>
         <p>Save this as <code>hello.nexo</code> and run it, or start the REPL with <code>.venv/bin/nexo</code>.</p>
 <div class="code"><div class="code-bar"><span>hello.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = &quot;world&quot;
-print(&quot;Hello, {name}!&quot;)</code></pre><div class="out"><div class="out-label">$ nexo --lang en hello.nexo</div><pre><code>Hello, world!</code></pre></div></div>
+print(&quot;Hello, {name}!&quot;)</code></pre><div class="out"><div class="out-label">$ nexo hello.nexo</div><pre><code>Hello, world!</code></pre></div></div>
       </li>
       <li class="step">
         <h3>Try the everyday commands</h3>
         <p>Run, test, format and lint from the same command.</p>
 <div class="code"><div class="code-bar"><span>shell</span><button class="copy" type="button">Copy</button></div><pre><code># run a program
 .venv/bin/nexo examples/invoice.nexo
-# messages in English
-.venv/bin/nexo --lang en app.nexo
 # run the test blocks
 .venv/bin/nexo test examples/
 # format, lint and apply the safe fixes

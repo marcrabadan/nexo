@@ -68,8 +68,7 @@ Total with VAT: 350.65 EUR
 - **Contracts.** `expect`, `ensure` and `old()` state what a function
   needs and promises, and a broken contract reports the values involved.
 - **Errors that teach.** Every message shows the file, the line, the
-  highlighted code, what went wrong and how to fix it, in Spanish (the
-  default) or English.
+  highlighted code, what went wrong and how to fix it.
 
 The full design lives in
 [`docs/especificacion-nexo.md`](docs/especificacion-nexo.md), and every
@@ -92,7 +91,7 @@ Needs Python 3.12 or newer.
 ```sh
 python3.12 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
-.venv/bin/nexo --lang en examples/invoice.nexo
+.venv/bin/nexo examples/invoice.nexo
 ```
 
 ### Compiler (phase 1)
@@ -103,7 +102,7 @@ and uses clang to build it and link it with the Nexo runtime library.
 ```sh
 cd compiler
 cargo build --release
-target/release/nexo --lang en ../examples/invoice.nexo               # compile and run
+target/release/nexo ../examples/invoice.nexo               # compile and run
 target/release/nexo build --release ../examples/invoice.nexo -o invoice  # native binary
 ./invoice
 ```
@@ -158,7 +157,6 @@ The command line:
 | `nexo fix [paths]` | apply the safe fixes of warnings and errors |
 | `nexo check [paths]` | report compile errors without running anything |
 | `nexo lsp` | language server for any editor (the VS Code extension uses it) |
-| `nexo --lang en ...` | show messages in English; Spanish is the default |
 
 Make a mistake and Nexo tells you how to fix it:
 
@@ -328,7 +326,7 @@ test "cannot transfer more than the balance":
 ```
 
 ```sh
-nexo --lang en test examples/bank.nexo
+nexo test examples/bank.nexo
 ```
 
 ## Examples
@@ -356,7 +354,7 @@ Run any of them from the `examples/` directory so relative paths to
 
 ```sh
 cd examples
-../.venv/bin/nexo --lang en sales_report.nexo
+../.venv/bin/nexo sales_report.nexo
 ```
 
 ## What is implemented
@@ -418,7 +416,7 @@ the same output in both:
   `input()` answers and file writes do not happen again.
 
 ```
-$ nexo --lang en lint app.nexo
+$ nexo lint app.nexo
 Warning in app.nexo, line 3:
   var total = 0
   ^^^
@@ -549,7 +547,7 @@ details are in D84.
 the same output for every program. The compiler catches some mistakes
 earlier (unknown names and certain type errors are reported before the
 program runs; `nexo lint`, `check` and the language server report them
-too) and fixes the message language when the program is compiled. Its
+too). Its
 REPL drops an input that fails when it runs, while phase 0 keeps what
 that input assigned before the error (D88). Each difference is recorded
 in [`docs/decisions.md`](docs/decisions.md) (D67 to D75, D88).
@@ -607,9 +605,9 @@ honest:
    suite at 100% and the differential test free of unexpected
    differences. An intended difference goes in
    `compiler/tests/differences.txt` and `docs/decisions.md`.
-3. **Every message has two languages.** New error messages need Spanish
-   and English text in `nexo/errors.py`, mirrored in
-   `compiler/diag/src/catalog.rs`, and follow the section 14 format:
+3. **Every message has its fix.** New error messages go in
+   `nexo/errors.py` with the same text in `compiler/diag/src/catalog.rs`
+   (messages are in English, D125), and follow the section 14 format:
    file and line, highlighted snippet, what went wrong, how to fix it.
 4. **Small commits, green tests.** One small commit per working step, with
    the whole test suite passing.
@@ -626,5 +624,5 @@ python3 compiler/bench/compare.py                    # benchmarks: native vs Rus
 ```
 
 To add a conformance test, put `NAME.nexo` and its exact output
-`NAME.expected` in `tests/conformance/` (messages in Spanish, the
-default). Extra CLI arguments, such as `--lang en`, go in `NAME.args`.
+`NAME.expected` in `tests/conformance/`. Extra CLI arguments, such as
+`test`, go in `NAME.args`.

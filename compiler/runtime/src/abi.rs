@@ -10,7 +10,7 @@
 use std::cell::RefCell;
 use std::sync::Mutex;
 
-use nexo_diag::{suggest, Diagnostic, Lang};
+use nexo_diag::{suggest, Diagnostic};
 
 use crate::call;
 use crate::coll;
@@ -96,10 +96,8 @@ pub unsafe extern "C" fn nx_init(
     src_len: usize,
     spans: *const SpanRec,
     nspans: u64,
-    lang: u32,
     cleanup: extern "C" fn(*mut Tls),
 ) {
-    nexo_diag::set_lang(if lang == 1 { Lang::En } else { Lang::Es });
     if std::env::var("NEXO_LEAKCHECK").is_ok_and(|v| v == "1") {
         enable_leakcheck();
     }

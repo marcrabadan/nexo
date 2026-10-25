@@ -1,5 +1,0 @@
-# the messages of modules in English
-use shop.prices
-
-print(prices.price(2))
-print(prices.margin())

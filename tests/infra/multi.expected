@@ -1,4 +1,4 @@
-Plan de shop_aws (aws, eu-west-1, etapa default):
+Plan for shop_aws (aws, eu-west-1, stage default):
   + network net
       + AWS::EC2::VPC shop-aws-net
       + AWS::EC2::Subnet shop-aws-net-a
@@ -19,10 +19,10 @@ Plan de shop_aws (aws, eu-west-1, etapa default):
       + AWS::ElasticLoadBalancingV2::TargetGroup shop-aws-api
       + AWS::ElasticLoadBalancingV2::Listener shop-aws-api-80
       + AWS::ECS::Service shop-aws-api
-Crear: 17, cambiar: 0, borrar: 0.
-Coste estimado: 85.45 EUR al mes.
-Disponibilidad estimada: 99.49 %.
-Plan de shop_azure (azure, westeurope, etapa default):
+To create: 17, to change: 0, to delete: 0.
+Estimated cost: 85.45 EUR per month.
+Estimated availability: 99.49 %.
+Plan for shop_azure (azure, westeurope, stage default):
   + infra shop_azure
       + Microsoft.Resources/resourceGroups shop_azure
   + identity api_id
@@ -45,10 +45,10 @@ Plan de shop_azure (azure, westeurope, etapa default):
       + Microsoft.Network/dnsZones shop.com
       + Microsoft.Network/dnsZones/CNAME shop.com/api
       + Microsoft.App/managedEnvironments/managedCertificates shop-azure-api/apishopcom
-Crear: 15, cambiar: 0, borrar: 0.
-Coste estimado: 37.70 EUR al mes.
-Disponibilidad estimada: 99.65 %.
-Plan de shop_gcp (gcp, europe-west1, etapa default):
+To create: 15, to change: 0, to delete: 0.
+Estimated cost: 37.70 EUR per month.
+Estimated availability: 99.65 %.
+Plan for shop_gcp (gcp, europe-west1, stage default):
   + network net
       + compute.networks shop-gcp-net
       + compute.subnetworks shop-gcp-net
@@ -68,10 +68,10 @@ Plan de shop_gcp (gcp, europe-west1, etapa default):
       + secretmanager.secrets shop-gcp-api-api-key
       + run.services shop-gcp-api
       + iam.binding roles/run.invoker
-Crear: 13, cambiar: 0, borrar: 0.
-Coste estimado: 45.10 EUR al mes.
-Disponibilidad estimada: 99.80 %.
-Plan de shop_k8s (k8s, etapa default):
+To create: 13, to change: 0, to delete: 0.
+Estimated cost: 45.10 EUR per month.
+Estimated availability: 99.80 %.
+Plan for shop_k8s (k8s, stage default):
   + infra shop_k8s
       + Namespace shop
   + network net
@@ -92,6 +92,6 @@ Plan de shop_k8s (k8s, etapa default):
       + HorizontalPodAutoscaler shop-k8s-api
   + dns api.shop.com
       + Ingress shop-k8s-api-shop-com
-Crear: 13, cambiar: 0, borrar: 0.
-Coste estimado: 0.00 EUR al mes.
-Disponibilidad estimada: 98.70 %.
+To create: 13, to change: 0, to delete: 0.
+Estimated cost: 0.00 EUR per month.
+Estimated availability: 98.70 %.

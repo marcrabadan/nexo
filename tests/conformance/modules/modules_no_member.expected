@@ -1,4 +1,4 @@
-Error en modules_no_member.nexo, línea 4:
+Error in modules_no_member.nexo, line 4:
   print(payments.charges(payments.Order(total: 1)))
         ^^^^^^^^^^^^^^^^
-El módulo shop.payments no tiene "charges". ¿Quisiste decir "payments.charge"?
+Module shop.payments has no "charges". Did you mean "payments.charge"?

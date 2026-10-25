@@ -1,4 +1,0 @@
-Error in s07_type_cycle.nexo, line 8:
-  department: Department?
-              ^^^^^^^^^^^
-The types Department, Employee refer to each other: they form a reference cycle that would never be freed. Mark one of the fields as weak, for example department: weak Department?

@@ -1,4 +1,4 @@
-Error en s24_tab.nexo, línea 2:
+Error in s24_tab.nexo, line 2:
   print(1)
   ^^^^^
-Hay un tabulador en la indentación. Usa 4 espacios por nivel; los tabuladores no están permitidos.
+There is a tab in the indentation. Use 4 spaces per level; tabs are not allowed.

@@ -44,9 +44,9 @@ def test_one_file_deploys_to_four_clouds(phase, cloud, tmp_path):
     shutil.copy(APP / "shop.nexo", tmp_path / "shop.nexo")
     code, out = nexo(phase, ["ci", "run", "--yes"], tmp_path, cloud)
     assert code == 0, out
-    assert out.startswith("== paso checks\n✓ shipping grows with the quantity\n")
+    assert out.startswith("== step checks\n✓ shipping grows with the quantity\n")
     assert "build -t shop:1.1.0 .\n" in out
-    assert out.endswith("Pipeline main: 3 pasos correctos, versión 1.1.0.\n")
+    assert out.endswith("Pipeline main: 3 steps passed, version 1.1.0.\n")
     # the four targets, in the order their references need
     order = [out.index(f"Plan de {name} ") for name in ("shop_aws", "shop_azure", "shop_gcp", "shop_k8s")]
     assert order == sorted(order)
@@ -64,7 +64,7 @@ def test_one_file_deploys_to_four_clouds(phase, cloud, tmp_path):
     assert env["DB"].startswith("postgres://") and env["NEXO_STAGE"] == "prod"
 
     code, out = nexo(phase, ["drift", "--stage", "prod", "shop.nexo"], tmp_path, cloud)
-    assert out.count("Ninguno: la nube coincide con el estado.") == 4, out
+    assert out.count("None: the cloud matches the state.") == 4, out
     # destroy keeps the order of the file, but shop_k8s goes before the
     # database it reads on GCP
     names = b"shop_aws\nshop_azure\nshop_k8s\nshop_gcp\n"
@@ -77,7 +77,7 @@ def test_one_file_deploys_to_four_clouds(phase, cloud, tmp_path):
 def test_the_exported_workflow(phase, tmp_path):
     shutil.copy(APP / "shop.nexo", tmp_path / "shop.nexo")
     code, out = nexo(phase, ["ci", "export", "github"], tmp_path, {})
-    assert (code, out) == (0, "Escrito .github/workflows/main.yml.\n")
+    assert (code, out) == (0, "Wrote .github/workflows/main.yml.\n")
     text = (tmp_path / ".github" / "workflows" / "main.yml").read_text()
     for step in ("checks", "build", "deploy"):
         assert f"nexo ci run main shop.nexo --step {step} --yes" in text

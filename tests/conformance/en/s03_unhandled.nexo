@@ -1,7 +1,0 @@
-fn divide(a, b):
-    if b == 0:
-        fail("Cannot divide by zero")
-    return a / b
-
-print(divide(8, 2))
-print(divide(1, 0))

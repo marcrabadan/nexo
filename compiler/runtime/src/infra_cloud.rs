@@ -1007,7 +1007,7 @@ fn apply(plan: &mut Plan, store: &dyn Store, yes: bool) -> R<i32> {
         if std::env::var("CI").is_ok_and(|v| !v.is_empty()) {
             return Err(fail_d(Diagnostic::new_spanless("apply_needs_yes")));
         }
-        if !confirm(&m("info.apply_confirm", &[]), &["sí", "si", "s", "yes", "y"]) {
+        if !confirm(&m("info.apply_confirm", &[]), &["yes", "y"]) {
             say(&m("info.apply_cancelled", &[]));
             return Ok(1);
         }

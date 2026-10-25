@@ -1,4 +1,4 @@
-Error en s06_db_field.nexo, línea 3:
+Error in s06_db_field.nexo, line 3:
   @table
   ^^^^^^
-El campo "items" de Basket es list[str], que no se puede guardar en una tabla. Usa int, float, bool, str, decimal, money, date, time, un enum sin datos o ref T; una lista de registros se escribe many T.
+The field "items" of Basket is list[str], which cannot be stored in a table. Use int, float, bool, str, decimal, money, date, time, an enum without data or ref T; a list of records is written many T.

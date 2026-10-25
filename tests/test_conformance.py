@@ -2,7 +2,7 @@
 `nexo` CLI from a scratch copy of its directory, and stdout + stderr must equal
 NAME.expected exactly (a .nexo without .expected is a module that other
 cases use). NAME.args, if present, holds extra CLI arguments placed
-before the file name (for example `--lang en` or `test`).
+before the file name (for example `test`).
 
 A case listed in tests/conformance/PENDING is expected to fail (xfail); the
 list must be empty once phase 0 is complete.
@@ -54,5 +54,5 @@ def test_conformance(source, tmp_path):
     expected = source.with_suffix(".expected").read_text(encoding="utf-8")
     output = proc.stdout.decode("utf-8")
     assert output == expected
-    is_error = any(line.startswith(("Error en ", "Error in ")) for line in expected.splitlines())
+    is_error = any(line.startswith("Error in ") for line in expected.splitlines())
     assert proc.returncode == (1 if is_error else 0)

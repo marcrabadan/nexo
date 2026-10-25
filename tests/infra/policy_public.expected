@@ -1,4 +1,4 @@
-Error en policy_public.nexo, línea 6:
+Error in policy_public.nexo, line 6:
   storage photos:
   ^^^^^^^
-La política de shop prohíbe un storage público, y photos lo es. Escribe public = false en photos.
+The policy of shop forbids a public storage, and photos is one. Write public = false in photos.

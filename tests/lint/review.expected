@@ -1,9 +1,9 @@
-Aviso en review.nexo, línea 17:
+Warning in review.nexo, line 17:
   y = (
   ^
-"y" se asigna a sí mismo. Borra esta línea.
-Aviso en review.nexo, línea 21:
+"y" is assigned to itself. Remove this line.
+Warning in review.nexo, line 21:
   var z = 2
   ^^^
-"z" se declara con var pero nunca cambia. Quita var: un nombre que no cambia es inmutable.
-Avisos: 2. Arreglos seguros con nexo fix: 1.
+"z" is declared with var but never changes. Remove var: a name that does not change is immutable.
+Warnings: 2. Safe fixes with nexo fix: 1.

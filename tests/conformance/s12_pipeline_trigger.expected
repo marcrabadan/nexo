@@ -1,4 +1,4 @@
-Error en s12_pipeline_trigger.nexo, línea 2:
+Error in s12_pipeline_trigger.nexo, line 2:
   trigger push main
   ^^^^^^^
-"trigger push main" no es un trigger de un pipeline. Escribe trigger push, trigger push to rama o trigger pull_request.
+"trigger push main" is not a trigger of a pipeline. Write trigger push, trigger push to branch or trigger pull_request.

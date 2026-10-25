@@ -1,4 +1,4 @@
-Error en s15_web_twice.nexo, línea 8:
+Error in s15_web_twice.nexo, line 8:
   get "/users"():
   ^^^
-La ruta GET /users está repetida. Deja una sola ruta para cada método y camino.
+The route GET /users is repeated. Keep a single route for each method and path.

@@ -40,7 +40,7 @@ for src in sorted(conf.rglob("*.nexo")):
         extra = src.with_suffix(".args").read_text().split() if src.with_suffix(".args").exists() else []
         code, out = run([str(nexo), *extra, src.name], work)
     expected = src.with_suffix(".expected").read_text(encoding="utf-8")
-    is_error = any(l.startswith(("Error en ", "Error in ")) for l in expected.splitlines())
+    is_error = any(l.startswith("Error in ") for l in expected.splitlines())
     if out != expected or code != (1 if is_error else 0):
         failures.append((cid, expected, out, code))
 

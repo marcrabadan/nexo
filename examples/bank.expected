@@ -1,4 +1,4 @@
 Ana: 80.00 EUR
 Luis: 90.00 EUR
-Rejected: No se cumple expect source.balance >= amount (source.balance = 90.00 EUR, amount = 500.00 EUR)
-Rejected: No se cumple expect amount > 0.00 EUR (amount = -5.00 EUR)
+Rejected: expect source.balance >= amount does not hold (source.balance = 90.00 EUR, amount = 500.00 EUR)
+Rejected: expect amount > 0.00 EUR does not hold (amount = -5.00 EUR)

@@ -1,2 +1,0 @@
-pub fn load(path: str):
-    return read(path)?

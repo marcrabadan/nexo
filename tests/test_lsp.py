@@ -92,7 +92,7 @@ def test_formatting_and_errors():
                                         "contentChanges": [{"text": "try:\n    x = 1\nelse:\n    pass\n"}]})
     [d] = c.diagnostics(uri)
     assert d["severity"] == 1 and d["code"] == "else_needs_var"
-    assert d["message"].startswith("else en un try necesita un nombre")  # the client's locale
+    assert d["message"].startswith("else in a try needs a name")  # whatever the client's locale
     assert d["data"]["fixes"][0]["edits"][0]["newText"] == " e"
     assert c.request("textDocument/formatting", {"textDocument": {"uri": uri}, "options": {}})["result"] == []
     assert c.request("nexo/unknown", {})["error"]["code"] == -32601

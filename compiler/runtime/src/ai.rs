@@ -1313,7 +1313,7 @@ fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, boo
             line.trim().to_string()
         });
         let answer = line.trim().to_lowercase();
-        if !matches!(answer.as_str(), "s" | "si" | "sí" | "y" | "yes") {
+        if !matches!(answer.as_str(), "y" | "yes") {
             return Ok((DENIED.to_string(), false));
         }
     }

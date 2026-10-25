@@ -25,7 +25,6 @@ use crate::resolve::*;
 
 pub struct Options {
     pub file: String,
-    pub lang: u32,
     pub test_mode: bool,
     /// `--trust-ensure`: unproven `ensure` checks are not compiled
     pub trust_ensure: bool,
@@ -1803,8 +1802,7 @@ impl<'a> Gen<'a> {
         let src_len = shown.len();
         self.top_body = program.body.as_ptr();
         self.emit(&format!(
-            "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, i32 {}, ptr @nexo_cleanup)",
-            self.opts.lang
+            "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, ptr @nexo_cleanup)"
         ));
         // the files of the modules the program uses (D124)
         for id in self.program_files.clone() {
@@ -4438,7 +4436,7 @@ impl<'a> Gen<'a> {
                     let mut cols = Vec::new();
                     for (ci, c) in step.columns.iter().enumerate() {
                         let ExprKind::Name(n) = &c.kind else {
-                            let what = if nexo_diag::lang() == nexo_diag::Lang::En { "a column name" } else { "un nombre de columna" };
+                            let what = "a column name";
                             return Err(Diagnostic::new("pipe_step_arg", c.span)
                                 .arg("step", "pick")
                                 .arg("what", what)
@@ -4712,7 +4710,7 @@ declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
 declare void @nx_too_deep()
-declare void @nx_init(ptr, i64, ptr, i64, ptr, i64, i32, ptr)
+declare void @nx_init(ptr, i64, ptr, i64, ptr, i64, ptr)
 declare void @nx_add_file(i32, ptr, i64, ptr, i64)
 declare void @nx_exit(i32) noreturn
 declare void @nx_unhandled() noreturn

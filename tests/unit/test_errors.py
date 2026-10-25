@@ -1,19 +1,14 @@
 """The message catalog and the section 14 format."""
 import string
 
-from nexo import errors
 from nexo.errors import MESSAGES, NexoError, Span, render, suggest
 from nexo.lexer import tokenize
 
 
-def placeholders(text):
-    return {name for _, name, _, _ in string.Formatter().parse(text) if name}
-
-
-def test_every_message_exists_in_spanish_and_english_with_the_same_placeholders():
-    for key, entry in MESSAGES.items():
-        assert set(entry) == {"es", "en"}, key
-        assert placeholders(entry["es"]) == placeholders(entry["en"]), key
+def test_every_message_is_a_valid_template():
+    for key, text in MESSAGES.items():
+        assert isinstance(text, str) and text, key
+        list(string.Formatter().parse(text))  # raises on an unbalanced brace
 
 
 def test_every_diagnostic_has_a_fix_sentence():
@@ -32,7 +27,6 @@ def test_every_error_kind_has_its_own_fix():
 
 def test_render_format_matches_section_14():
     tokenize('name = "Ana"\nage = 30\ngreeting = "Hello"\nprint(nmae)\n', "app.nexo")
-    errors.set_lang("en")
     err = NexoError("name_not_found", Span("app.nexo", 4, 7, 11), fix="suggest", name="nmae", suggestion="name")
     assert render(err.span, err.text()) == (
         "Error in app.nexo, line 4:\n"
@@ -40,8 +34,6 @@ def test_render_format_matches_section_14():
         "        ^^^^\n"
         '"nmae" does not exist. Did you mean "name"?\n'
     )
-    errors.set_lang("es")
-    assert render(err.span, err.text()).startswith("Error en app.nexo, línea 4:\n")
 
 
 def test_render_strips_indentation_and_keeps_the_caret_aligned():
@@ -58,16 +50,19 @@ def test_suggestions():
 
 
 def compiler_catalog():
+    """key -> text of the compiler's catalog (compiler/diag/src/catalog.rs)."""
     import re
     from pathlib import Path
     path = Path(__file__).parents[2] / "compiler" / "diag" / "src" / "catalog.rs"
     text = path.read_text(encoding="utf-8").split("pub(crate) static WORDS")[0]
-    return {m.group(1) for m in re.finditer(r'^    \("([\w.]+)",', text, re.M)}
+    rows = re.finditer(r'^    \("([\w.]+)", "((?:[^"\\]|\\.)*)"\),$', text, re.M)
+    return {m.group(1): m.group(2).replace('\\"', '"').replace("\\\\", "\\") for m in rows}
 
 
-def test_the_compiler_catalog_has_every_message():
+def test_the_compiler_catalog_has_every_message_with_the_same_text():
     compiled = compiler_catalog()
-    assert set(MESSAGES) <= compiled, sorted(set(MESSAGES) - compiled)
+    assert set(MESSAGES) <= set(compiled), sorted(set(MESSAGES) - set(compiled))
+    assert [k for k in MESSAGES if compiled[k] != MESSAGES[k]] == []
 
 
 def test_every_compiler_diagnostic_has_a_fix_sentence():
@@ -85,5 +80,6 @@ def test_no_message_is_written_twice():
     import re
     from pathlib import Path
     text = (Path(__file__).parents[2] / "nexo" / "errors.py").read_text(encoding="utf-8")
-    keys = re.findall(r'^    "([\w.]+)": \{', text, re.M)
+    keys = re.findall(r'^    "([\w.]+)": ', text, re.M)
+    assert len(keys) >= len(MESSAGES)
     assert [k for k, n in collections.Counter(keys).items() if n > 1] == []

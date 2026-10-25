@@ -1,4 +1,4 @@
-Error en s03_question_top_level.nexo, línea 1:
+Error in s03_question_top_level.nexo, line 1:
   text = read("app.json")?
          ^^^^^^^^^^^^^^^^^
-? solo se puede usar dentro de una función que devuelve T!. Aquí no hay llamador: gestiona el error con try y else e.
+? can only be used inside a function that returns T!. There is no caller here: handle the error with try and else e.
