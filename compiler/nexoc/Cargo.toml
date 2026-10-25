@@ -11,3 +11,4 @@ path = "src/main.rs"
 
 [dependencies]
 nexo-diag = { path = "../diag" }
+nexo-runtime = { path = "../runtime" }

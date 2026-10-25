@@ -1,0 +1,4 @@
+Error en s22_flag_unknown.nexo, línea 5:
+  if flag("payments_v3"):
+          ^^^^^^^^^^^^^
+El flag "payments_v3" no está declarado. ¿Quisiste decir "payments_v2"?

@@ -1,0 +1,3 @@
+# the state of nexo plan/apply and the runs of nexo ci stay out of the image
+.nexo/
+smoke/

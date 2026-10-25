@@ -33,6 +33,8 @@ pub struct Column {
     pub target: Option<String>,
     /// the enum of a "variant" column
     pub variants: Option<&'static crate::types::EnumType>,
+    /// @private: encrypted at rest (D116)
+    pub private: bool,
 }
 
 pub struct TableInfo {
@@ -163,6 +165,10 @@ pub fn register(t: V, key: V, many: V, marks: V, span: u32) -> R<Val> {
     for f in &rt.fields {
         let fmarks = marks.iter().find(|(k, _)| *k == f.name).map(|(_, m)| m.clone()).unwrap_or_default();
         let (kind, target, variants) = column_kind(rt, f, &fmarks, span)?;
+        let private = fmarks.iter().any(|m| m == "private");
+        if private && kind == "ref" {
+            return Err(diag(Diagnostic::new_spanless("privacy_ref").arg("field", f.name.clone()).arg("type", rt.name.clone()), span));
+        }
         let name = if kind == "ref" { format!("{}_id", f.name) } else { f.name.clone() };
         columns.push(Column {
             field: f.name.clone(),
@@ -172,6 +178,7 @@ pub fn register(t: V, key: V, many: V, marks: V, span: u32) -> R<Val> {
             unique: fmarks.iter().any(|m| m == "unique"),
             target,
             variants,
+            private,
         });
     }
     let many = map_pairs(many).into_iter().map(|(k, v)| (k, v.as_str().unwrap_or("").to_string())).collect();
@@ -208,6 +215,29 @@ pub struct Database {
     conn: Mutex<Conn>,
     synced: Mutex<Vec<String>>,
     depth: Mutex<usize>,
+    /// encrypts @private columns (D116)
+    key: Option<[u8; 32]>,
+    /// when the keep period of each table was last applied (seconds)
+    purged: Mutex<HashMap<String, f64>>,
+}
+
+fn now_secs() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
+/// A table whose type has @personal or @private fields.
+fn personal_table(info: &TableInfo) -> Option<crate::privacy::Info> {
+    crate::privacy::info_of(&info.rtype.name).filter(|p| !p.marks.is_empty() && info.key.is_some())
+}
+
+/// Rows restricted or erased are left out of every query.
+fn hidden_where(info: &TableInfo) -> String {
+    format!(
+        "{} NOT IN (SELECT \"row\" FROM \"{}\" WHERE \"tbl\" = '{}')",
+        quote(info.key.as_deref().unwrap_or("id")),
+        crate::privacy::TABLE,
+        info.name
+    )
 }
 
 struct Rows {
@@ -323,10 +353,155 @@ impl Database {
         self.run(sql, params).map_err(|e| self.fail(e, None, None, span))
     }
 
+    /// A value as stored in a column: @private ones encrypted.
+    fn cell(&self, v: V, c: &Column, span: u32) -> R<Sql> {
+        let raw = to_sql(v, span)?;
+        if !c.private {
+            return Ok(raw);
+        }
+        let text = match &raw {
+            Sql::Null => return Ok(Sql::Null),
+            Sql::Int(i) => i.to_string(),
+            Sql::Real(f) => crate::fmt::format_float(*f),
+            Sql::Text(t) => t.clone(),
+        };
+        Ok(Sql::Text(crate::privacy::seal(self.key.as_ref().unwrap(), &text)))
+    }
+
+    /// The rows past their keep period are erased (when due) and the
+    /// restricted or erased ones left out (D116).
+    fn guard(&self, me: V, info: &TableInfo, span: u32) -> R<Vec<String>> {
+        let Some(p) = personal_table(info) else { return Ok(Vec::new()) };
+        let due = self.purged.lock().unwrap().get(&info.name).is_none_or(|t| now_secs() - t >= 86400.0);
+        if due {
+            self.purge(me, info, &p, span)?;
+        }
+        Ok(vec![hidden_where(info)])
+    }
+
+    /// Erase the rows past their keep period (section 23, rule 2).
+    fn purge(&self, me: V, info: &TableInfo, p: &crate::privacy::Info, span: u32) -> R<()> {
+        if let (Some(_), Some(after), Some(key)) = (p.keep, &p.after, &info.key) {
+            let col = info.column(after).unwrap();
+            let cutoff = crate::privacy::cutoff(p, col.kind);
+            let sql = format!(
+                "SELECT {k} FROM {t} WHERE {c} < ? AND {k} NOT IN (SELECT \"row\" FROM \"{pt}\" WHERE \"tbl\" = ? AND \"state\" = 'erased') ORDER BY {k}",
+                k = quote(key),
+                t = quote(&info.name),
+                c = quote(&col.name),
+                pt = crate::privacy::TABLE
+            );
+            let rows = self.exec(&sql, &[Sql::Text(cutoff), Sql::Text(info.name.clone())], span)?;
+            for row in rows.rows {
+                if let Some(Sql::Int(k)) = row.first() {
+                    self.erase_row(me, info, *k, span)?;
+                }
+            }
+        }
+        self.purged.lock().unwrap().insert(info.name.clone(), now_secs());
+        Ok(())
+    }
+
+    /// Set the personal fields of the rows `where` picks to blank values.
+    fn anonymise(&self, info: &TableInfo, wheres: &str, params: &[Sql], span: u32) -> R<()> {
+        let Some(p) = crate::privacy::info_of(&info.rtype.name) else { return Ok(()) };
+        let cols: Vec<&Column> = p.marks.iter().filter_map(|(f, _)| info.column(f)).collect();
+        if cols.is_empty() {
+            return Ok(());
+        }
+        // a @unique field is made from the row's id, so that several erased
+        // rows can keep it unique
+        let values = |row: Option<i64>| -> Vec<Sql> {
+            let mut out = Vec::new();
+            for c in &cols {
+                let v = if c.optional {
+                    Sql::Null
+                } else {
+                    match (c.kind, row.filter(|_| c.unique)) {
+                        ("str", Some(r)) => Sql::Text(format!("erased-{r}")),
+                        ("int", Some(r)) => Sql::Int(-r),
+                        ("float", Some(r)) => Sql::Real(-(r as f64)),
+                        ("int" | "bool", _) => Sql::Int(0),
+                        ("float", _) => Sql::Real(0.0),
+                        ("date", _) => Sql::Text("0001-01-01".into()),
+                        ("time", _) => Sql::Text("1970-01-01T00:00:00.000Z".into()),
+                        _ => Sql::Text(String::new()),
+                    }
+                };
+                let v = match (&v, c.private, &self.key) {
+                    (Sql::Null, _, _) | (_, false, _) | (_, _, None) => v,
+                    (Sql::Int(i), true, Some(k)) => Sql::Text(crate::privacy::seal(k, &i.to_string())),
+                    (Sql::Real(f), true, Some(k)) => Sql::Text(crate::privacy::seal(k, &crate::fmt::format_float(*f))),
+                    (Sql::Text(t), true, Some(k)) => Sql::Text(crate::privacy::seal(k, t)),
+                };
+                out.push(v);
+            }
+            out
+        };
+        let sets: Vec<String> = cols.iter().map(|c| format!("{} = ?", quote(&c.name))).collect();
+        if !cols.iter().any(|c| c.unique && !c.optional) {
+            let mut vs = values(None);
+            vs.extend(params.iter().cloned());
+            self.exec(&format!("UPDATE {} SET {} WHERE {wheres}", quote(&info.name), sets.join(", ")), &vs, span)?;
+            return Ok(());
+        }
+        let key = quote(info.key.as_deref().unwrap_or("id"));
+        let found = self.exec(&format!("SELECT {key} FROM {} WHERE {wheres}", quote(&info.name)), params, span)?;
+        for r in found.rows {
+            let Some(Sql::Int(row)) = r.into_iter().next() else { continue };
+            let mut vs = values(Some(row));
+            vs.push(Sql::Int(row));
+            self.exec(&format!("UPDATE {} SET {} WHERE {key} = ?", quote(&info.name), sets.join(", ")), &vs, span)?;
+        }
+        Ok(())
+    }
+
+    /// Delete the row, or anonymise it when other rows point to it; the
+    /// personal fields of the rows that point to it are anonymised too.
+    fn erase_row(&self, me: V, info: &TableInfo, key: i64, span: u32) -> R<()> {
+        let tables: Vec<Arc<TableInfo>> = registry().lock().unwrap().tables.iter().map(|(_, t)| t.clone()).collect();
+        let mut referenced = false;
+        for other in &tables {
+            for c in &other.columns {
+                if c.kind == "ref" && c.target.as_deref() == Some(&info.rtype.name) {
+                    self.sync(me, other, span)?;
+                    self.anonymise(other, &format!("{} = ?", quote(&c.name)), &[Sql::Int(key)], span)?;
+                    let found = self.exec(&format!("SELECT 1 FROM {} WHERE {} = ? LIMIT 1", quote(&other.name), quote(&c.name)), &[Sql::Int(key)], span)?;
+                    if !found.rows.is_empty() {
+                        referenced = true;
+                    }
+                }
+            }
+        }
+        let k = quote(info.key.as_deref().unwrap_or("id"));
+        if referenced {
+            self.anonymise(info, &format!("{k} = ?"), &[Sql::Int(key)], span)?;
+            self.exec(
+                &format!("INSERT OR REPLACE INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?)", crate::privacy::TABLE),
+                &[Sql::Text(info.name.clone()), Sql::Int(key), Sql::Text("erased".into())],
+                span,
+            )?;
+        } else {
+            self.exec(&format!("DELETE FROM {} WHERE {k} = ?", quote(&info.name)), &[Sql::Int(key)], span)?;
+            self.exec(
+                &format!("DELETE FROM \"{}\" WHERE \"tbl\" = ? AND \"row\" = ?", crate::privacy::TABLE),
+                &[Sql::Text(info.name.clone()), Sql::Int(key)],
+                span,
+            )?;
+        }
+        Ok(())
+    }
+
     fn sync(&self, me: V, info: &TableInfo, span: u32) -> R<()> {
         registry().lock().unwrap().db_of_type.insert(info.rtype.name.clone(), Val::from(me));
         if self.synced.lock().unwrap().contains(&info.name) {
             return Ok(());
+        }
+        if self.key.is_none() && info.columns.iter().any(|c| c.private) {
+            return Err(diag(
+                Diagnostic::new_spanless("privacy_key").arg("table", info.name.clone()).arg("db", self.path.clone()),
+                span,
+            ));
         }
         let exists = self.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", &[Sql::Text(info.name.clone())], span)?;
         if exists.rows.is_empty() {
@@ -348,6 +523,13 @@ impl Database {
             }
         }
         self.synced.lock().unwrap().push(info.name.clone());
+        if personal_table(info).is_some() {
+            self.exec(
+                &format!("CREATE TABLE IF NOT EXISTS \"{}\" (\"tbl\" TEXT NOT NULL, \"row\" INTEGER NOT NULL, \"state\" TEXT NOT NULL, PRIMARY KEY (\"tbl\", \"row\"))", crate::privacy::TABLE),
+                &[],
+                span,
+            )?;
+        }
         Ok(())
     }
 }
@@ -395,7 +577,7 @@ fn column_sql(info: &TableInfo, c: &Column, adding: bool) -> String {
     if info.key.as_deref() == Some(&c.field) {
         return format!("{} INTEGER PRIMARY KEY AUTOINCREMENT", quote(&c.name));
     }
-    let mut s = format!("{} {}", quote(&c.name), sql_type(c.kind));
+    let mut s = format!("{} {}", quote(&c.name), if c.private { "TEXT" } else { sql_type(c.kind) });
     if !c.optional && !adding {
         s.push_str(" NOT NULL");
     }
@@ -462,6 +644,21 @@ fn from_sql(db: &Database, me: V, raw: &Sql, c: &Column, cache: &mut Cache, span
     if matches!(raw, Sql::Null) {
         return Ok(Val::none());
     }
+    if c.private {
+        let text = match raw {
+            Sql::Text(t) => t.clone(),
+            _ => String::new(),
+        };
+        let table = table_of_column(c);
+        let plain = crate::privacy::unseal(db.key.as_ref().unwrap(), &text, &table, span)?;
+        let raw = match c.kind {
+            "int" | "bool" | "ref" => plain.parse::<i64>().map(Sql::Int).unwrap_or(Sql::Text(plain)),
+            "float" => plain.parse::<f64>().map(Sql::Real).unwrap_or(Sql::Text(plain)),
+            _ => Sql::Text(plain),
+        };
+        let open = Column { private: false, ..c.clone() };
+        return from_sql(db, me, &raw, &open, cache, span);
+    }
     let text = || match raw {
         Sql::Text(t) => t.clone(),
         Sql::Int(i) => i.to_string(),
@@ -523,6 +720,9 @@ fn from_sql(db: &Database, me: V, raw: &Sql, c: &Column, cache: &mut Cache, span
 #[allow(clippy::too_many_arguments)]
 fn select(db: &Database, me: V, info: &TableInfo, wheres: &[String], params: &[Sql], order: &[String], limit: Option<i64>, cache: &mut Cache, span: u32) -> R<Vec<Val>> {
     db.sync(me, info, span)?;
+    let mut all = db.guard(me, info, span)?;
+    all.extend(wheres.iter().cloned());
+    let wheres = &all;
     let cols: Vec<String> = info.columns.iter().map(|c| quote(&c.name)).collect();
     let mut sql = format!("SELECT {} FROM {}", cols.join(", "), quote(&info.name));
     if !wheres.is_empty() {
@@ -562,6 +762,9 @@ fn record(info: &TableInfo, vals: Vec<Val>) -> Val {
 
 fn count(db: &Database, me: V, info: &TableInfo, wheres: &[String], params: &[Sql], span: u32) -> R<i64> {
     db.sync(me, info, span)?;
+    let mut all = db.guard(me, info, span)?;
+    all.extend(wheres.iter().cloned());
+    let wheres = &all;
     let mut sql = format!("SELECT COUNT(*) FROM {}", quote(&info.name));
     if !wheres.is_empty() {
         let w: Vec<String> = wheres.iter().map(|w| format!("({w})")).collect();
@@ -841,7 +1044,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
                     wheres.push(format!("{} IS NULL", quote(&col.name)));
                 } else {
                     wheres.push(format!("{} = ?", quote(&col.name)));
-                    params.push(to_sql(*v, span)?);
+                    params.push(db.cell(*v, col, span)?);
                 }
                 shown.push(format!("{} = {}", col.field, repr(v.plain())));
             }
@@ -866,6 +1069,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
             };
             let Some(Obj::Record(r)) = rec.get() else { unreachable!() };
             db.sync(me, info, span)?;
+            db.guard(me, info, span)?;
             let key_i = info.key_index();
             let fields: Vec<Val> = r.fields.borrow().clone();
             let mut cols = Vec::new();
@@ -877,7 +1081,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
                     continue;
                 }
                 cols.push(quote(&c.name));
-                vals.push(to_sql(fields[i].v(), span)?);
+                vals.push(db.cell(fields[i].v(), c, span)?);
             }
             let marks: Vec<&str> = cols.iter().map(|_| "?").collect();
             let sql = format!("INSERT INTO {} ({}) VALUES ({})", quote(&info.name), cols.join(", "), marks.join(", "));
@@ -917,7 +1121,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
                     continue;
                 }
                 sets.push(format!("{} = ?", quote(&c.name)));
-                vals.push(to_sql(fields[i].v(), span)?);
+                vals.push(db.cell(fields[i].v(), c, span)?);
             }
             vals.push(Sql::Int(key));
             let sql = format!("UPDATE {} SET {} WHERE {} = ?", quote(&info.name), sets.join(", "), quote(info.key.as_deref().unwrap()));
@@ -1061,7 +1265,8 @@ pub fn parse_plan(text: &str) -> Plan {
 /// `value(i)` evaluates leaf i outside the row.
 fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, span: u32) -> R<Option<(String, Vec<Sql>)>> {
     let info = &q.info;
-    let column = |i: usize| plan.names[i].as_ref().and_then(|n| info.column(n));
+    // an encrypted column cannot be compared in SQL (D116)
+    let column = |i: usize| plan.names[i].as_ref().and_then(|n| info.column(n)).filter(|c| !c.private);
     let usable = |i: usize| {
         if column(i).is_some() {
             return true;
@@ -1203,7 +1408,7 @@ pub fn pipe_sort(src: V, column: &str, desc: bool) -> Option<Val> {
         return None;
     }
     let col = q.info.column(column)?;
-    if ["decimal", "money", "ref", "variant"].contains(&col.kind) {
+    if ["decimal", "money", "ref", "variant"].contains(&col.kind) || col.private {
         return None;
     }
     let key = format!("{} {}", quote(&col.name), if desc { "DESC" } else { "ASC" });
@@ -1225,8 +1430,9 @@ pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
         let what = format!("\"connect({})\"", crate::fmt::quote(&format!("{scheme}://...")));
         return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", what), span));
     }
+    let mut data_key = None;
     if let Some(k) = key.filter(|k| !k.is_none()) {
-        crate::crypto::text_or_secret("connect", k, span)?;
+        data_key = Some(crate::privacy::data_key(&crate::crypto::text_or_secret("connect", k, span)?));
     }
     let c = CString::new(path.clone()).unwrap_or_default();
     let mut db: *mut ffi::sqlite3 = std::ptr::null_mut();
@@ -1237,7 +1443,14 @@ pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
         unsafe { ffi::sqlite3_close(db) };
         return Err(failure("DatabaseError", span, &[("db", path), ("reason", reason)]));
     }
-    let d = Database { path, conn: Mutex::new(Conn(db)), synced: Mutex::new(Vec::new()), depth: Mutex::new(0) };
+    let d = Database {
+        path,
+        conn: Mutex::new(Conn(db)),
+        synced: Mutex::new(Vec::new()),
+        depth: Mutex::new(0),
+        key: data_key,
+        purged: Mutex::new(HashMap::new()),
+    };
     d.exec("PRAGMA foreign_keys = ON", &[], span)?;
     Ok(native(d))
 }
@@ -1402,7 +1615,14 @@ pub fn run_command() -> i32 {
         eprintln!("Error: {}", errmsg(raw));
         return 1;
     }
-    let db = Database { path: db_path.clone(), conn: Mutex::new(Conn(raw)), synced: Mutex::new(Vec::new()), depth: Mutex::new(0) };
+    let db = Database {
+        path: db_path.clone(),
+        conn: Mutex::new(Conn(raw)),
+        synced: Mutex::new(Vec::new()),
+        depth: Mutex::new(0),
+        key: None,
+        purged: Mutex::new(HashMap::new()),
+    };
     let fail = |e: String| {
         eprintln!(
             "Error: {}. {}",
@@ -1490,4 +1710,105 @@ pub fn run_command() -> i32 {
         println!("{}", msg("info.db_up_to_date", &[("db", db_path.clone())]));
     }
     0
+}
+
+/// The table of a column (for messages).
+fn table_of_column(c: &Column) -> String {
+    registry()
+        .lock()
+        .unwrap()
+        .tables
+        .iter()
+        .find(|(_, t)| t.columns.iter().any(|x| std::ptr::eq(x, c) || (x.name == c.name && x.field == c.field)))
+        .map(|(_, t)| t.name.clone())
+        .unwrap_or_default()
+}
+
+/// (type, table) of every @table type, for `nexo privacy report`.
+pub fn table_names() -> Vec<(String, String)> {
+    registry().lock().unwrap().tables.iter().map(|(n, t)| (n.clone(), t.name.clone())).collect()
+}
+
+// ------------------------------------------------- privacy.export/erase
+
+/// (database, table info, key) of a record saved in a table.
+fn saved_row(fname: &str, rec: V, span: u32) -> R<(Val, Arc<TableInfo>, i64)> {
+    let Some(Obj::Record(r)) = rec.get() else { return Err(expects(&format!("privacy.{fname}"), "@table", rec, span)) };
+    let Some(info) = table_of(r.ty) else { return Err(expects(&format!("privacy.{fname}"), "@table", rec, span)) };
+    let Some(ki) = info.key_index() else { return Err(expects(&format!("privacy.{fname}"), "@table", rec, span)) };
+    let key = r.fields.borrow()[ki].as_int();
+    let db = registry().lock().unwrap().db_of_type.get(&r.ty.name).cloned();
+    match (key, db) {
+        (Some(k), Some(db)) => Ok((db, info, k)),
+        _ => Err(diag(Diagnostic::new_spanless("db_unsaved").arg("type", r.ty.name.clone()), span)),
+    }
+}
+
+/// A row as a map whose `ref` fields are the ids they point to.
+fn plain_row(rec: V) -> Val {
+    let Some(Obj::Record(r)) = rec.get() else { return Val::from(rec) };
+    let fields = r.fields.borrow();
+    let mut pairs = Vec::new();
+    for (i, f) in r.ty.fields.iter().enumerate() {
+        let v = fields[i].v();
+        let v = match v.get() {
+            Some(Obj::Record(t)) => match table_of(t.ty).and_then(|ti| ti.key_index()) {
+                Some(k) => Val::from(t.fields.borrow()[k].v()),
+                None => Val::from(v),
+            },
+            _ => Val::from(v),
+        };
+        pairs.push((Val::str(f.name.clone()), v));
+    }
+    crate::coll::map_from(pairs)
+}
+
+/// privacy.export(person): a JSON file with all their data, including the
+/// rows of its `many` fields; it returns the file's path.
+pub fn privacy_export(rec: V, span: u32) -> R<Val> {
+    let (db, info, key) = saved_row("export", rec, span)?;
+    let d = db.v().native::<Database>().unwrap();
+    let k = quote(info.key.as_deref().unwrap_or("id"));
+    let rows = select(d, db.v(), &info, &[format!("{k} = ?")], &[Sql::Int(key)], &[], Some(1), &mut Cache::new(), span)?;
+    let Some(row) = rows.into_iter().next() else {
+        return Err(failure_as(
+            "NotFound",
+            "NotFound.row",
+            span,
+            &[("type", info.rtype.name.clone()), ("conditions", format!("{} = {key}", info.key.clone().unwrap_or_default()))],
+        ));
+    };
+    let data = plain_row(row.v());
+    for (field, target) in &info.many {
+        let Some(t) = table(target) else { continue };
+        let Some(col) = t.columns.iter().find(|c| c.kind == "ref" && c.target.as_deref() == Some(&info.rtype.name)) else { continue };
+        let related = select(d, db.v(), &t, &[format!("{} = ?", quote(&col.name))], &[Sql::Int(key)], &[], None, &mut Cache::new(), span)?;
+        let items: Vec<Val> = related.iter().map(|r| plain_row(r.v())).collect();
+        if let Some(Obj::Map(m)) = data.get() {
+            m.borrow_mut().insert(Key::Str(field.clone()), Val::str(field.clone()), list(items));
+        }
+    }
+    let path = format!("{}-{key}.json", info.name);
+    crate::data::write_text(&path, &(crate::data::to_json(data.v(), 0) + "\n"), span)?;
+    Ok(Val::str(path))
+}
+
+pub fn privacy_erase(rec: V, span: u32) -> R<Val> {
+    let (db, info, key) = saved_row("erase", rec, span)?;
+    let d = db.v().native::<Database>().unwrap();
+    d.sync(db.v(), &info, span)?;
+    d.erase_row(db.v(), &info, key, span)?;
+    Ok(Val::none())
+}
+
+pub fn privacy_restrict(rec: V, span: u32) -> R<Val> {
+    let (db, info, key) = saved_row("restrict", rec, span)?;
+    let d = db.v().native::<Database>().unwrap();
+    d.sync(db.v(), &info, span)?;
+    d.exec(
+        &format!("INSERT OR REPLACE INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?)", crate::privacy::TABLE),
+        &[Sql::Text(info.name.clone()), Sql::Int(key), Sql::Text("restricted".into())],
+        span,
+    )?;
+    Ok(Val::none())
 }

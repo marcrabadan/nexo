@@ -1,0 +1,4 @@
+type Customer:
+    name: str @personal
+    purpose = "billing and shipping"
+    kept = 5 years after name

@@ -709,6 +709,11 @@ fn as_type(value: V, t: Target, span: u32) -> R<Val> {
     }
 }
 
+/// A record of type `rt` from a map, as JSON data is read (D47, D117).
+pub fn record_from_map(value: V, rt: &'static crate::types::RecordType, span: u32) -> R<Val> {
+    as_type(value, Target::Record(rt), span)
+}
+
 pub fn json_parse(text: &str, as_: Option<V>, span: u32) -> R<Val> {
     let j = match parse_json(text) {
         Ok(j) => j,

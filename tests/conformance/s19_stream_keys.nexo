@@ -1,0 +1,10 @@
+when kafka("orders") as msg, key: msg.text():
+    print("cobro", msg.id)
+
+when kafka("orders") as msg, key: msg.text():
+    print("envío", msg.id)
+
+test "each handler processes a key once":
+    orders = kafka("orders")
+    orders.send("pedido 7")
+    orders.send("pedido 7")

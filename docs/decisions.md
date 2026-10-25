@@ -1216,3 +1216,350 @@ records or maps; `convert(money, to: USD, rate: r)` stays as it was, and
 their own readers and writers and are not part of phase 4's exit
 criterion; they stay for a later phase, and `yaml`, `xml` and `parquet`
 are ordinary names until then.
+
+## Phase 5: cloud and operations (section 25)
+
+**D113. What phase 5 covers.** Section 25 lists "`nexo.infra`, `nexo.ci`,
+`nexo.stream`, flags, privacy" with the exit criterion "an app deploys to
+AWS, Azure, GCP and k8s from the same file". Both implementations get,
+with the same output: `infra` and `stage` blocks with the portable
+resources of section 11, `native` resources, `output`, the `policy` of an
+infra block, `budget`, and the commands `nexo plan`, `apply`, `destroy`,
+`drift`, `cost` and `import`, which talk to each cloud's own API (D118-D121);
+`pipeline` blocks with `nexo ci run` and `nexo ci export github|gitlab|
+azure|jenkins` (D122, D123); `when` on a stream source, `send` and the
+window steps of section 19 on a local broker (D117); `flags` and `flag()`
+with `nexo flags set` (D115); the markers, rules and functions of section
+23 with `nexo privacy report` (D116). What needs a running controller or
+measured metrics stays out and is reported as unavailable (D65): `release
+canary` and `blue_green` (`rolling` is the default and the only strategy),
+`watch` and `rollback` in flags, high availability across regions, the
+`calls` block, `scale at`, `nexo chaos` and `nexo release`; also what
+other phases or modules own: the program `policy` of section 9, `notify`
+(`slack`), `audit`, `scan`, `every`, `lifecycle`, `when` on things that are
+not streams (email, files, webhooks), secrets from a vault or a cloud
+manager, brokers reached over the network (Kafka, RabbitMQ, SQS, Kinesis,
+Service Bus, Event Hubs, Pub/Sub, WebSocket: D117), `flags_store`,
+PostgreSQL. `unsupported` messages now say "phase 5".
+
+**D114. The body of phase 5 blocks.** Section 4 says configuration blocks
+are `word name?:` followed by `key = value` pairs, but the examples of
+sections 11, 12, 22 and 23 also write lines of words (`deny public
+database`, `can read storage photos`, `trigger push to main`, `queue
+orders`), nested blocks (`network net:`, `env:`, `scale 3..50:`), options
+after a comma (`retry = 3, backoff: exp`, `output db = customers.url,
+secret`) and conditions (`cpu > 70%`, `users where country == "ES"`). Both
+parsers read the body of `infra`, `stage`, `pipeline` and `flags` with one
+rule:
+
+    entry  = phrase [ "=" items ] [ ":" NEWLINE INDENT { entry } DEDENT ] NEWLINE
+           | phrase { "," item } ...
+    items  = item { "," item }
+    item   = IDENT ":" atom | phrase
+    phrase = atom { atom }
+
+An atom is an expression without `->`, `|>` or lambdas (so a phrase can
+hold several), or a keyword that cannot start one (`every`, `at`, `type`),
+or `->`. Inside atoms a bare name is a word (the text of the name: `size =
+medium` is `size = "medium"`), a dotted name is a reference to what a
+resource exposes (`customers.url`), a comparison or `and`/`or`/`not` is a
+condition kept as data (`errors < 1%`), and `2027-03-01` is a date;
+calls (`secret("API_KEY")`, `s3("bucket")`) and their arguments are
+ordinary code. Each entry becomes a value made by `__cfg(head, values,
+options, body)` (D90) that the module reads, so every mistake is reported
+at the line of its entry. The bodies of `step` and `after` in a `pipeline`
+are ordinary code (section 12). A value of a program constant is written
+inside a text (`image = "{IMAGE}"`), since a bare name is a word.
+`nexo fmt` keeps, inside these blocks, the space a phrase needs before
+`(` or `[` (`require tags ["team", "cost"]` has two words, `tags[0]`
+would be an index) and the date `2027-03-01` together. `test` is a
+keyword, so `test()` in a step (section 12) is the call of nexo.ci's
+`test`: the keyword followed by `(` is a name.
+
+**D115. Flags.** Section 22 declares flags in a `flags:` block of `name =
+value` lines and reads them with `flag(name, user)`. A value is `on`,
+`off`, a percentage from 0% to 100%, or `users where condition`, whose
+words are fields of the user (`country == "ES"`); `expires: date` is the
+only option (`watch` and `rollback` need metrics, D113). `flag(name)`
+needs the user only for a percentage or an audience. The same user always
+gets the same result (rule 1): the first 8 bytes of SHA-256 of
+`name:key`, modulo 10,000, below the percentage times 100, where the key
+is the `id` field of a record, or the text of a text or an int. Rule 2: a
+literal name no block declares is a compile error; a name built at run
+time is checked when it is used. Rule 3: `nexo lint` warns about a flag
+whose `expires` day (in UTC) has passed. Rule 4: `nexo flags set name
+value [file.nexo] [--stage s]` writes on, off or a percentage to
+`.nexo/flags.json` (the local store of the last paragraph, under the stage
+or `default`), which `flag()` reads again whenever the file changes, so
+running programs see it at once; the program's stage is the environment
+variable `NEXO_STAGE` (set by `nexo apply` on every app, D120). The change
+is recorded as a line of `.nexo/audit.log` with the time, `$USER`, what
+changed and the SHA-256 of the previous line, so a changed or removed line
+shows (section 9 calls the audit log signed and append-only; `audit()`
+itself is not part of phase 5). The commands of phase 5 that read a
+program take its file, or else the only `.nexo` file of the current
+directory with that block.
+
+**D116. Privacy.** Section 23 marks fields `@personal` or `@private` and
+adds `keep` and `purpose` to a type. A type with either marks or settings
+is followed by `__privacy_type(T, [settings], {marks})` (D90); its
+settings are read with the rule of D114. `keep` is a duration `after` a
+`date` or `time` field that is not `@private` (`keep = 5 years after
+last_activity`; a year is 365 days, D2), and `purpose` a text; any other
+setting is an error. The rules:
+1. `nexo lint` warns once for each of `keep` and `purpose` that a type
+   with personal fields lacks; `nexo build --release` stops with an error.
+2. In a table, rows whose field is older than the period are erased the
+   first time the table is used through a connection and again whenever
+   it is used 24 hours later: the program that uses the data is the
+   daily task, since `every` is outside phase 5. Dates compare in UTC.
+3. `data_region` is checked by `nexo plan` (D121).
+4. `nexo privacy report [file.nexo]` runs only the types of the program
+   (as `nexo db diff` does) and lists, type by type, its fields with their
+   mark, where the rows live (the table and the database of the first
+   `connect`, or "not stored in a database"), the period, the purpose and
+   who reads it: the program and every `identity` of an infra block with
+   `can read database`.
+Encryption at rest: the `@private` columns of a table are stored as
+`nexo:` and the base64 of a nonce and AES-256-GCM, with the SHA-256 of the
+`key:` given to `connect` (D100) as the key; the nonce is the HMAC-SHA256
+of the text with that key, so equal texts give equal values and
+`find(national_id: x)` still finds the row, while `where`, `sort by` and
+`in` on such a column run in memory. A table with `@private` fields
+opened without a key is an error, as is a wrong key when a value is read.
+`privacy.export(record)` writes `<table>-<id>.json` (as `save` writes
+JSON) with the row and the rows of its `many` fields, whose `ref` fields
+are written as ids, and returns the path; it can fail like any write.
+`privacy.erase(record)` deletes the row; when other rows point to it, it
+is anonymised instead (its personal fields become none, `""`, 0 or the
+first day; a `@unique` one that is not optional becomes `erased-<id>`, or
+minus the id for numbers, so that several erased rows keep it unique) and
+recorded as erased, and the personal fields of the rows
+that point to it are anonymised as well. `privacy.restrict(record)`
+records it as restricted. The table `nexo_privacy (tbl, row, state)`
+holds both, and every query of a table with personal fields leaves its
+rows out; `db.sql` reads them, for legal obligations. `@private` makes a
+`ref` field an error (the data are in the other table).
+
+**D117. nexo.stream.** Section 19 makes a stream "just another source for
+`when` and `|>`". The sources (`kafka`, `rabbit`, `sqs`, `kinesis`,
+`servicebus`, `eventhub`, `pubsub`) take the name of the stream; phase 5
+has one broker, local, so a source with the address of a broker on the
+network (`servers:`, `url:`...) and `websocket(...)` are reported as
+unavailable (D113). Each stream is an append-only file
+`.nexo/streams/<kind>/<name>.log`, one JSON line per message (its number,
+the time in milliseconds and the data), shared by the programs of the
+machine, which lock the file while they number and append a message, so
+producers in several processes never share a number; under `nexo test` the broker lives in memory, starts empty for
+each test, and `send` delivers the message at once to the program's own
+handlers and pipelines. `use nexo.stream` (like `nexo.infra` and
+`nexo.ci`) is accepted and changes nothing: the module is loaded
+implicitly (section 1).
+- `stream.send(value, at: time)` writes a text as it is and any other
+  value as compact JSON; `at:` sets the time the message happened (for
+  windows; the default is now).
+- `when SOURCE as msg[, key: expression]: block` becomes a function and
+  `__stream_when(SOURCE, it, key: (msg) -> expression)` (D90); `when` on
+  anything but a source (email, files, webhooks) stays unavailable. A
+  message has `msg.id` (its number in the stream), `msg.time`,
+  `msg.text()` and `msg.json()`, which fails on data that is not JSON;
+  `validate(map, as: Record)` builds the record as JSON data is read
+  (D47), so section 19's `validate(msg.json(), as: Order)?` works.
+- After the top level (and the spawned tasks), a program with handlers or
+  stream pipelines reads its streams until it is stopped, next to its
+  servers if it has any, as consumer group named after the file: the
+  offset of the last acknowledged message is saved in
+  `<name>.<group>.offset`, and a new group starts at the first message.
+  A message is acknowledged when its block ends without error (at least
+  once). A failing block (an error value or a mistake) is tried 3 more
+  times, 0.1 s, 0.2 s and 0.4 s apart, and then the message goes to the
+  stream `<name>.dead` with a line on the standard error output saying
+  why. With `key:`, the key of each processed message (as `repr` writes
+  it) is kept in `<name>.<group>.<n>.keys` and a message with a key already
+  processed is acknowledged without running the block. Each handler has
+  its own keys (n is its place among the `when` of that stream), so two
+  handlers of one stream each process a message once. There is one
+  partition per stream, so order is kept and handlers run one at a time.
+- A pipeline whose source is a stream keeps its steps and runs them over
+  the messages of each window, whose rows are the decoded data (JSON, or
+  the text); it starts when it reaches `each`, which gets each row, or
+  once the value of a final `count`, `sum` or `avg`. Call steps are not
+  allowed on a stream. `window D` is a tumbling window aligned to
+  multiples of D since 1970 (UTC); `session D` ends after D without
+  messages; both close when a message of a later window arrives, when
+  the time passes (while the program runs) or at the end of a test.
+  `sliding D` runs on every message over the messages of the last D.
+  The offset saved never passes the first message of a window or session
+  still open, so a consumer stopped before it closes reads those messages
+  again (and the handlers of that stream see them again: at least once).
+  These three are contextual steps after `|>`, must come right after the
+  source, and are errors on anything else.
+
+**D118. The model of nexo.infra.** Section 11 gives the resources, the
+keys of its examples and the commands, not the exact list of settings
+nor what a command runs. Both phases share one table,
+`nexo/stdlib/infra_providers.json` (the compiler embeds it), and read
+the blocks with it:
+- `infra NAME:` takes `cloud` (`"aws"`, `"azure"`, `"gcp"`, `"k8s"`,
+  required), `region` (required except on k8s), `state`, `budget`,
+  `data_region`, `tags`, `project` (GCP), `subscription` (Azure),
+  `namespace` and `cluster` (k8s), `policy:`, `output` and the
+  resources. Each resource kind has its keys with a type (text, number,
+  size, count `1..4`, bool, a reference to another resource of a given
+  kind, tags) and a default; an unknown key is an error with "Did you
+  mean...?". The storage key is `capacity`, not `size`, because a stage's
+  `size = large` means the size of machines (`small`, `medium`, `large`,
+  which the table turns into each cloud's classes).
+- A resource body may hold the lines of section 11 (`allow from internet
+  to api, port: 443`, `can read storage photos`), `env:` (texts, numbers,
+  `secret("NAME")` and references `customers.url`), `scale MIN..MAX:`
+  with `cpu > N%`. What a resource gives (`url`, `host`, `id`...) is
+  listed per kind; a reference to anything else is an error at once.
+- `stage NAME:` holds `key = value` lines that override, for that stage,
+  the value of every resource that has the key (`size`, `replicas`...).
+  Values apply in the order: the default, the resource's value, the
+  stage's (D119). Without `--stage` the stage is `default`; the app gets
+  `NEXO_STAGE` (D115).
+- A portable resource with no equivalent on a target (`server` and
+  `cluster` on k8s) and a `database` on k8s in the stage `prod` (section
+  11 says "dev only") are plan errors, as the section requires.
+- `nexo plan|apply|destroy|drift|cost [file] [--stage S]` (and `--yes` for
+  apply) run, like `nexo db` (D101), only the types, the constants written
+  as literals and the infra and stage blocks of the program, never its
+  other code; without a file they take the only `.nexo` file of the
+  directory with an `infra` block. A program without one is an error.
+
+**D119. Plan, cost and policy.** Section 11 asks `nexo plan` to show the
+changes, "the estimated cost and the estimated availability", and
+section 22's `budget` to stop a plan, without saying how they are
+computed. Both phases print one block per infra: the portable resources
+with `+` (create), `~` (change, naming the changed fields), `-/+`
+(replace, for the fields a cloud cannot change), `=` (keep) and `-`
+(delete, what the state has and the program no longer does), each with
+its native resources, then the totals. The cost is the sum, in EUR per
+month, of the on-demand list prices in the table for each resource at
+its size, replicas, cpu and ram, in whole cents; it is an estimate and
+says so. The availability multiplies the published SLA of each service
+the infra uses. `budget = N EUR per month` is the only form; an
+estimate above it is an error that names both. The rules of `policy:`
+are `deny public KIND`, `require encryption` and `require tags [...]`
+(the tags of the infra count for every resource), plus `allow personal
+data to "AREA"`; `data_region = "eu"` makes a region outside that area an
+error when the program has `@personal` data (section 23, rule 3), with
+the areas of each cloud's regions in the table. Anything else in
+`policy:` is an error.
+
+**D120. How the commands talk to each cloud.** Section 11 does not say
+how the plan is applied. Both phases talk to each cloud's own API over
+HTTPS, with no SDK nor external tool: AWS through Cloud Control
+(`CreateResource`, `UpdateResource` with a JSON Patch, `DeleteResource`,
+`GetResource`, `GetResourceRequestStatus`) signed with SigV4, which
+covers every CloudFormation type, so `native "aws_wafv2_web_acl"` is
+`AWS::WAFv2::WebACL`; Azure through Resource Manager (`PUT`/`DELETE` of
+each resource id, polling `Azure-AsyncOperation`) with a client-secret
+token; GCP through each service's REST API with its long-running
+operations and IAM policies; Kubernetes with server-side apply
+(`fieldManager=nexo`) and a bearer token. `native` takes the
+resource's own type and properties as they are. Credentials come from
+the usual variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_SESSION_TOKEN`; `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
+`AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`;
+`GOOGLE_OAUTH_ACCESS_TOKEN`, `GOOGLE_CLOUD_PROJECT`; `NEXO_K8S_SERVER`
+and `NEXO_K8S_TOKEN`, with `NEXO_K8S_CA` for the certificate authority of a
+cluster outside it, or the service account of a pod), and the
+addresses can be changed (`AWS_ENDPOINT_URL`, `AZURE_AUTHORITY_HOST`,
+`NEXO_AZURE_ENDPOINT`, `NEXO_GCP_ENDPOINT`), which is how the tests use
+`tests/cloud_emulator.py`, a local stand-in for those APIs that checks
+the signatures and tokens. Native resources are created in the order
+their references need, and deleted in reverse; a failure stops at once,
+saving what was done.
+
+**D121. State, secrets, several infra blocks and import.** The state of
+each infra and stage is a JSON file: `.nexo/state/<infra>-<stage>.json`,
+or, with `state = s3("bucket")`, the object `nexo/<infra>-<stage>.json`
+of that bucket, written with server-side encryption and locked with a
+conditional write of a lock object (section 11: "encrypted and
+locked"); `gcs(...)` and `blob(...)` are reported as unavailable. Both
+phases read and write the same state. A secret is sent to the cloud
+when applying, read from the environment, and is a hash
+(`sha256:...`) in the state, the plan and the output; values the cloud
+echoes back are scrubbed, and `output ..., secret` prints `(secret)`.
+`apply` asks for confirmation unless `--yes` (with no answer, as in CI
+without `--yes`, nothing changes); `destroy` asks to type the infra's name, block by block.
+`drift` compares what each API returns with the state, field by field.
+The state is locked only when the changes start: if another command
+changed it since it was read (while one asked for confirmation), the
+command stops without changing anything and asks to run it again. A
+secret whose value changed is a change (its hash differs), also for a
+GCP secret, whose version is kept beside its body.
+A value of another infra block is written `infra.resource.value`; the
+blocks are applied in the order those references need (a cycle is an
+error) and each one reads the other's values from its state, so a plan
+before the first apply shows them as known after applying; destroy goes
+in the opposite order. `nexo import CLOUD RESOURCE ID [file]` (section
+11's `nexo import aws app i-0abc123`) adopts the existing object with
+that id as the native resource of the program's resource named
+RESOURCE (`RESOURCE.native` when it has several), reading it into the
+state; the next plan then shows it as kept or changed.
+
+**D122. nexo.ci: pipelines and `nexo ci run`.** Section 12 shows a
+`pipeline` with `trigger`, `secrets`, `version = auto`, steps of ordinary
+code and `after success|failure`, and says `nexo ci run` runs it
+locally; it does not say what the step functions do, how values pass
+between steps nor how the version is computed. Both phases:
+- The entries are `trigger push`, `trigger push to BRANCH`, `trigger
+  pull_request`, `secrets = ["NAME", ...]` (environment variables the
+  run needs; `from vault` is unavailable, D113), `version = auto` or
+  `version = "X.Y.Z"` (without it the version is `dev`), `step NAME:` and
+  `after success:` / `after failure:`; anything else is an error. A step
+  body is a function of the run (D114): the names it assigns are kept and
+  the later steps read them; `version` and `step` (the current step, or
+  the failed one in `after failure`) are always there. What is kept must
+  be text, numbers, bools, lists or maps, because in a CI it travels
+  between jobs as JSON in `.nexo/ci/<pipeline>.json`. `return` in a step
+  is an error.
+- `nexo ci run [PIPELINE] [file] [--step S | --after success|failure]
+  [--yes]` runs, like the infra commands (D118), only the program's
+  declarations (types, functions, literal constants) and blocks, never its
+  other code; without a name it takes the only pipeline. It prints `==
+  paso NAME` before each step, stops at the first step that fails (an
+  error value or a mistake, shown as usual), runs `after failure`, and
+  ends with code 1; otherwise it runs `after success` and prints the
+  count and the version. `--step` runs one step with what the earlier
+  ones kept, which is how exported jobs run (D123).
+- `version = auto` reads git: the highest tag `vX.Y.Z` reachable from
+  HEAD (0.0.0 without one) raised by the commits after it, following the
+  comment of section 12: a `fix:` raises the patch, a `feat:` the minor,
+  and `type!:` or a `BREAKING CHANGE:` line the major (Conventional
+  Commits); outside a repository it is an error.
+- The functions of section 12: `run(command)` runs it with the shell,
+  shows what it writes (stdout and stderr together) and returns it; a
+  non-zero exit is an error value that stops the step. It is the only
+  one usable outside a pipeline. `test()` runs `nexo test` in the
+  directory; `build_image(name)` runs `docker build -t name:VERSION .`
+  (`NEXO_CONTAINER_TOOL` chooses another tool, such as podman) and returns
+  the tag; `apply(stage:, image:)` applies the infra blocks of the file
+  without asking, with `image` replacing the image of every app whose
+  image has the same name; `plan(stage:, image:)` returns the plan as
+  text; `approve(by: [...])` asks on the terminal unless `--yes`;
+  `comment(text)` shows the text and appends it to `.nexo/ci/comment.md`
+  (the exported GitHub job can post it). `audit()`, `scan()` and
+  `slack()` are unavailable (D113). Inside `parallel:` they run as any
+  call does.
+
+**D123. `nexo ci export`.** Section 12 says `nexo ci export github` (also
+`gitlab`, `azure`, `jenkins`) "generates the native file". So that a CI
+runs exactly what `nexo ci run` runs, both phases write one job (stage in
+Jenkins) per step, in order, that installs Nexo (`pip install nexo`) and
+runs `nexo ci run PIPELINE FILE --step NAME --yes`; `.nexo/ci` travels
+between jobs as an artifact (in Jenkins the workspace is shared). The
+files are `.github/workflows/<pipeline>.yml`, `.gitlab-ci.yml`,
+`azure-pipelines.yml` and `Jenkinsfile`. Triggers become each service's
+own (`on: push/pull_request`, workflow rules, `trigger`/`pr`, `when`
+conditions); secrets become its secret variables. A step whose code calls
+`approve(by: [...])` with a literal list waits for the service's approval
+before running (a GitHub environment named after the step, a manual
+GitLab job, an Azure `ManualValidation` task notifying those people, a
+Jenkins `input` with them as submitters), which is why the job passes
+`--yes`. `after success` and `after failure` become jobs that run when
+the steps pass or fail.

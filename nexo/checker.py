@@ -22,7 +22,7 @@ from .errors import NexoError
 
 FALLIBLE_BUILTINS = {"read", "write", "read_lines", "save", "validate", "move_file", "render", "decrypt",
                      "encrypt_file", "decrypt_file", "connect", "ask"}
-FALLIBLE_MEMBERS = {("json", "parse"), ("csv", "parse"), ("http", "get"), ("http", "post"), ("http", "put"),
+FALLIBLE_MEMBERS = {("privacy", "export"), ("json", "parse"), ("csv", "parse"), ("http", "get"), ("http", "post"), ("http", "put"),
                     ("http", "patch"), ("http", "delete")}
 
 
@@ -91,6 +91,7 @@ class Checker:
     def check(self, program: A.Program) -> None:
         self.collect(program.body)
         check_memory(program.body)
+        check_flags(program.body)
         self.stmts(program.body, Ctx(None))
 
     def stmts(self, body: list[A.Stmt], ctx: Ctx) -> None:
@@ -646,3 +647,33 @@ def strongly_connected(graph: dict[str, list[str]]) -> dict[str, set[str]]:
         if v not in index:
             visit(v)
     return comp
+
+
+def check_flags(body: list[A.Stmt]) -> None:
+    """Using a flag no `flags:` block declares is a compile error
+    (section 22, rule 2), when its name is a literal text."""
+    from .errors import suggest
+    from .stdlib.flags import declared
+    names = declared(A.Program(None, body))
+    uses = []
+
+    def visit(e):
+        if (isinstance(e, A.Call) and isinstance(e.func, A.Name) and e.func.name == "flag" and e.args
+                and e.args[0].name is None and isinstance(e.args[0].value, A.Str)
+                and all(isinstance(p, str) for p in e.args[0].value.parts)):
+            uses.append(e.args[0].value)
+        from .parser import sub_exprs
+        for c in sub_exprs(e):
+            visit(c)
+
+    from .parser import stmt_exprs
+    for s in walk_stmts(body):
+        for e in stmt_exprs(s):
+            visit(e)
+    for lit in uses:
+        name = "".join(lit.parts)
+        if name not in names:
+            s = suggest(name, names)
+            if s:
+                raise NexoError("flag_unknown", lit.span, fix="suggest", name=name, suggestion=s)
+            raise NexoError("flag_unknown", lit.span, name=name)

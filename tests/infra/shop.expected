@@ -1,0 +1,34 @@
+Plan de shop (aws, eu-west-1, etapa default):
+  + network net
+      + AWS::EC2::VPC shop-net
+      + AWS::EC2::Subnet shop-net-a
+      + AWS::EC2::Subnet shop-net-b
+      + AWS::EC2::SecurityGroup shop-net
+  + identity api_id
+      + AWS::IAM::Role shop-api-id
+  + database customers
+      + AWS::RDS::DBSubnetGroup shop-customers
+      + AWS::RDS::DBInstance shop-customers
+  + storage photos
+      + AWS::S3::Bucket shop-photos
+  + queue orders
+      + AWS::SQS::Queue shop-orders
+  + app api
+      + AWS::SecretsManager::Secret shop/api/API_KEY
+      + AWS::IAM::Role shop-api-run
+      + AWS::ECS::Cluster shop-api
+      + AWS::Logs::LogGroup /nexo/shop/api
+      + AWS::ECS::TaskDefinition shop-api
+      + AWS::ElasticLoadBalancingV2::LoadBalancer shop-api
+      + AWS::ElasticLoadBalancingV2::TargetGroup shop-api
+      + AWS::ElasticLoadBalancingV2::Listener shop-api-80
+      + AWS::ECS::Service shop-api
+  + dns api.shop.com
+      + AWS::CertificateManager::Certificate api.shop.com
+      + AWS::ElasticLoadBalancingV2::Listener api.shop.com-443
+      + AWS::Route53::RecordSet api.shop.com
+  + native firewall
+      + AWS::WAFv2::WebACL firewall
+Crear: 22, cambiar: 0, borrar: 0.
+Coste estimado: 167.95 EUR al mes (presupuesto: 300.00 EUR al mes).
+Disponibilidad estimada: 99.29 %.

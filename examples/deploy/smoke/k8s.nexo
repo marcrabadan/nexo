@@ -1,0 +1,18 @@
+# A smoke test of nexo.infra on a real Kubernetes cluster (kind, minikube or
+# a cloud one): a namespace and an app that serves nginx.
+#     export NEXO_K8S_SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+#     kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > ca.crt
+#     export NEXO_K8S_CA=ca.crt
+#     kubectl create serviceaccount nexo && kubectl create clusterrolebinding nexo --clusterrole=cluster-admin --serviceaccount=default:nexo
+#     export NEXO_K8S_TOKEN=$(kubectl create token nexo)
+#     nexo plan k8s.nexo && nexo apply k8s.nexo && nexo drift k8s.nexo
+#     kubectl -n smoke get deployment,service
+#     nexo destroy k8s.nexo
+
+infra smoke_k8s:
+    cloud = "k8s"
+    namespace = "smoke"
+    app web:
+        image = "nginx:1.27"
+        port = 80
+        health = "/"

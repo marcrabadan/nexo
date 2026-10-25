@@ -1,0 +1,7 @@
+infra shop:
+    cloud = "k8s"
+    namespace = "shop"
+    database customers
+
+stage prod:
+    replicas = 2

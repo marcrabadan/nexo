@@ -86,7 +86,7 @@ fn network(url: &str, reason_key: &str, span: u32) -> crate::state::Fail {
 }
 
 /// The proxy of the environment for `url`, unless NO_PROXY names its host.
-fn proxy_for(url: &str) -> Option<ureq::Proxy> {
+pub fn proxy_for(url: &str) -> Option<ureq::Proxy> {
     let https = url.starts_with("https://");
     let var = |names: &[&str]| names.iter().find_map(|n| std::env::var(n).ok().filter(|v| !v.is_empty()));
     let proxy = if https { var(&["https_proxy", "HTTPS_PROXY"]) } else { var(&["http_proxy", "HTTP_PROXY"]) }?;

@@ -855,6 +855,10 @@ fn port_error(s: &Server, port: i64, reason: String) -> crate::state::Fail {
 
 /// `nexo file.nexo`: the servers answer until the program is stopped.
 /// Returns false when it stops with a diagnostic (already shown).
+pub fn has_servers() -> bool {
+    !SERVERS.lock().unwrap().is_empty()
+}
+
 pub fn serve_forever() -> bool {
     let servers: Vec<Val> = SERVERS.lock().unwrap().clone();
     if servers.is_empty() || TESTING.load(std::sync::atomic::Ordering::SeqCst) {

@@ -1,0 +1,6 @@
+flags:
+    new_checkout = 10%
+    payments_v2 = off
+
+if flag("payments_v3"):
+    print("v3")

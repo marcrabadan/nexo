@@ -1,0 +1,4 @@
+Error in data_region.nexo, line 7:
+  region = "us-east-1"
+  ^^^^^^
+shop keeps personal data in us-east-1, outside the area eu. Use a region in eu, or allow it in the policy: allow personal data to "area".

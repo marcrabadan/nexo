@@ -1,0 +1,71 @@
+infra shop_aws:
+    cloud = "aws"
+    region = "eu-west-1"
+    network net:
+        allow from internet to api, port: 443
+    database customers:
+        size = small
+    app api:
+        image = "shop-api:2.4"
+        env:
+            DB = customers.url
+            API_KEY = secret("API_KEY")
+    output url = api.url
+
+infra shop_azure:
+    cloud = "azure"
+    region = "westeurope"
+    identity api_id:
+        can read storage photos
+        can write queue orders
+    storage photos
+    queue orders
+    database customers
+    app api:
+        image = "shop-api:2.4"
+        identity = api_id
+        replicas = 1..4
+        env:
+            DB = customers.url
+            API_KEY = secret("API_KEY")
+    dns "api.shop.com" -> api, https
+    output url = api.url
+
+infra shop_gcp:
+    cloud = "gcp"
+    region = "europe-west1"
+    network net:
+        allow from internet to api, port: 443
+    identity api_id:
+        can read storage photos
+    storage photos
+    queue orders
+    database customers:
+        network = net
+    app api:
+        image = "shop-api:2.4"
+        identity = api_id
+        env:
+            DB = customers.url
+            API_KEY = secret("API_KEY")
+    output url = api.url
+
+infra shop_k8s:
+    cloud = "k8s"
+    namespace = "shop"
+    network net:
+        allow from internet to api, port: 8080
+    identity api_id:
+        can read storage photos
+    storage photos
+    database customers
+    app api:
+        image = "shop-api:2.4"
+        identity = api_id
+        scale 2..6:
+            cpu > 60%
+        env:
+            DB = customers.url
+            API_KEY = secret("API_KEY")
+    dns "api.shop.com" -> api, https
+    output url = api.url

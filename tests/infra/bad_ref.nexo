@@ -1,0 +1,7 @@
+infra shop:
+    cloud = "gcp"
+    region = "europe-west1"
+    app api:
+        image = "shop-api:1.0"
+        env:
+            DB = customers.url

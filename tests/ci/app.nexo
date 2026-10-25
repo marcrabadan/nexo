@@ -1,0 +1,27 @@
+fn greet(name):
+    return "hola {name}"
+
+pipeline main:
+    trigger push to main
+    trigger pull_request
+    secrets = ["DEPLOY_KEY"]
+    version = auto
+
+    step build:
+        image = "shop:{version}"
+        print(greet("ci"))
+        run("echo compilando")
+
+    step dev:
+        print(image, step)
+
+    step prod:
+        approve(by: ["ana@company.com", "luis@company.com"])
+        print("prod", image)
+
+    after success:
+        print("v{version} en producción")
+    after failure:
+        print("fallo en {step}")
+
+print("esto no se ejecuta en nexo ci")

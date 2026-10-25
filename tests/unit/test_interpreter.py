@@ -286,7 +286,7 @@ def test_collections():
 
 def test_not_supported_features_are_reported():
     assert error_of("use nexo.ui\n").key == "not_supported"
-    assert error_of('infra shop:\n    cloud = "aws"\n').key == "not_supported"
+    assert error_of('policy:\n    deny shell\n').key == "not_supported"
     assert error_of("@cache(10m)\nfn f():\n    return 1\n").key == "not_supported"
     assert error_of("every 5m:\n    pass\n").key == "not_supported"
 
@@ -302,5 +302,7 @@ def test_errors_inside_interpolation_point_at_the_brace():
     assert e.key == "unexpected" and e.args_["got"] == '"}"'
 
 
-def test_type_settings_are_not_available():
-    assert error_of('type C:\n    name: str\n    purpose = "billing"\n').key == "not_supported"
+def test_type_settings_are_privacy_settings():
+    # D116: keep and purpose; anything else is an error
+    assert run('type C:\n    name: str @personal\n    purpose = "billing"\nprint(C(name: "a"))\n') == 'C(name: "a")\n'
+    assert error_of('type C:\n    name: str\n    colour = "red"\n').key == "type_setting"

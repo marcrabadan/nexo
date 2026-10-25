@@ -1,0 +1,18 @@
+order 1 30
+orders: el mensaje 2 falla tras 4 intentos y pasa a orders.dead: Error sin gestionar: negative total. Gestiónalo con try y else e.
+orders: el mensaje 3 falla tras 4 intentos y pasa a orders.dead: Error sin gestionar (InvalidData): Datos no válidos: el JSON no es válido (línea 1, columna 1). Corrige los datos de entrada, o gestiónalo con try y else e is InvalidData.
+✓ orders are processed once
+metrics {"page": "/a", "count": 2}
+metrics {"page": "/b", "count": 1}
+metrics {"page": "/a", "count": 1}
+✓ clicks by minute
+in the last 5 minutes: 10
+in the last 5 minutes: 15
+in the last 5 minutes: 6
+pages in the session: 2
+pages in the session: 1
+✓ sliding and session windows
+welcome ana@company.com
+welcome luis@company.com
+✓ the same key is processed once
+4 pruebas: 4 correctas, 0 fallidas

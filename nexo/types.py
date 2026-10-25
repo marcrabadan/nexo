@@ -267,6 +267,7 @@ class RecordType:
     traits: list[TraitType] = field(default_factory=list)
     env: Any = None
     table: Any = None  # a @table type (nexo.db)
+    privacy: Any = None  # keep, purpose and personal fields (D116)
 
 
 class WeakRef:

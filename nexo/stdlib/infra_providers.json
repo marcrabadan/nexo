@@ -1,0 +1,745 @@
+{
+  "comment": "nexo.infra (section 11, D118-D121): what each portable resource is on each target. Read by both phases (nexo/stdlib/infra.py and compiler/runtime/src/infra.rs). Templates: ${path} takes a value; a string that is only ${path} keeps its type; {\"$if\": path, \"then\": t, \"else\": t} and {\"$each\": path, \"do\": t} (in lists, with ${item...}).",
+  "kinds": {
+    "app": {
+      "keys": {
+        "image": {"type": "text", "required": true},
+        "cpu": {"type": "number", "default": 0.25},
+        "ram": {"type": "size", "default": 512},
+        "port": {"type": "int", "default": 8080},
+        "health": {"type": "text", "default": "/health"},
+        "replicas": {"type": "count", "default": 1},
+        "public": {"type": "bool", "default": true},
+        "identity": {"type": "ref", "kind": "identity"},
+        "network": {"type": "ref", "kind": "network"},
+        "cluster": {"type": "ref", "kind": "cluster"},
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["env", "scale", "release", "stage"],
+      "attrs": ["url"]
+    },
+    "server": {
+      "keys": {
+        "image": {"type": "text", "required": true},
+        "size": {"type": "word", "words": ["small", "medium", "large"], "default": "small"},
+        "network": {"type": "ref", "kind": "network"},
+        "ssh_key": {"type": "text"},
+        "public": {"type": "bool", "default": false},
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["stage"],
+      "attrs": ["address"]
+    },
+    "database": {
+      "keys": {
+        "type": {"type": "word", "words": ["postgres", "mysql"], "default": "postgres"},
+        "size": {"type": "word", "words": ["small", "medium", "large"], "default": "small"},
+        "storage": {"type": "size", "default": 20480},
+        "network": {"type": "ref", "kind": "network"},
+        "public": {"type": "bool", "default": false},
+        "encryption": {"type": "bool", "default": true},
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["stage"],
+      "attrs": ["url", "host"]
+    },
+    "storage": {
+      "keys": {
+        "public": {"type": "bool", "default": false},
+        "encryption": {"type": "bool", "default": true},
+        "capacity": {"type": "size", "default": 10240},
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["stage"],
+      "attrs": ["url"]
+    },
+    "cache": {
+      "keys": {
+        "size": {"type": "word", "words": ["small", "medium", "large"], "default": "small"},
+        "network": {"type": "ref", "kind": "network"},
+        "public": {"type": "bool", "default": false},
+        "encryption": {"type": "bool", "default": true},
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["stage"],
+      "attrs": ["url"]
+    },
+    "queue": {
+      "keys": {
+        "public": {"type": "bool", "default": false},
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["stage"],
+      "attrs": ["url"]
+    },
+    "cluster": {
+      "keys": {
+        "nodes": {"type": "count", "default": 3},
+        "size": {"type": "word", "words": ["small", "medium", "large"], "default": "medium"},
+        "network": {"type": "ref", "kind": "network"},
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["stage"],
+      "attrs": ["endpoint"]
+    },
+    "network": {
+      "keys": {
+        "range": {"type": "cidr", "default": "10.0.0.0/16"},
+        "private": {"type": "bool", "default": false},
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["stage"],
+      "lines": ["allow"],
+      "attrs": ["id"]
+    },
+    "dns": {
+      "keys": {},
+      "blocks": [],
+      "attrs": ["url"]
+    },
+    "identity": {
+      "keys": {
+        "tags": {"type": "tags"}
+      },
+      "blocks": ["stage"],
+      "lines": ["can"],
+      "attrs": ["id"]
+    },
+    "native": {
+      "keys": {},
+      "blocks": [],
+      "attrs": ["id"]
+    }
+  },
+
+  "sizes": {
+    "aws": {
+      "db_class": {"small": "db.t4g.small", "medium": "db.t4g.large", "large": "db.r6g.xlarge"},
+      "vm": {"small": "t3.small", "medium": "t3.large", "large": "m6i.xlarge"},
+      "cache_node": {"small": "cache.t4g.small", "medium": "cache.t4g.medium", "large": "cache.r6g.large"}
+    },
+    "azure": {
+      "pg_sku": {"small": "Standard_B1ms", "medium": "Standard_D2ds_v5", "large": "Standard_D8ds_v5"},
+      "pg_tier": {"small": "Burstable", "medium": "GeneralPurpose", "large": "GeneralPurpose"},
+      "vm": {"small": "Standard_B2s", "medium": "Standard_D2s_v5", "large": "Standard_D8s_v5"},
+      "redis_sku": {"small": "Basic", "medium": "Standard", "large": "Standard"},
+      "redis_capacity": {"small": 0, "medium": 1, "large": 3}
+    },
+    "gcp": {
+      "sql_tier": {"small": "db-g1-small", "medium": "db-custom-2-7680", "large": "db-custom-8-30720"},
+      "vm": {"small": "e2-small", "medium": "e2-standard-2", "large": "e2-standard-8"},
+      "redis_gb": {"small": 1, "medium": 5, "large": 20}
+    },
+    "k8s": {
+      "redis_memory": {"small": "256Mi", "medium": "1Gi", "large": "4Gi"},
+      "db_memory": {"small": "512Mi", "medium": "2Gi", "large": "8Gi"}
+    }
+  },
+
+  "cost": {
+    "comment": "Estimated EUR per month (on-demand list prices, rounded). An app is per replica at its cpu and ram.",
+    "aws": {"app_vcpu": 29.0, "app_gb": 3.2, "app_fixed": 18.0, "server": {"small": 16.0, "medium": 64.0, "large": 152.0}, "database": {"small": 26.0, "medium": 104.0, "large": 410.0}, "database_gb": 0.13, "storage": 2.5, "cache": {"small": 25.0, "medium": 50.0, "large": 165.0}, "queue": 1.0, "cluster": 68.0, "cluster_node": {"small": 16.0, "medium": 64.0, "large": 152.0}, "network": 30.0, "dns": 1.0, "identity": 0.0, "native": 0.0},
+    "azure": {"app_vcpu": 31.0, "app_gb": 3.7, "app_fixed": 0.0, "server": {"small": 30.0, "medium": 70.0, "large": 280.0}, "database": {"small": 14.0, "medium": 125.0, "large": 500.0}, "database_gb": 0.12, "storage": 2.2, "cache": {"small": 15.0, "medium": 90.0, "large": 230.0}, "queue": 9.0, "cluster": 0.0, "cluster_node": {"small": 30.0, "medium": 70.0, "large": 280.0}, "network": 0.0, "dns": 0.5, "identity": 0.0, "native": 0.0},
+    "gcp": {"app_vcpu": 46.0, "app_gb": 4.8, "app_fixed": 0.0, "server": {"small": 12.0, "medium": 49.0, "large": 196.0}, "database": {"small": 25.0, "medium": 105.0, "large": 420.0}, "database_gb": 0.16, "storage": 2.0, "cache": {"small": 35.0, "medium": 175.0, "large": 700.0}, "queue": 1.0, "cluster": 68.0, "cluster_node": {"small": 12.0, "medium": 49.0, "large": 196.0}, "network": 0.0, "dns": 0.2, "identity": 0.0, "native": 0.0},
+    "k8s": {"app_vcpu": 0.0, "app_gb": 0.0, "app_fixed": 0.0, "server": {}, "database": {"small": 0.0, "medium": 0.0, "large": 0.0}, "database_gb": 0.0, "storage": 0.0, "cache": {"small": 0.0, "medium": 0.0, "large": 0.0}, "queue": 0.0, "cluster": 0.0, "cluster_node": {}, "network": 0.0, "dns": 0.0, "identity": 0.0, "native": 0.0}
+  },
+
+  "sla": {
+    "comment": "Published monthly availability of each service, in percent; the estimate multiplies those of the resources an app needs.",
+    "aws": {"app": 99.99, "server": 99.5, "database": 99.5, "storage": 99.9, "cache": 99.9, "queue": 99.9, "cluster": 99.95, "network": 100.0, "dns": 100.0, "identity": 100.0, "native": 100.0},
+    "azure": {"app": 99.95, "server": 99.9, "database": 99.9, "storage": 99.9, "cache": 99.9, "queue": 99.9, "cluster": 99.95, "network": 99.99, "dns": 100.0, "identity": 100.0, "native": 100.0},
+    "gcp": {"app": 99.95, "server": 99.5, "database": 99.95, "storage": 99.95, "cache": 99.9, "queue": 99.95, "cluster": 99.95, "network": 100.0, "dns": 100.0, "identity": 100.0, "native": 100.0},
+    "k8s": {"app": 99.9, "server": 100.0, "database": 99.0, "storage": 99.9, "cache": 99.0, "queue": 99.0, "cluster": 100.0, "network": 100.0, "dns": 99.9, "identity": 100.0, "native": 100.0}
+  },
+
+  "areas": {
+    "comment": "The area of a region, for data_region (section 23, rule 3).",
+    "aws": {"prefix": {"eu": "eu", "us": "us", "ca": "ca", "sa": "sa", "ap": "ap", "me": "me", "af": "af", "il": "me", "mx": "mx"}},
+    "gcp": {"prefix": {"europe": "eu", "us": "us", "northamerica": "ca", "southamerica": "sa", "asia": "ap", "australia": "ap", "me": "me", "africa": "af"}},
+    "azure": {"names": {
+      "westeurope": "eu", "northeurope": "eu", "francecentral": "eu", "francesouth": "eu", "germanywestcentral": "eu", "germanynorth": "eu",
+      "swedencentral": "eu", "swedensouth": "eu", "polandcentral": "eu", "italynorth": "eu", "spaincentral": "eu", "austriaeast": "eu", "belgiumcentral": "eu",
+      "norwayeast": "eu", "norwaywest": "eu", "switzerlandnorth": "eu", "switzerlandwest": "eu", "uksouth": "uk", "ukwest": "uk",
+      "eastus": "us", "eastus2": "us", "westus": "us", "westus2": "us", "westus3": "us", "centralus": "us", "northcentralus": "us", "southcentralus": "us", "westcentralus": "us",
+      "canadacentral": "ca", "canadaeast": "ca", "brazilsouth": "sa", "japaneast": "ap", "japanwest": "ap", "australiaeast": "ap", "southeastasia": "ap", "eastasia": "ap", "centralindia": "ap", "koreacentral": "ap"
+    }}
+  },
+
+  "roles": {
+    "aws": {
+      "storage": {"read": ["s3:GetObject", "s3:ListBucket"], "write": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]},
+      "queue": {"read": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"], "write": ["sqs:SendMessage", "sqs:GetQueueAttributes"]},
+      "database": {"read": ["rds-db:connect"], "write": ["rds-db:connect"]},
+      "cache": {"read": ["elasticache:Connect"], "write": ["elasticache:Connect"]}
+    },
+    "azure": {
+      "storage": {"read": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1", "write": "ba92f5b4-2d11-453d-a403-e96b0029c9fe"},
+      "queue": {"read": "4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0", "write": "69a216fc-b8fb-44d8-bc22-1f3c2cd27a39"},
+      "database": {"read": "acdd72a7-3385-48ef-bd42-f606fba81ae7", "write": "b24988ac-6180-42a0-ab88-20f7382dd24c"},
+      "cache": {"read": "acdd72a7-3385-48ef-bd42-f606fba81ae7", "write": "e0f68234-74aa-48ed-b826-c38b57376e17"}
+    },
+    "gcp": {
+      "storage": {"read": "roles/storage.objectViewer", "write": "roles/storage.objectAdmin"},
+      "queue": {"read": "roles/pubsub.subscriber", "write": "roles/pubsub.publisher"},
+      "database": {"read": "roles/cloudsql.client", "write": "roles/cloudsql.client"},
+      "cache": {"read": "roles/redis.viewer", "write": "roles/redis.editor"}
+    },
+    "k8s": {
+      "storage": {"read": ["get", "list"], "write": ["get", "list", "update", "patch"]},
+      "queue": {"read": ["get", "list"], "write": ["get", "list", "update"]},
+      "database": {"read": ["get", "list"], "write": ["get", "list", "update"]},
+      "cache": {"read": ["get", "list"], "write": ["get", "list", "update"]}
+    }
+  },
+
+  "infra": {
+    "aws": [],
+    "azure": [
+      {"id": "group", "type": "Microsoft.Resources/resourceGroups", "api": "2021-04-01", "name": "${infra}", "path": "/subscriptions/${subscription}/resourcegroups/${infra}",
+       "body": {"location": "${region}", "tags": "${tags}"}}
+    ],
+    "gcp": [],
+    "k8s": [
+      {"id": "namespace", "type": "Namespace", "api": "v1", "plural": "namespaces", "cluster_scope": true, "name": "${namespace}",
+       "body": {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "${namespace}", "labels": "${k8s_labels}"}}}
+    ]
+  },
+
+  "resources": {
+    "aws": {
+      "network": {
+        "natives": [
+          {"id": "vpc", "type": "AWS::EC2::VPC", "name": "${ctx.base}",
+           "body": {"CidrBlock": "${set.range}", "EnableDnsHostnames": true, "EnableDnsSupport": true, "Tags": "${aws_tags}"}},
+          {"id": "subnet_a", "type": "AWS::EC2::Subnet", "name": "${ctx.base}-a",
+           "body": {"VpcId": "${own.vpc.VpcId}", "CidrBlock": "${ctx.subnet_a}", "AvailabilityZone": "${region}a", "MapPublicIpOnLaunch": "${ctx.public_net}", "Tags": "${aws_tags}"}},
+          {"id": "subnet_b", "type": "AWS::EC2::Subnet", "name": "${ctx.base}-b",
+           "body": {"VpcId": "${own.vpc.VpcId}", "CidrBlock": "${ctx.subnet_b}", "AvailabilityZone": "${region}b", "MapPublicIpOnLaunch": "${ctx.public_net}", "Tags": "${aws_tags}"}},
+          {"$if": "ctx.public_net", "then": {"id": "gateway", "type": "AWS::EC2::InternetGateway", "name": "${ctx.base}", "body": {"Tags": "${aws_tags}"}}},
+          {"$if": "ctx.public_net", "then": {"id": "attach", "type": "AWS::EC2::VPCGatewayAttachment", "name": "${ctx.base}",
+           "body": {"VpcId": "${own.vpc.VpcId}", "InternetGatewayId": "${own.gateway.InternetGatewayId}"}}},
+          {"id": "firewall", "type": "AWS::EC2::SecurityGroup", "name": "${ctx.base}",
+           "body": {"GroupName": "${ctx.base}", "GroupDescription": "Nexo ${infra} ${name}", "VpcId": "${own.vpc.VpcId}",
+                    "SecurityGroupIngress": [{"$each": "ctx.ingress", "do": {"IpProtocol": "tcp", "FromPort": "${item.port}", "ToPort": "${item.port}", "CidrIp": "${item.cidr}"}}],
+                    "Tags": "${aws_tags}"}}
+        ],
+        "attrs": {"id": "${own.vpc.VpcId}"}
+      },
+      "identity": {
+        "natives": [
+          {"id": "role", "type": "AWS::IAM::Role", "name": "${ctx.base}",
+           "body": {"RoleName": "${ctx.base}",
+                    "AssumeRolePolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": ["ecs-tasks.amazonaws.com", "ec2.amazonaws.com"]}, "Action": "sts:AssumeRole"}]},
+                    "Policies": [{"$if": "ctx.grants", "then": {"PolicyName": "nexo", "PolicyDocument": {"Version": "2012-10-17", "Statement": [{"$each": "ctx.grants", "do": {"Effect": "Allow", "Action": "${item.actions}", "Resource": "${item.resources}"}}]}}}],
+                    "Tags": "${aws_tags}"}}
+        ],
+        "attrs": {"id": "${own.role.Arn}"}
+      },
+      "storage": {
+        "natives": [
+          {"id": "bucket", "type": "AWS::S3::Bucket", "name": "${ctx.bucket}",
+           "body": {"BucketName": "${ctx.bucket}",
+                    "BucketEncryption": {"ServerSideEncryptionConfiguration": [{"ServerSideEncryptionByDefault": {"SSEAlgorithm": "${ctx.s3_encryption}"}}]},
+                    "PublicAccessBlockConfiguration": {"BlockPublicAcls": "${ctx.private}", "BlockPublicPolicy": "${ctx.private}", "IgnorePublicAcls": "${ctx.private}", "RestrictPublicBuckets": "${ctx.private}"},
+                    "Tags": "${aws_tags}"}}
+        ],
+        "attrs": {"url": "s3://${ctx.bucket}"}
+      },
+      "queue": {
+        "natives": [
+          {"id": "queue", "type": "AWS::SQS::Queue", "name": "${ctx.base}",
+           "body": {"QueueName": "${ctx.base}", "SqsManagedSseEnabled": true, "Tags": "${aws_tags}"}}
+        ],
+        "attrs": {"url": "${own.queue.QueueUrl}"}
+      },
+      "database": {
+        "natives": [
+          {"id": "subnets", "type": "AWS::RDS::DBSubnetGroup", "name": "${ctx.base}",
+           "body": {"DBSubnetGroupName": "${ctx.base}", "DBSubnetGroupDescription": "Nexo ${infra} ${name}",
+                    "SubnetIds": ["${link.network.subnet_a.SubnetId}", "${link.network.subnet_b.SubnetId}"], "Tags": "${aws_tags}"}},
+          {"id": "db", "type": "AWS::RDS::DBInstance", "name": "${ctx.base}",
+           "body": {"DBInstanceIdentifier": "${ctx.base}", "Engine": "${set.type}", "DBInstanceClass": "${ctx.db_class}", "AllocatedStorage": "${ctx.storage_gb_text}",
+                    "DBName": "${ctx.ident}", "MasterUsername": "nexo", "ManageMasterUserPassword": true, "StorageEncrypted": "${set.encryption}",
+                    "PubliclyAccessible": "${set.public}", "DBSubnetGroupName": "${own.subnets.DBSubnetGroupName}",
+                    "VPCSecurityGroups": ["${link.network.firewall.GroupId}"], "MultiAZ": false, "Tags": "${aws_tags}"}}
+        ],
+        "attrs": {"url": "${set.type}://nexo@${own.db.Endpoint.Address}:${own.db.Endpoint.Port}/${ctx.ident}", "host": "${own.db.Endpoint.Address}"}
+      },
+      "cache": {
+        "natives": [
+          {"id": "cache", "type": "AWS::ElastiCache::ServerlessCache", "name": "${ctx.base}",
+           "body": {"ServerlessCacheName": "${ctx.base}", "Engine": "redis",
+                    "SubnetIds": ["${link.network.subnet_a.SubnetId}", "${link.network.subnet_b.SubnetId}"], "SecurityGroupIds": ["${link.network.firewall.GroupId}"], "Tags": "${aws_tags}"}}
+        ],
+        "attrs": {"url": "rediss://${own.cache.Endpoint.Address}:${own.cache.Endpoint.Port}"}
+      },
+      "cluster": {
+        "natives": [
+          {"id": "role", "type": "AWS::IAM::Role", "name": "${ctx.base}-cluster",
+           "body": {"RoleName": "${ctx.base}-cluster", "AssumeRolePolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": ["eks.amazonaws.com"]}, "Action": "sts:AssumeRole"}]},
+                    "ManagedPolicyArns": ["arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"], "Tags": "${aws_tags}"}},
+          {"id": "node_role", "type": "AWS::IAM::Role", "name": "${ctx.base}-nodes",
+           "body": {"RoleName": "${ctx.base}-nodes", "AssumeRolePolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": ["ec2.amazonaws.com"]}, "Action": "sts:AssumeRole"}]},
+                    "ManagedPolicyArns": ["arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy", "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly", "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"], "Tags": "${aws_tags}"}},
+          {"id": "cluster", "type": "AWS::EKS::Cluster", "name": "${ctx.base}",
+           "body": {"Name": "${ctx.base}", "RoleArn": "${own.role.Arn}", "ResourcesVpcConfig": {"SubnetIds": ["${link.network.subnet_a.SubnetId}", "${link.network.subnet_b.SubnetId}"]}, "Tags": "${aws_tags}"}},
+          {"id": "nodes", "type": "AWS::EKS::Nodegroup", "name": "${ctx.base}",
+           "body": {"ClusterName": "${own.cluster.Name}", "NodegroupName": "${ctx.base}", "NodeRole": "${own.node_role.Arn}",
+                    "Subnets": ["${link.network.subnet_a.SubnetId}", "${link.network.subnet_b.SubnetId}"],
+                    "ScalingConfig": {"MinSize": "${ctx.nodes_min}", "MaxSize": "${ctx.nodes_max}", "DesiredSize": "${ctx.nodes_min}"}, "InstanceTypes": ["${ctx.vm}"]}}
+        ],
+        "attrs": {"endpoint": "${own.cluster.Endpoint}"}
+      },
+      "server": {
+        "natives": [
+          {"id": "vm", "type": "AWS::EC2::Instance", "name": "${ctx.base}",
+           "body": {"ImageId": "${set.image}", "InstanceType": "${ctx.vm}", "SubnetId": "${link.network.subnet_a.SubnetId}",
+                    "SecurityGroupIds": ["${link.network.firewall.GroupId}"], "Tags": "${aws_tags_named}"}}
+        ],
+        "attrs": {"address": "${own.vm.PrivateIp}"}
+      },
+      "app": {
+        "natives": [
+          {"$each": "ctx.secrets", "do": {"id": "secret_${item.key}", "type": "AWS::SecretsManager::Secret", "name": "${infra}/${name}/${item.name}",
+           "body": {"Name": "${infra}/${name}/${item.name}", "SecretString": "${item.value}", "Tags": "${aws_tags}"}}},
+          {"id": "exec_role", "type": "AWS::IAM::Role", "name": "${ctx.base}-run",
+           "body": {"RoleName": "${ctx.base}-run", "AssumeRolePolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": ["ecs-tasks.amazonaws.com"]}, "Action": "sts:AssumeRole"}]},
+                    "ManagedPolicyArns": ["arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"],
+                    "Policies": [{"$if": "ctx.secrets", "then": {"PolicyName": "secrets", "PolicyDocument": {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": ["secretsmanager:GetSecretValue"], "Resource": [{"$each": "ctx.secrets", "do": "${own.secret_${item.key}.Id}"}]}]}}}],
+                    "Tags": "${aws_tags}"}},
+          {"id": "cluster", "type": "AWS::ECS::Cluster", "name": "${ctx.base}", "body": {"ClusterName": "${ctx.base}", "Tags": "${aws_tags}"}},
+          {"id": "logs", "type": "AWS::Logs::LogGroup", "name": "/nexo/${infra}/${name}", "body": {"LogGroupName": "/nexo/${infra}/${name}", "RetentionInDays": 30}},
+          {"id": "task", "type": "AWS::ECS::TaskDefinition", "name": "${ctx.base}",
+           "body": {"Family": "${ctx.base}", "Cpu": "${ctx.ecs_cpu}", "Memory": "${ctx.ram_text}", "NetworkMode": "awsvpc", "RequiresCompatibilities": ["FARGATE"],
+                    "ExecutionRoleArn": "${own.exec_role.Arn}", "TaskRoleArn": {"$if": "set.identity", "then": "${link.identity.role.Arn}"},
+                    "ContainerDefinitions": [{"Name": "${name}", "Image": "${set.image}", "Essential": true,
+                                              "PortMappings": [{"ContainerPort": "${set.port}", "Protocol": "tcp"}],
+                                              "Environment": [{"$each": "ctx.env", "do": {"Name": "${item.name}", "Value": "${item.value}"}}],
+                                              "Secrets": [{"$each": "ctx.secrets", "do": {"Name": "${item.name}", "ValueFrom": "${own.secret_${item.key}.Id}"}}],
+                                              "LogConfiguration": {"LogDriver": "awslogs", "Options": {"awslogs-group": "/nexo/${infra}/${name}", "awslogs-region": "${region}", "awslogs-stream-prefix": "${name}"}}}],
+                    "Tags": "${aws_tags}"}},
+          {"id": "balancer", "type": "AWS::ElasticLoadBalancingV2::LoadBalancer", "name": "${ctx.short}",
+           "body": {"Name": "${ctx.short}", "Scheme": "${ctx.scheme}", "Type": "application", "Subnets": ["${link.network.subnet_a.SubnetId}", "${link.network.subnet_b.SubnetId}"],
+                    "SecurityGroups": ["${link.network.firewall.GroupId}"], "Tags": "${aws_tags}"}},
+          {"id": "target", "type": "AWS::ElasticLoadBalancingV2::TargetGroup", "name": "${ctx.short}",
+           "body": {"Name": "${ctx.short}", "Port": "${set.port}", "Protocol": "HTTP", "TargetType": "ip", "VpcId": "${link.network.vpc.VpcId}", "HealthCheckPath": "${set.health}", "Tags": "${aws_tags}"}},
+          {"id": "listener", "type": "AWS::ElasticLoadBalancingV2::Listener", "name": "${ctx.short}-80",
+           "body": {"LoadBalancerArn": "${own.balancer.LoadBalancerArn}", "Port": 80, "Protocol": "HTTP", "DefaultActions": [{"Type": "forward", "TargetGroupArn": "${own.target.TargetGroupArn}"}]}},
+          {"id": "service", "type": "AWS::ECS::Service", "name": "${ctx.base}",
+           "body": {"ServiceName": "${ctx.base}", "Cluster": "${own.cluster.Arn}", "TaskDefinition": "${own.task.TaskDefinitionArn}", "DesiredCount": "${ctx.replicas_min}",
+                    "LaunchType": "FARGATE", "DeploymentConfiguration": {"MinimumHealthyPercent": 100, "MaximumPercent": 200},
+                    "NetworkConfiguration": {"AwsvpcConfiguration": {"Subnets": ["${link.network.subnet_a.SubnetId}", "${link.network.subnet_b.SubnetId}"], "SecurityGroups": ["${link.network.firewall.GroupId}"], "AssignPublicIp": "ENABLED"}},
+                    "LoadBalancers": [{"ContainerName": "${name}", "ContainerPort": "${set.port}", "TargetGroupArn": "${own.target.TargetGroupArn}"}],
+                    "Tags": "${aws_tags}"}},
+          {"$if": "ctx.autoscale", "then": {"id": "scaling", "type": "AWS::ApplicationAutoScaling::ScalableTarget", "name": "${ctx.base}",
+           "body": {"MinCapacity": "${ctx.replicas_min}", "MaxCapacity": "${ctx.replicas_max}", "ResourceId": "service/${ctx.base}/${ctx.base}",
+                    "ScalableDimension": "ecs:service:DesiredCount", "ServiceNamespace": "ecs"}}},
+          {"$if": "ctx.autoscale", "then": {"id": "scaling_cpu", "type": "AWS::ApplicationAutoScaling::ScalingPolicy", "name": "${ctx.base}-cpu",
+           "body": {"PolicyName": "${ctx.base}-cpu", "PolicyType": "TargetTrackingScaling", "ScalingTargetId": "${own.scaling.Id}",
+                    "TargetTrackingScalingPolicyConfiguration": {"TargetValue": "${ctx.cpu_target}", "PredefinedMetricSpecification": {"PredefinedMetricType": "ECSServiceAverageCPUUtilization"}, "ScaleInCooldown": 300, "ScaleOutCooldown": 60}}}}
+        ],
+        "attrs": {"url": "http://${own.balancer.DNSName}"}
+      },
+      "dns": {
+        "natives": [
+          {"$if": "ctx.https", "then": {"id": "certificate", "type": "AWS::CertificateManager::Certificate", "name": "${ctx.domain}",
+           "body": {"DomainName": "${ctx.domain}", "ValidationMethod": "DNS", "Tags": "${aws_tags}"}}},
+          {"$if": "ctx.https", "then": {"id": "listener", "type": "AWS::ElasticLoadBalancingV2::Listener", "name": "${ctx.domain}-443",
+           "body": {"LoadBalancerArn": "${res.${ctx.target}.balancer.LoadBalancerArn}", "Port": 443, "Protocol": "HTTPS", "Certificates": [{"CertificateArn": "${own.certificate.Id}"}],
+                    "DefaultActions": [{"Type": "forward", "TargetGroupArn": "${res.${ctx.target}.target.TargetGroupArn}"}]}}},
+          {"id": "record", "type": "AWS::Route53::RecordSet", "name": "${ctx.domain}",
+           "body": {"HostedZoneName": "${ctx.zone}.", "Name": "${ctx.domain}.", "Type": "CNAME", "TTL": "300", "ResourceRecords": ["${res.${ctx.target}.balancer.DNSName}"]}}
+        ],
+        "attrs": {"url": "${ctx.scheme_dns}://${ctx.domain}"}
+      },
+      "native": {
+        "natives": [
+          {"id": "resource", "type": "${ctx.native_type}", "name": "${name}", "body": "${ctx.native_body}"}
+        ],
+        "attrs": {"id": "${own.resource.Id}"}
+      }
+    },
+
+    "azure": {
+      "network": {
+        "natives": [
+          {"id": "firewall", "type": "Microsoft.Network/networkSecurityGroups", "api": "2023-11-01", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}", "properties": {"securityRules": [{"$each": "ctx.ingress", "do": {"name": "allow-${item.port}",
+             "properties": {"priority": "${item.priority}", "direction": "Inbound", "access": "Allow", "protocol": "Tcp", "sourceAddressPrefix": "${item.source}", "sourcePortRange": "*", "destinationAddressPrefix": "*", "destinationPortRange": "${item.port_text}"}}}]}}},
+          {"id": "vnet", "type": "Microsoft.Network/virtualNetworks", "api": "2023-11-01", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}", "properties": {"addressSpace": {"addressPrefixes": ["${set.range}"]},
+             "subnets": [{"name": "default", "properties": {"addressPrefix": "${ctx.subnet_a}", "networkSecurityGroup": {"id": "${own.firewall.id}"}}},
+                         {"name": "apps", "properties": {"addressPrefix": "${ctx.subnet_wide}", "delegations": [{"name": "apps", "properties": {"serviceName": "Microsoft.App/environments"}}]}}]}}}
+        ],
+        "attrs": {"id": "${own.vnet.id}"}
+      },
+      "identity": {
+        "natives": [
+          {"id": "identity", "type": "Microsoft.ManagedIdentity/userAssignedIdentities", "api": "2023-01-31", "name": "${ctx.base}", "body": {"location": "${region}", "tags": "${tags}"}},
+          {"$each": "ctx.grants", "do": {"id": "grant_${item.index}", "type": "Microsoft.Authorization/roleAssignments", "api": "2022-04-01", "name": "${item.guid}", "scope": "${item.scope}",
+           "body": {"properties": {"roleDefinitionId": "/subscriptions/${subscription}/providers/Microsoft.Authorization/roleDefinitions/${item.role}", "principalId": "${own.identity.properties.principalId}", "principalType": "ServicePrincipal"}}}}
+        ],
+        "attrs": {"id": "${own.identity.id}"}
+      },
+      "storage": {
+        "natives": [
+          {"id": "account", "type": "Microsoft.Storage/storageAccounts", "api": "2023-05-01", "name": "${ctx.account}",
+           "body": {"location": "${region}", "tags": "${tags}", "sku": {"name": "Standard_LRS"}, "kind": "StorageV2",
+                    "properties": {"allowBlobPublicAccess": "${set.public}", "minimumTlsVersion": "TLS1_2", "supportsHttpsTrafficOnly": true,
+                                   "encryption": {"keySource": "Microsoft.Storage", "services": {"blob": {"enabled": true}}}}}},
+          {"id": "container", "type": "Microsoft.Storage/storageAccounts/blobServices/containers", "api": "2023-05-01", "name": "${ctx.account}/default/${ctx.ident}",
+           "body": {"properties": {"publicAccess": "${ctx.blob_access}"}}}
+        ],
+        "attrs": {"url": "https://${ctx.account}.blob.core.windows.net/${ctx.ident}"}
+      },
+      "queue": {
+        "natives": [
+          {"id": "namespace", "type": "Microsoft.ServiceBus/namespaces", "api": "2022-10-01-preview", "name": "${ctx.base}", "body": {"location": "${region}", "tags": "${tags}", "sku": {"name": "Standard", "tier": "Standard"}}},
+          {"id": "queue", "type": "Microsoft.ServiceBus/namespaces/queues", "api": "2022-10-01-preview", "name": "${ctx.base}/${ctx.ident}", "body": {"properties": {}}}
+        ],
+        "attrs": {"url": "sb://${ctx.base}.servicebus.windows.net/${ctx.ident}"}
+      },
+      "database": {
+        "natives": [
+          {"id": "server", "type": "${ctx.az_db_type}", "api": "2023-06-01-preview", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}", "sku": {"name": "${ctx.pg_sku}", "tier": "${ctx.pg_tier}"},
+                    "properties": {"version": "${ctx.az_db_version}", "storage": {"storageSizeGB": "${ctx.storage_gb}"},
+                                   "authConfig": {"activeDirectoryAuth": "Enabled", "passwordAuth": "Disabled"},
+                                   "network": {"publicNetworkAccess": "${ctx.public_access}"}}}},
+          {"id": "database", "type": "${ctx.az_db_type}/databases", "api": "2023-06-01-preview", "name": "${ctx.base}/${ctx.ident}", "body": {"properties": {}}}
+        ],
+        "attrs": {"url": "${set.type}://${own.server.properties.fullyQualifiedDomainName}/${ctx.ident}", "host": "${own.server.properties.fullyQualifiedDomainName}"}
+      },
+      "cache": {
+        "natives": [
+          {"id": "cache", "type": "Microsoft.Cache/redis", "api": "2023-08-01", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}", "properties": {"sku": {"name": "${ctx.redis_sku}", "family": "C", "capacity": "${ctx.redis_capacity}"},
+                    "enableNonSslPort": false, "minimumTlsVersion": "1.2", "publicNetworkAccess": "${ctx.public_access}"}}}
+        ],
+        "attrs": {"url": "rediss://${own.cache.properties.hostName}:6380"}
+      },
+      "cluster": {
+        "natives": [
+          {"id": "cluster", "type": "Microsoft.ContainerService/managedClusters", "api": "2024-02-01", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}", "identity": {"type": "SystemAssigned"},
+                    "properties": {"dnsPrefix": "${ctx.base}", "agentPoolProfiles": [{"name": "nodes", "mode": "System", "osType": "Linux", "vmSize": "${ctx.vm}",
+                                   "count": "${ctx.nodes_min}", "minCount": "${ctx.nodes_min}", "maxCount": "${ctx.nodes_max}", "enableAutoScaling": true}]}}}
+        ],
+        "attrs": {"endpoint": "https://${own.cluster.properties.fqdn}"}
+      },
+      "server": {
+        "natives": [
+          {"id": "nic", "type": "Microsoft.Network/networkInterfaces", "api": "2023-11-01", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}", "properties": {"ipConfigurations": [{"name": "main", "properties": {"subnet": {"id": "${link.network.vnet.id}/subnets/default"}, "privateIPAllocationMethod": "Dynamic"}}]}}},
+          {"id": "vm", "type": "Microsoft.Compute/virtualMachines", "api": "2024-03-01", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}", "properties": {"hardwareProfile": {"vmSize": "${ctx.vm}"},
+                    "storageProfile": {"imageReference": "${ctx.az_image}", "osDisk": {"createOption": "FromImage", "managedDisk": {"storageAccountType": "StandardSSD_LRS"}}},
+                    "osProfile": {"computerName": "${ctx.ident}", "adminUsername": "nexo", "linuxConfiguration": {"disablePasswordAuthentication": true,
+                                  "ssh": {"publicKeys": [{"path": "/home/nexo/.ssh/authorized_keys", "keyData": "${set.ssh_key}"}]}}},
+                    "networkProfile": {"networkInterfaces": [{"id": "${own.nic.id}"}]}}}}
+        ],
+        "attrs": {"address": "${own.nic.properties.ipConfigurations.0.properties.privateIPAddress}"}
+      },
+      "app": {
+        "natives": [
+          {"id": "environment", "type": "Microsoft.App/managedEnvironments", "api": "2024-03-01", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}", "properties": {"vnetConfiguration": {"$if": "set.network", "then": {"infrastructureSubnetId": "${link.network.vnet.id}/subnets/apps"}}}}},
+          {"id": "app", "type": "Microsoft.App/containerApps", "api": "2024-03-01", "name": "${ctx.base}",
+           "body": {"location": "${region}", "tags": "${tags}",
+                    "identity": {"$if": "set.identity", "then": {"type": "UserAssigned", "userAssignedIdentities": {"${link.identity.identity.id}": {}}}},
+                    "properties": {"managedEnvironmentId": "${own.environment.id}",
+                                   "configuration": {"ingress": {"external": "${set.public}", "targetPort": "${set.port}", "transport": "auto"},
+                                                     "secrets": [{"$each": "ctx.secrets", "do": {"name": "${item.key}", "value": "${item.value}"}}]},
+                                   "template": {"containers": [{"name": "${name}", "image": "${set.image}", "resources": {"cpu": "${set.cpu}", "memory": "${ctx.ram_gi}"},
+                                                                "env": [{"$each": "ctx.env", "do": {"name": "${item.name}", "value": "${item.value}"}}, {"$each": "ctx.secrets", "do": {"name": "${item.name}", "secretRef": "${item.key}"}}],
+                                                                "probes": [{"type": "Liveness", "httpGet": {"path": "${set.health}", "port": "${set.port}"}}]}],
+                                                "scale": {"minReplicas": "${ctx.replicas_min}", "maxReplicas": "${ctx.replicas_max}",
+                                                          "rules": [{"$if": "ctx.autoscale", "then": {"name": "cpu", "custom": {"type": "cpu", "metadata": {"type": "Utilization", "value": "${ctx.cpu_target_text}"}}}}]}}}}}
+        ],
+        "attrs": {"url": "https://${own.app.properties.configuration.ingress.fqdn}"}
+      },
+      "dns": {
+        "natives": [
+          {"id": "zone", "type": "Microsoft.Network/dnsZones", "api": "2018-05-01", "name": "${ctx.zone}", "body": {"location": "global", "tags": "${tags}"}},
+          {"id": "record", "type": "Microsoft.Network/dnsZones/CNAME", "api": "2018-05-01", "name": "${ctx.zone}/${ctx.host}",
+           "body": {"properties": {"TTL": 300, "CNAMERecord": {"cname": "${res.${ctx.target}.app.properties.configuration.ingress.fqdn}"}}}},
+          {"$if": "ctx.https", "then": {"id": "certificate", "type": "Microsoft.App/managedEnvironments/managedCertificates", "api": "2024-03-01", "name": "${ctx.target_base}/${ctx.ident}",
+           "body": {"location": "${region}", "properties": {"subjectName": "${ctx.domain}", "domainControlValidation": "CNAME"}}}}
+        ],
+        "attrs": {"url": "${ctx.scheme_dns}://${ctx.domain}"}
+      },
+      "native": {
+        "natives": [
+          {"id": "resource", "type": "${ctx.native_type}", "api": "${ctx.native_api}", "name": "${name}", "body": "${ctx.native_body}"}
+        ],
+        "attrs": {"id": "${own.resource.id}"}
+      }
+    },
+
+    "gcp": {
+      "network": {
+        "natives": [
+          {"id": "vpc", "type": "compute.networks", "name": "${ctx.base}",
+           "create": "POST https://compute.googleapis.com/compute/v1/projects/${project}/global/networks",
+           "self": "https://compute.googleapis.com/compute/v1/projects/${project}/global/networks/${ctx.base}", "update": "PATCH",
+           "body": {"name": "${ctx.base}", "autoCreateSubnetworks": false}},
+          {"id": "subnet", "type": "compute.subnetworks", "name": "${ctx.base}",
+           "create": "POST https://compute.googleapis.com/compute/v1/projects/${project}/regions/${region}/subnetworks",
+           "self": "https://compute.googleapis.com/compute/v1/projects/${project}/regions/${region}/subnetworks/${ctx.base}", "update": "PATCH",
+           "body": {"name": "${ctx.base}", "network": "${own.vpc.selfLink}", "ipCidrRange": "${set.range}", "privateIpGoogleAccess": true}},
+          {"$each": "ctx.ingress", "do": {"id": "firewall_${item.port}", "type": "compute.firewalls", "name": "${ctx.base}-${item.port}",
+           "create": "POST https://compute.googleapis.com/compute/v1/projects/${project}/global/firewalls",
+           "self": "https://compute.googleapis.com/compute/v1/projects/${project}/global/firewalls/${ctx.base}-${item.port}", "update": "PATCH",
+           "body": {"name": "${ctx.base}-${item.port}", "network": "${own.vpc.selfLink}", "direction": "INGRESS", "allowed": [{"IPProtocol": "tcp", "ports": ["${item.port_text}"]}], "sourceRanges": ["${item.cidr}"]}}}
+        ],
+        "attrs": {"id": "${own.vpc.selfLink}"}
+      },
+      "identity": {
+        "natives": [
+          {"id": "account", "type": "iam.serviceAccounts", "name": "${ctx.account_id}",
+           "create": "POST https://iam.googleapis.com/v1/projects/${project}/serviceAccounts",
+           "self": "https://iam.googleapis.com/v1/projects/${project}/serviceAccounts/${ctx.account_id}@${project}.iam.gserviceaccount.com", "update": "none",
+           "body": {"accountId": "${ctx.account_id}", "serviceAccount": {"displayName": "Nexo ${infra} ${name}"}}},
+          {"$each": "ctx.grants", "do": {"id": "grant_${item.index}", "type": "iam.binding", "name": "${item.role}", "op": "iam",
+           "self": "${item.resource}", "body": {"role": "${item.role}", "member": "serviceAccount:${own.account.email}"}}}
+        ],
+        "attrs": {"id": "${own.account.email}"}
+      },
+      "storage": {
+        "natives": [
+          {"id": "bucket", "type": "storage.buckets", "name": "${ctx.bucket}",
+           "create": "POST https://storage.googleapis.com/storage/v1/b?project=${project}",
+           "self": "https://storage.googleapis.com/storage/v1/b/${ctx.bucket}", "update": "PATCH",
+           "body": {"name": "${ctx.bucket}", "location": "${region}", "labels": "${labels}",
+                    "iamConfiguration": {"uniformBucketLevelAccess": {"enabled": true}, "publicAccessPrevention": "${ctx.access_prevention}"}}},
+          {"$if": "set.public", "then": {"id": "public", "type": "iam.binding", "name": "roles/storage.objectViewer", "op": "iam",
+           "self": "https://storage.googleapis.com/storage/v1/b/${ctx.bucket}/iam", "body": {"role": "roles/storage.objectViewer", "member": "allUsers"}}}
+        ],
+        "attrs": {"url": "gs://${ctx.bucket}"}
+      },
+      "queue": {
+        "natives": [
+          {"id": "topic", "type": "pubsub.topics", "name": "${ctx.base}",
+           "create": "PUT https://pubsub.googleapis.com/v1/projects/${project}/topics/${ctx.base}",
+           "self": "https://pubsub.googleapis.com/v1/projects/${project}/topics/${ctx.base}", "update": "none",
+           "body": {"labels": "${labels}"}},
+          {"id": "subscription", "type": "pubsub.subscriptions", "name": "${ctx.base}",
+           "create": "PUT https://pubsub.googleapis.com/v1/projects/${project}/subscriptions/${ctx.base}",
+           "self": "https://pubsub.googleapis.com/v1/projects/${project}/subscriptions/${ctx.base}", "update": "none",
+           "body": {"topic": "projects/${project}/topics/${ctx.base}", "ackDeadlineSeconds": 60, "labels": "${labels}"}}
+        ],
+        "attrs": {"url": "projects/${project}/topics/${ctx.base}"}
+      },
+      "database": {
+        "natives": [
+          {"id": "instance", "type": "sqladmin.instances", "name": "${ctx.base}",
+           "create": "POST https://sqladmin.googleapis.com/v1/projects/${project}/instances",
+           "self": "https://sqladmin.googleapis.com/v1/projects/${project}/instances/${ctx.base}", "update": "PATCH",
+           "body": {"name": "${ctx.base}", "databaseVersion": "${ctx.gcp_db_version}", "region": "${region}",
+                    "settings": {"tier": "${ctx.sql_tier}", "dataDiskSizeGb": "${ctx.storage_gb_text}", "userLabels": "${labels}", "backupConfiguration": {"enabled": true},
+                                 "ipConfiguration": {"ipv4Enabled": "${set.public}", "privateNetwork": {"$if": "set.network", "then": "${link.network.vpc.selfLink}"}}}}},
+          {"id": "database", "type": "sqladmin.databases", "name": "${ctx.ident}",
+           "create": "POST https://sqladmin.googleapis.com/v1/projects/${project}/instances/${ctx.base}/databases",
+           "self": "https://sqladmin.googleapis.com/v1/projects/${project}/instances/${ctx.base}/databases/${ctx.ident}", "update": "none",
+           "body": {"name": "${ctx.ident}", "instance": "${ctx.base}"}}
+        ],
+        "attrs": {"url": "${set.type}://${own.instance.ipAddresses.0.ipAddress}/${ctx.ident}", "host": "${own.instance.ipAddresses.0.ipAddress}"}
+      },
+      "cache": {
+        "natives": [
+          {"id": "cache", "type": "redis.instances", "name": "${ctx.base}",
+           "create": "POST https://redis.googleapis.com/v1/projects/${project}/locations/${region}/instances?instanceId=${ctx.base}",
+           "self": "https://redis.googleapis.com/v1/projects/${project}/locations/${region}/instances/${ctx.base}", "update": "PATCH",
+           "body": {"tier": "BASIC", "memorySizeGb": "${ctx.redis_gb}", "labels": "${labels}", "transitEncryptionMode": "SERVER_AUTHENTICATION",
+                    "authorizedNetwork": {"$if": "set.network", "then": "${link.network.vpc.selfLink}"}}}
+        ],
+        "attrs": {"url": "rediss://${own.cache.host}:${own.cache.port}"}
+      },
+      "cluster": {
+        "natives": [
+          {"id": "cluster", "type": "container.clusters", "name": "${ctx.base}",
+           "create": "POST https://container.googleapis.com/v1/projects/${project}/locations/${region}/clusters",
+           "self": "https://container.googleapis.com/v1/projects/${project}/locations/${region}/clusters/${ctx.base}", "update": "none",
+           "body": {"cluster": {"name": "${ctx.base}", "resourceLabels": "${labels}", "network": {"$if": "set.network", "then": "${link.network.vpc.selfLink}"},
+                    "nodePools": [{"name": "nodes", "initialNodeCount": "${ctx.nodes_min}", "config": {"machineType": "${ctx.vm}"},
+                                   "autoscaling": {"enabled": true, "minNodeCount": "${ctx.nodes_min}", "maxNodeCount": "${ctx.nodes_max}"}}]}}}
+        ],
+        "attrs": {"endpoint": "https://${own.cluster.endpoint}"}
+      },
+      "server": {
+        "natives": [
+          {"id": "vm", "type": "compute.instances", "name": "${ctx.base}",
+           "create": "POST https://compute.googleapis.com/compute/v1/projects/${project}/zones/${region}-a/instances",
+           "self": "https://compute.googleapis.com/compute/v1/projects/${project}/zones/${region}-a/instances/${ctx.base}", "update": "none",
+           "body": {"name": "${ctx.base}", "machineType": "zones/${region}-a/machineTypes/${ctx.vm}", "labels": "${labels}",
+                    "disks": [{"boot": true, "autoDelete": true, "initializeParams": {"sourceImage": "${set.image}"}}],
+                    "networkInterfaces": [{"network": "${link.network.vpc.selfLink}", "subnetwork": "${link.network.subnet.selfLink}"}]}}
+        ],
+        "attrs": {"address": "${own.vm.networkInterfaces.0.networkIP}"}
+      },
+      "app": {
+        "natives": [
+          {"$each": "ctx.secrets", "do": {"id": "secret_${item.key}", "type": "secretmanager.secrets", "name": "${ctx.base}-${item.key}", "op": "secret",
+           "create": "POST https://secretmanager.googleapis.com/v1/projects/${project}/secrets?secretId=${ctx.base}-${item.key}",
+           "self": "https://secretmanager.googleapis.com/v1/projects/${project}/secrets/${ctx.base}-${item.key}", "update": "none",
+           "body": {"replication": {"automatic": {}}, "labels": "${labels}"}, "value": "${item.value}"}},
+          {"id": "service", "type": "run.services", "name": "${ctx.base}",
+           "create": "POST https://run.googleapis.com/v2/projects/${project}/locations/${region}/services?serviceId=${ctx.base}",
+           "self": "https://run.googleapis.com/v2/projects/${project}/locations/${region}/services/${ctx.base}", "update": "PATCH",
+           "body": {"labels": "${labels}", "ingress": "${ctx.run_ingress}",
+                    "template": {"serviceAccount": {"$if": "set.identity", "then": "${link.identity.account.email}"},
+                                 "scaling": {"minInstanceCount": "${ctx.replicas_min}", "maxInstanceCount": "${ctx.replicas_max}"},
+                                 "containers": [{"image": "${set.image}", "ports": [{"containerPort": "${set.port}"}],
+                                                 "resources": {"limits": {"cpu": "${ctx.run_cpu}", "memory": "${ctx.ram_mi}"}},
+                                                 "env": [{"$each": "ctx.env", "do": {"name": "${item.name}", "value": "${item.value}"}},
+                                                         {"$each": "ctx.secrets", "do": {"name": "${item.name}", "valueSource": {"secretKeyRef": {"secret": "${ctx.base}-${item.key}", "version": "latest"}}}}],
+                                                 "startupProbe": {"httpGet": {"path": "${set.health}", "port": "${set.port}"}}}]}}},
+          {"$if": "set.public", "then": {"id": "public", "type": "iam.binding", "name": "roles/run.invoker", "op": "iam",
+           "self": "https://run.googleapis.com/v2/projects/${project}/locations/${region}/services/${ctx.base}", "body": {"role": "roles/run.invoker", "member": "allUsers"}}}
+        ],
+        "attrs": {"url": "${own.service.uri}"}
+      },
+      "dns": {
+        "natives": [
+          {"id": "zone", "type": "dns.managedZones", "name": "${ctx.zone_id}",
+           "create": "POST https://dns.googleapis.com/dns/v1/projects/${project}/managedZones",
+           "self": "https://dns.googleapis.com/dns/v1/projects/${project}/managedZones/${ctx.zone_id}", "update": "PATCH",
+           "body": {"name": "${ctx.zone_id}", "dnsName": "${ctx.zone}.", "description": "Nexo ${infra}", "labels": "${labels}"}},
+          {"id": "record", "type": "dns.resourceRecordSets", "name": "${ctx.domain}",
+           "create": "POST https://dns.googleapis.com/dns/v1/projects/${project}/managedZones/${ctx.zone_id}/rrsets",
+           "self": "https://dns.googleapis.com/dns/v1/projects/${project}/managedZones/${ctx.zone_id}/rrsets/${ctx.domain}./CNAME", "update": "PATCH",
+           "body": {"name": "${ctx.domain}.", "type": "CNAME", "ttl": 300, "rrdatas": ["ghs.googlehosted.com."]}},
+          {"id": "mapping", "type": "run.domainmappings", "name": "${ctx.domain}",
+           "create": "POST https://run.googleapis.com/apis/domains.cloudrun.com/v1/namespaces/${project}/domainmappings",
+           "self": "https://run.googleapis.com/apis/domains.cloudrun.com/v1/namespaces/${project}/domainmappings/${ctx.domain}", "update": "none",
+           "body": {"apiVersion": "domains.cloudrun.com/v1", "kind": "DomainMapping", "metadata": {"name": "${ctx.domain}", "namespace": "${project}"},
+                    "spec": {"routeName": "${res.${ctx.target}.service.name}", "certificateMode": "${ctx.cert_mode}"}}}
+        ],
+        "attrs": {"url": "${ctx.scheme_dns}://${ctx.domain}"}
+      },
+      "native": {
+        "natives": [
+          {"id": "resource", "type": "${ctx.native_type}", "name": "${name}", "create": "POST ${ctx.native_url}", "self": "${ctx.native_url}/${name}", "update": "PATCH", "body": "${ctx.native_body}"}
+        ],
+        "attrs": {"id": "${own.resource.selfLink}"}
+      }
+    },
+
+    "k8s": {
+      "network": {
+        "natives": [
+          {"id": "policy", "type": "NetworkPolicy", "api": "networking.k8s.io/v1", "plural": "networkpolicies", "name": "${ctx.base}",
+           "body": {"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"podSelector": {}, "policyTypes": ["Ingress"],
+                             "ingress": [{"$if": "ctx.public_net", "then": {}}, {"$each": "ctx.ingress", "do": {"ports": [{"protocol": "TCP", "port": "${item.port}"}]}}]}}}
+        ],
+        "attrs": {"id": "${ctx.base}"}
+      },
+      "identity": {
+        "natives": [
+          {"id": "account", "type": "ServiceAccount", "api": "v1", "plural": "serviceaccounts", "name": "${ctx.base}",
+           "body": {"apiVersion": "v1", "kind": "ServiceAccount", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"}}},
+          {"$if": "ctx.grants", "then": {"id": "role", "type": "Role", "api": "rbac.authorization.k8s.io/v1", "plural": "roles", "name": "${ctx.base}",
+           "body": {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "rules": [{"$each": "ctx.grants", "do": {"apiGroups": ["${item.group}"], "resources": ["${item.plural}"], "resourceNames": ["${item.target}"], "verbs": "${item.verbs}"}}]}}},
+          {"$if": "ctx.grants", "then": {"id": "binding", "type": "RoleBinding", "api": "rbac.authorization.k8s.io/v1", "plural": "rolebindings", "name": "${ctx.base}",
+           "body": {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "RoleBinding", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "${ctx.base}"},
+                    "subjects": [{"kind": "ServiceAccount", "name": "${ctx.base}", "namespace": "${namespace}"}]}}}
+        ],
+        "attrs": {"id": "${ctx.base}"}
+      },
+      "storage": {
+        "natives": [
+          {"id": "volume", "type": "PersistentVolumeClaim", "api": "v1", "plural": "persistentvolumeclaims", "name": "${ctx.base}",
+           "body": {"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "${ctx.size_gi}"}}}}}
+        ],
+        "attrs": {"url": "pvc://${namespace}/${ctx.base}"}
+      },
+      "queue": {
+        "natives": [
+          {"id": "set", "type": "StatefulSet", "api": "apps/v1", "plural": "statefulsets", "name": "${ctx.base}",
+           "body": {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"serviceName": "${ctx.base}", "replicas": 1, "selector": {"matchLabels": {"app": "${ctx.base}"}},
+                             "template": {"metadata": {"labels": {"app": "${ctx.base}"}}, "spec": {"containers": [{"name": "redis", "image": "redis:7", "ports": [{"containerPort": 6379}]}]}}}}},
+          {"id": "service", "type": "Service", "api": "v1", "plural": "services", "name": "${ctx.base}",
+           "body": {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"selector": {"app": "${ctx.base}"}, "ports": [{"port": 6379, "targetPort": 6379}]}}}
+        ],
+        "attrs": {"url": "redis://${ctx.base}.${namespace}.svc.cluster.local:6379/${ctx.ident}"}
+      },
+      "cache": {
+        "natives": [
+          {"id": "set", "type": "StatefulSet", "api": "apps/v1", "plural": "statefulsets", "name": "${ctx.base}",
+           "body": {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"serviceName": "${ctx.base}", "replicas": 1, "selector": {"matchLabels": {"app": "${ctx.base}"}},
+                             "template": {"metadata": {"labels": {"app": "${ctx.base}"}}, "spec": {"containers": [{"name": "redis", "image": "redis:7", "ports": [{"containerPort": 6379}],
+                                          "resources": {"limits": {"memory": "${ctx.redis_memory}"}}}]}}}}},
+          {"id": "service", "type": "Service", "api": "v1", "plural": "services", "name": "${ctx.base}",
+           "body": {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"selector": {"app": "${ctx.base}"}, "ports": [{"port": 6379, "targetPort": 6379}]}}}
+        ],
+        "attrs": {"url": "redis://${ctx.base}.${namespace}.svc.cluster.local:6379"}
+      },
+      "database": {
+        "natives": [
+          {"id": "set", "type": "StatefulSet", "api": "apps/v1", "plural": "statefulsets", "name": "${ctx.base}",
+           "body": {"apiVersion": "apps/v1", "kind": "StatefulSet", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"serviceName": "${ctx.base}", "replicas": 1, "selector": {"matchLabels": {"app": "${ctx.base}"}},
+                             "template": {"metadata": {"labels": {"app": "${ctx.base}"}},
+                                          "spec": {"containers": [{"name": "${set.type}", "image": "${ctx.k8s_db_image}", "ports": [{"containerPort": "${ctx.db_port}"}],
+                                                                   "env": [{"name": "${ctx.k8s_db_name_var}", "value": "${ctx.ident}"}, {"name": "${ctx.k8s_db_trust_var}", "value": "${ctx.k8s_db_trust}"}],
+                                                                   "resources": {"limits": {"memory": "${ctx.db_memory}"}}}]}},
+                             "volumeClaimTemplates": [{"metadata": {"name": "data"}, "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "${ctx.storage_gi}"}}}}]}}},
+          {"id": "service", "type": "Service", "api": "v1", "plural": "services", "name": "${ctx.base}",
+           "body": {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"selector": {"app": "${ctx.base}"}, "ports": [{"port": "${ctx.db_port}", "targetPort": "${ctx.db_port}"}]}}}
+        ],
+        "attrs": {"url": "${set.type}://${ctx.base}.${namespace}.svc.cluster.local:${ctx.db_port}/${ctx.ident}", "host": "${ctx.base}.${namespace}.svc.cluster.local"}
+      },
+      "app": {
+        "natives": [
+          {"$if": "ctx.secrets", "then": {"id": "secrets", "type": "Secret", "api": "v1", "plural": "secrets", "name": "${ctx.base}",
+           "body": {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"}, "type": "Opaque",
+                    "stringData": "${ctx.secret_data}"}}},
+          {"id": "deployment", "type": "Deployment", "api": "apps/v1", "plural": "deployments", "name": "${ctx.base}",
+           "body": {"apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"replicas": "${ctx.replicas_min}", "selector": {"matchLabels": {"app": "${ctx.base}"}},
+                             "strategy": {"type": "RollingUpdate", "rollingUpdate": {"maxUnavailable": 0, "maxSurge": 1}},
+                             "template": {"metadata": {"labels": {"app": "${ctx.base}"}},
+                                          "spec": {"serviceAccountName": {"$if": "set.identity", "then": "${link.identity.account.metadata.name}"},
+                                                   "containers": [{"name": "${name}", "image": "${set.image}", "ports": [{"containerPort": "${set.port}"}],
+                                                                   "env": [{"$each": "ctx.env", "do": {"name": "${item.name}", "value": "${item.value}"}},
+                                                                           {"$each": "ctx.secrets", "do": {"name": "${item.name}", "valueFrom": {"secretKeyRef": {"name": "${ctx.base}", "key": "${item.name}"}}}}],
+                                                                   "resources": {"requests": {"cpu": "${ctx.k8s_cpu}", "memory": "${ctx.ram_mi}"}, "limits": {"memory": "${ctx.ram_mi}"}},
+                                                                   "readinessProbe": {"httpGet": {"path": "${set.health}", "port": "${set.port}"}}}]}}}}},
+          {"id": "service", "type": "Service", "api": "v1", "plural": "services", "name": "${ctx.base}",
+           "body": {"apiVersion": "v1", "kind": "Service", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"type": "${ctx.k8s_service_type}", "selector": {"app": "${ctx.base}"}, "ports": [{"port": 80, "targetPort": "${set.port}"}]}}},
+          {"$if": "ctx.autoscale", "then": {"id": "autoscaler", "type": "HorizontalPodAutoscaler", "api": "autoscaling/v2", "plural": "horizontalpodautoscalers", "name": "${ctx.base}",
+           "body": {"apiVersion": "autoscaling/v2", "kind": "HorizontalPodAutoscaler", "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}"},
+                    "spec": {"scaleTargetRef": {"apiVersion": "apps/v1", "kind": "Deployment", "name": "${ctx.base}"}, "minReplicas": "${ctx.replicas_min}", "maxReplicas": "${ctx.replicas_max}",
+                             "metrics": [{"type": "Resource", "resource": {"name": "cpu", "target": {"type": "Utilization", "averageUtilization": "${ctx.cpu_target}"}}}]}}}}
+        ],
+        "attrs": {"url": "http://${own.service.status.loadBalancer.ingress.0.ip}"}
+      },
+      "dns": {
+        "natives": [
+          {"id": "ingress", "type": "Ingress", "api": "networking.k8s.io/v1", "plural": "ingresses", "name": "${ctx.base}",
+           "body": {"apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
+                    "metadata": {"name": "${ctx.base}", "namespace": "${namespace}", "labels": "${k8s_labels}", "annotations": {"$if": "ctx.https", "then": {"cert-manager.io/cluster-issuer": "letsencrypt"}}},
+                    "spec": {"tls": [{"$if": "ctx.https", "then": {"hosts": ["${ctx.domain}"], "secretName": "${ctx.base}-tls"}}],
+                             "rules": [{"host": "${ctx.domain}", "http": {"paths": [{"path": "/", "pathType": "Prefix", "backend": {"service": {"name": "${res.${ctx.target}.service.metadata.name}", "port": {"number": 80}}}}]}}]}}}
+        ],
+        "attrs": {"url": "${ctx.scheme_dns}://${ctx.domain}"}
+      },
+      "native": {
+        "natives": [
+          {"id": "resource", "type": "${ctx.native_type}", "api": "${ctx.native_api}", "plural": "${ctx.native_plural}", "name": "${name}", "body": "${ctx.native_body}"}
+        ],
+        "attrs": {"id": "${name}"}
+      }
+    }
+  }
+}

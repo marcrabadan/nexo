@@ -20,6 +20,9 @@ aes-gcm = { version = "0.10", default-features = false, features = ["aes", "allo
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
 getrandom = "0.2"
 ureq = { version = "2", default-features = false, features = ["tls", "native-certs"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+rustls-native-certs = "0.7"
 libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 hmac = "0.12"
 sha2 = "0.10"

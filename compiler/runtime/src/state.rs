@@ -334,6 +334,21 @@ pub fn pending_text() -> String {
     String::new()
 }
 
+/// Text of the pending failure without the place: what went wrong and how
+/// to fix it (the dead letters of nexo.stream, D117).
+pub fn pending_plain() -> String {
+    let (d, err) = with_task(|s| (s.diag.take(), s.error.take()));
+    if let Some((d, _)) = d {
+        return d.text();
+    }
+    if let Some(err) = err {
+        if let Some(Obj::Error(e)) = err.get() {
+            return unhandled_text(&e.kind, &e.message, e.fix);
+        }
+    }
+    String::new()
+}
+
 /// Show the pending failure on stderr (after flushing stdout).
 pub fn report_pending() {
     flush();

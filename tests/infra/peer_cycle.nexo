@@ -1,0 +1,13 @@
+infra a:
+    cloud = "k8s"
+    app api:
+        image = "a:1"
+        env:
+            OTHER = b.api.url
+
+infra b:
+    cloud = "k8s"
+    app api:
+        image = "b:1"
+        env:
+            OTHER = a.api.url

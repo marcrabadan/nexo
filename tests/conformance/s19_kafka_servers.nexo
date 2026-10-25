@@ -1,0 +1,1 @@
+orders = kafka("orders", servers: "broker-1:9092")

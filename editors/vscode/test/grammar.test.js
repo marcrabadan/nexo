@@ -76,6 +76,12 @@ function programs(dir, found = []) {
     ['    get "/users/{id}"(id: int):', [["get", "keyword.other.route.nexo"]]],
     ['    fake ask returns "positive"', [["fake", "keyword.other.fake.nexo"], ["returns", "keyword.other.fake.nexo"]]],
     ['summary = ask("Summarise this text", text)', [["ask", "support.function.builtin.nexo"]]],
+    ['infra shop:', [["infra", "keyword.other.module.nexo"]]],
+    ['pipeline main:', [["pipeline", "keyword.other.module.nexo"]]],
+    ['    step build:', [["step", "keyword.other.block.nexo"]]],
+    ['    trigger push to main', [["trigger", "keyword.other.block.nexo"]]],
+    ['    output url = api.url', [["output", "keyword.other.block.nexo"]]],
+    ['        image = build_image("shop-api")', [["build_image", "support.function.builtin.nexo"]]],
   ];
   for (const [line, expected] of cases) {
     const tokens = tokenize(g, line);

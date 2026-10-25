@@ -104,8 +104,54 @@ class Linter:
         top = Scope(self.program.body, None, True)
         self.block(self.program.body, top)
         self.use_lines()
+        self.expired_flags()
+        self.privacy_settings()
         self.findings.sort(key=lambda f: (f.span.line, f.span.col, f.key))
         return self.findings
+
+    def privacy_settings(self) -> None:
+        """A type with @personal or @private fields and no keep or purpose
+        (section 23, rule 1)."""
+        for s in self.program.body:
+            if not (isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and isinstance(s.expr.func, A.Name)
+                    and s.expr.func.name == "__privacy_type"):
+                continue
+            name = s.expr.args[0].value.name
+            if not s.expr.args[2].value.pairs:
+                continue
+            keys = set()
+            for entry in s.expr.args[1].value.items:
+                head = entry.args[0].value.items[0].items
+                if len(head) == 1 and isinstance(head[0], A.Str):
+                    keys.add("".join(p for p in head[0].parts if isinstance(p, str)))
+            for key in ("keep", "purpose"):
+                if key not in keys:
+                    self.add(f"privacy_{key}", s.expr.args[0].value.span, type=name)
+
+    def expired_flags(self) -> None:
+        """A flag whose `expires` date has passed (section 22, rule 3);
+        the day is the one in UTC."""
+        import datetime as dt
+        today = dt.datetime.now(dt.timezone.utc).date()
+        for s in self.program.body:
+            if not (isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and isinstance(s.expr.func, A.Name)
+                    and s.expr.func.name == "__flags"):
+                continue
+            for entry in s.expr.args[0].value.items:
+                head = entry.args[0].value.items[0].items
+                options = entry.args[2].value
+                if len(head) != 1 or not isinstance(head[0], A.Str):
+                    continue
+                for k, v in options.pairs:
+                    if k.parts != ["expires"] or not (isinstance(v, A.Call) and isinstance(v.func, A.Name)
+                                                      and v.func.name == "date" and len(v.args) == 3):
+                        continue
+                    try:
+                        day = dt.date(*(int(a.value.text) for a in v.args))
+                    except (ValueError, AttributeError):
+                        continue
+                    if day < today:
+                        self.add("flag_expired", head[0].span, name="".join(head[0].parts), date=day.isoformat())
 
     def add(self, rule: str, span: Span, fix: Fix | None = None, **args) -> None:
         self.findings.append(Finding(rule, span, args, fix))

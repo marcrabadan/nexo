@@ -1,0 +1,20 @@
+infra web:
+    cloud = "k8s"
+    namespace = "web"
+    app api:
+        image = "shop-api:1.0"
+
+stage prod:
+    replicas = 2
+
+pipeline release:
+    version = "1.4.0"
+
+    step build:
+        image = build_image("shop-api")
+
+    step review:
+        comment(plan(stage: "prod", image: image))
+
+    step prod:
+        apply(stage: "prod", image: image)

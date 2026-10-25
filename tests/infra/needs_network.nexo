@@ -1,0 +1,6 @@
+infra shop:
+    cloud = "aws"
+    region = "eu-west-1"
+    budget = 50 EUR per month
+    database customers:
+        size = large

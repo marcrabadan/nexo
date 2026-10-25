@@ -1,0 +1,4 @@
+Error en peer_cycle.nexo, línea 1:
+  infra a:
+  ^^^^^
+Las infras a, b usan datos unas de otras en círculo. Quita una de las referencias: una infra solo usa datos de las que se aplican antes.

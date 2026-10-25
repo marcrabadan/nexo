@@ -1,0 +1,4 @@
+Error en s23_type_setting.nexo, línea 4:
+  kept = 5 years after name
+  ^^^^
+"kept" no es un ajuste de un type. Un type solo declara keep = duración after campo y purpose = "finalidad".

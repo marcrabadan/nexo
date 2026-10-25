@@ -29,6 +29,31 @@ fn v(tag: u64, bits: u64) -> V {
 
 /// Give an owned result to the compiled code (NONE when it failed).
 #[inline]
+/// A step of a pipeline whose source is a stream is kept for its windows
+/// (D117).
+fn stream_op(src: V, each: bool, op: impl Fn(V) -> R<Val> + Send + Sync + 'static) -> Option<V> {
+    crate::stream::push(src, std::sync::Arc::new(op), each).map(|x| x.into_raw())
+}
+
+/// `window 1m`, `sliding 5m` and `session 30s` after a stream (section 19).
+#[no_mangle]
+pub extern "C" fn nx_pipe_window(st_: u64, sb: u64, nt: u64, nb: u64, kind: u32, step: u32, nspan: u32) -> V {
+    let kind = match kind {
+        0 => "window",
+        1 => "sliding",
+        _ => "session",
+    };
+    ret(crate::stream::window(v(st_, sb), v(nt, nb), kind, step, nspan))
+}
+
+/// A call step: a stream pipeline only takes the steps of section 6.
+#[no_mangle]
+pub extern "C" fn nx_pipe_check_call(st_: u64, sb: u64, step: u32) {
+    if crate::stream::query_of(v(st_, sb)).is_some() {
+        diag(Diagnostic::new_spanless("stream_call"), step);
+    }
+}
+
 fn ret(r: R<Val>) -> V {
     match r {
         Ok(v) => v.into_raw(),
@@ -116,8 +141,16 @@ pub extern "C" fn nx_too_deep() {
 pub extern "C" fn nx_exit(code: i32) -> ! {
     // the program ends when every spawned task has ended
     crate::sync::wait_all();
-    // then its servers answer until it is stopped (D102)
+    // then its servers answer and its streams are read until it is
+    // stopped (D102, D117)
     let mut code = code;
+    if code == 0 && crate::stream::listening() && !crate::stream::in_test_mode() {
+        let file = state::program().file.to_string();
+        if !crate::web::has_servers() {
+            crate::stream::listen_forever(&file);
+        }
+        std::thread::spawn(move || crate::stream::listen_forever(&file));
+    }
     if code == 0 && !crate::web::serve_forever() {
         code = 1;
     }
@@ -251,7 +284,16 @@ pub unsafe extern "C" fn nx_named(ptr: *const u8, len: usize) -> V {
 /// with the database and end.
 #[no_mangle]
 pub extern "C" fn nx_db_command() -> ! {
-    let code = crate::db::run_command();
+    // the command of a module that compiled the program alone (D101, D116)
+    let code = if std::env::var_os("NEXO_CI_COMMAND").is_some() {
+        crate::ci::run_command()
+    } else if std::env::var_os("NEXO_INFRA_COMMAND").is_some() {
+        crate::infra_cloud::run_command()
+    } else if std::env::var_os("NEXO_PRIVACY_FILE").is_some() {
+        crate::privacy::run_command()
+    } else {
+        crate::db::run_command()
+    };
     nx_exit(code)
 }
 
@@ -1002,6 +1044,10 @@ pub extern "C" fn nx_no_match(t: u64, b: u64, span: u32) {
 
 #[no_mangle]
 pub extern "C" fn nx_pipe_where(st_: u64, sb: u64, ft: u64, fb: u64, step: u32, expr: u32) -> V {
+    let f = Val::from(v(ft, fb));
+    if let Some(q) = stream_op(v(st_, sb), false, move |x| Ok(pipe::where_(x, f.v(), step, expr))) {
+        return q;
+    }
     pipe::where_(v(st_, sb), v(ft, fb), step, expr).into_raw()
 }
 
@@ -1021,6 +1067,10 @@ pub unsafe extern "C" fn nx_pipe_where_sql(
     expr: u32,
 ) -> V {
     let src = v(st_, sb);
+    let f = Val::from(v(ft, fb));
+    if let Some(q) = stream_op(src, false, move |x| Ok(pipe::where_(x, f.v(), step, expr))) {
+        return q;
+    }
     if crate::db::query_of(src).is_some() {
         let plan = crate::db::parse_plan(text(plan, plen));
         let leaves = values(leaves, n);
@@ -1047,6 +1097,10 @@ pub unsafe extern "C" fn nx_pipe_sort_col(
     step: u32,
     expr: u32,
 ) -> V {
+    let f = Val::from(v(ft, fb));
+    if let Some(q) = stream_op(v(st_, sb), false, move |x| Ok(pipe::sort(x, f.v(), desc != 0, step, expr))) {
+        return q;
+    }
     if let Some(q) = crate::db::pipe_sort(v(st_, sb), text(name, len), desc != 0) {
         return q.into_raw();
     }
@@ -1055,6 +1109,10 @@ pub unsafe extern "C" fn nx_pipe_sort_col(
 
 #[no_mangle]
 pub extern "C" fn nx_pipe_map(st_: u64, sb: u64, ft: u64, fb: u64, step: u32, expr: u32) -> V {
+    let f = Val::from(v(ft, fb));
+    if let Some(q) = stream_op(v(st_, sb), false, move |x| Ok(pipe::map(x, f.v(), step, expr))) {
+        return q;
+    }
     pipe::map(v(st_, sb), v(ft, fb), step, expr).into_raw()
 }
 
@@ -1062,16 +1120,28 @@ pub extern "C" fn nx_pipe_map(st_: u64, sb: u64, ft: u64, fb: u64, step: u32, ex
 pub unsafe extern "C" fn nx_pipe_pick(st_: u64, sb: u64, fns: *const V, nm: *const NameRef, n: u64, step: u32, expr: u32) -> V {
     let fns = own_all(values(fns, n));
     let cols: Vec<&'static str> = names(nm, n).into_iter().map(|x| x.unwrap_or("")).collect();
+    let (f2, c2) = (fns.clone(), cols.clone());
+    if let Some(q) = stream_op(v(st_, sb), false, move |x| Ok(pipe::pick(x, f2.clone(), c2.clone(), step, expr))) {
+        return q;
+    }
     pipe::pick(v(st_, sb), fns, cols, step, expr).into_raw()
 }
 
 #[no_mangle]
 pub extern "C" fn nx_pipe_take(st_: u64, sb: u64, nt: u64, nb: u64, step: u32, nspan: u32) -> V {
+    let n = Val::from(v(nt, nb));
+    if let Some(q) = stream_op(v(st_, sb), false, move |x| pipe::take(x, n.v(), step, nspan)) {
+        return q;
+    }
     ret(pipe::take(v(st_, sb), v(nt, nb), step, nspan))
 }
 
 #[no_mangle]
 pub extern "C" fn nx_pipe_sort(st_: u64, sb: u64, ft: u64, fb: u64, desc: u32, step: u32, expr: u32) -> V {
+    let f = Val::from(v(ft, fb));
+    if let Some(q) = stream_op(v(st_, sb), false, move |x| Ok(pipe::sort(x, f.v(), desc != 0, step, expr))) {
+        return q;
+    }
     pipe::sort(v(st_, sb), v(ft, fb), desc != 0, step, expr).into_raw()
 }
 
@@ -1086,26 +1156,51 @@ pub unsafe extern "C" fn nx_pipe_group(
     step: u32,
     expr: u32,
 ) -> V {
+    let (f, k) = (Val::from(v(ft, fb)), text(key, len));
+    if let Some(q) = stream_op(v(st_, sb), false, move |x| pipe::group(x, f.v(), k, step, expr)) {
+        return q;
+    }
     ret(pipe::group(v(st_, sb), v(ft, fb), text(key, len), step, expr))
 }
 
 #[no_mangle]
 pub extern "C" fn nx_pipe_each(st_: u64, sb: u64, ft: u64, fb: u64, step: u32, expr: u32) -> V {
+    let f = Val::from(v(ft, fb));
+    let each = move |x: V| {
+        // count, sum or avg give one value: each gets it once (D117)
+        if matches!(x.get(), Some(Obj::List(_) | Obj::Lazy(_))) {
+            pipe::each(x, f.v(), step, expr)
+        } else {
+            pipe::apply(f.v(), x, expr).map(|_| Val::none())
+        }
+    };
+    if let Some(q) = stream_op(v(st_, sb), true, each) {
+        return q;
+    }
     ret(pipe::each(v(st_, sb), v(ft, fb), step, expr))
 }
 
 #[no_mangle]
 pub extern "C" fn nx_pipe_count(t: u64, b: u64, span: u32) -> V {
+    if let Some(q) = stream_op(v(t, b), false, move |x| pipe::count(x, span)) {
+        return q;
+    }
     ret(pipe::count(v(t, b), span))
 }
 
 #[no_mangle]
 pub extern "C" fn nx_pipe_sum(t: u64, b: u64, span: u32) -> V {
+    if let Some(q) = stream_op(v(t, b), false, move |x| pipe::sum(x, span)) {
+        return q;
+    }
     ret(pipe::sum(v(t, b), span))
 }
 
 #[no_mangle]
 pub extern "C" fn nx_pipe_avg(t: u64, b: u64, span: u32) -> V {
+    if let Some(q) = stream_op(v(t, b), false, move |x| pipe::avg(x, span)) {
+        return q;
+    }
     ret(pipe::avg(v(t, b), span))
 }
 
@@ -1126,6 +1221,10 @@ pub unsafe extern "C" fn nx_pipe_agg(
         1 => "count",
         _ => "avg",
     };
+    let (f, c) = (Val::from(v(ft, fb)), text(col, len));
+    if let Some(q) = stream_op(v(gt, gb), false, move |x| pipe::aggregate(x, kind, f.v(), c, span, expr)) {
+        return q;
+    }
     ret(pipe::aggregate(v(gt, gb), kind, v(ft, fb), text(col, len), span, expr))
 }
 
@@ -1475,9 +1574,20 @@ pub extern "C" fn nx_run_tests() -> ! {
     }
     for (name, f) in tests {
         crate::library::clear_fakes();
-        drop(call::call_value(f.v(), &[], 0));
+        crate::stream::reset_memory();
+        let r = call::call_value(f.v(), &[], 0);
+        if r.is_ok() {
+            crate::stream::drain();
+        }
+        drop(r);
         crate::library::clear_fakes();
         unsafe { nx_test_result(name.as_ptr(), name.len()) };
     }
     nx_test_finish()
+}
+
+/// `nexo test`: a message sent is delivered at once (D117).
+#[no_mangle]
+pub extern "C" fn nx_stream_test_mode() {
+    crate::stream::set_test_mode();
 }

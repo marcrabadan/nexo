@@ -1,0 +1,4 @@
+Error en budget.nexo, línea 4:
+  budget = 50 EUR per month
+  ^^^^^^
+El coste estimado de shop (442.60 EUR al mes) supera su presupuesto (50.00 EUR al mes). Reduce tamaños o réplicas, o sube budget.

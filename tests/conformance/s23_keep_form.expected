@@ -1,0 +1,4 @@
+Error en s23_keep_form.nexo, línea 4:
+  keep = 5 years
+  ^^^^
+keep se escribe como una duración después de un campo de fecha. Escríbelo así: keep = 5 years after last_activity, con last_activity un campo date o time que no sea @private.

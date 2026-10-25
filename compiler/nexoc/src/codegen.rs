@@ -1817,6 +1817,9 @@ impl<'a> Gen<'a> {
         }
         let root = self.res.frames[GLOBAL_FRAME].root;
         self.enter_scope(root);
+        if self.opts.test_mode {
+            self.emit("call void @nx_stream_test_mode()");
+        }
         self.block(&program.body)?;
         // the program's own loop variables and cells
         let release = self.frame_release_text();
@@ -2023,7 +2026,7 @@ impl<'a> Gen<'a> {
             }
             StmtKind::Use { what, .. } if what == "nexo.sync" => {}
             StmtKind::Use { lang: Some(l), .. } if l == "c" || l == "python" => {}
-            StmtKind::Use { what, .. } if matches!(what.as_str(), "nexo.db" | "nexo.ai" | "nexo.web") => {}
+            StmtKind::Use { what, .. } if matches!(what.as_str(), "nexo.db" | "nexo.ai" | "nexo.web" | "nexo.stream" | "nexo.infra" | "nexo.ci") => {}
             StmtKind::Use { what, .. } => return Err(not_supported(format!("\"use {what}\""), s.span)),
             StmtKind::Spawn { call } => {
                 let ExprKind::Call { func, args } = &call.kind else { unreachable!() };
@@ -4362,8 +4365,29 @@ impl<'a> Gen<'a> {
             let node = Node::Step(e.id, i);
             let slot = self.spill(&v);
             let r = match step.kind {
+                StepKind::Window | StepKind::Sliding | StepKind::Session => {
+                    let x = step.expr.as_ref().unwrap();
+                    let n = self.expr(x, false)?;
+                    let cur = self.load(&slot);
+                    let ts = self.tb(&cur);
+                    let tn = self.tb(&n);
+                    let nsp = self.span_id(x.span);
+                    let k = match step.kind {
+                        StepKind::Window => 0,
+                        StepKind::Sliding => 1,
+                        _ => 2,
+                    };
+                    let r = self.call_v("nx_pipe_window", &format!("{ts}, {tn}, i32 {k}, i32 {ssp}, i32 {nsp}"));
+                    self.check();
+                    self.drop_val(&n);
+                    self.owned(r)
+                }
                 StepKind::Call => {
                     let x = step.expr.as_ref().unwrap();
+                    let cur = self.load(&slot);
+                    let tc = self.tb(&cur);
+                    self.emit(&format!("call void @nx_pipe_check_call({tc}, i32 {ssp})"));
+                    self.check();
                     let cur = self.load(&slot);
                     match &x.kind {
                         ExprKind::Call { func, args } => self.call_expr(x, func, args, Some(cur), step.span)?,
@@ -4689,6 +4713,9 @@ declare %V @nx_builtin(i32)
 declare %V @nx_named(ptr, i64)
 declare %V @nx_clock(ptr, i64)
 declare void @nx_db_command()
+declare void @nx_stream_test_mode()
+declare void @nx_pipe_check_call(i64, i64, i32)
+declare %V @nx_pipe_window(i64, i64, i64, i64, i32, i32, i32)
 declare %V @nx_pipe_where_sql(i64, i64, i64, i64, ptr, i64, ptr, i64, i32, i32)
 declare %V @nx_pipe_sort_col(i64, i64, i64, i64, i32, ptr, i64, i32, i32)
 declare %V @nx_call_fake(ptr, i64, i64, i64, ptr, ptr, i64, i32)

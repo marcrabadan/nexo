@@ -487,6 +487,9 @@ dependencies = [
  "num-integer",
  "num-traits",
  "regex",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pemfile",
  "sha2",
  "ureq",
 ]
@@ -496,6 +499,7 @@ name = "nexoc"
 version = "0.1.0"
 dependencies = [
  "nexo-diag",
+ "nexo-runtime",
 ]
 
 [[package]]

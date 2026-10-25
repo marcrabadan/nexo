@@ -68,6 +68,10 @@ pub enum StepKind {
     Sort,
     Take,
     Each,
+    /// `window 1m`, `sliding 5m`, `session 30s` after a stream (section 19)
+    Window,
+    Sliding,
+    Session,
     Call,
 }
 
@@ -84,6 +88,9 @@ impl StepKind {
             StepKind::Sort => "sort",
             StepKind::Take => "take",
             StepKind::Each => "each",
+            StepKind::Window => "window",
+            StepKind::Sliding => "sliding",
+            StepKind::Session => "session",
             StepKind::Call => "call",
         }
     }
@@ -100,6 +107,9 @@ impl StepKind {
             "sort" => StepKind::Sort,
             "take" => StepKind::Take,
             "each" => StepKind::Each,
+            "window" => StepKind::Window,
+            "sliding" => StepKind::Sliding,
+            "session" => StepKind::Session,
             _ => return None,
         })
     }

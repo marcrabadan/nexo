@@ -1,0 +1,4 @@
+Error en policy_public.nexo, línea 6:
+  storage photos:
+  ^^^^^^^
+La política de shop prohíbe un storage público, y photos lo es. Escribe public = false en photos.

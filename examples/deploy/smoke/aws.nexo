@@ -1,0 +1,12 @@
+# A smoke test of nexo.infra on a real AWS account: a bucket and a queue,
+# which cost almost nothing. Bucket names are global, so rename the infra
+# (smoke_aws_yourname) before applying.
+#     export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+#     nexo plan aws.nexo && nexo apply aws.nexo && nexo drift aws.nexo
+#     nexo destroy aws.nexo
+
+infra smoke_aws:
+    cloud = "aws"
+    region = "eu-west-1"
+    storage files
+    queue jobs

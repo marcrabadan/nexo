@@ -25,6 +25,7 @@ mod lint;
 mod lsp;
 mod narrow;
 mod parser;
+mod phase5;
 mod prove;
 mod resolve;
 mod typecheck;
@@ -34,11 +35,11 @@ use std::process::{Command, ExitCode, Stdio};
 
 use nexo_diag::{msg, render, Diagnostic, Lang};
 
-fn usage() -> &'static str {
+pub fn usage() -> &'static str {
     if nexo_diag::lang() == Lang::En {
-        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage]"
+        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]"
     } else {
-        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage]"
+        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [archivo.nexo] [--stage etapa] [--yes] | import nube recurso id [archivo.nexo] | ci run [pipeline] [archivo.nexo] [--step paso | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [archivo.nexo] | flags set nombre valor [archivo.nexo] [--stage etapa] | privacy report [archivo.nexo]]"
     }
 }
 
@@ -152,6 +153,80 @@ fn run_db(args: &[String]) -> u8 {
     }
     if allow_drop {
         cmd.env("NEXO_DB_ALLOW_DROP", "1");
+    }
+    let status = cmd.status();
+    let _ = std::fs::remove_dir_all(&dir);
+    match status {
+        Ok(s) => exit_code(s),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
+    }
+}
+
+/// Compile only the types of a program and the `keep` calls (`__db_table`
+/// and the like), run it with `env` set, and return its exit code: the
+/// runtime carries out the command of a module (D101, D116).
+pub fn module_command(file: &str, env: &[(&str, String)], keep: &[&str], literals: bool, fns: bool) -> u8 {
+    let source = match read_source(file) {
+        Ok(s) => s,
+        Err(e) => {
+            eprint!("{e}");
+            return 1;
+        }
+    };
+    let fail = |d: Diagnostic| render(file, &source, d.span, &d.text());
+    let mut db_path = None;
+    let compiled = (|| {
+        let mut program = parser::parse(&source).map_err(fail)?;
+        checker::check(&program).map_err(fail)?;
+        resolve::resolve(&program).map_err(fail)?;
+        db_path = connect_literal(&program);
+        program.body.retain(|s| match &s.kind {
+            ast::StmtKind::Type(_) | ast::StmtKind::Trait { .. } | ast::StmtKind::Use { .. } => true,
+            ast::StmtKind::Fn(_) => fns,
+            ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call { func, .. }, .. }) => {
+                matches!(&func.kind, ast::ExprKind::Name(n) if keep.contains(&n.as_str()))
+            }
+            ast::StmtKind::Assign { target: ast::Expr { kind: ast::ExprKind::Name(_), .. }, op: "=", value, .. } => {
+                literals && phase5::literal(value)
+            }
+            _ => false,
+        });
+        let res = resolve::resolve(&program).map_err(fail)?;
+        typecheck::check(&program, &res).map_err(fail)?;
+        let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
+        let opts = codegen::Options {
+            file: file.to_string(),
+            lang,
+            test_mode: false,
+            trust_ensure: false,
+            repl_line: 0,
+            shown_source: None,
+            db_command: true,
+        };
+        codegen::Gen::new(&source, &res, &opts).program(&program).map_err(fail)
+    })();
+    let ir = match compiled {
+        Ok(ir) => ir,
+        Err(text) => {
+            eprint!("{text}");
+            return 1;
+        }
+    };
+    let dir = work_dir();
+    let exe = dir.join("module");
+    if let Err(e) = link(&ir, &exe, false) {
+        eprintln!("Error: {e}");
+        return 1;
+    }
+    let mut cmd = Command::new(&exe);
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    if let Some(p) = &db_path {
+        cmd.env("NEXO_DB_PATH", p);
     }
     let status = cmd.status();
     let _ = std::fs::remove_dir_all(&dir);
@@ -431,7 +506,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn read_source(path: &str) -> Result<String, String> {
+pub fn read_source(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|_| format!("Error: {}.\n", msg("err.NotFound", &[("path", path.to_string())])))
 }
 
@@ -518,6 +593,16 @@ fn build(args: &[String]) -> u8 {
             return 1;
         }
     };
+    if release {
+        // personal data without keep or purpose (section 23, rule 1)
+        if let Ok(program) = parser::parse(&source) {
+            if let Some((span, tname, missing)) = phase5::privacy_gaps(&program.body).into_iter().next() {
+                let d = Diagnostic::new("privacy_release", span).arg("type", tname).arg("missing", missing.join(", "));
+                eprint!("{}", render(&file, &source, d.span, &d.text()));
+                return 1;
+            }
+        }
+    }
     let out = out.unwrap_or_else(|| Path::new(&file).with_extension("").to_string_lossy().into_owned());
     if let Err(e) = link(&ir, Path::new(&out), release) {
         eprintln!("Error: {e}");
@@ -836,6 +921,10 @@ fn main() -> ExitCode {
             "fix" => run_fix(&rest[1..]),
             "check" => run_check(&rest[1..]),
             "db" => run_db(&rest[1..]),
+            "flags" => phase5::run_flags(&rest[1..]),
+            "privacy" => phase5::privacy_report(&rest[1..]),
+            "plan" | "apply" | "destroy" | "drift" | "cost" | "import" => phase5::run_infra(&rest[0], &rest[1..]),
+            "ci" => phase5::run_ci(&rest[1..]),
             "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),
             "ai" if rest.len() == 2 && rest[1] == "usage" => ai_cmd::usage(),
             "lsp" if rest.len() == 1 => lsp::serve(lang_given),
