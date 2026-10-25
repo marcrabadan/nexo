@@ -69,6 +69,24 @@ static SIGS: &[Sig] = &[
     Sig { name: "pubsub", params: &[] },
     Sig { name: "websocket", params: &[] },
     Sig { name: "__stream_when", params: &[p("source"), p("fn"), opt("key")] },
+    Sig { name: "__infra", params: &[p("name"), p("entries")] },
+    Sig { name: "__stage", params: &[p("name"), p("entries")] },
+    Sig { name: "s3", params: &[p("name")] },
+    Sig { name: "gcs", params: &[p("name")] },
+    Sig { name: "blob", params: &[p("name")] },
+    Sig { name: "__pipeline", params: &[p("name"), p("entries")] },
+    Sig { name: "__ci_get", params: &[p("run"), p("name")] },
+    Sig { name: "__ci_keep", params: &[p("run"), p("name"), p("value")] },
+    Sig { name: "run", params: &[p("command")] },
+    Sig { name: "test", params: &[] },
+    Sig { name: "build_image", params: &[p("name")] },
+    Sig { name: "apply", params: &[opt("stage"), opt("image")] },
+    Sig { name: "plan", params: &[opt("stage"), opt("image")] },
+    Sig { name: "approve", params: &[p("by")] },
+    Sig { name: "comment", params: &[p("text")] },
+    Sig { name: "audit", params: &[] },
+    Sig { name: "scan", params: &[] },
+    Sig { name: "slack", params: &[] },
     Sig {
         name: "__web_route",
         params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
@@ -129,6 +147,8 @@ pub fn release_all() {
     crate::flags::release_all();
     crate::privacy::release_all();
     crate::stream::release_all();
+    crate::infra::release_all();
+    crate::ci::release_all();
 }
 
 pub fn clear_fakes() {
@@ -151,6 +171,9 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
     }
     if sig.name == "log" {
         return log(args, names, span);
+    }
+    if matches!(sig.name, "audit" | "scan" | "slack") {
+        return crate::ci::unavailable(sig.name, span);
     }
     if crate::stream::KINDS.contains(&sig.name) {
         return crate::stream::source(sig.name, args, names, span);
@@ -205,6 +228,19 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "flag" => crate::flags::flag(x(0), a.get(1), span),
         "__stream_when" => crate::stream::when(x(0), x(1), a.get(2), span),
         "__privacy_type" => crate::privacy::privacy_type(x(0), x(1), x(2), span),
+        "__infra" => crate::infra::infra_block(x(0), x(1), span),
+        "__stage" => crate::infra::stage_block(x(0), x(1), span),
+        "s3" | "gcs" | "blob" => crate::infra::state_target(sig.name, x(0), span),
+        "__pipeline" => crate::ci::pipeline(x(0), x(1), span),
+        "__ci_get" => crate::ci::ci_get(x(1), span),
+        "__ci_keep" => crate::ci::ci_keep(x(1), x(2), span),
+        "run" => crate::ci::run(x(0), span),
+        "test" => crate::ci::test(span),
+        "build_image" => crate::ci::build_image(x(0), span),
+        "apply" => crate::ci::apply(a.get(0), a.get(1), span),
+        "plan" => crate::ci::plan(a.get(0), a.get(1), span),
+        "approve" => crate::ci::approve(x(0), span),
+        "comment" => crate::ci::comment(x(0), span),
         "privacy.export" => crate::db::privacy_export(x(0), span),
         "privacy.erase" => crate::db::privacy_erase(x(0), span),
         "privacy.restrict" => crate::db::privacy_restrict(x(0), span),

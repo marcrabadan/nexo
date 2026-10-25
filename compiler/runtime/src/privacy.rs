@@ -38,6 +38,11 @@ pub struct Info {
 
 static PRIVACY: Mutex<Vec<Info>> = Mutex::new(Vec::new());
 
+/// Does the program declare personal data (section 23, rule 3)?
+pub fn has_personal() -> bool {
+    !PRIVACY.lock().unwrap().is_empty()
+}
+
 pub fn info_of(type_name: &str) -> Option<Info> {
     PRIVACY.lock().unwrap().iter().find(|i| i.name == type_name).cloned()
 }

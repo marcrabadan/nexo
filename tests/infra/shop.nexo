@@ -1,0 +1,48 @@
+infra shop:
+    cloud = "aws"
+    region = "eu-west-1"
+    budget = 300 EUR per month
+    tags = {"team": "shop", "cost": "web"}
+
+    policy:
+        deny public database
+        require encryption
+        require tags ["team", "cost"]
+
+    network net:
+        range = "10.0.0.0/16"
+        private = true
+        allow from internet to api, port: 443
+
+    identity api_id:
+        can read storage photos
+        can write queue orders
+
+    database customers:
+        type = "postgres"
+        size = medium
+        network = net
+
+    storage photos:
+        public = false
+
+    queue orders
+
+    app api:
+        image = "shop-api:2.4"
+        identity = api_id
+        env:
+            DB = customers.url
+            API_KEY = secret("API_KEY")
+
+    dns "api.shop.com" -> api, https
+
+    native "aws_wafv2_web_acl" firewall:
+        scope = "REGIONAL"
+
+    output url = api.url
+    output db = customers.url, secret
+
+stage prod:
+    size = large
+    replicas = 3..10

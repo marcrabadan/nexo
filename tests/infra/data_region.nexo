@@ -1,0 +1,10 @@
+type Customer:
+    name: str @personal
+    email: str @private
+
+infra shop:
+    cloud = "aws"
+    region = "us-east-1"
+    data_region = "eu"
+    network net
+    database customers

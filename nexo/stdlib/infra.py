@@ -36,6 +36,7 @@ UNKNOWN = "\x00unknown"
 
 INFRAS: list = []
 STAGES: dict = {}
+IMAGE: list = [None]  # apply(image:) in a pipeline step (D122)
 
 
 def reset() -> None:
@@ -81,6 +82,7 @@ class Infra(Native):
         self.policy: list = []  # (words, options, span)
         self.resources: list[Resource] = []
         self.outputs: list[Output] = []
+        self.peer_refs: list = []  # (ref, at): values of other infra blocks (D121)
 
     def repr(self) -> str:
         return f"infra({self.name})"
@@ -145,7 +147,7 @@ def read_infra_entry(infra: Infra, entry: Cfg) -> None:
             raise entry.error("output_form")
         ref = entry.values[0][0] if len(entry.values[0]) == 1 else None
         secret = [p for p in entry.values[1:]] == [["secret"]]
-        if not isinstance(ref, Ref) or len(ref.parts) != 2 or (len(entry.values) > 1 and not secret):
+        if not isinstance(ref, Ref) or len(ref.parts) not in (2, 3) or (len(entry.values) > 1 and not secret):
             raise entry.error("output_form")
         infra.outputs.append(Output(words[1], ref, secret, entry.span))
         return
@@ -284,18 +286,57 @@ def check_refs(infra: Infra) -> None:
         check_attr(infra, o.ref, o)
 
 
-def check_attr(infra: Infra, ref: Ref, at) -> None:
+def check_attr(infra: Infra, ref: Ref, at, shown: Ref | None = None) -> None:
+    if len(ref.parts) == 3 and shown is None and infra.resource(ref.parts[0]) is None:
+        # another infra block, maybe declared later: checked by infra_order
+        infra.peer_refs.append((ref, at))
+        return
+    shown = shown or ref
     if len(ref.parts) != 2:
-        raise NexoError("infra_attr", at.span, ref=ref.repr())
+        raise NexoError("infra_attr", at.span, ref=shown.repr())
     target = infra.resource(ref.parts[0])
     if target is None:
-        raise NexoError("infra_attr", at.span, ref=ref.repr())
+        raise NexoError("infra_attr", at.span, ref=shown.repr())
     attrs = PROVIDERS["kinds"][target.kind]["attrs"]
     if ref.parts[1] not in attrs:
         s = errors.suggest(ref.parts[1], attrs)
         if s:
-            raise NexoError("infra_attr_name", at.span, fix="suggest", ref=ref.repr(), kind=target.kind, suggestion=s)
-        raise NexoError("infra_attr_name", at.span, ref=ref.repr(), kind=target.kind)
+            raise NexoError("infra_attr_name", at.span, fix="suggest", ref=shown.repr(), kind=target.kind, suggestion=s)
+        raise NexoError("infra_attr_name", at.span, ref=shown.repr(), kind=target.kind)
+
+
+def infra_order(infras: list) -> list:
+    """The infra blocks in the order they are applied: each one after the
+    blocks whose values it uses (D121)."""
+    by_name = {i.name: i for i in INFRAS}
+    needs = {}
+    for infra in infras:
+        needs[infra.name] = []
+        for ref, at in infra.peer_refs:
+            peer = by_name.get(ref.parts[0])
+            if peer is None or peer is infra:
+                raise NexoError("infra_attr", at.span, ref=ref.repr())
+            check_attr(peer, Ref(ref.parts[1:]), at, ref)
+            if peer.name not in needs[infra.name]:
+                needs[infra.name].append(peer.name)
+    out, done, visiting = [], set(), []
+
+    def visit(infra):
+        if infra.name in done:
+            return
+        if infra.name in visiting:
+            names = visiting[visiting.index(infra.name):]
+            raise NexoError("infra_cycle", by_name[names[0]].span, names=", ".join(names))
+        visiting.append(infra.name)
+        for name in needs.get(infra.name, []):
+            visit(by_name[name])
+        visiting.pop()
+        done.add(infra.name)
+        if infra in infras:
+            out.append(infra)
+    for infra in infras:
+        visit(infra)
+    return out
 
 
 # ---------------------------------------------------------------- values
@@ -375,7 +416,15 @@ def effective(infra: Infra, r: Resource, stage: str | None) -> dict:
     for key, k in spec["keys"].items():
         if k.get("required") and key not in out:
             raise NexoError("infra_required", r.span, key=key, kind=r.kind, name=r.name)
+    if r.kind == "app" and IMAGE[0] is not None and image_name(out["image"]) == image_name(IMAGE[0]):
+        out["image"] = IMAGE[0]
     return out
+
+
+def image_name(image: str) -> str:
+    """`registry:5000/shop-api:2.4` -> `registry:5000/shop-api`."""
+    head, sep, tag = image.rpartition(":")
+    return head if sep and "/" not in tag else image
 
 
 def infra_settings(infra: Infra, stage: str | None) -> dict:
@@ -625,7 +674,8 @@ def build_ctx(plan, r: Resource, st: dict) -> dict:
             if isinstance(value, Secret):
                 secrets.append({"key": slug(name), "name": name, "value": "${secret." + value.name + "}"})
             elif isinstance(value, Ref):
-                env.append({"name": name, "value": "${attr." + ".".join(value.parts) + "}"})
+                head = "${peer." if len(value.parts) == 3 else "${attr."
+                env.append({"name": name, "value": head + ".".join(value.parts) + "}"})
             elif isinstance(value, (str, int, float, bool, Decimal)):
                 env.append({"name": name, "value": text_of(value) if not isinstance(value, Decimal) else str(value)})
             else:
@@ -771,6 +821,7 @@ class Plan:
         self.namespace = self.values.get("namespace") or slug(infra.name)
         self.settings = {}
         self.ctx = {}
+        self.peers: dict = {}
         self.state = None  # loaded by the commands
         self.fresh: dict = {}  # outputs read while applying: native id -> read
         self.reveal = False  # apply: secrets are their values
@@ -781,7 +832,7 @@ class Plan:
             if r.kind in ("app", "database", "server", "cluster", "cache") and self.cloud == "aws" and "network" not in st:
                 nets = [x for x in infra.resources if x.kind == "network"]
                 if len(nets) != 1:
-                    raise NexoError("infra_network", r.span, kind=r.kind, name=r.name)
+                    raise NexoError("infra_needs_network", r.span, kind=r.kind, name=r.name)
                 st["network"] = nets[0].name
             if self.cloud == "k8s" and r.kind == "database" and stage == "prod":
                 raise NexoError("infra_dev_only", r.span, name=r.name)
@@ -861,6 +912,8 @@ class Plan:
             if head == "attr":
                 name, _, attr = rest.partition(".")
                 return self.attr(name, attr, deps)
+            if head == "peer":
+                return self.peer_attr(rest.split("."))
             if head == "secret":
                 if self.reveal:
                     value = os.environ.get(rest)
@@ -870,6 +923,16 @@ class Plan:
                 return secret_hash(rest)
             return None
         return resolve
+
+    def peer_attr(self, parts: list):
+        """A value of another infra block, read from its state (D121)."""
+        peer = self.peers.get(parts[0])
+        if peer is None:
+            infra = next(i for i in INFRAS if i.name == parts[0])
+            peer = Plan(infra, self.stage)
+            peer.state = State(peer, store_of(peer).load())
+            self.peers[parts[0]] = peer
+        return peer.attr(parts[1], parts[2], set())
 
     def attr(self, name: str, attr: str, deps: set):
         r = self.infra.resource(name)

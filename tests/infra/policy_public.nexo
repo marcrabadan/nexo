@@ -1,0 +1,7 @@
+infra shop:
+    cloud = "aws"
+    region = "eu-west-1"
+    policy:
+        deny public storage
+    storage photos:
+        public = true

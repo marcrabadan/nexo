@@ -29,11 +29,17 @@ from .. import errors
 from ..errors import NexoError
 from . import infra as I
 
-POLL = (0.5, 1, 2, 4, 5)
+POLL = (0.2, 0.5, 1, 2, 5)
 MAX_WAIT = 1800
 
 
+CAPTURE: list = []  # plan() in a pipeline step keeps the lines (D122)
+
+
 def say(text: str = "") -> None:
+    if CAPTURE:
+        CAPTURE[-1].append(text)
+        return
     sys.stdout.write(text + "\n")
     sys.stdout.flush()
 
@@ -587,7 +593,7 @@ def outputs_lines(plan) -> list[str]:
         if o.secret:
             out.append(f"{o.name} = {I.m('info.secret_output')}")
             continue
-        v = plan.attr(o.ref.parts[0], o.ref.parts[1], set())
+        v = plan.peer_attr(o.ref.parts) if len(o.ref.parts) == 3 else plan.attr(o.ref.parts[0], o.ref.parts[1], set())
         out.append(f"{o.name} = {I.text_of(v) if not (isinstance(v, str) and v.startswith(I.UNKNOWN)) else I.m('info.unknown_value')}")
     return out
 
@@ -764,6 +770,8 @@ def command(interp, name: str, args: list, stage, yes: bool) -> int:
         if not infras:
             raise NexoError("import_cloud", None, cloud=cloud)
         infras = [next((x for x in infras if x.resource(args[1].partition(".")[0])), infras[0])]
+    # destroy: the blocks that use values of others go first
+    infras = I.infra_order(infras[::-1])[::-1] if name == "destroy" else I.infra_order(infras)
     for infra in infras:
         plan = I.Plan(infra, stage)
         store = I.store_of(plan)

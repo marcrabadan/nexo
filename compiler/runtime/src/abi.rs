@@ -285,7 +285,15 @@ pub unsafe extern "C" fn nx_named(ptr: *const u8, len: usize) -> V {
 #[no_mangle]
 pub extern "C" fn nx_db_command() -> ! {
     // the command of a module that compiled the program alone (D101, D116)
-    let code = if std::env::var_os("NEXO_PRIVACY_FILE").is_some() { crate::privacy::run_command() } else { crate::db::run_command() };
+    let code = if std::env::var_os("NEXO_CI_COMMAND").is_some() {
+        crate::ci::run_command()
+    } else if std::env::var_os("NEXO_INFRA_COMMAND").is_some() {
+        crate::infra_cloud::run_command()
+    } else if std::env::var_os("NEXO_PRIVACY_FILE").is_some() {
+        crate::privacy::run_command()
+    } else {
+        crate::db::run_command()
+    };
     nx_exit(code)
 }
 

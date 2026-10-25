@@ -24,9 +24,11 @@ from .types import NexoFailure, repr_value
 
 USAGE = {
     "es": "Uso: nexo [--lang es|en] [archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp"
-          " | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage]",
+          " | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage"
+          " | plan|apply|destroy|drift|cost [archivo.nexo] [--stage etapa] [--yes] | import nube recurso id [archivo.nexo] | ci run [pipeline] [archivo.nexo] [--step paso | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [archivo.nexo] | flags set nombre valor [archivo.nexo] [--stage etapa] | privacy report [archivo.nexo]]",
     "en": "Usage: nexo [--lang es|en] [file.nexo | test|fmt|lint|fix|check [paths...] | lsp"
-          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage]",
+          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
+          " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]",
 }
 BANNER = {
     "es": "Nexo {v} (fase 0). Escribe código y pulsa Intro; Ctrl-D para salir.",
@@ -493,6 +495,101 @@ def run_infra(command: str, args: list[str]) -> int:
         return 1
 
 
+def ci_program(program) -> list:
+    """What nexo ci runs: the declarations of the program (types,
+    functions, literal constants) and its blocks, not its other code (D122)."""
+    keep = []
+    for s in program.body:
+        if isinstance(s, (A.TypeDef, A.TraitDef, A.Use, A.FnDef)):
+            keep.append(s)
+        elif (isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and isinstance(s.expr.func, A.Name)
+              and s.expr.func.name in ("__db_table", "__privacy_type", "__infra", "__stage", "__flags", "__pipeline")):
+            keep.append(s)
+        elif isinstance(s, A.Assign) and s.op == "=" and isinstance(s.target, A.Name) and literal(s.value):
+            keep.append(s)
+    return keep
+
+
+def approvals(program, pipeline: str) -> dict:
+    """step -> the people of its approve(by: [...]) call (D123)."""
+    from .checker import walk_stmts
+    from .parser import stmt_exprs, sub_exprs
+    out = {}
+    for s in program.body:
+        if not (isinstance(s, A.FnDef) and s.name.startswith(f"{pipeline} step ")):
+            continue
+        step = s.name[len(pipeline) + 6:]
+
+        def visit(e):
+            if (isinstance(e, A.Call) and isinstance(e.func, A.Name) and e.func.name == "approve"
+                    and step not in out):
+                for a in e.args:
+                    if isinstance(a.value, A.ListLit):
+                        out[step] = [i.parts[0] for i in a.value.items
+                                     if isinstance(i, A.Str) and len(i.parts) == 1 and isinstance(i.parts[0], str)]
+            for c in sub_exprs(e):
+                visit(c)
+        for st in walk_stmts(s.body):
+            for e in stmt_exprs(st):
+                visit(e)
+    return out
+
+
+def run_ci(args: list[str]) -> int:
+    """`nexo ci run [PIPELINE] [file.nexo] [--step S | --after success|failure] [--yes]`
+    and `nexo ci export github|gitlab|azure|jenkins [PIPELINE] [file.nexo]` (section 12)."""
+    from .stdlib import ci, ci_export
+    sub = args[0] if args else None
+    if sub == "run":
+        parsed = split_options(args[1:], flags=("--yes",), values=("--step", "--after"))
+    elif sub == "export":
+        parsed = split_options(args[1:], flags=(), values=())
+    else:
+        parsed = None
+    if parsed is None:
+        print(USAGE[errors.LANG], file=sys.stderr)
+        return 2
+    pos, opts = parsed
+    target = None
+    if sub == "export":
+        if not pos:
+            print(USAGE[errors.LANG], file=sys.stderr)
+            return 2
+        target, pos = pos[0], pos[1:]
+    files = [a for a in pos if a.endswith(".nexo")]
+    names = [a for a in pos if not a.endswith(".nexo")]
+    after = opts.get("--after")
+    if (len(files) > 1 or len(names) > 1 or ("--step" in opts and after is not None)
+            or after not in (None, "success", "failure")):
+        print(USAGE[errors.LANG], file=sys.stderr)
+        return 2
+    path = program_file("pipeline", files[0] if files else None)
+    if path is None:
+        return 1
+    loaded = read_program(path)
+    if loaded is None:
+        return 1
+    try:
+        if target is not None and target not in ci_export.TARGETS:
+            raise NexoError("ci_target", None, target=target)
+        interp = Interpreter()
+        program = interp.load(loaded[0], path)
+        for stmt in ci_program(program):
+            interp.exec(stmt, interp.globals)
+        ci.FILE[0] = path
+        p = ci.pick(names[0] if names else None, path)
+        if target is None:
+            return ci.run_pipeline(interp, p, opts.get("--step"), after, "--yes" in opts, report)
+        out, text = ci_export.export(target, p, path, approvals(program, p.name))
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(text, encoding="utf-8")
+        print(errors.msg("info.ci_exported", path=out))
+        return 0
+    except (NexoError, NexoFailure) as exc:
+        report(exc)
+        return 1
+
+
 # ----------------------------------------------------------------- REPL
 
 def repl() -> int:
@@ -564,6 +661,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_flags(rest[1:])
     if rest[:1] and rest[0] in INFRA_COMMANDS and lang in ("es", "en"):
         return run_infra(rest[0], rest[1:])
+    if rest[:1] == ["ci"] and lang in ("es", "en"):
+        return run_ci(rest[1:])
     if rest[:1] == ["privacy"] and lang in ("es", "en"):
         return run_privacy(rest[1:])
     if rest in (["ai", "setup"], ["ai", "usage"]) and lang in ("es", "en"):

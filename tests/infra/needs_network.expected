@@ -1,0 +1,4 @@
+Error en needs_network.nexo, línea 5:
+  database customers:
+  ^^^^^^^^
+En aws un database (customers) necesita una network, y la infra no tiene exactamente una. Declara una network en la infra, o escribe network = nombre en customers.

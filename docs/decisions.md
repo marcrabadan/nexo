@@ -1386,3 +1386,166 @@ implicitly (section 1).
   `sliding D` runs on every message over the messages of the last D.
   These three are contextual steps after `|>`, must come right after the
   source, and are errors on anything else.
+
+**D118. The model of nexo.infra.** Section 11 gives the resources, the
+keys of its examples and the commands, not the exact list of settings
+nor what a command runs. Both phases share one table,
+`nexo/stdlib/infra_providers.json` (the compiler embeds it), and read
+the blocks with it:
+- `infra NAME:` takes `cloud` (`"aws"`, `"azure"`, `"gcp"`, `"k8s"`,
+  required), `region` (required except on k8s), `state`, `budget`,
+  `data_region`, `tags`, `project` (GCP), `subscription` (Azure),
+  `namespace` and `cluster` (k8s), `policy:`, `output` and the
+  resources. Each resource kind has its keys with a type (text, number,
+  size, count `1..4`, bool, a reference to another resource of a given
+  kind, tags) and a default; an unknown key is an error with "Did you
+  mean...?". The storage key is `capacity`, not `size`, because a stage's
+  `size = large` means the size of machines (`small`, `medium`, `large`,
+  which the table turns into each cloud's classes).
+- A resource body may hold the lines of section 11 (`allow from internet
+  to api, port: 443`, `can read storage photos`), `env:` (texts, numbers,
+  `secret("NAME")` and references `customers.url`), `scale MIN..MAX:`
+  with `cpu > N%`. What a resource gives (`url`, `host`, `id`...) is
+  listed per kind; a reference to anything else is an error at once.
+- `stage NAME:` holds `key = value` lines that override, for that stage,
+  the value of every resource that has the key (`size`, `replicas`...).
+  Values apply in the order: the default, the resource's value, the
+  stage's (D119). Without `--stage` the stage is `default`; the app gets
+  `NEXO_STAGE` (D115).
+- A portable resource with no equivalent on a target (`server` and
+  `cluster` on k8s) and a `database` on k8s in the stage `prod` (section
+  11 says "dev only") are plan errors, as the section requires.
+- `nexo plan|apply|destroy|drift|cost [file] [--stage S]` (and `--yes` for
+  apply) run, like `nexo db` (D101), only the types, the constants written
+  as literals and the infra and stage blocks of the program, never its
+  other code; without a file they take the only `.nexo` file of the
+  directory with an `infra` block. A program without one is an error.
+
+**D119. Plan, cost and policy.** Section 11 asks `nexo plan` to show the
+changes, "the estimated cost and the estimated availability", and
+section 22's `budget` to stop a plan, without saying how they are
+computed. Both phases print one block per infra: the portable resources
+with `+` (create), `~` (change, naming the changed fields), `-/+`
+(replace, for the fields a cloud cannot change), `=` (keep) and `-`
+(delete, what the state has and the program no longer does), each with
+its native resources, then the totals. The cost is the sum, in EUR per
+month, of the on-demand list prices in the table for each resource at
+its size, replicas, cpu and ram, in whole cents; it is an estimate and
+says so. The availability multiplies the published SLA of each service
+the infra uses. `budget = N EUR per month` is the only form; an
+estimate above it is an error that names both. The rules of `policy:`
+are `deny public KIND`, `require encryption` and `require tags [...]`
+(the tags of the infra count for every resource), plus `allow personal
+data to "AREA"`; `data_region = "eu"` makes a region outside that area an
+error when the program has `@personal` data (section 23, rule 3), with
+the areas of each cloud's regions in the table. Anything else in
+`policy:` is an error.
+
+**D120. How the commands talk to each cloud.** Section 11 does not say
+how the plan is applied. Both phases talk to each cloud's own API over
+HTTPS, with no SDK nor external tool: AWS through Cloud Control
+(`CreateResource`, `UpdateResource` with a JSON Patch, `DeleteResource`,
+`GetResource`, `GetResourceRequestStatus`) signed with SigV4, which
+covers every CloudFormation type, so `native "aws_wafv2_web_acl"` is
+`AWS::WAFv2::WebACL`; Azure through Resource Manager (`PUT`/`DELETE` of
+each resource id, polling `Azure-AsyncOperation`) with a client-secret
+token; GCP through each service's REST API with its long-running
+operations and IAM policies; Kubernetes with server-side apply
+(`fieldManager=nexo`) and a bearer token. `native` takes the
+resource's own type and properties as they are. Credentials come from
+the usual variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_SESSION_TOKEN`; `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
+`AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`;
+`GOOGLE_OAUTH_ACCESS_TOKEN`, `GOOGLE_CLOUD_PROJECT`; `NEXO_K8S_SERVER`
+and `NEXO_K8S_TOKEN`, or the service account of a pod), and the
+addresses can be changed (`AWS_ENDPOINT_URL`, `AZURE_AUTHORITY_HOST`,
+`NEXO_AZURE_ENDPOINT`, `NEXO_GCP_ENDPOINT`), which is how the tests use
+`tests/cloud_emulator.py`, a local stand-in for those APIs that checks
+the signatures and tokens. Native resources are created in the order
+their references need, and deleted in reverse; a failure stops at once,
+saving what was done.
+
+**D121. State, secrets, several infra blocks and import.** The state of
+each infra and stage is a JSON file: `.nexo/state/<infra>-<stage>.json`,
+or, with `state = s3("bucket")`, the object `nexo/<infra>-<stage>.json`
+of that bucket, written with server-side encryption and locked with a
+conditional write of a lock object (section 11: "encrypted and
+locked"); `gcs(...)` and `blob(...)` are reported as unavailable. Both
+phases read and write the same state. A secret is sent to the cloud
+when applying, read from the environment, and is a hash
+(`sha256:...`) in the state, the plan and the output; values the cloud
+echoes back are scrubbed, and `output ..., secret` prints `(secret)`.
+`apply` asks for confirmation unless `--yes` (with no answer, as in CI
+without `--yes`, nothing changes); `destroy` asks to type the infra's name, block by block.
+`drift` compares what each API returns with the state, field by field.
+A value of another infra block is written `infra.resource.value`; the
+blocks are applied in the order those references need (a cycle is an
+error) and each one reads the other's values from its state, so a plan
+before the first apply shows them as known after applying; destroy goes
+in the opposite order. `nexo import CLOUD RESOURCE ID [file]` (section
+11's `nexo import aws app i-0abc123`) adopts the existing object with
+that id as the native resource of the program's resource named
+RESOURCE (`RESOURCE.native` when it has several), reading it into the
+state; the next plan then shows it as kept or changed.
+
+**D122. nexo.ci: pipelines and `nexo ci run`.** Section 12 shows a
+`pipeline` with `trigger`, `secrets`, `version = auto`, steps of ordinary
+code and `after success|failure`, and says `nexo ci run` runs it
+locally; it does not say what the step functions do, how values pass
+between steps nor how the version is computed. Both phases:
+- The entries are `trigger push`, `trigger push to BRANCH`, `trigger
+  pull_request`, `secrets = ["NAME", ...]` (environment variables the
+  run needs; `from vault` is unavailable, D113), `version = auto` or
+  `version = "X.Y.Z"` (without it the version is `dev`), `step NAME:` and
+  `after success:` / `after failure:`; anything else is an error. A step
+  body is a function of the run (D114): the names it assigns are kept and
+  the later steps read them; `version` and `step` (the current step, or
+  the failed one in `after failure`) are always there. What is kept must
+  be text, numbers, bools, lists or maps, because in a CI it travels
+  between jobs as JSON in `.nexo/ci/<pipeline>.json`. `return` in a step
+  is an error.
+- `nexo ci run [PIPELINE] [file] [--step S | --after success|failure]
+  [--yes]` runs, like the infra commands (D118), only the program's
+  declarations (types, functions, literal constants) and blocks, never its
+  other code; without a name it takes the only pipeline. It prints `==
+  paso NAME` before each step, stops at the first step that fails (an
+  error value or a mistake, shown as usual), runs `after failure`, and
+  ends with code 1; otherwise it runs `after success` and prints the
+  count and the version. `--step` runs one step with what the earlier
+  ones kept, which is how exported jobs run (D123).
+- `version = auto` reads git: the highest tag `vX.Y.Z` reachable from
+  HEAD (0.0.0 without one) raised by the commits after it, following the
+  comment of section 12: a `fix:` raises the patch, a `feat:` the minor,
+  and `type!:` or a `BREAKING CHANGE:` line the major (Conventional
+  Commits); outside a repository it is an error.
+- The functions of section 12: `run(command)` runs it with the shell,
+  shows what it writes (stdout and stderr together) and returns it; a
+  non-zero exit is an error value that stops the step. It is the only
+  one usable outside a pipeline. `test()` runs `nexo test` in the
+  directory; `build_image(name)` runs `docker build -t name:VERSION .`
+  (`NEXO_CONTAINER_TOOL` chooses another tool, such as podman) and returns
+  the tag; `apply(stage:, image:)` applies the infra blocks of the file
+  without asking, with `image` replacing the image of every app whose
+  image has the same name; `plan(stage:, image:)` returns the plan as
+  text; `approve(by: [...])` asks on the terminal unless `--yes`;
+  `comment(text)` shows the text and appends it to `.nexo/ci/comment.md`
+  (the exported GitHub job can post it). `audit()`, `scan()` and
+  `slack()` are unavailable (D113). Inside `parallel:` they run as any
+  call does.
+
+**D123. `nexo ci export`.** Section 12 says `nexo ci export github` (also
+`gitlab`, `azure`, `jenkins`) "generates the native file". So that a CI
+runs exactly what `nexo ci run` runs, both phases write one job (stage in
+Jenkins) per step, in order, that installs Nexo (`pip install nexo`) and
+runs `nexo ci run PIPELINE FILE --step NAME --yes`; `.nexo/ci` travels
+between jobs as an artifact (in Jenkins the workspace is shared). The
+files are `.github/workflows/<pipeline>.yml`, `.gitlab-ci.yml`,
+`azure-pipelines.yml` and `Jenkinsfile`. Triggers become each service's
+own (`on: push/pull_request`, workflow rules, `trigger`/`pr`, `when`
+conditions); secrets become its secret variables. A step whose code calls
+`approve(by: [...])` with a literal list waits for the service's approval
+before running (a GitHub environment named after the step, a manual
+GitLab job, an Azure `ManualValidation` task notifying those people, a
+Jenkins `input` with them as submitters), which is why the job passes
+`--yes`. `after success` and `after failure` become jobs that run when
+the steps pass or fail.

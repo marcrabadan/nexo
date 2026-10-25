@@ -118,6 +118,14 @@ def test_a_private_field_needs_a_key(phase, tmp_path):
 REPORTED = APP + """
 type Contact:
     phone: str @personal
+
+infra shop:
+    cloud = "aws"
+    region = "eu-west-1"
+    identity api_id:
+        can read database customers
+    network net
+    database customers
 """
 
 REPORT = """Datos personales de app.nexo:
@@ -134,7 +142,7 @@ Customer: tabla customer en shop.db
   national_id  sensible, cifrado en reposo
   se guarda: 5 years after last_activity
   finalidad: billing and shipping
-  lo leen: el programa
+  lo leen: el programa, api_id (infra shop, database customers)
 """
 
 

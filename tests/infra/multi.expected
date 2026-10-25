@@ -1,0 +1,97 @@
+Plan de shop_aws (aws, eu-west-1, etapa default):
+  + network net
+      + AWS::EC2::VPC shop-aws-net
+      + AWS::EC2::Subnet shop-aws-net-a
+      + AWS::EC2::Subnet shop-aws-net-b
+      + AWS::EC2::InternetGateway shop-aws-net
+      + AWS::EC2::VPCGatewayAttachment shop-aws-net
+      + AWS::EC2::SecurityGroup shop-aws-net
+  + database customers
+      + AWS::RDS::DBSubnetGroup shop-aws-customers
+      + AWS::RDS::DBInstance shop-aws-customers
+  + app api
+      + AWS::SecretsManager::Secret shop_aws/api/API_KEY
+      + AWS::IAM::Role shop-aws-api-run
+      + AWS::ECS::Cluster shop-aws-api
+      + AWS::Logs::LogGroup /nexo/shop_aws/api
+      + AWS::ECS::TaskDefinition shop-aws-api
+      + AWS::ElasticLoadBalancingV2::LoadBalancer shop-aws-api
+      + AWS::ElasticLoadBalancingV2::TargetGroup shop-aws-api
+      + AWS::ElasticLoadBalancingV2::Listener shop-aws-api-80
+      + AWS::ECS::Service shop-aws-api
+Crear: 17, cambiar: 0, borrar: 0.
+Coste estimado: 85.45 EUR al mes.
+Disponibilidad estimada: 99.49 %.
+Plan de shop_azure (azure, westeurope, etapa default):
+  + infra shop_azure
+      + Microsoft.Resources/resourceGroups shop_azure
+  + identity api_id
+      + Microsoft.ManagedIdentity/userAssignedIdentities shop-azure-api-id
+      + Microsoft.Authorization/roleAssignments 87c1dac7-e4d6-7617-13d0-2e47b48f2bad
+      + Microsoft.Authorization/roleAssignments 6d6160d4-6776-2ce8-03a2-efe8f7e300c9
+  + storage photos
+      + Microsoft.Storage/storageAccounts shopazurephotos
+      + Microsoft.Storage/storageAccounts/blobServices/containers shopazurephotos/default/photos
+  + queue orders
+      + Microsoft.ServiceBus/namespaces shop-azure-orders
+      + Microsoft.ServiceBus/namespaces/queues shop-azure-orders/orders
+  + database customers
+      + Microsoft.DBforPostgreSQL/flexibleServers shop-azure-customers
+      + Microsoft.DBforPostgreSQL/flexibleServers/databases shop-azure-customers/customers
+  + app api
+      + Microsoft.App/managedEnvironments shop-azure-api
+      + Microsoft.App/containerApps shop-azure-api
+  + dns api.shop.com
+      + Microsoft.Network/dnsZones shop.com
+      + Microsoft.Network/dnsZones/CNAME shop.com/api
+      + Microsoft.App/managedEnvironments/managedCertificates shop-azure-api/apishopcom
+Crear: 15, cambiar: 0, borrar: 0.
+Coste estimado: 37.70 EUR al mes.
+Disponibilidad estimada: 99.65 %.
+Plan de shop_gcp (gcp, europe-west1, etapa default):
+  + network net
+      + compute.networks shop-gcp-net
+      + compute.subnetworks shop-gcp-net
+      + compute.firewalls shop-gcp-net-443
+  + identity api_id
+      + iam.serviceAccounts shop-gcp-api-id
+      + iam.binding roles/storage.objectViewer
+  + storage photos
+      + storage.buckets shop-gcp-photos
+  + queue orders
+      + pubsub.topics shop-gcp-orders
+      + pubsub.subscriptions shop-gcp-orders
+  + database customers
+      + sqladmin.instances shop-gcp-customers
+      + sqladmin.databases customers
+  + app api
+      + secretmanager.secrets shop-gcp-api-api-key
+      + run.services shop-gcp-api
+      + iam.binding roles/run.invoker
+Crear: 13, cambiar: 0, borrar: 0.
+Coste estimado: 45.10 EUR al mes.
+Disponibilidad estimada: 99.80 %.
+Plan de shop_k8s (k8s, etapa default):
+  + infra shop_k8s
+      + Namespace shop
+  + network net
+      + NetworkPolicy shop-k8s-net
+  + identity api_id
+      + ServiceAccount shop-k8s-api-id
+      + Role shop-k8s-api-id
+      + RoleBinding shop-k8s-api-id
+  + storage photos
+      + PersistentVolumeClaim shop-k8s-photos
+  + database customers
+      + StatefulSet shop-k8s-customers
+      + Service shop-k8s-customers
+  + app api
+      + Secret shop-k8s-api
+      + Deployment shop-k8s-api
+      + Service shop-k8s-api
+      + HorizontalPodAutoscaler shop-k8s-api
+  + dns api.shop.com
+      + Ingress shop-k8s-api-shop-com
+Crear: 13, cambiar: 0, borrar: 0.
+Coste estimado: 0.00 EUR al mes.
+Disponibilidad estimada: 98.70 %.

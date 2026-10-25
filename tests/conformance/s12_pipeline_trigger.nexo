@@ -1,0 +1,4 @@
+pipeline main:
+    trigger push main
+    step build:
+        print("build")

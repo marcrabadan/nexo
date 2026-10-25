@@ -1,0 +1,3 @@
+infra shop:
+    cloud = "azure"
+    storage photos

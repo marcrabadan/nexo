@@ -1,0 +1,13 @@
+infra web:
+    cloud = "k8s"
+    namespace = "web"
+    app api:
+        image = "shop-api:2.4"
+        env:
+            DB = data.customers.url
+    output db = data.customers.host
+
+infra data:
+    cloud = "gcp"
+    region = "europe-west1"
+    database customers

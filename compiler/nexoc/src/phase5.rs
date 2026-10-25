@@ -233,7 +233,7 @@ pub fn privacy_report(args: &[String]) -> u8 {
         Some(p) => readers_of_data(&p.body),
         None => Vec::new(),
     };
-    crate::module_command(&path, &[("NEXO_PRIVACY_FILE", path.clone()), ("NEXO_PRIVACY_READERS", readers.join("\n"))], &["__db_table", "__privacy_type"])
+    crate::module_command(&path, &[("NEXO_PRIVACY_FILE", path.clone()), ("NEXO_PRIVACY_READERS", readers.join("\n"))], &["__db_table", "__privacy_type"], false, false)
 }
 
 /// The identities of infra blocks that can read a database: `can read
@@ -310,4 +310,152 @@ pub fn program_file_matching(word: &str, given: Option<&str>, needles: &[&str]) 
     }
     eprint!("{}", error_line(Diagnostic::new_spanless("which_file").arg("word", word)));
     None
+}
+
+/// A constant the commands of nexo.infra keep: a literal value (D118).
+pub fn literal(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Num { .. } | ExprKind::Unit { .. } | ExprKind::Bool(_) | ExprKind::None => true,
+        ExprKind::Str(_) => lit(e).is_some(),
+        ExprKind::List(items) => items.iter().all(literal),
+        _ => false,
+    }
+}
+
+/// `nexo plan|apply|destroy|drift|cost [file.nexo] [--stage s] [--yes]` and
+/// `nexo import CLOUD RESOURCE ID [file.nexo] [--stage s]` (section 11): the
+/// types, literal constants and infra blocks run, then the command.
+pub fn run_infra(command: &str, args: &[String]) -> u8 {
+    let flags: &[&str] = if command == "apply" { &["--yes"] } else { &[] };
+    let Some((pos, opts)) = split_options(args, flags, &["--stage"]) else {
+        eprintln!("{}", crate::usage());
+        return 2;
+    };
+    let extra = if command == "import" { 3 } else { 0 };
+    if pos.len() != extra && pos.len() != extra + 1 {
+        eprintln!("{}", crate::usage());
+        return 2;
+    }
+    let Some(path) = program_file("infra", pos.get(extra).map(|s| s.as_str())) else { return 1 };
+    let mut env = vec![
+        ("NEXO_INFRA_COMMAND", command.to_string()),
+        ("NEXO_INFRA_ARGS", pos[..extra].join("\n")),
+        ("NEXO_INFRA_STAGE", option(&opts, "--stage").unwrap_or("").to_string()),
+    ];
+    if opts.iter().any(|(k, _)| k == "--yes") {
+        env.push(("NEXO_INFRA_YES", "1".to_string()));
+    }
+    crate::module_command(&path, &env, &["__db_table", "__privacy_type", "__infra", "__stage"], true, false)
+}
+
+/// step -> the people of its approve(by: [...]) call (D123).
+pub fn approvals(body: &[Stmt], pipeline: &str) -> Vec<(String, Vec<String>)> {
+    fn visit(e: &Expr, step: &str, out: &mut Vec<(String, Vec<String>)>) {
+        if let ExprKind::Call { func, args } = &e.kind {
+            if matches!(&func.kind, ExprKind::Name(n) if n == "approve") && !out.iter().any(|(s, _)| s == step) {
+                for a in args {
+                    if let ExprKind::List(items) = &a.value.kind {
+                        out.push((step.to_string(), items.iter().filter_map(lit).collect()));
+                    }
+                }
+            }
+        }
+        crate::parser::each_child(e, &mut |c| visit(c, step, out));
+    }
+    let prefix = format!("{pipeline} step ");
+    let mut out = Vec::new();
+    for s in body {
+        let StmtKind::Fn(d) = &s.kind else { continue };
+        let Some(step) = d.name.strip_prefix(&prefix) else { continue };
+        crate::checker::walk_stmts(&d.body, true, &mut |st| crate::parser::each_stmt_expr(st, &mut |e| visit(e, step, &mut out)));
+    }
+    out
+}
+
+/// `nexo ci run [PIPELINE] [file.nexo] [--step S | --after success|failure] [--yes]`
+/// and `nexo ci export github|gitlab|azure|jenkins [PIPELINE] [file.nexo]`
+/// (section 12): the program's declarations and blocks run, then the command.
+pub fn run_ci(args: &[String]) -> u8 {
+    let sub = args.first().map(|s| s.as_str());
+    let parsed = match sub {
+        Some("run") => split_options(&args[1..], &["--yes"], &["--step", "--after"]),
+        Some("export") => split_options(&args[1..], &[], &[]),
+        _ => None,
+    };
+    let Some((mut pos, opts)) = parsed else {
+        eprintln!("{}", crate::usage());
+        return 2;
+    };
+    let mut target = None;
+    if sub == Some("export") {
+        if pos.is_empty() {
+            eprintln!("{}", crate::usage());
+            return 2;
+        }
+        target = Some(pos.remove(0));
+    }
+    let files: Vec<&String> = pos.iter().filter(|a| a.ends_with(".nexo")).collect();
+    let names: Vec<&String> = pos.iter().filter(|a| !a.ends_with(".nexo")).collect();
+    let after = option(&opts, "--after");
+    if files.len() > 1 || names.len() > 1 || (option(&opts, "--step").is_some() && after.is_some()) || !matches!(after, None | Some("success") | Some("failure")) {
+        eprintln!("{}", crate::usage());
+        return 2;
+    }
+    let Some(path) = program_file("pipeline", files.first().map(|s| s.as_str())) else { return 1 };
+    let source = match crate::read_source(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprint!("{e}");
+            return 1;
+        }
+    };
+    let program = match crate::parser::parse(&source) {
+        Ok(p) => p,
+        Err(d) => {
+            eprint!("{}", nexo_diag::render(&path, &source, d.span, &d.text()));
+            return 1;
+        }
+    };
+    if let Some(t) = &target {
+        if !nexo_runtime::ci_export::TARGETS.contains(&t.as_str()) {
+            eprint!("{}", error_line(Diagnostic::new_spanless("ci_target").arg("target", t.clone())));
+            return 1;
+        }
+    }
+    let mut env = vec![("NEXO_CI_COMMAND", "1".to_string())];
+    if let Some(n) = names.first() {
+        env.push(("NEXO_CI_PIPELINE", n.to_string()));
+    }
+    if let Some(s) = option(&opts, "--step") {
+        env.push(("NEXO_CI_STEP", s.to_string()));
+    }
+    if let Some(a) = after {
+        env.push(("NEXO_CI_AFTER", a.to_string()));
+    }
+    if opts.iter().any(|(k, _)| k == "--yes") {
+        env.push(("NEXO_CI_YES", "1".to_string()));
+    }
+    if let Some(t) = target {
+        env.push(("NEXO_CI_EXPORT", t));
+        // the steps that wait for an approval, read from the code (D123)
+        let mut lines = Vec::new();
+        for s in &program.body {
+            let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind else { continue };
+            if !matches!(&func.kind, ExprKind::Name(n) if n == "__pipeline") {
+                continue;
+            }
+            let Some(name) = args.first().and_then(|a| lit(&a.value)) else { continue };
+            if names.first().is_some_and(|n| **n != name) {
+                continue;
+            }
+            for (step, people) in approvals(&program.body, &name) {
+                lines.push(std::iter::once(step).chain(people).collect::<Vec<_>>().join("\x1f"));
+            }
+        }
+        env.push(("NEXO_CI_APPROVALS", lines.join("\n")));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        env.push(("NEXO_DRIVER", exe.display().to_string()));
+    }
+    crate::module_command(&path, &env, &["__db_table", "__privacy_type", "__infra", "__stage", "__flags", "__pipeline"], true, true)
 }

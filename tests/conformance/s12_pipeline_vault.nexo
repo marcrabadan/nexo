@@ -1,0 +1,4 @@
+pipeline main:
+    secrets = ["AWS_KEY", "DB_PASS"] from vault
+    step build:
+        print("build")

@@ -37,9 +37,9 @@ use nexo_diag::{msg, render, Diagnostic, Lang};
 
 pub fn usage() -> &'static str {
     if nexo_diag::lang() == Lang::En {
-        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage]"
+        "Usage: nexo [--lang es|en] [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]"
     } else {
-        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage]"
+        "Uso: nexo [--lang es|en] [archivo.nexo | build [--release [--trust-ensure]] [-o salida] archivo.nexo | test|fmt|lint|fix|check [rutas...] | lsp | db diff|migrate archivo.nexo [--db ruta] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [archivo.nexo] [--stage etapa] [--yes] | import nube recurso id [archivo.nexo] | ci run [pipeline] [archivo.nexo] [--step paso | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [archivo.nexo] | flags set nombre valor [archivo.nexo] [--stage etapa] | privacy report [archivo.nexo]]"
     }
 }
 
@@ -168,7 +168,7 @@ fn run_db(args: &[String]) -> u8 {
 /// Compile only the types of a program and the `keep` calls (`__db_table`
 /// and the like), run it with `env` set, and return its exit code: the
 /// runtime carries out the command of a module (D101, D116).
-pub fn module_command(file: &str, env: &[(&str, String)], keep: &[&str]) -> u8 {
+pub fn module_command(file: &str, env: &[(&str, String)], keep: &[&str], literals: bool, fns: bool) -> u8 {
     let source = match read_source(file) {
         Ok(s) => s,
         Err(e) => {
@@ -185,8 +185,12 @@ pub fn module_command(file: &str, env: &[(&str, String)], keep: &[&str]) -> u8 {
         db_path = connect_literal(&program);
         program.body.retain(|s| match &s.kind {
             ast::StmtKind::Type(_) | ast::StmtKind::Trait { .. } | ast::StmtKind::Use { .. } => true,
+            ast::StmtKind::Fn(_) => fns,
             ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call { func, .. }, .. }) => {
                 matches!(&func.kind, ast::ExprKind::Name(n) if keep.contains(&n.as_str()))
+            }
+            ast::StmtKind::Assign { target: ast::Expr { kind: ast::ExprKind::Name(_), .. }, op: "=", value, .. } => {
+                literals && phase5::literal(value)
             }
             _ => false,
         });
@@ -919,6 +923,8 @@ fn main() -> ExitCode {
             "db" => run_db(&rest[1..]),
             "flags" => phase5::run_flags(&rest[1..]),
             "privacy" => phase5::privacy_report(&rest[1..]),
+            "plan" | "apply" | "destroy" | "drift" | "cost" | "import" => phase5::run_infra(&rest[0], &rest[1..]),
+            "ci" => phase5::run_ci(&rest[1..]),
             "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),
             "ai" if rest.len() == 2 && rest[1] == "usage" => ai_cmd::usage(),
             "lsp" if rest.len() == 1 => lsp::serve(lang_given),

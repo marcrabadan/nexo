@@ -1,0 +1,6 @@
+hola
+hola
+Error en s12_run.nexo, línea 2:
+  out = run("exit 3")
+        ^^^^^^^^^^^^^
+Error sin gestionar: El comando "exit 3" ha terminado con el código 3. Mira su salida, arriba, para saber qué ha fallado.

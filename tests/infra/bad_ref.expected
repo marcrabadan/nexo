@@ -1,0 +1,4 @@
+Error en bad_ref.nexo, línea 7:
+  DB = customers.url
+  ^^
+"customers.url" no es un dato de un recurso de esta infra ni de otra. Escribe recurso.dato, o infra.recurso.dato para otra infra, por ejemplo customers.url.
