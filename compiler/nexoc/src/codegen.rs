@@ -1926,7 +1926,13 @@ impl<'a> Gen<'a> {
             StmtKind::Assign { target: Expr { kind: ExprKind::Name(n), span, .. }, ty, .. } => {
                 let a = &self.res.assigns[&s.id];
                 let b = &self.res.bindings[a.target];
-                if assigned.contains(&n.as_str()) && b.kind == BKind::Const && a.cands.first().map(|c| c.0) == Some(a.target) {
+                // a `var` of an outer scope takes the assignment instead (D26)
+                let outer_var = a.cands.iter().any(|(c, _)| self.res.bindings[*c].kind == BKind::Var);
+                if assigned.contains(&n.as_str())
+                    && b.kind == BKind::Const
+                    && a.cands.first().map(|c| c.0) == Some(a.target)
+                    && !outer_var
+                {
                     let _ = ty;
                     return Err(Diagnostic::new("immutable", *span).arg("name", n.clone()));
                 }
