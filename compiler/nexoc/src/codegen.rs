@@ -1746,7 +1746,10 @@ impl<'a> Gen<'a> {
             let ps: Vec<String> = (0..f.params.len()).map(|i| format!("i64 %p{i}")).collect();
             let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, i64 %depth, {}, i32 %span) {{\nentry:", ps.join(", "));
         } else {
-            let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span) {{\nentry:");
+            // the step of a pipeline is small and called from one loop: it
+            // goes inside it (D134)
+            let inline = if matches!(src, FrameSrc::Step(_)) { " alwaysinline" } else { "" };
+            let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span){inline} {{\nentry:");
         }
         let release = self.frame_release_text();
         for line in release.lines() {
@@ -4357,12 +4360,27 @@ impl<'a> Gen<'a> {
             Target::Place(place, name, name_span) => {
                 // the arguments are evaluated first; then the place is made
                 // unique and changed (copy-on-write)
-                let ptr = self.place_ptr(&place)?;
+                let fast_add = name == "add" && n == 1 && names.iter().all(|x| x.is_none());
+                let var_ptr = match &place {
+                    // `nx_list_add` only takes a list nobody else sees; the
+                    // slow path makes the variable unique first (D134)
+                    Place::Var(e, cands) if fast_add => {
+                        if let (ExprKind::Name(nm), [b]) = (&e.kind, cands.as_slice()) {
+                            self.task_write_check(*b, nm, e.span);
+                        }
+                        Some(self.binding_ptr_any(e, cands)?)
+                    }
+                    _ => None,
+                };
+                let ptr = match &var_ptr {
+                    Some(p) => p.clone(),
+                    None => self.place_ptr(&place)?,
+                };
                 let arr = self.values_array(&vals);
                 let nm = self.names_array(&names);
                 let na = self.strarg(&name);
                 let nsp = self.span_id(name_span);
-                let r = if name == "add" && n == 1 && names.iter().all(|x| x.is_none()) {
+                let r = if fast_add {
                     // a list this place alone owns takes the value here (D134)
                     let res = self.alloca("%V");
                     let tv = self.tb(&vals[0]);
@@ -4378,6 +4396,9 @@ impl<'a> Gen<'a> {
                     self.emitf(format_args!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {res}"));
                     self.br(&merge);
                     self.place(&slow);
+                    if var_ptr.is_some() {
+                        self.emitf(format_args!("call void @nx_unique_slot(ptr {ptr})"));
+                    }
                     let r = self.call_v("nx_call_method_at", &format!("ptr {ptr}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
                     self.check();
                     self.store(&res, &r);
