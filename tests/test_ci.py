@@ -75,7 +75,7 @@ def test_a_refused_approval_fails_the_step(phase, repo):
 def test_steps_one_by_one(phase, repo):
     # as the exported jobs run them: the state travels in .nexo/ci
     code, out = nexo(phase, ["ci", "run", "--step", "dev", "--yes"], repo, env=KEY)
-    assert code == 1 and "image no tiene valor en este paso" in out
+    assert code == 1 and "image has no value in this step" in out
     assert nexo(phase, ["ci", "run", "--step", "build", "--yes"], repo, env=KEY)[0] == 0
     code, out = nexo(phase, ["ci", "run", "--step", "dev", "--yes"], repo, env=KEY)
     assert (code, out) == (0, "== step dev\nshop:1.3.0 dev\n")

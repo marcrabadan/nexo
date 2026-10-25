@@ -225,7 +225,7 @@ def test_unexpected_token_message():
     with pytest.raises(NexoError) as e:
         parse("x = (1 + )\n", "t.nexo")
     assert e.value.key == "unexpected"
-    assert "una expresión" in e.value.text()
+    assert "an expression" in e.value.text()
 
 
 def test_events_and_use():
