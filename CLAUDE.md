@@ -1,4 +1,4 @@
-# Nexo — phases 0 to 5
+# Nexo — phases 0 to 6
 
 The core of Nexo, a new programming language, in two implementations
 (section 25 of the specification):
@@ -16,7 +16,12 @@ The core of Nexo, a new programming language, in two implementations
 - phase 4, in both: the standard library of section 15, `nexo.ai`,
   `nexo.web`, `nexo.db`, `use c` and `use python` (D89-D112);
 - phase 5, in both: `nexo.infra`, `nexo.ci`, `nexo.stream`, flags and
-  privacy (D113-D123).
+  privacy (D113-D123);
+- phase 6, optimisation and 1.0: faster compiled code and compilation,
+  reproducible release builds with an SBOM, and in both phases `nexo
+  audit`, `nexo docs --for-ai`, `nexo test --suggest` and `nexo check
+  --intent`; the guarantees of the specification are measured and their
+  state is in docs/guarantees.md (D126-D133).
 
 ## Source of truth
 
@@ -45,11 +50,17 @@ nexo/
                   flags, privacy, stream, infra (model and plan),
                   infra_cloud (the clients and commands),
                   infra_providers.json (shared by both phases), ci,
-                  ci_export
+                  ci_export; phase 6: api.json (what a program can use,
+                  shared by both phases)
+  audit.py        `nexo audit`: the uses of C (implicit unsafe, D129)
+  docs.py         `nexo docs --for-ai`: stdlib/api.json + the program (D130)
+  suggest.py      `nexo test --suggest`: edge cases run by a probe (D131)
+  intent.py       `nexo check --intent`: comments against code with ask (D132)
   fmt.py          `nexo fmt`: token-preserving formatter (D85)
   lint.py         `nexo lint` / `nexo fix`: warnings and safe fixes (D86)
   lsp.py          `nexo lsp`: language server (D87)
-  cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test|fmt|lint|fix|check|lsp`,
+  cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test|fmt|lint|fix|check|audit|lsp`,
+                  `nexo test --suggest`, `nexo check --intent`, `nexo docs --for-ai`,
                   `nexo db diff|migrate`, `nexo ai setup|usage`; phase 5:
                   `nexo plan|apply|destroy|drift|cost|import`, `nexo ci run|export`,
                   `nexo flags set`, `nexo privacy report`
@@ -68,15 +79,19 @@ compiler/
                   (scopes, closures), typecheck (gradual), codegen (LLVM IR),
                   fmt, lint, lsp (+ json), the REPL, cheader (C headers
                   read at compile time), ai_cmd, phase5 (the commands of
-                  flags, privacy, infra and ci)
+                  flags, privacy, infra and ci); phase 6: narrow (ints and
+                  records of known types, D126), sbom, audit, docs,
+                  suggest, intent
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
                   http, db, web, ai, clib, pylib; phase 5: cfg, flags,
                   privacy, stream, infra, infra_cloud, ci, ci_export)
   tests/programs/ extra programs for the differential test
-  scripts/        conformance.py, differential.py
-  bench/          benchmarks (run.sh; compare.py against rust/*.rs; languages.py
+  scripts/        conformance.py, differential.py, fuzz.py (random programs
+                  in both phases), fix_rate.py (errors with a fix)
+  bench/          benchmarks (run.sh; compare.py against rust/*.rs; goals.py
+                  measures the goals of the specification -> goals.json; languages.py
                   against c, rust, go, java, js, python -> languages.json, shown
                   on the site by site.py)
 examples/         real programs; NAME.expected (and NAME.stdin) checked by
@@ -85,6 +100,7 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
   deploy/         the exit criterion of phase 5 (tests/test_exit_criterion_5.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
+docs/guarantees.md the state of each guarantee of the specification (phase 6)
 docs/index.html, reference.html  the GitHub Pages site; reference.html is built from
                   docs/reference/ (page.tmpl + the programs it runs) by
                   docs/reference/build.py
@@ -110,9 +126,11 @@ Phase 1 (needs cargo and clang):
 ```
 cd compiler && cargo build && cargo test
 compiler/target/debug/nexo file.nexo          # compile and run
-compiler/target/debug/nexo build --release file.nexo -o app
+compiler/target/debug/nexo build --release file.nexo -o app   # + app.sbom.json
 python3 compiler/scripts/conformance.py       # conformance + examples
 .venv/bin/python compiler/scripts/differential.py  # same output as phase 0
+.venv/bin/python compiler/scripts/fuzz.py --count=200 # random programs, both phases
+python3 compiler/bench/goals.py                    # the performance goals (needs a release build)
 ```
 
 `tests/test_compiler.py` runs the conformance suite and the examples with
@@ -124,7 +142,7 @@ fails) must equal `NAME.expected` exactly. Messages are in English (the
 only language, D125); a `NAME.args` file holds extra CLI arguments placed
 before the file name, such as `test`.
 
-## Scope (phases 0 to 5)
+## Scope (phases 0 to 6)
 
 Included: lexer/parser per section 24; modules of the program's own
 files (`use shop.payments`, `pub`, D124); constants and `var`; `type`
@@ -175,6 +193,17 @@ between infra blocks. `nexo.ci` (D122-D123): pipelines, `nexo ci run`,
 broker (D117), flags (D115), privacy (D116). Tests that talk to clouds
 use tests/cloud_emulator.py: tests/test_infra.py, test_ci.py,
 test_exit_criterion_5.py.
+
+Phase 6: the fast paths of D126 (records of known types, fields inside
+the object, counted range loops, counts without atomics until a second
+thread starts); linear name resolution and `-O0` in development mode
+(D127); release builds that are the same byte for byte, with
+`<program>.sbom.json` (D128); `nexo audit` (D129), `nexo docs --for-ai`
+from nexo/stdlib/api.json (D130), `nexo test --suggest` (D131) and `nexo
+check --intent` through `ask` (D132), in both phases with the same output
+(tests/test_phase6.py). External audits, user studies, the package
+registry and the program `policy` are not code; docs/guarantees.md says
+what each guarantee needs (D133).
 
 Excluded (do not implement yet): ml, ui, notify, the program policy,
 every/lifecycle, canary and blue/green releases, chaos, AI budgets and

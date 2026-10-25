@@ -1764,3 +1764,21 @@ the code agree in ...". When the model cannot answer (no provider, a
 network error) the error of `ask` is printed and the exit code is 1. The
 public set of cases with known mismatches that verifies this guarantee
 needs a real model and is left to the project (D133).
+
+**D133. What phase 6 covers and how its exit criterion is reported.**
+Section 25 gives phase 6 "performance goals, external audit, user
+studies" and the exit criterion "the guarantees in 'Goals and guarantees'
+are met or removed". The code side is done here: the optimisations of
+D126-D127, the tools the guarantees name (D128-D132), differential
+fuzzing (`compiler/scripts/fuzz.py`: random programs that are correct by
+construction run in both phases, with the same output, no crash and no
+leak; nightly in `.github/workflows/fuzz.yml`), the percentage of errors
+with a fix (`compiler/scripts/fix_rate.py`) and the measure of the
+performance goals (`compiler/bench/goals.py`, written to `goals.json`).
+`docs/guarantees.md` gives the state of every guarantee. Removing a
+guarantee from the specification is the owner's decision, not an
+ambiguity to settle here: the ones not met (time and memory against
+Rust, compiling 100,000 lines in 10 s, capability permissions) and the
+ones that need people (external audits, user studies, the registry,
+comparisons against models) stay in the specification and are listed as
+not met, so phase 6 stays open.
