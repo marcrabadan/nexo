@@ -164,10 +164,18 @@ def due(db, info) -> bool:
     return last is None or _time.time() - last >= DAY
 
 
-def blank(col):
-    """The value an anonymised column takes."""
+def blank(col, row=None):
+    """The value an anonymised column takes; a @unique one is made from the
+    row's id, so that several erased rows can keep it unique."""
     if col.optional:
         return None
+    if col.unique and row is not None:
+        if col.kind == "str":
+            return f"erased-{row}"
+        if col.kind == "int":
+            return -row
+        if col.kind == "float":
+            return float(-row)
     return {"str": "", "int": 0, "float": 0.0, "bool": 0, "date": "0001-01-01",
             "time": "1970-01-01T00:00:00.000Z"}.get(col.kind, "")
 
@@ -179,12 +187,21 @@ def anonymise(db, call, info, where: str, params: list) -> None:
     cols = [info.column(f) for f in p.personal() if info.column(f) is not None]
     if not cols:
         return
-    values = []
-    for c in cols:
-        v = blank(c)
-        values.append(seal(db.key, str(v)) if c.private and v is not None and db.key is not None else v)
     sets = ", ".join(f"{quote(c.name)} = ?" for c in cols)
-    db.execute(call, f"UPDATE {quote(info.name)} SET {sets} WHERE {where}", values + params)
+
+    def values(row=None):
+        out = []
+        for c in cols:
+            v = blank(c, row)
+            out.append(seal(db.key, str(v)) if c.private and v is not None and db.key is not None else v)
+        return out
+    if not any(c.unique and not c.optional for c in cols):
+        db.execute(call, f"UPDATE {quote(info.name)} SET {sets} WHERE {where}", values() + params)
+        return
+    key = quote(info.key or "id")
+    rows = db.execute(call, f"SELECT {key} FROM {quote(info.name)} WHERE {where}", params).fetchall()
+    for (row,) in rows:
+        db.execute(call, f"UPDATE {quote(info.name)} SET {sets} WHERE {key} = ?", values(row) + [row])
 
 
 def erase_row(db, call, info, key) -> None:

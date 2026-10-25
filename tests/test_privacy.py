@@ -166,3 +166,44 @@ def test_release_build_needs_keep_and_purpose(tmp_path):
     proc = run([str(nexo)], ["build", "--release", "app.nexo"], tmp_path)
     assert proc.returncode == 1
     assert 'El type "Contact" tiene datos personales sin keep.' in proc.stdout.decode()
+
+
+UNIQUE = """use nexo.db
+
+db = connect("shop.db", key: secret("DB_KEY"))
+
+@table
+type Customer:
+    id: id
+    name: str @personal
+    email: str @personal @unique
+    code: int @private @unique
+    since: date
+    orders: many Order
+
+    keep = 5 years after since
+    purpose = "billing"
+
+@table
+type Order:
+    id: id
+    customer: ref Customer
+    total: int
+
+ana = db.Customer.add(name: "Ana", email: "ana@x.com", code: 11, since: today)
+luis = db.Customer.add(name: "Luis", email: "luis@x.com", code: 22, since: today)
+db.Order.add(customer: ana, total: 30)
+db.Order.add(customer: luis, total: 40)
+privacy.erase(ana)
+privacy.erase(luis)
+print(db.sql("SELECT name, email FROM customer"))
+"""
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_erasing_keeps_unique_fields_unique(phase, tmp_path):
+    # erased rows that others point to stay, anonymised: a @unique field
+    # takes a value made from the row's id, not one shared blank value
+    (tmp_path / "app.nexo").write_text(UNIQUE, encoding="utf-8")
+    out = run(phase[1], ["app.nexo"], tmp_path, env={"DB_KEY": "k"}).stdout.decode()
+    assert out == '[{"name": "", "email": "erased-1"}, {"name": "", "email": "erased-2"}]\n'

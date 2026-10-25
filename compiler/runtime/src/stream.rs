@@ -256,21 +256,23 @@ fn group() -> String {
     with(|b| if b.group.is_empty() { "nexo".to_string() } else { b.group.clone() })
 }
 
-fn keys_path(s: &(String, String)) -> String {
-    format!("{ROOT}/{}/{}.{}.keys", s.0, s.1, group())
+/// The keys each handler (the n-th `when` of its stream) has processed: its
+/// own, so that two handlers of one stream each process a message once.
+fn keys_path(s: &(String, String), n: usize) -> String {
+    format!("{ROOT}/{}/{}.{}.{n}.keys", s.0, s.1, group())
 }
 
-fn seen_key(s: &(String, String), k: &str) -> bool {
+fn seen_key(s: &(String, String), n: usize, k: &str) -> bool {
     if test_mode() {
-        let ident = format!("{}:{}", s.0, s.1);
+        let ident = format!("{}:{}#{n}", s.0, s.1);
         return with(|b| b.keys.iter().any(|(i, ks)| *i == ident && ks.iter().any(|x| x == k)));
     }
-    std::fs::read_to_string(keys_path(s)).map(|t| t.lines().any(|l| l == k)).unwrap_or(false)
+    std::fs::read_to_string(keys_path(s, n)).map(|t| t.lines().any(|l| l == k)).unwrap_or(false)
 }
 
-fn remember_key(s: &(String, String), k: String) {
+fn remember_key(s: &(String, String), n: usize, k: String) {
     if test_mode() {
-        let ident = format!("{}:{}", s.0, s.1);
+        let ident = format!("{}:{}#{n}", s.0, s.1);
         with(|b| match b.keys.iter_mut().find(|(i, _)| *i == ident) {
             Some((_, ks)) => ks.push(k),
             None => b.keys.push((ident, vec![k])),
@@ -278,20 +280,21 @@ fn remember_key(s: &(String, String), k: String) {
         return;
     }
     let _ = std::fs::create_dir_all(format!("{ROOT}/{}", s.0));
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(keys_path(s)) {
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(keys_path(s, n)) {
         let _ = writeln!(f, "{k}");
     }
 }
 
-/// Run a handler with retries; then the dead-letter stream.
-fn handle(func: &Val, key: &Option<Val>, m: &Message, span: u32) {
+/// Run a handler (the n-th `when` of its stream) with retries; then the
+/// dead-letter stream.
+fn handle(func: &Val, key: &Option<Val>, m: &Message, n: usize, span: u32) {
     let mv = native(m.clone());
     let mut k = None;
     if let Some(kf) = key {
         match call_value(kf.v(), &[mv.v()], span).and_then(|v| crate::pipe::bind(v.v())) {
             Ok(v) => {
                 let text = repr(v.v());
-                if seen_key(&m.stream, &text) {
+                if seen_key(&m.stream, n, &text) {
                     return;
                 }
                 k = Some(text);
@@ -323,7 +326,7 @@ fn handle(func: &Val, key: &Option<Val>, m: &Message, span: u32) {
         return;
     }
     if let Some(k) = k {
-        remember_key(&m.stream, k);
+        remember_key(&m.stream, n, k);
     }
 }
 
@@ -338,8 +341,8 @@ fn dead(m: &Message, error: &str) {
 fn deliver(m: &Message, span: u32) {
     let handlers: Vec<(Val, Option<Val>)> =
         with(|b| b.handlers.iter().filter(|h| h.stream == m.stream).map(|h| (h.func.clone(), h.key.clone())).collect());
-    for (f, k) in handlers {
-        handle(&f, &k, m, span);
+    for (i, (f, k)) in handlers.iter().enumerate() {
+        handle(f, k, m, i + 1, span);
     }
     let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
     for q in queries {
@@ -519,6 +522,21 @@ fn offset_path(s: &(String, String)) -> String {
     format!("{ROOT}/{}/{}.{}.offset", s.0, s.1, group())
 }
 
+/// Save the offset up to `read`, but not past the messages of a window
+/// still open: after a stop they are read again (at least once, D117).
+fn acknowledge(s: &(String, String), read: i64) {
+    let mut done = read;
+    let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
+    for q in queries {
+        let g = q.lock().unwrap();
+        let windowed = g.window.is_some_and(|w| w.0 != "sliding");
+        if g.stream == *s && windowed && !g.open.is_empty() {
+            done = done.min(g.open[0].id - 1);
+        }
+    }
+    let _ = std::fs::write(offset_path(s), format!("{done}\n"));
+}
+
 /// `nexo file.nexo` with `when` handlers or stream pipelines: read the new
 /// messages of every stream until the program is stopped.
 pub fn listen_forever(program: &str) {
@@ -538,10 +556,13 @@ pub fn listen_forever(program: &str) {
     let shown: Vec<String> = streams.iter().map(|s| format!("{}(\"{}\")", s.0, s.1)).collect();
     crate::state::flush();
     eprintln!("{}", msg("info.stream_listening", &[("streams", shown.join(", "))]));
+    // what was delivered, per stream
+    let mut read: Vec<i64> =
+        streams.iter().map(|s| std::fs::read_to_string(offset_path(s)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)).collect();
     loop {
         let mut idle = true;
-        for s in &streams {
-            let mut done: i64 = std::fs::read_to_string(offset_path(s)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0);
+        for (si, s) in streams.iter().enumerate() {
+            let mut done = read[si];
             let text = std::fs::read_to_string(log_path(s)).unwrap_or_default();
             for (i, line) in text.lines().enumerate() {
                 let n = i as i64 + 1;
@@ -559,7 +580,8 @@ pub fn listen_forever(program: &str) {
                 deliver(&m, 0);
                 crate::state::flush();
                 done = m.id;
-                let _ = std::fs::write(offset_path(s), format!("{done}\n"));
+                read[si] = done;
+                acknowledge(s, done);
             }
         }
         let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
@@ -567,6 +589,10 @@ pub fn listen_forever(program: &str) {
             let d = due(&q.lock().unwrap());
             if d {
                 flush_query(&q);
+                let stream = q.lock().unwrap().stream.clone();
+                if let Some(si) = streams.iter().position(|s| *s == stream) {
+                    acknowledge(&stream, read[si]);
+                }
             }
         }
         if idle {

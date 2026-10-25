@@ -1332,7 +1332,9 @@ JSON) with the row and the rows of its `many` fields, whose `ref` fields
 are written as ids, and returns the path; it can fail like any write.
 `privacy.erase(record)` deletes the row; when other rows point to it, it
 is anonymised instead (its personal fields become none, `""`, 0 or the
-first day) and recorded as erased, and the personal fields of the rows
+first day; a `@unique` one that is not optional becomes `erased-<id>`, or
+minus the id for numbers, so that several erased rows keep it unique) and
+recorded as erased, and the personal fields of the rows
 that point to it are anonymised as well. `privacy.restrict(record)`
 records it as restricted. The table `nexo_privacy (tbl, row, state)`
 holds both, and every query of a table with personal fields leaves its
@@ -1372,8 +1374,10 @@ implicitly (section 1).
   times, 0.1 s, 0.2 s and 0.4 s apart, and then the message goes to the
   stream `<name>.dead` with a line on the standard error output saying
   why. With `key:`, the key of each processed message (as `repr` writes
-  it) is kept in `<name>.<group>.keys` and a message with a key already
-  processed is acknowledged without running the block. There is one
+  it) is kept in `<name>.<group>.<n>.keys` and a message with a key already
+  processed is acknowledged without running the block. Each handler has
+  its own keys (n is its place among the `when` of that stream), so two
+  handlers of one stream each process a message once. There is one
   partition per stream, so order is kept and handlers run one at a time.
 - A pipeline whose source is a stream keeps its steps and runs them over
   the messages of each window, whose rows are the decoded data (JSON, or
@@ -1384,6 +1388,9 @@ implicitly (section 1).
   messages; both close when a message of a later window arrives, when
   the time passes (while the program runs) or at the end of a test.
   `sliding D` runs on every message over the messages of the last D.
+  The offset saved never passes the first message of a window or session
+  still open, so a consumer stopped before it closes reads those messages
+  again (and the handlers of that stream see them again: at least once).
   These three are contextual steps after `|>`, must come right after the
   source, and are errors on anything else.
 

@@ -173,8 +173,9 @@ def b_stream_when(call, source, fn, key=None):
     return None
 
 
-def handle(call, fn, key, message: Message) -> None:
-    """Run a handler with retries; then the dead-letter stream."""
+def handle(call, fn, key, message: Message, n: int = 1) -> None:
+    """Run a handler (the n-th `when` of its stream) with retries; then the
+    dead-letter stream."""
     interp = call.interp
     ident = message.stream.ident()
     if key is not None:
@@ -184,7 +185,7 @@ def handle(call, fn, key, message: Message) -> None:
         except (NexoFailure, NexoError) as exc:
             dead(call, message, exc)
             return
-        if k in keys_of(message.stream):
+        if k in keys_of(message.stream, n):
             return
     error = None
     for attempt in range(4):
@@ -200,7 +201,7 @@ def handle(call, fn, key, message: Message) -> None:
         dead(call, message, error)
         return
     if key is not None:
-        remember_key(message.stream, k)
+        remember_key(message.stream, n, k)
 
 
 def dead(call, message: Message, error) -> None:
@@ -214,21 +215,27 @@ def dead(call, message: Message, error) -> None:
     sys.stderr.flush()
 
 
-def keys_of(stream: Stream) -> set:
+def keys_path(stream: Stream, n: int) -> Path:
+    """The keys each handler has processed: its own, so that two handlers of
+    one stream each process a message once."""
+    return ROOT / stream.kind / f"{stream.name}.{group()}.{n}.keys"
+
+
+def keys_of(stream: Stream, n: int) -> set:
     if TEST_MODE:
-        return SEEN_KEYS.setdefault(stream.ident(), set())
-    path = ROOT / stream.kind / f"{stream.name}.{group()}.keys"
+        return SEEN_KEYS.setdefault(f"{stream.ident()}#{n}", set())
+    path = keys_path(stream, n)
     try:
         return set(path.read_text(encoding="utf-8").splitlines())
     except OSError:
         return set()
 
 
-def remember_key(stream: Stream, k: str) -> None:
+def remember_key(stream: Stream, n: int, k: str) -> None:
     if TEST_MODE:
-        SEEN_KEYS.setdefault(stream.ident(), set()).add(k)
+        SEEN_KEYS.setdefault(f"{stream.ident()}#{n}", set()).add(k)
         return
-    path = ROOT / stream.kind / f"{stream.name}.{group()}.keys"
+    path = keys_path(stream, n)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
         f.write(k + "\n")
@@ -243,9 +250,11 @@ def group() -> str:
 
 def deliver(call, message: Message) -> None:
     """A message reaches every handler and query of its stream."""
+    n = 0
     for source, fn, key, span in list(HANDLERS):
         if source == message.stream:
-            handle(call, fn, key, message)
+            n += 1
+            handle(call, fn, key, message, n)
     for q in list(QUERIES):
         if q.stream == message.stream:
             q.add(call, message)
@@ -403,6 +412,18 @@ def new_messages(stream: Stream, after: int) -> list[Message]:
     return out
 
 
+def acknowledge(stream: Stream, read: int) -> None:
+    """Save the offset up to `read`, but not past the messages of a window
+    still open: after a stop they are read again (at least once, D117)."""
+    done = read
+    for q in QUERIES:
+        if q.stream == stream and q.open and q.window is not None and q.window[0] != "sliding":
+            first = q.open[0].id
+            if isinstance(first, int):
+                done = min(done, first - 1)
+    save_offset(stream, done)
+
+
 def listen_forever(interp, program: str) -> None:
     """`nexo file.nexo` with `when` handlers or stream pipelines: read the
     new messages of every stream until the program is stopped."""
@@ -415,20 +436,21 @@ def listen_forever(interp, program: str) -> None:
             streams.append(s)
     sys.stderr.write(errors.msg("info.stream_listening", streams=", ".join(s.repr() for s in streams)) + "\n")
     sys.stderr.flush()
+    read = {s: read_offset(s) for s in streams}  # what was delivered
     try:
         while True:
             idle = True
             for s in streams:
-                done = read_offset(s)
-                for message in new_messages(s, done):
+                for message in new_messages(s, read[s]):
                     idle = False
                     deliver(call, message)
                     sys.stdout.flush()
-                    done = message.id if isinstance(message.id, int) else done + 1
-                    save_offset(s, done)
+                    read[s] = message.id if isinstance(message.id, int) else read[s] + 1
+                    acknowledge(s, read[s])
             for q in QUERIES:
                 if q.due():
                     q.flush(call)
+                    acknowledge(q.stream, read[q.stream])
             if idle:
                 _time.sleep(0.2)
     except KeyboardInterrupt:

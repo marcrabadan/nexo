@@ -409,30 +409,50 @@ impl Database {
         if cols.is_empty() {
             return Ok(());
         }
-        let mut values = Vec::new();
-        for c in &cols {
-            let v = if c.optional {
-                Sql::Null
-            } else {
-                match c.kind {
-                    "int" | "bool" => Sql::Int(0),
-                    "float" => Sql::Real(0.0),
-                    "date" => Sql::Text("0001-01-01".into()),
-                    "time" => Sql::Text("1970-01-01T00:00:00.000Z".into()),
-                    _ => Sql::Text(String::new()),
-                }
-            };
-            let v = match (&v, c.private, &self.key) {
-                (Sql::Null, _, _) | (_, false, _) | (_, _, None) => v,
-                (Sql::Int(i), true, Some(k)) => Sql::Text(crate::privacy::seal(k, &i.to_string())),
-                (Sql::Real(f), true, Some(k)) => Sql::Text(crate::privacy::seal(k, &crate::fmt::format_float(*f))),
-                (Sql::Text(t), true, Some(k)) => Sql::Text(crate::privacy::seal(k, t)),
-            };
-            values.push(v);
-        }
+        // a @unique field is made from the row's id, so that several erased
+        // rows can keep it unique
+        let values = |row: Option<i64>| -> Vec<Sql> {
+            let mut out = Vec::new();
+            for c in &cols {
+                let v = if c.optional {
+                    Sql::Null
+                } else {
+                    match (c.kind, row.filter(|_| c.unique)) {
+                        ("str", Some(r)) => Sql::Text(format!("erased-{r}")),
+                        ("int", Some(r)) => Sql::Int(-r),
+                        ("float", Some(r)) => Sql::Real(-(r as f64)),
+                        ("int" | "bool", _) => Sql::Int(0),
+                        ("float", _) => Sql::Real(0.0),
+                        ("date", _) => Sql::Text("0001-01-01".into()),
+                        ("time", _) => Sql::Text("1970-01-01T00:00:00.000Z".into()),
+                        _ => Sql::Text(String::new()),
+                    }
+                };
+                let v = match (&v, c.private, &self.key) {
+                    (Sql::Null, _, _) | (_, false, _) | (_, _, None) => v,
+                    (Sql::Int(i), true, Some(k)) => Sql::Text(crate::privacy::seal(k, &i.to_string())),
+                    (Sql::Real(f), true, Some(k)) => Sql::Text(crate::privacy::seal(k, &crate::fmt::format_float(*f))),
+                    (Sql::Text(t), true, Some(k)) => Sql::Text(crate::privacy::seal(k, t)),
+                };
+                out.push(v);
+            }
+            out
+        };
         let sets: Vec<String> = cols.iter().map(|c| format!("{} = ?", quote(&c.name))).collect();
-        values.extend(params.iter().cloned());
-        self.exec(&format!("UPDATE {} SET {} WHERE {wheres}", quote(&info.name), sets.join(", ")), &values, span)?;
+        if !cols.iter().any(|c| c.unique && !c.optional) {
+            let mut vs = values(None);
+            vs.extend(params.iter().cloned());
+            self.exec(&format!("UPDATE {} SET {} WHERE {wheres}", quote(&info.name), sets.join(", ")), &vs, span)?;
+            return Ok(());
+        }
+        let key = quote(info.key.as_deref().unwrap_or("id"));
+        let found = self.exec(&format!("SELECT {key} FROM {} WHERE {wheres}", quote(&info.name)), params, span)?;
+        for r in found.rows {
+            let Some(Sql::Int(row)) = r.into_iter().next() else { continue };
+            let mut vs = values(Some(row));
+            vs.push(Sql::Int(row));
+            self.exec(&format!("UPDATE {} SET {} WHERE {key} = ?", quote(&info.name), sets.join(", ")), &vs, span)?;
+        }
         Ok(())
     }
 

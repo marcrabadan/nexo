@@ -50,3 +50,40 @@ def test_a_consumer_reads_what_producers_send(producer, consumer, tmp_path):
         out, err = proc.communicate(timeout=30)
     assert out.decode() == OUT
     assert err.decode().startswith('Escuchando kafka("notices")')
+
+
+WINDOWED = """when kafka("clicks") as msg:
+    print("seen", msg.id)
+
+fn show(n):
+    print("window", n)
+
+kafka("clicks")
+  |> window 1h
+  |> count
+  |> each show
+"""
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_stop_keeps_the_messages_of_an_open_window(phase, tmp_path):
+    # the offset stays before a window that has not run yet, so a consumer
+    # stopped (or crashed) before the window closes reads it again
+    (tmp_path / "producer.nexo").write_text('kafka("clicks").send("home")\n', encoding="utf-8")
+    (tmp_path / "consumer.nexo").write_text(WINDOWED, encoding="utf-8")
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    assert subprocess.run([*phase[1], "producer.nexo"], cwd=tmp_path, env=env, timeout=120).returncode == 0
+    offset = tmp_path / ".nexo" / "streams" / "kafka" / "clicks.consumer.offset"
+    for round_ in range(2):
+        out = tmp_path / f"out{round_}.txt"
+        with out.open("w") as f:
+            proc = subprocess.Popen([*phase[1], "consumer.nexo"], cwd=tmp_path, stdout=f,
+                                    stderr=subprocess.DEVNULL, env=env, start_new_session=True)
+            try:
+                wait_for(out, "seen 1")
+                wait_for(offset, "0")
+            finally:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait(timeout=30)
+        # the window never ran, and the message is read again each time
+        assert out.read_text() == "seen 1\n"
