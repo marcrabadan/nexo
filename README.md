@@ -482,6 +482,14 @@ pipeline main:
         apply(stage: "prod", image: image)
 ```
 
+**Containers.** `build_image("shop")` runs `docker build` (or the tool in
+`NEXO_CONTAINER_TOOL`) with the project's own `Dockerfile`, and does not
+push: a step pushes with `run("docker push {image}")` to a registry the
+clouds can read. [`examples/deploy/Dockerfile`](examples/deploy/Dockerfile)
+compiles the app with `nexo build --release` and copies the binary, which
+needs only glibc, into `debian:bookworm-slim`; secrets are passed with
+`-e` when the container starts.
+
 **Not yet:** `ml`, `ui`, `notify`, the program `policy`, `every` and
 `lifecycle`, canary and blue/green releases, `nexo chaos`, AI budgets,
 MCP tools, PostgreSQL, brokers on the network, `use rust`/`use wasm`,
