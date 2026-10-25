@@ -1644,3 +1644,123 @@ per program, nothing to choose.
 - Keywords were already in English (section 16); the editor views of
   keywords in other languages (`nexo fmt --view es`, `nexo config lang`)
   were never implemented and are not planned.
+
+## Phase 6: optimisation and 1.0 (section 25)
+
+**D126. Faster compiled code.** Section 25 asks phase 6 for the
+performance goals of "Goals and guarantees" (under 1.5× Rust's time and
+1.3× its memory). None of these changes what a program prints.
+- A value is certainly a record of a type defined once (D84) when it is a
+  call to that type, `self` in one of its methods (methods are only
+  reached through a value of their type, and `self` is never assigned),
+  or a variable whose every assignment (with `=` and no declared type) is
+  one. `x.field` on such a value reads the field by its index, without
+  looking up the name; `x.method(args)` calls the method's function
+  directly, with the receiver as `self`, when the call has one positional
+  argument per parameter after `self`. A field declared `int` (not weak)
+  read from such a record is certainly an int: storing a field checks its
+  type.
+- A record keeps up to four fields inside its object (one allocation; the
+  object does not grow, other values are larger), and the compiled code
+  reads them at an offset the runtime finds when it starts.
+- `for i in a..b` with both ends certainly ints is a counted loop: no
+  range object and no iterator.
+- Reference counts change without atomic instructions until the program
+  starts a second thread that may touch values (`parallel`, `spawn`, a
+  server, a stream that listens). The flag is set before that thread
+  starts and is never cleared, so every later change is atomic; a program
+  with no threads never pays for them.
+- mimalloc as the allocator and link-time optimisation of the runtime
+  were tried and measured slower; they are not used.
+
+**D127. Compiling large programs.** The goal is 100,000 lines in under
+10 s in development mode. Resolving names was quadratic: each name was
+looked up in a list of the names of its scope, and each read computed its
+"Did you mean...?" suggestion against every visible name. Scopes now keep
+an index of their names, and suggestions among a large scope (more than
+32 names) or the builtins use an index of the strings left after
+deleting up to two characters (two names within distance 2 always share
+one); they give exactly the suggestion the linear search gave, the first
+name in scope order among the closest. Development mode (`nexo
+file.nexo`, `nexo build` without `--release`) no longer optimises the
+generated code (`-O0` instead of `-O1`): it compiled several times
+slower than it runs faster, and `--release` is the mode for speed.
+
+**D128. Reproducible release builds and the bill of materials.** "Goals
+and guarantees" asks that two builds of the same code produce the same
+binary byte for byte and that `nexo build --release` generate an SBOM.
+The only byte that changed between two builds was the name of the
+temporary IR file, which the object file records: it is now always
+`program.ll`, in a directory of its own. Builds of the same file give the
+same bytes from any directory and at any time. Next to the program,
+`nexo build --release` writes `<program>.sbom.json`, a CycloneDX 1.5
+document: the program (with the SHA-256 of the binary), each source file
+(main file and modules, with their SHA-256), the runtime and the crates
+it is built from (from the compiler's `Cargo.lock`, as `pkg:cargo` URLs),
+the C libraries and Python modules the program uses, and the C compiler.
+It has no date and no random serial number, so it is reproducible too.
+A development build writes none. Signed packages need the registry of
+section 13, which does not exist yet.
+
+**D129. `nexo audit`.** "Goals and guarantees" says `nexo audit` lists
+every use of `unsafe`, and section 18 that calls to C count as implicit
+`unsafe`. `unsafe:` blocks belong to `nexo.perf`, outside this edition
+(D89), so they are a compile error and never reach the audit. `nexo audit
+[paths]` reads every file (like `nexo lint`) and prints, in the order of
+the file, each `use c` library and each call to a function of one, as
+`file:line: text fix`, then a summary; with none, "No unsafe code in
+...". It does not fail (exit code 0) unless a file cannot be read or
+parsed. Calls to Python are not unsafe: data is converted at the
+boundary (section 18).
+
+**D130. `nexo docs --for-ai`.** "Goals and guarantees" says it gives any
+model "the exact list of available functions". The list is written once,
+in `nexo/stdlib/api.json` (read by both phases, like
+`infra_providers.json`): each function of the core, the standard library
+and the modules of this edition with its signature and one line on what
+it does, the values (`PI`, `now`...), the types, the methods of the
+builtin types, and the names that exist but are not available in this
+edition (brokers on the network, `mcp`, `audit`...). A test checks that
+it names every builtin of both phases and nothing else. `nexo docs
+--for-ai file.nexo` adds the program's own top-level functions, types
+and traits: their first line, their `##` comments and the fields and
+methods of types. `nexo docs` without `--for-ai` is a usage error: the
+other documentation is the site.
+
+**D131. `nexo test --suggest`.** "Goals and guarantees" says it
+"generates edge cases from types, contracts and unions". It prints test
+blocks for every top-level function whose parameters all have a type it
+can make values of: for `int` 0, 1, -1 and the largest int, plus the
+values on each side of the bound of an `expect param OP literal` (either
+way round); for `float` 0.0, -1.5 and 1.5; for `str` "" and "a b"; for
+`bool` both; each literal of a union; the two bounds of a range; each
+variant of an enum of the file (variants without data); `[]` and a list
+of one value; `none` for `T?`. A first case uses, for each parameter, its
+first value that keeps the `expect`s; every other case changes one
+parameter. A function with a parameter of another type (a record, money,
+a map...) is left out. The expected values are what the function gives
+now: a probe program (the file's definitions and literal constants,
+without the rest of its top level, next to the file so its modules are
+found, run for at most a minute) calls every case and prints the result
+as JSON, and each result becomes `assert call == value`, or, when the
+call fails, a check of the error's kind. A result with no plain literal
+(a record, a list) is a comment with its JSON. The header says to check
+each value before keeping it: the suggestion records behaviour, it does
+not know what is right. Both phases run the probe with their own
+implementation and print the same text.
+
+**D132. `nexo check --intent`.** "Goals and guarantees" says it
+"compares `##` comments and contracts with what the code does"; D87 left
+it to `nexo.ai`, since reading the intent of a comment needs a language
+model. For every top-level function with `##` comments right above it or
+an `expect` or `ensure`, the text of the function (comments included) is
+sent to the model with `ask` and a typed answer (`agrees: bool`, `reason:
+str`). A probe program with the file's `ai` blocks asks the questions, so
+the configuration (D106), the providers, the retries and `fake` are those
+of `ask`. Each function the model says disagrees is a warning on its
+first comment line, "The comments of "f" and its code disagree:
+reason.", then a summary, with exit code 1; otherwise "The comments and
+the code agree in ...". When the model cannot answer (no provider, a
+network error) the error of `ask` is printed and the exit code is 1. The
+public set of cases with known mismatches that verifies this guarantee
+needs a real model and is left to the project (D133).

@@ -21,7 +21,7 @@ from .errors import NexoError
 from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
-USAGE = ("Usage: nexo [file.nexo | test|fmt|lint|fix|check [paths...] | lsp"
+USAGE = ("Usage: nexo [file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs --for-ai [file.nexo] | lsp"
          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
          " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]")
 BANNER = "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit."
@@ -270,6 +270,38 @@ def run_check(paths: list[str]) -> int:
             status = 1
     if status == 0:
         print(errors.msg("check_ok", path=", ".join(paths) or "."))
+    return status
+
+
+def run_intent(paths: list[str]) -> int:
+    """`nexo check --intent`: comments and contracts against the code (D132)."""
+    from .intent import check_intent, run_probe
+    total = status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            warnings, error = check_intent(source, name, run_probe(str(f)))
+        except NexoError as exc:
+            report(exc)
+            status = 1
+            continue
+        for w in warnings:
+            sys.stdout.write(w)
+        total += len(warnings)
+        if error is not None:
+            sys.stderr.write(f"Error: {error}\n")
+            return 1
+    if total:
+        print(errors.msg("info.intent_summary", n=total))
+        return 1
+    if status == 0:
+        print(errors.msg("info.intent_ok", path=", ".join(paths) or "."))
     return status
 
 
@@ -625,9 +657,82 @@ def repl() -> int:
         sys.stdout.flush()
 
 
+def run_audit(paths: list[str]) -> int:
+    """`nexo audit`: every use of unsafe code, then a summary (D129)."""
+    from .audit import audit_source
+    total = files = 0
+    status = 0
+    for f in test_files(paths):
+        try:
+            source = f.read_text(encoding="utf-8")
+        except OSError:
+            sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+            status = 1
+            continue
+        name = str(f) if paths else str(f.relative_to("."))
+        try:
+            found = audit_source(source, name)
+        except NexoError as exc:
+            report(exc)
+            status = 1
+            continue
+        for line, _, text in found:
+            print(f"{name}:{line}: {text}")
+        total += len(found)
+        files += bool(found)
+    if total:
+        print(errors.msg("info.audit_summary", n=total, files=files))
+    elif status == 0:
+        print(errors.msg("info.audit_none", path=", ".join(paths) or "."))
+    return status
+
+
+def run_suggest(args: list[str]) -> int:
+    """`nexo test --suggest file.nexo` (D131)."""
+    from .suggest import run_probe, suggest
+    if len(args) != 1:
+        print(USAGE, file=sys.stderr)
+        return 2
+    try:
+        source = Path(args[0]).read_text(encoding="utf-8")
+    except OSError:
+        sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=args[0])}.\n")
+        return 1
+    try:
+        sys.stdout.write(suggest(source, args[0], run_probe(args[0])))
+    except NexoError as exc:
+        report(exc)
+        return 1
+    return 0
+
+
+def run_docs(args: list[str]) -> int:
+    """`nexo docs --for-ai [file]` (D130)."""
+    from .docs import for_ai
+    if args[:1] != ["--for-ai"] or len(args) > 2:
+        print(USAGE, file=sys.stderr)
+        return 2
+    if len(args) == 1:
+        sys.stdout.write(for_ai())
+        return 0
+    try:
+        source = Path(args[1]).read_text(encoding="utf-8")
+    except OSError:
+        sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=args[1])}.\n")
+        return 1
+    sys.stdout.write(for_ai(args[1], source))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     rest = args
+    if rest[:1] == ["docs"]:
+        return run_docs(rest[1:])
+    if rest[:2] == ["test", "--suggest"]:
+        return run_suggest(rest[2:])
+    if rest[:2] == ["check", "--intent"]:
+        return run_intent(rest[2:])
     if rest[:1] == ["db"]:
         return run_db(rest[1:])
     if rest[:1] == ["flags"]:
@@ -657,6 +762,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_fix(rest[1:])
     if rest[0] == "check":
         return run_check(rest[1:])
+    if rest[0] == "audit":
+        return run_audit(rest[1:])
     if rest == ["lsp"]:
         from .lsp import serve
         return serve()
