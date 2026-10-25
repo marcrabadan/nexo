@@ -223,7 +223,9 @@ h1 em {
 }
 .code-bar span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code pre { margin: 0; padding: 18px 20px; overflow-x: auto; font-size: 14px; line-height: 1.65; tab-size: 4; }
-.code pre code { font-size: inherit; font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+/* code windows can sit inside a list or a table: undo the inline-code chip */
+.code pre code { font-size: inherit; font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0;
+  background: none; border: 0; border-radius: 0; padding: 0; white-space: inherit; color: inherit; }
 .code > pre { max-height: 560px; overflow-y: auto; }
 .code .out { background: var(--out-bg); border-top: 1px solid var(--code-line); }
 .code .out pre { color: #c9c5bd; }
