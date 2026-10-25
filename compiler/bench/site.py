@@ -98,7 +98,8 @@ def main():
         cells = []
         for lang in LANGS:
             t = results[n][lang]
-            cls = ' class="best"' if t == fastest else (' class="nexo"' if lang == "Nexo" else "")
+            cls = " ".join(c for c, on in (("best", t == fastest), ("nexo", lang == "Nexo")) if on)
+            cls = f' class="{cls}"' if cls else ""
             cells.append(f"<td{cls}>{seconds(t)}</td>")
         if interp:
             cells.append(f"<td>{seconds(results[n].get('Nexo interpreter'))}</td>")
@@ -111,7 +112,7 @@ def main():
     <div class="section-head">
       <p class="eyebrow">Performance</p>
       <h2>How fast is Nexo?</h2>
-      <p class="section-intro">The same eight programs in Nexo and six other languages, written the usual way in each, every one checked to print the same result. Compiled Nexo runs close to Go and Java on integer code; on lists, maps and records it is slower than the compiled languages, because every value there is boxed and reference-counted, and faster than Python.</p>
+      <p class="section-intro">The same programs in Nexo and six other languages, written the usual way in each and checked to print the same result. Over all of them, compiled Nexo sits with JavaScript and Java: behind C, Go and Rust, and several times faster than Python. It is close to C on integer loops and threads, and ahead of Go, Java and JavaScript on lists. It is slowest on records, maps and strings, where every value is boxed and reference-counted, and on strings even Python is faster: that is the work of phase 6.</p>
     </div>
     <div class="tabs" role="tablist" aria-label="Benchmarks">{"".join(tabs)}</div>
     {"".join(panels)}
@@ -126,6 +127,7 @@ def main():
         <li>Measured on {html.escape(data["date"])}, on {html.escape(data["machine"])}. {versions}.</li>
         <li>Times include starting the program: <code>hello</code> shows that cost alone. It weighs most on Java and JavaScript, and these programs run for well under a second in the compiled languages.</li>
         <li>Nexo and Rust check every integer operation for overflow; C, Go and Java wrap around silently, and Python's integers never overflow.</li>
+        <li>In C and Go a record is a plain value on the stack, so building one costs almost nothing; in Nexo, Java, JavaScript and Python each one is an object on the heap. That is most of the gap on <code>records</code>.</li>
         <li>Each program uses its language's usual tools: <code>ArrayList&lt;Long&gt;</code> and <code>HashMap</code> in Java, a hand-written hash map in C, which has none. Python runs <code>parallel</code> on 4 processes, because its threads share one lock.</li>
         <li>The Nexo interpreter is the phase 0 prototype, a tree-walking evaluator written in Python; it shows the language works, not how fast it runs.</li>
         <li>The programs and the script are in <a href="{SOURCE}"><code>compiler/bench/</code></a>: <code>python3 compiler/bench/languages.py</code> runs them again.</li>

@@ -66,6 +66,16 @@ def best(cmd, runs, timeout=None):
     return min(times), out
 
 
+def cpu():
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or platform.machine()
+
+
 def version(cmd):
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=ENV)
     return p.stdout.decode().strip().splitlines()[0]
@@ -100,7 +110,7 @@ def main() -> int:
             results[name] = row
     data = {
         "date": date.today().isoformat(),
-        "machine": f"{platform.processor() or platform.machine()}, {os.cpu_count()} cores, {platform.system()}",
+        "machine": f"{cpu()}, {os.cpu_count()} cores, {platform.system()}",
         "runs": RUNS,
         "versions": {
             "Nexo": "nexo build --release, LLVM IR built by " + version(["clang", "--version"]),

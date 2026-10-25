@@ -1,0 +1,96 @@
+{
+  "date": "2026-10-25",
+  "machine": "Intel(R) Xeon(R) Processor @ 2.10GHz, 4 cores, Linux",
+  "runs": 5,
+  "versions": {
+    "Nexo": "nexo build --release, LLVM IR built by Ubuntu clang version 18.1.3 (1ubuntu1)",
+    "C": "Ubuntu clang version 18.1.3 (1ubuntu1), -O2",
+    "Rust": "rustc 1.97.0 (2d8144b78 2026-07-07), -O, overflow checks on",
+    "Go": "go version go1.24.7 linux/amd64",
+    "Java": "openjdk version \"21.0.12.1\" 2026-08-18",
+    "JavaScript": "Node.js v22.22.0",
+    "Python": "CPython 3.13.17"
+  },
+  "results": {
+    "hello": {
+      "Nexo": 0.0023,
+      "C": 0.0012,
+      "Rust": 0.0019,
+      "Go": 0.0015,
+      "Java": 0.0443,
+      "JavaScript": 0.0328,
+      "Python": 0.014,
+      "Nexo interpreter": 0.2284
+    },
+    "fib": {
+      "Nexo": 0.0361,
+      "C": 0.0097,
+      "Rust": 0.0165,
+      "Go": 0.0153,
+      "Java": 0.057,
+      "JavaScript": 0.0542,
+      "Python": 0.2915,
+      "Nexo interpreter": 161.3039
+    },
+    "loop": {
+      "Nexo": 0.0715,
+      "C": 0.0541,
+      "Rust": 0.054,
+      "Go": 0.0441,
+      "Java": 0.0952,
+      "JavaScript": 0.1163,
+      "Python": 5.4731,
+      "Nexo interpreter": null
+    },
+    "lists": {
+      "Nexo": 0.1324,
+      "C": 0.0175,
+      "Rust": 0.0183,
+      "Go": 0.169,
+      "Java": 0.2411,
+      "JavaScript": 0.1953,
+      "Python": 0.3749,
+      "Nexo interpreter": 126.8789
+    },
+    "maps": {
+      "Nexo": 0.0973,
+      "C": 0.003,
+      "Rust": 0.0199,
+      "Go": 0.0109,
+      "Java": 0.1042,
+      "JavaScript": 0.0474,
+      "Python": 0.1646,
+      "Nexo interpreter": 13.9057
+    },
+    "records": {
+      "Nexo": 0.2328,
+      "C": 0.0038,
+      "Rust": 0.0284,
+      "Go": 0.0047,
+      "Java": 0.0536,
+      "JavaScript": 0.0621,
+      "Python": 0.7219,
+      "Nexo interpreter": 95.4799
+    },
+    "strings": {
+      "Nexo": 0.2159,
+      "C": 0.0313,
+      "Rust": 0.0615,
+      "Go": 0.0656,
+      "Java": 0.1865,
+      "JavaScript": 0.0898,
+      "Python": 0.1157,
+      "Nexo interpreter": 24.4336
+    },
+    "parallel": {
+      "Nexo": 0.0532,
+      "C": 0.0242,
+      "Rust": 0.0289,
+      "Go": 0.0264,
+      "Java": 0.0934,
+      "JavaScript": 0.2698,
+      "Python": 1.6099,
+      "Nexo interpreter": null
+    }
+  }
+}

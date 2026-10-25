@@ -543,6 +543,11 @@ collections and records is not yet: every value is boxed and
 reference-counted, and each element passes through the runtime. The
 details are in D84.
 
+`compiler/bench/languages.py` runs the same benchmarks in C, Rust, Go,
+Java, JavaScript and Python as well, checks that every one prints the
+same result, and writes `languages.json`; `compiler/bench/site.py` puts
+the results in the performance section of the site (`docs/index.html`).
+
 **Interpreter and compiler differences.** The two implementations print
 the same output for every program. The compiler catches some mistakes
 earlier (unknown names and certain type errors are reported before the
@@ -621,6 +626,7 @@ python3 compiler/scripts/conformance.py              # conformance suite with th
 .venv/bin/python compiler/scripts/differential.py    # compiler output equals interpreter output
 compiler/bench/run.sh                                # benchmarks: native vs interpreter
 python3 compiler/bench/compare.py                    # benchmarks: native vs Rust
+python3 compiler/bench/languages.py                  # benchmarks: Nexo vs C, Rust, Go, Java, JS, Python
 ```
 
 To add a conformance test, put `NAME.nexo` and its exact output

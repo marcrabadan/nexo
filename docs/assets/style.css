@@ -369,7 +369,7 @@ h4 { font-size: 16.5px; margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1
 .perf-table tbody tr:last-child th { border-bottom: 0; }
 .perf-table tbody th span { display: block; font-size: 13px; color: var(--muted); font-weight: 400; margin-top: 2px; min-width: 180px; }
 .perf-table td.best { color: var(--accent-strong); font-weight: 700; }
-.perf-table td.nexo { color: var(--text); }
+.perf-table td.nexo { color: var(--text); font-weight: 600; }
 .perf-table td:first-child { white-space: nowrap; }
 .perf-notes h3 { font-size: 18px; }
 
@@ -421,7 +421,7 @@ h4 { font-size: 16.5px; margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1
 .ref-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .ref-table th, .ref-table td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .ref-table tr:last-child td { border-bottom: 0; }
-.ref-table th { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; background: var(--bg-alt); }
+.ref-table thead th { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; background: var(--bg-alt); }
 .ref-table td:first-child { white-space: nowrap; font-weight: 500; }
 .ref-table td { color: var(--muted); }
 .ref-table td:first-child { color: var(--text); }

@@ -76,7 +76,9 @@ compiler/
                   privacy, stream, infra, infra_cloud, ci, ci_export)
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py
-  bench/          benchmarks (run.sh; compare.py against rust/*.rs)
+  bench/          benchmarks (run.sh; compare.py against rust/*.rs; languages.py
+                  against c, rust, go, java, js, python -> languages.json, shown
+                  on the site by site.py)
 examples/         real programs; NAME.expected (and NAME.stdin) checked by
                   tests/test_examples.py; they are formatted and lint-clean;
   shop_api/       the exit criterion of phase 4 (tests/test_exit_criterion.py)
