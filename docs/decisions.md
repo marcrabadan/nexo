@@ -1782,3 +1782,50 @@ Rust, compiling 100,000 lines in 10 s, capability permissions) and the
 ones that need people (external audits, user studies, the registry,
 comparisons against models) stay in the specification and are listed as
 not met, so phase 6 stays open.
+
+**D134. More fast paths of the compiled code.** A second round on the
+performance goals; none of these changes what a program prints.
+- A pipeline of `where` and `map` steps that ends in `sum` or `count` is
+  one loop that calls the functions of its steps directly (at `--release`
+  LLVM can inline them), with no lazy values in between. A step whose
+  value is a function still calls it with the element (D51). `sum` keeps
+  an exact int total while every element is an int and nothing
+  overflows; otherwise the remaining elements are kept and added at the
+  end, after every element has been read, as `sum` always did, so an
+  error of a step still comes before an overflow. A database query, a
+  stream or a grouped value takes the usual steps, which translate them.
+- A list being iterated (by `for`, a comprehension or a fused pipeline)
+  is read in place: the iterator holds the list, so a change through a
+  variable copies it and the elements the loop reads do not move. A
+  range is counted without a boxed iterator.
+- `xs.add(x)` on a list its place alone owns, with a value that is not
+  lazy, is pushed directly; `m[k]` and `m[k] = v` with an int `k` and
+  `xs[i]` with an int `i` skip the general index code. Int keys of maps
+  and sets have a table of their own with a cheaper hash.
+- `len(x)` and `print` with positional arguments skip the general
+  binding of arguments.
+- Freed heap objects go to a list per thread and are reused by the next
+  ones (every object has the same size); a small record of plain values
+  is freed without the general work list.
+- Fixed on the way: `fits` released a value it had not taken when a heap
+  value was checked against `int` (a field of the wrong type in
+  `json.parse(..., as: T)`), which could free an object still in use.
+  The atomic counts had hidden it; the counts of D126 made it visible.
+
+**D135. Faster development builds.** Compiling 100,000 lines took 208 s,
+nearly all in clang. Development mode now (1) calls the reference-count
+helpers instead of copying them into every use (`noinline` instead of
+`alwaysinline`; release builds keep them inline), which halves the code
+clang compiles; (2) cuts a large program's IR (over 2 MB) into as many
+parts as there are cores, up to eight, compiled at the same time and
+linked together (constants and globals are defined once and declared in
+the other parts, so each keeps one address); (3) leaves out the check
+that a function or type is defined when it certainly is: it is defined
+once by a statement of the top level, and the code that uses it is a
+later statement of the top level or runs inside a function (or method)
+that a later statement defines, which can only run after its own
+definition; and (4) looks for the "Did you mean...?" of a name only when
+it writes an error that may show it, among the names that were visible
+at the lookup (the resolver keeps how many names each scope had).
+Release builds are never cut: LLVM optimises the whole program at once,
+and two of them still give the same bytes (D128).

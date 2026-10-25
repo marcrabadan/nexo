@@ -193,6 +193,17 @@ pub struct Gen<'a> {
     method_of: HashMap<u32, String>,
     /// values that are certainly ints (no type checks at run time)
     ints: Option<crate::narrow::Ints<'a>>,
+    /// functions and types defined once by a statement of the top level:
+    /// the index of that statement (D135)
+    top_defs: HashMap<BindingId, usize>,
+    /// the frames of those functions and of the methods of those types
+    frame_top: HashMap<FrameId, usize>,
+    /// the index of each statement of the top level, and of the one being
+    /// compiled
+    top_index: HashMap<u32, usize>,
+    cur_top: usize,
+    /// the line `emitf` formats
+    line_buf: String,
     /// names a `fake` of some test replaces (section 14): their calls ask
     /// the runtime first
     fakes: Vec<String>,
@@ -409,6 +420,11 @@ impl<'a> Gen<'a> {
             prover: None,
             method_of: HashMap::new(),
             ints: None,
+            top_defs: HashMap::new(),
+            frame_top: HashMap::new(),
+            top_index: HashMap::new(),
+            cur_top: 0,
+            line_buf: String::new(),
             fakes: Vec::new(),
         }
     }
@@ -443,6 +459,31 @@ impl<'a> Gen<'a> {
         });
         fns.retain(|b, f| defs.get(b) == Some(&1) && f.annotations.is_empty());
         types.retain(|b, _| defs.get(b) == Some(&1));
+        // what the top level defines, in order (D135)
+        for (k, s) in program.body.iter().enumerate() {
+            self.top_index.insert(s.id, k);
+            let Some(b) = res.decl.get(&Node::Stmt(s.id)) else { continue };
+            if defs.get(b) != Some(&1) {
+                continue;
+            }
+            match &s.kind {
+                StmtKind::Fn(f) if f.annotations.is_empty() => {
+                    self.top_defs.insert(*b, k);
+                    if let Some(fr) = res.frame_of.get(&Node::Fn(f.id)) {
+                        self.frame_top.insert(*fr, k);
+                    }
+                }
+                StmtKind::Type(t) if t.annotations.is_empty() && t.settings.is_empty() => {
+                    self.top_defs.insert(*b, k);
+                    for m in &t.methods {
+                        if let Some(fr) = res.frame_of.get(&Node::Fn(m.id)) {
+                            self.frame_top.insert(*fr, k);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         self.known_fns = fns;
         self.known_types = types;
     }
@@ -647,7 +688,7 @@ impl<'a> Gen<'a> {
             }
         };
         let d = self.reg();
-        self.emit(&format!("{d} = load ptr, ptr {name}"));
+        self.emitf(format_args!("{d} = load ptr, ptr {name}"));
         format!("ptr {d}, i64 0")
     }
 
@@ -677,7 +718,7 @@ impl<'a> Gen<'a> {
         for t in tags {
             let c = self.is_tag(v, *t);
             let o = self.reg();
-            self.emit(&format!("{o} = or i1 {acc}, {c}"));
+            self.emitf(format_args!("{o} = or i1 {acc}, {c}"));
             acc = o;
         }
         acc
@@ -725,6 +766,16 @@ impl<'a> Gen<'a> {
 
     // ------------------------------------------------------ instructions
 
+    /// `emit` of a formatted line, written into a buffer kept between
+    /// calls (most of the compiler's time went into the strings, D135).
+    fn emitf(&mut self, args: std::fmt::Arguments) {
+        let mut buf = std::mem::take(&mut self.line_buf);
+        buf.clear();
+        let _ = buf.write_fmt(args);
+        self.emit(&buf);
+        self.line_buf = buf;
+    }
+
     fn emit(&mut self, line: &str) {
         if self.f().terminated {
             let l = format!("D{}", self.next());
@@ -761,12 +812,12 @@ impl<'a> Gen<'a> {
     }
 
     fn br(&mut self, label: &str) {
-        self.emit(&format!("br label %{label}"));
+        self.emitf(format_args!("br label %{label}"));
         self.f().terminated = true;
     }
 
     fn cond_br(&mut self, cond: &str, yes: &str, no: &str) {
-        self.emit(&format!("br i1 {cond}, label %{yes}, label %{no}"));
+        self.emitf(format_args!("br i1 {cond}, label %{yes}, label %{no}"));
         self.f().terminated = true;
     }
 
@@ -795,8 +846,8 @@ impl<'a> Gen<'a> {
             Val::Reg(r) => {
                 let t = self.reg();
                 let b = self.reg();
-                self.emit(&format!("{t} = extractvalue %V {r}, 0"));
-                self.emit(&format!("{b} = extractvalue %V {r}, 1"));
+                self.emitf(format_args!("{t} = extractvalue %V {r}, 0"));
+                self.emitf(format_args!("{b} = extractvalue %V {r}, 1"));
                 format!("i64 {t}, i64 {b}")
             }
         }
@@ -807,7 +858,7 @@ impl<'a> Gen<'a> {
             Val::Lit(t, _) => t.to_string(),
             Val::Reg(r) => {
                 let t = self.reg();
-                self.emit(&format!("{t} = extractvalue %V {r}, 0"));
+                self.emitf(format_args!("{t} = extractvalue %V {r}, 0"));
                 t
             }
         }
@@ -818,7 +869,7 @@ impl<'a> Gen<'a> {
             Val::Lit(_, b) => if b.is_empty() { "0".into() } else { b.clone() },
             Val::Reg(r) => {
                 let b = self.reg();
-                self.emit(&format!("{b} = extractvalue %V {r}, 1"));
+                self.emitf(format_args!("{b} = extractvalue %V {r}, 1"));
                 b
             }
         }
@@ -826,20 +877,20 @@ impl<'a> Gen<'a> {
 
     fn call_v(&mut self, f: &str, args: &str) -> Val {
         let r = self.reg();
-        self.emit(&format!("{r} = call %V @{f}({args})"));
+        self.emitf(format_args!("{r} = call %V @{f}({args})"));
         Val::Reg(r)
     }
 
     fn call_void(&mut self, f: &str, args: &str) {
-        self.emit(&format!("call void @{f}({args})"));
+        self.emitf(format_args!("call void @{f}({args})"));
     }
 
     /// Call returning i8; gives an i1 (`!= 0`).
     fn call_flag(&mut self, f: &str, args: &str) -> String {
         let r = self.reg();
-        self.emit(&format!("{r} = call i8 @{f}({args})"));
+        self.emitf(format_args!("{r} = call i8 @{f}({args})"));
         let c = self.reg();
-        self.emit(&format!("{c} = icmp ne i8 {r}, 0"));
+        self.emitf(format_args!("{c} = icmp ne i8 {r}, 0"));
         c
     }
 
@@ -876,7 +927,7 @@ impl<'a> Gen<'a> {
 
     fn failing_flag(&mut self) -> String {
         let f = self.reg();
-        self.emit(&format!("{f} = load i8, ptr %tls"));
+        self.emitf(format_args!("{f} = load i8, ptr %tls"));
         f
     }
 
@@ -884,7 +935,7 @@ impl<'a> Gen<'a> {
     fn check(&mut self) {
         let f = self.failing_flag();
         let c = self.reg();
-        self.emit(&format!("{c} = icmp ne i8 {f}, 0"));
+        self.emitf(format_args!("{c} = icmp ne i8 {f}, 0"));
         let ok = self.label();
         let unwind = self.unwind_label();
         self.cond_br(&c, &unwind, &ok);
@@ -932,7 +983,7 @@ impl<'a> Gen<'a> {
             }
         }
         let x = self.agg(v);
-        self.emit(&format!("call void @rc_inc(%V {x})"));
+        self.emitf(format_args!("call void @rc_inc(%V {x})"));
     }
 
     fn rc_dec(&mut self, v: &Val) {
@@ -942,7 +993,7 @@ impl<'a> Gen<'a> {
             }
         }
         let x = self.agg(v);
-        self.emit(&format!("call void @rc_dec(%V {x})"));
+        self.emitf(format_args!("call void @rc_dec(%V {x})"));
     }
 
     /// Take ownership of a value to store it: an owned temporary is moved,
@@ -1020,7 +1071,7 @@ impl<'a> Gen<'a> {
 
     fn load_global(&mut self, g: &str) -> Val {
         let r = self.reg();
-        self.emit(&format!("{r} = load %V, ptr {g}"));
+        self.emitf(format_args!("{r} = load %V, ptr {g}"));
         Val::Reg(r)
     }
 
@@ -1028,19 +1079,19 @@ impl<'a> Gen<'a> {
     fn temp(&mut self, v: &Val) -> String {
         let a = self.alloca("%V");
         let x = self.agg(v);
-        self.emit(&format!("store %V {x}, ptr {a}"));
+        self.emitf(format_args!("store %V {x}, ptr {a}"));
         a
     }
 
     fn load(&mut self, ptr: &str) -> Val {
         let r = self.reg();
-        self.emit(&format!("{r} = load %V, ptr {ptr}"));
+        self.emitf(format_args!("{r} = load %V, ptr {ptr}"));
         Val::Reg(r)
     }
 
     fn store(&mut self, ptr: &str, v: &Val) {
         let x = self.agg(v);
-        self.emit(&format!("store %V {x}, ptr {ptr}"));
+        self.emitf(format_args!("store %V {x}, ptr {ptr}"));
     }
 
     /// An array of values on the stack; `ptr` operand (or null).
@@ -1051,7 +1102,7 @@ impl<'a> Gen<'a> {
         let a = self.alloca(&format!("[{} x %V]", vals.len()));
         for (i, v) in vals.iter().enumerate() {
             let p = self.reg();
-            self.emit(&format!("{p} = getelementptr inbounds [{} x %V], ptr {a}, i64 0, i64 {i}", vals.len()));
+            self.emitf(format_args!("{p} = getelementptr inbounds [{} x %V], ptr {a}, i64 0, i64 {i}", vals.len()));
             self.store(&p, v);
         }
         a
@@ -1080,7 +1131,7 @@ impl<'a> Gen<'a> {
     fn is_tag(&mut self, v: &Val, tag: u64) -> String {
         let t = self.tag_of(v);
         let c = self.reg();
-        self.emit(&format!("{c} = icmp eq i64 {t}, {tag}"));
+        self.emitf(format_args!("{c} = icmp eq i64 {t}, {tag}"));
         c
     }
 
@@ -1102,7 +1153,7 @@ impl<'a> Gen<'a> {
         self.place(&ok);
         let bits = self.bits_of(v);
         let c = self.reg();
-        self.emit(&format!("{c} = icmp ne i64 {bits}, 0"));
+        self.emitf(format_args!("{c} = icmp ne i64 {bits}, 0"));
         // the condition uses the value up
         self.drop_val(v);
         c
@@ -1110,9 +1161,9 @@ impl<'a> Gen<'a> {
 
     fn bool_val(&mut self, cond: &str) -> Val {
         let z = self.reg();
-        self.emit(&format!("{z} = zext i1 {cond} to i64"));
+        self.emitf(format_args!("{z} = zext i1 {cond} to i64"));
         let r = self.reg();
-        self.emit(&format!("{r} = insertvalue %V {{ i64 1, i64 0 }}, i64 {z}, 1"));
+        self.emitf(format_args!("{r} = insertvalue %V {{ i64 1, i64 0 }}, i64 {z}, 1"));
         Val::Reg(r)
     }
 
@@ -1136,7 +1187,7 @@ impl<'a> Gen<'a> {
             Val::Lit(..) => v,
             Val::Reg(r) => {
                 let x = self.reg();
-                self.emit(&format!("{x} = call %V @nx_plainv(%V {r})"));
+                self.emitf(format_args!("{x} = call %V @nx_plainv(%V {r})"));
                 if self.unlive(&Live::Reg(r.clone())) {
                     self.f().live.push(Live::Reg(x.clone()));
                 }
@@ -1160,7 +1211,7 @@ impl<'a> Gen<'a> {
             Some(Slot::Value(a)) => a,
             Some(Slot::Cell(a)) => {
                 let p = self.reg();
-                self.emit(&format!("{p} = load ptr, ptr {a}"));
+                self.emitf(format_args!("{p} = load ptr, ptr {a}"));
                 p
             }
             None => {
@@ -1169,9 +1220,9 @@ impl<'a> Gen<'a> {
                 });
                 let env = self.fs.last().unwrap().env.clone().unwrap();
                 let pp = self.reg();
-                self.emit(&format!("{pp} = getelementptr inbounds ptr, ptr {env}, i64 {idx}"));
+                self.emitf(format_args!("{pp} = getelementptr inbounds ptr, ptr {env}, i64 {idx}"));
                 let p = self.reg();
-                self.emit(&format!("{p} = load ptr, ptr {pp}"));
+                self.emitf(format_args!("{p} = load ptr, ptr {pp}"));
                 p
             }
         }
@@ -1205,7 +1256,7 @@ impl<'a> Gen<'a> {
         match self.slot_of(b) {
             Some(Slot::Cell(a)) => {
                 let p = self.reg();
-                self.emit(&format!("{p} = load ptr, ptr {a}"));
+                self.emitf(format_args!("{p} = load ptr, ptr {a}"));
                 p
             }
             Some(Slot::Value(_)) => panic!("binding {b} is not captured"),
@@ -1213,9 +1264,9 @@ impl<'a> Gen<'a> {
                 let idx = self.fs.last().unwrap().free_index[&b];
                 let env = self.fs.last().unwrap().env.clone().unwrap();
                 let pp = self.reg();
-                self.emit(&format!("{pp} = getelementptr inbounds ptr, ptr {env}, i64 {idx}"));
+                self.emitf(format_args!("{pp} = getelementptr inbounds ptr, ptr {env}, i64 {idx}"));
                 let p = self.reg();
-                self.emit(&format!("{p} = load ptr, ptr {pp}"));
+                self.emitf(format_args!("{p} = load ptr, ptr {pp}"));
                 p
             }
         }
@@ -1237,15 +1288,15 @@ impl<'a> Gen<'a> {
         match self.slot_of(b) {
             Some(Slot::Cell(a)) => {
                 let old = self.reg();
-                self.emit(&format!("{old} = load ptr, ptr {a}"));
+                self.emitf(format_args!("{old} = load ptr, ptr {a}"));
                 let c = self.reg();
-                self.emit(&format!("{c} = call ptr @nx_cell()"));
-                self.emit(&format!("store ptr {c}, ptr {a}"));
-                self.emit(&format!("call void @nx_cell_release(ptr {old})"));
+                self.emitf(format_args!("{c} = call ptr @nx_cell()"));
+                self.emitf(format_args!("store ptr {c}, ptr {a}"));
+                self.emitf(format_args!("call void @nx_cell_release(ptr {old})"));
             }
             Some(Slot::Value(a)) => {
                 let old = self.load(&a);
-                self.emit(&format!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {a}"));
+                self.emitf(format_args!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {a}"));
                 self.rc_dec(&old);
             }
             None => {}
@@ -1280,8 +1331,8 @@ impl<'a> Gen<'a> {
         slots.sort_by_key(|(b, _)| *b);
         for (_, s) in slots {
             match s {
-                Slot::Value(a) => self.emit(&format!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {a}")),
-                Slot::Cell(a) => self.emit(&format!("store ptr null, ptr {a}")),
+                Slot::Value(a) => self.emitf(format_args!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {a}")),
+                Slot::Cell(a) => self.emitf(format_args!("store ptr null, ptr {a}")),
             }
         }
     }
@@ -1297,11 +1348,37 @@ impl<'a> Gen<'a> {
     }
 
     /// Is the binding assigned? (an i1)
+    /// A function or type that is certainly defined when this code runs
+    /// (D135): it is defined once by a statement of the top level, and
+    /// this code is a later statement of the top level, or runs inside a
+    /// function (or method) that a later statement of the top level
+    /// defines; such a function can only run after its own definition.
+    fn statically_defined(&self, b: BindingId) -> bool {
+        if self.opts.repl_line != 0 {
+            return false;
+        }
+        let Some(&d) = self.top_defs.get(&b) else { return false };
+        let mut f = self.fs.last().unwrap().frame;
+        let at = loop {
+            if let Some(&k) = self.frame_top.get(&f) {
+                break k;
+            }
+            if f == GLOBAL_FRAME {
+                break self.cur_top;
+            }
+            match self.res.frames[f].parent {
+                Some(p) => f = p,
+                None => return false,
+            }
+        };
+        d < at
+    }
+
     fn defined(&mut self, b: BindingId) -> String {
         let v = self.load_binding(b);
         let t = self.tag_of(&v);
         let c = self.reg();
-        self.emit(&format!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
+        self.emitf(format_args!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
         c
     }
 
@@ -1402,11 +1479,11 @@ impl<'a> Gen<'a> {
         let mut payloads = Vec::new();
         for (i, p) in f.params.iter().enumerate() {
             let a = self.reg();
-            self.emit(&format!("{a} = getelementptr inbounds %V, ptr %args, i64 {i}"));
+            self.emitf(format_args!("{a} = getelementptr inbounds %V, ptr %args, i64 {i}"));
             let v = self.load(&a);
             let t = self.tag_of(&v);
             let is_int = self.reg();
-            self.emit(&format!("{is_int} = icmp eq i64 {t}, {T_INT}"));
+            self.emitf(format_args!("{is_int} = icmp eq i64 {t}, {T_INT}"));
             let fast = self.label();
             let slow = self.label();
             let done = self.label();
@@ -1416,23 +1493,23 @@ impl<'a> Gen<'a> {
             let slot = self.alloca("i64");
             let x = self.reg();
             let av = self.agg(&v);
-            self.emit(&format!("{x} = extractvalue %V {av}, 1"));
-            self.emit(&format!("store i64 {x}, ptr {slot}"));
+            self.emitf(format_args!("{x} = extractvalue %V {av}, 1"));
+            self.emitf(format_args!("store i64 {x}, ptr {slot}"));
             self.br(&done);
             self.place(&slow);
             // a missing argument is none, as in param_value
             let missing = self.reg();
-            self.emit(&format!("{missing} = icmp eq i64 {t}, {T_MISSING}"));
+            self.emitf(format_args!("{missing} = icmp eq i64 {t}, {T_MISSING}"));
             let given = self.reg();
-            self.emit(&format!("{given} = select i1 {missing}, %V {{ i64 0, i64 0 }}, %V {av}"));
+            self.emitf(format_args!("{given} = select i1 {missing}, %V {{ i64 0, i64 0 }}, %V {av}"));
             let tb = self.tb(&Val::Reg(given));
             let d = self.desc_arg(p.ty.as_ref().unwrap());
             let nm = self.strarg(&p.name);
             let r = self.call_v("nx_conform", &format!("{tb}, {d}, {nm}, i32 %span"));
             let fl = self.reg();
-            self.emit(&format!("{fl} = load i8, ptr %tls"));
+            self.emitf(format_args!("{fl} = load i8, ptr %tls"));
             let failed = self.reg();
-            self.emit(&format!("{failed} = icmp ne i8 {fl}, 0"));
+            self.emitf(format_args!("{failed} = icmp ne i8 {fl}, 0"));
             let conformed = self.label();
             self.cond_br(&failed, &bad, &conformed);
             self.place(&bad);
@@ -1440,22 +1517,22 @@ impl<'a> Gen<'a> {
             self.place(&conformed);
             let y = self.reg();
             let ar = self.agg(&r);
-            self.emit(&format!("{y} = extractvalue %V {ar}, 1"));
-            self.emit(&format!("store i64 {y}, ptr {slot}"));
+            self.emitf(format_args!("{y} = extractvalue %V {ar}, 1"));
+            self.emitf(format_args!("store i64 {y}, ptr {slot}"));
             self.br(&done);
             self.place(&done);
             let z = self.reg();
-            self.emit(&format!("{z} = load i64, ptr {slot}"));
+            self.emitf(format_args!("{z} = load i64, ptr {slot}"));
             payloads.push(format!("i64 {z}"));
         }
         let dp = self.reg();
-        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+        self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
         let d = self.reg();
-        self.emit(&format!("{d} = load i64, ptr {dp}"));
+        self.emitf(format_args!("{d} = load i64, ptr {dp}"));
         let r = self.reg();
-        self.emit(&format!("{r} = call %V {worker}(ptr %tls, ptr %clo, i64 {d}, {}, i32 %span)", payloads.join(", ")));
-        self.emit(&format!("store i64 {d}, ptr {dp}"));
-        self.emit(&format!("ret %V {r}"));
+        self.emitf(format_args!("{r} = call %V {worker}(ptr %tls, ptr %clo, i64 {d}, {}, i32 %span)", payloads.join(", ")));
+        self.emitf(format_args!("store i64 {d}, ptr {dp}"));
+        self.emitf(format_args!("ret %V {r}"));
         self.f().terminated = true;
         let st = self.fs.pop().unwrap();
         let mut text = format!("define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span) {{\nentry:\n");
@@ -1510,27 +1587,27 @@ impl<'a> Gen<'a> {
         self.frame_slots(frame);
         self.init_frame_slots();
         let ret_slot = self.alloca("%V");
-        self.emit(&format!("store %V {{ i64 0, i64 0 }}, ptr {ret_slot}"));
+        self.emitf(format_args!("store %V {{ i64 0, i64 0 }}, ptr {ret_slot}"));
         self.f().ret_slot = ret_slot.clone();
         // count nested calls (D73)
         let dp = self.reg();
-        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+        self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
         let d = if int_params {
             "%depth".to_string()
         } else {
             let d = self.reg();
-            self.emit(&format!("{d} = load i64, ptr {dp}"));
+            self.emitf(format_args!("{d} = load i64, ptr {dp}"));
             d
         };
         self.f().int_params = int_params;
         let d1 = self.reg();
         self.f().depth = Some(d1.clone());
-        self.emit(&format!("{d1} = add i64 {d}, 1"));
+        self.emitf(format_args!("{d1} = add i64 {d}, 1"));
         if !int_params {
-            self.emit(&format!("store i64 {d1}, ptr {dp}"));
+            self.emitf(format_args!("store i64 {d1}, ptr {dp}"));
         }
         let deep = self.reg();
-        self.emit(&format!("{deep} = icmp ugt i64 {d1}, {MAX_DEPTH}"));
+        self.emitf(format_args!("{deep} = icmp ugt i64 {d1}, {MAX_DEPTH}"));
         let too = self.label();
         let fine = self.label();
         self.cond_br(&deep, &too, &fine);
@@ -1541,9 +1618,9 @@ impl<'a> Gen<'a> {
         let free = self.res.frames[frame].free.clone();
         if !free.is_empty() {
             let p = self.reg();
-            self.emit(&format!("{p} = getelementptr inbounds i8, ptr %clo, i64 16"));
+            self.emitf(format_args!("{p} = getelementptr inbounds i8, ptr %clo, i64 16"));
             let env = self.reg();
-            self.emit(&format!("{env} = load ptr, ptr {p}"));
+            self.emitf(format_args!("{env} = load ptr, ptr {p}"));
             self.f().env = Some(env);
             for (i, b) in free.iter().enumerate() {
                 self.f().free_index.insert(*b, i);
@@ -1556,12 +1633,12 @@ impl<'a> Gen<'a> {
         for (i, b) in params.iter().enumerate() {
             if int_params {
                 let v = self.reg();
-                self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 %p{i}, 1"));
+                self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 %p{i}, 1"));
                 self.store_binding(*b, &Val::Reg(v));
                 continue;
             }
             let p = self.reg();
-            self.emit(&format!("{p} = getelementptr inbounds %V, ptr %args, i64 {i}"));
+            self.emitf(format_args!("{p} = getelementptr inbounds %V, ptr %args, i64 {i}"));
             let v = self.load(&p);
             let v = match src {
                 FrameSrc::Fn(f) => self.param_value(f, i, v)?,
@@ -1676,7 +1753,7 @@ impl<'a> Gen<'a> {
             self.emit(line.trim());
         }
         self.leave_depth();
-        self.emit(&format!("ret %V {r}"));
+        self.emitf(format_args!("ret %V {r}"));
         self.f().terminated = true;
         let unwinds: Vec<String> = self.f().unwind.iter().map(|(u, _)| u.clone()).collect();
         let mut tail = String::new();
@@ -1707,12 +1784,12 @@ impl<'a> Gen<'a> {
             return;
         }
         let dp = self.reg();
-        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+        self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
         let d = self.reg();
-        self.emit(&format!("{d} = load i64, ptr {dp}"));
+        self.emitf(format_args!("{d} = load i64, ptr {dp}"));
         let d1 = self.reg();
-        self.emit(&format!("{d1} = sub i64 {d}, 1"));
-        self.emit(&format!("store i64 {d1}, ptr {dp}"));
+        self.emitf(format_args!("{d1} = sub i64 {d}, 1"));
+        self.emitf(format_args!("store i64 {d1}, ptr {dp}"));
     }
 
     /// The value of parameter i on entry (owned): its default when it was
@@ -1757,8 +1834,8 @@ impl<'a> Gen<'a> {
             for (i, b) in free.iter().enumerate() {
                 let c = self.cell_ptr(*b);
                 let p = self.reg();
-                self.emit(&format!("{p} = getelementptr inbounds [{} x ptr], ptr {a}, i64 0, i64 {i}", free.len()));
-                self.emit(&format!("store ptr {c}, ptr {p}"));
+                self.emitf(format_args!("{p} = getelementptr inbounds [{} x ptr], ptr {a}, i64 0, i64 {i}", free.len()));
+                self.emitf(format_args!("store ptr {c}, ptr {p}"));
             }
             a
         };
@@ -1801,7 +1878,7 @@ impl<'a> Gen<'a> {
         let file_len = self.opts.file.len();
         let src_len = shown.len();
         self.top_body = program.body.as_ptr();
-        self.emit(&format!(
+        self.emitf(format_args!(
             "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, ptr @nexo_cleanup)"
         ));
         // the files of the modules the program uses (D124)
@@ -1809,7 +1886,7 @@ impl<'a> Gen<'a> {
             if let Some((name, source)) = nexo_diag::file_of(id) {
                 let n = self.strarg(name);
                 let s = self.strarg(source);
-                self.emit(&format!("call void @nx_add_file(i32 {id}, {n}, {s})"));
+                self.emitf(format_args!("call void @nx_add_file(i32 {id}, {n}, {s})"));
             }
         }
         self.emit("call void @nx_module_init()");
@@ -1957,9 +2034,9 @@ impl<'a> Gen<'a> {
         // the thread's own flag is only read when some thread has a limit
         // (its own one is counted before this code runs)
         let d = self.reg();
-        self.emit(&format!("{d} = load atomic i32, ptr @nx_any_deadline unordered, align 4"));
+        self.emitf(format_args!("{d} = load atomic i32, ptr @nx_any_deadline unordered, align 4"));
         let c = self.reg();
-        self.emit(&format!("{c} = icmp ne i32 {d}, 0"));
+        self.emitf(format_args!("{c} = icmp ne i32 {d}, 0"));
         let yes = self.label();
         let done = self.label();
         self.cond_br(&c, &yes, &done);
@@ -1971,6 +2048,11 @@ impl<'a> Gen<'a> {
     }
 
     fn stmt(&mut self, s: &'a Stmt) -> GResult<()> {
+        if self.fs.len() == 1 {
+            if let Some(&k) = self.top_index.get(&s.id) {
+                self.cur_top = k;
+            }
+        }
         let echo = std::mem::take(&mut self.echo_next);
         match &s.kind {
             StmtKind::Expr(e) if echo => {
@@ -2168,36 +2250,36 @@ impl<'a> Gen<'a> {
                         let b = self.expr(end, false)?;
                         let b = self.bits_of(&b);
                         let i = self.alloca("i64");
-                        self.emit(&format!("store i64 {a}, ptr {i}"));
+                        self.emitf(format_args!("store i64 {a}, ptr {i}"));
                         let head = self.label();
                         let yes = self.label();
                         let next = self.label();
                         let done = self.label();
                         let c = self.reg();
-                        self.emit(&format!("{c} = icmp sle i64 {a}, {b}"));
+                        self.emitf(format_args!("{c} = icmp sle i64 {a}, {b}"));
                         self.cond_br(&c, &head, &done);
                         self.place(&head);
                         let cur = self.reg();
-                        self.emit(&format!("{cur} = load i64, ptr {i}"));
+                        self.emitf(format_args!("{cur} = load i64, ptr {i}"));
                         self.br(&yes);
                         self.place(&yes);
                         let v = self.reg();
-                        self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {cur}, 1"));
+                        self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {cur}, 1"));
                         self.enter_scope(scope);
                         self.store_binding(var, &Val::Reg(v));
                         self.block(body)?;
                         self.br(&next);
                         self.place(&next);
                         let cur2 = self.reg();
-                        self.emit(&format!("{cur2} = load i64, ptr {i}"));
+                        self.emitf(format_args!("{cur2} = load i64, ptr {i}"));
                         let last = self.reg();
-                        self.emit(&format!("{last} = icmp eq i64 {cur2}, {b}"));
+                        self.emitf(format_args!("{last} = icmp eq i64 {cur2}, {b}"));
                         let inc = self.label();
                         self.cond_br(&last, &done, &inc);
                         self.place(&inc);
                         let n = self.reg();
-                        self.emit(&format!("{n} = add i64 {cur2}, 1"));
-                        self.emit(&format!("store i64 {n}, ptr {i}"));
+                        self.emitf(format_args!("{n} = add i64 {cur2}, 1"));
+                        self.emitf(format_args!("store i64 {n}, ptr {i}"));
                         self.br(&head);
                         self.place(&done);
                         return Ok(());
@@ -2232,25 +2314,25 @@ impl<'a> Gen<'a> {
                 let tb = self.tb(&v);
                 let sp = self.span_id(count.span);
                 let n = self.reg();
-                self.emit(&format!("{n} = call i64 @nx_repeat_count({tb}, i32 {sp})"));
+                self.emitf(format_args!("{n} = call i64 @nx_repeat_count({tb}, i32 {sp})"));
                 self.check();
                 self.drop_val(&v);
                 let i = self.alloca("i64");
-                self.emit(&format!("store i64 0, ptr {i}"));
+                self.emitf(format_args!("store i64 0, ptr {i}"));
                 let head = self.label();
                 let yes = self.label();
                 let end = self.label();
                 self.br(&head);
                 self.place(&head);
                 let cur = self.reg();
-                self.emit(&format!("{cur} = load i64, ptr {i}"));
+                self.emitf(format_args!("{cur} = load i64, ptr {i}"));
                 let c = self.reg();
-                self.emit(&format!("{c} = icmp slt i64 {cur}, {n}"));
+                self.emitf(format_args!("{c} = icmp slt i64 {cur}, {n}"));
                 self.cond_br(&c, &yes, &end);
                 self.place(&yes);
                 let nx = self.reg();
-                self.emit(&format!("{nx} = add i64 {cur}, 1"));
-                self.emit(&format!("store i64 {nx}, ptr {i}"));
+                self.emitf(format_args!("{nx} = add i64 {cur}, 1"));
+                self.emitf(format_args!("store i64 {nx}, ptr {i}"));
                 self.enter_scope(scope);
                 self.block(body)?;
                 self.br(&head);
@@ -2296,7 +2378,7 @@ impl<'a> Gen<'a> {
         let tb = self.tb(iterable);
         let sp = self.span_id(span);
         let it = self.reg();
-        self.emit(&format!("{it} = call ptr @nx_iter({tb}, i32 {sp})"));
+        self.emitf(format_args!("{it} = call ptr @nx_iter({tb}, i32 {sp})"));
         self.check();
         self.drop_val(iterable);
         self.f().live.push(Live::Iter(it.clone()));
@@ -2317,7 +2399,7 @@ impl<'a> Gen<'a> {
         self.br(&head);
         self.place(&end);
         self.unlive(&Live::Iter(it.clone()));
-        self.emit(&format!("call void @nx_iter_free(ptr {it})"));
+        self.emitf(format_args!("call void @nx_iter_free(ptr {it})"));
         Ok(())
     }
 
@@ -2327,9 +2409,9 @@ impl<'a> Gen<'a> {
     fn iter_view(&mut self, it: &str) -> (String, String, String) {
         let len = self.alloca("i64");
         let idx = self.alloca("i64");
-        self.emit(&format!("store i64 0, ptr {idx}"));
+        self.emitf(format_args!("store i64 0, ptr {idx}"));
         let view = self.reg();
-        self.emit(&format!("{view} = call ptr @nx_iter_view(ptr {it}, ptr {len})"));
+        self.emitf(format_args!("{view} = call ptr @nx_iter_view(ptr {it}, ptr {len})"));
         (view, len, idx)
     }
 
@@ -2338,7 +2420,7 @@ impl<'a> Gen<'a> {
         let (view, len, idx) = view;
         let ok = self.alloca("i8");
         let isview = self.reg();
-        self.emit(&format!("{isview} = icmp ne ptr {view}, null"));
+        self.emitf(format_args!("{isview} = icmp ne ptr {view}, null"));
         let fast = self.label();
         let more = self.label();
         let done = self.label();
@@ -2347,40 +2429,40 @@ impl<'a> Gen<'a> {
         self.cond_br(&isview, &fast, &general);
         self.place(&fast);
         let i = self.reg();
-        self.emit(&format!("{i} = load i64, ptr {idx}"));
+        self.emitf(format_args!("{i} = load i64, ptr {idx}"));
         let n = self.reg();
-        self.emit(&format!("{n} = load i64, ptr {len}"));
+        self.emitf(format_args!("{n} = load i64, ptr {len}"));
         let lt = self.reg();
-        self.emit(&format!("{lt} = icmp ult i64 {i}, {n}"));
+        self.emitf(format_args!("{lt} = icmp ult i64 {i}, {n}"));
         self.cond_br(&lt, &more, &done);
         self.place(&more);
         let p = self.reg();
-        self.emit(&format!("{p} = getelementptr inbounds %V, ptr {view}, i64 {i}"));
+        self.emitf(format_args!("{p} = getelementptr inbounds %V, ptr {view}, i64 {i}"));
         let x = self.reg();
-        self.emit(&format!("{x} = load %V, ptr {p}"));
+        self.emitf(format_args!("{x} = load %V, ptr {p}"));
         let x2 = self.reg();
-        self.emit(&format!("{x2} = call %V @nx_plainv(%V {x})"));
-        self.emit(&format!("call void @rc_inc(%V {x2})"));
-        self.emit(&format!("store %V {x2}, ptr {item}"));
+        self.emitf(format_args!("{x2} = call %V @nx_plainv(%V {x})"));
+        self.emitf(format_args!("call void @rc_inc(%V {x2})"));
+        self.emitf(format_args!("store %V {x2}, ptr {item}"));
         let i1 = self.reg();
-        self.emit(&format!("{i1} = add i64 {i}, 1"));
-        self.emit(&format!("store i64 {i1}, ptr {idx}"));
-        self.emit(&format!("store i8 1, ptr {ok}"));
+        self.emitf(format_args!("{i1} = add i64 {i}, 1"));
+        self.emitf(format_args!("store i64 {i1}, ptr {idx}"));
+        self.emitf(format_args!("store i8 1, ptr {ok}"));
         self.br(&join);
         self.place(&done);
-        self.emit(&format!("store i8 0, ptr {ok}"));
+        self.emitf(format_args!("store i8 0, ptr {ok}"));
         self.br(&join);
         self.place(&general);
         let r = self.reg();
-        self.emit(&format!("{r} = call i8 @nx_iter_next(ptr {it}, ptr {item})"));
-        self.emit(&format!("store i8 {r}, ptr {ok}"));
+        self.emitf(format_args!("{r} = call i8 @nx_iter_next(ptr {it}, ptr {item})"));
+        self.emitf(format_args!("store i8 {r}, ptr {ok}"));
         self.check();
         self.br(&join);
         self.place(&join);
         let o = self.reg();
-        self.emit(&format!("{o} = load i8, ptr {ok}"));
+        self.emitf(format_args!("{o} = load i8, ptr {ok}"));
         let c = self.reg();
-        self.emit(&format!("{c} = icmp ne i8 {o}, 0"));
+        self.emitf(format_args!("{c} = icmp ne i8 {o}, 0"));
         c
     }
 
@@ -2576,7 +2658,7 @@ impl<'a> Gen<'a> {
             let x = self.load(slot);
             self.rc_dec(&x);
         }
-        self.emit(&format!("store %V {{ i64 0, i64 0 }}, ptr {slot}"));
+        self.emitf(format_args!("store %V {{ i64 0, i64 0 }}, ptr {slot}"));
     }
 
     /// The parts of a place that are evaluated before the change: the
@@ -2616,7 +2698,7 @@ impl<'a> Gen<'a> {
                     self.task_write_check(*b, n, e.span);
                 }
                 let ptr = self.binding_ptr_any(e, cands)?;
-                self.emit(&format!("call void @nx_unique_slot(ptr {ptr})"));
+                self.emitf(format_args!("call void @nx_unique_slot(ptr {ptr})"));
                 ptr
             }
             Place::Field(slot, name, span) => {
@@ -2625,7 +2707,7 @@ impl<'a> Gen<'a> {
                 let n = self.strarg(name);
                 let sp = self.span_id(*span);
                 let ptr = self.reg();
-                self.emit(&format!("{ptr} = call ptr @nx_field_slot({to}, {n}, i32 {sp})"));
+                self.emitf(format_args!("{ptr} = call ptr @nx_field_slot({to}, {n}, i32 {sp})"));
                 self.check();
                 ptr
             }
@@ -2635,7 +2717,7 @@ impl<'a> Gen<'a> {
                 let ti = self.tb(&i);
                 let sp = self.span_id(*span);
                 let ptr = self.reg();
-                self.emit(&format!("{ptr} = call ptr @nx_index_slot(ptr {base}, {ti}, i32 {sp})"));
+                self.emitf(format_args!("{ptr} = call ptr @nx_index_slot(ptr {base}, {ti}, i32 {sp})"));
                 self.check();
                 ptr
             }
@@ -2686,24 +2768,24 @@ impl<'a> Gen<'a> {
         let done = self.label();
         for b in cands {
             let p = self.binding_ptr(*b);
-            self.emit(&format!("store ptr {p}, ptr {out}"));
+            self.emitf(format_args!("store ptr {p}, ptr {out}"));
             let v = self.load(&p);
             let t = self.tag_of(&v);
             let c = self.reg();
-            self.emit(&format!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
+            self.emitf(format_args!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
             let next = self.label();
             self.cond_br(&c, &done, &next);
             self.place(&next);
         }
         let ExprKind::Name(name) = &e.kind else { unreachable!() };
         let sugg = match self.res.names.get(&e.id) {
-            Some(NameRes::Bindings { suggestion, .. }) => suggestion.clone(),
+            Some(NameRes::Bindings { suggestion, .. }) => self.res.suggestion(suggestion, name),
             _ => None,
         };
         self.name_error(name, sugg.as_deref(), e.span);
         self.place(&done);
         let r = self.reg();
-        self.emit(&format!("{r} = load ptr, ptr {out}"));
+        self.emitf(format_args!("{r} = load ptr, ptr {out}"));
         Ok(r)
     }
 
@@ -2883,7 +2965,7 @@ impl<'a> Gen<'a> {
             self.br(&done);
             self.place(&skip);
             self.call_void("nx_clear", "");
-            self.emit(&format!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {slot}"));
+            self.emitf(format_args!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {slot}"));
             self.br(&done);
             self.place(&done);
             self.f().live.push(Live::Slot(slot.clone()));
@@ -2925,7 +3007,7 @@ impl<'a> Gen<'a> {
             self.place(&caught);
             let f = self.failing_flag();
             let is_error = self.reg();
-            self.emit(&format!("{is_error} = icmp eq i8 {f}, 1"));
+            self.emitf(format_args!("{is_error} = icmp eq i8 {f}, 1"));
             let ok = self.label();
             let unwind = self.unwind_label();
             self.cond_br(&is_error, &ok, &unwind);
@@ -2993,7 +3075,7 @@ impl<'a> Gen<'a> {
         }
         let f = self.failing_flag();
         let is_error = self.reg();
-        self.emit(&format!("{is_error} = icmp eq i8 {f}, 1"));
+        self.emitf(format_args!("{is_error} = icmp eq i8 {f}, 1"));
         let handle = self.label();
         let outer = self.unwind_label();
         self.cond_br(&is_error, &handle, &outer);
@@ -3157,9 +3239,9 @@ impl<'a> Gen<'a> {
         if let Val::Reg(r) = &v {
             if !matches!(e.kind, ExprKind::BinOp { .. } | ExprKind::Num { .. }) && self.certain_int(e) {
                 let bits = self.reg();
-                self.emit(&format!("{bits} = extractvalue %V {r}, 1"));
+                self.emitf(format_args!("{bits} = extractvalue %V {r}, 1"));
                 let n = self.reg();
-                self.emit(&format!("{n} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {bits}, 1"));
+                self.emitf(format_args!("{n} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {bits}, 1"));
                 self.unlive(&Live::Reg(r.clone()));
                 return Ok(Val::Reg(n));
             }
@@ -3303,16 +3385,16 @@ impl<'a> Gen<'a> {
                         // kept inside the object, at an offset the runtime
                         // finds when it starts
                         let off = self.reg();
-                        self.emit(&format!("{off} = load i64, ptr @nx_field_off"));
+                        self.emitf(format_args!("{off} = load i64, ptr @nx_field_off"));
                         let at = self.reg();
-                        self.emit(&format!("{at} = add i64 {off}, {}", 16 * i));
+                        self.emitf(format_args!("{at} = add i64 {off}, {}", 16 * i));
                         let addr = self.reg();
-                        self.emit(&format!("{addr} = add i64 {b}, {at}"));
+                        self.emitf(format_args!("{addr} = add i64 {b}, {at}"));
                         let p = self.reg();
-                        self.emit(&format!("{p} = inttoptr i64 {addr} to ptr"));
+                        self.emitf(format_args!("{p} = inttoptr i64 {addr} to ptr"));
                         let r = Val::Reg(self.reg());
                         let Val::Reg(rn) = &r else { unreachable!() };
-                        self.emit(&format!("{rn} = load %V, ptr {p}"));
+                        self.emitf(format_args!("{rn} = load %V, ptr {p}"));
                         if !crate::narrow::is_int_type(&f.ty) {
                             self.rc_inc(&r);
                         }
@@ -3368,7 +3450,7 @@ impl<'a> Gen<'a> {
                 let v = self.expr(operand, false)?;
                 let c = self.truth(&v, operand.span, "not");
                 let n = self.reg();
-                self.emit(&format!("{n} = xor i1 {c}, true"));
+                self.emitf(format_args!("{n} = xor i1 {c}, true"));
                 self.bool_val(&n)
             }
             ExprKind::BinOp { op, left, right } => {
@@ -3514,63 +3596,63 @@ impl<'a> Gen<'a> {
                     _ => "smul",
                 };
                 let pair = self.reg();
-                self.emit(&format!("{pair} = call {{ i64, i1 }} @llvm.{f}.with.overflow.i64(i64 {a}, i64 {b})"));
+                self.emitf(format_args!("{pair} = call {{ i64, i1 }} @llvm.{f}.with.overflow.i64(i64 {a}, i64 {b})"));
                 let ovf = self.reg();
-                self.emit(&format!("{ovf} = extractvalue {{ i64, i1 }} {pair}, 1"));
+                self.emitf(format_args!("{ovf} = extractvalue {{ i64, i1 }} {pair}, 1"));
                 let ok = self.label();
                 self.cond_br(&ovf, &slow, &ok);
                 self.place(&ok);
                 let v = self.reg();
-                self.emit(&format!("{v} = extractvalue {{ i64, i1 }} {pair}, 0"));
+                self.emitf(format_args!("{v} = extractvalue {{ i64, i1 }} {pair}, 0"));
                 v
             }
             _ => {
                 // b == 0 and MIN // -1 are left to the runtime
                 let zero = self.reg();
-                self.emit(&format!("{zero} = icmp eq i64 {b}, 0"));
+                self.emitf(format_args!("{zero} = icmp eq i64 {b}, 0"));
                 let m1 = self.reg();
-                self.emit(&format!("{m1} = icmp eq i64 {b}, -1"));
+                self.emitf(format_args!("{m1} = icmp eq i64 {b}, -1"));
                 let min = self.reg();
-                self.emit(&format!("{min} = icmp eq i64 {a}, -9223372036854775808"));
+                self.emitf(format_args!("{min} = icmp eq i64 {a}, -9223372036854775808"));
                 let both_bad = self.reg();
-                self.emit(&format!("{both_bad} = and i1 {m1}, {min}"));
+                self.emitf(format_args!("{both_bad} = and i1 {m1}, {min}"));
                 let bad = self.reg();
-                self.emit(&format!("{bad} = or i1 {zero}, {both_bad}"));
+                self.emitf(format_args!("{bad} = or i1 {zero}, {both_bad}"));
                 let ok = self.label();
                 self.cond_br(&bad, &slow, &ok);
                 self.place(&ok);
                 let q = self.reg();
-                self.emit(&format!("{q} = sdiv i64 {a}, {b}"));
+                self.emitf(format_args!("{q} = sdiv i64 {a}, {b}"));
                 let rem = self.reg();
-                self.emit(&format!("{rem} = srem i64 {a}, {b}"));
+                self.emitf(format_args!("{rem} = srem i64 {a}, {b}"));
                 // floor division: adjust when the remainder and the divisor
                 // have different signs
                 let nz = self.reg();
-                self.emit(&format!("{nz} = icmp ne i64 {rem}, 0"));
+                self.emitf(format_args!("{nz} = icmp ne i64 {rem}, 0"));
                 let x = self.reg();
-                self.emit(&format!("{x} = xor i64 {rem}, {b}"));
+                self.emitf(format_args!("{x} = xor i64 {rem}, {b}"));
                 let neg = self.reg();
-                self.emit(&format!("{neg} = icmp slt i64 {x}, 0"));
+                self.emitf(format_args!("{neg} = icmp slt i64 {x}, 0"));
                 let adj = self.reg();
-                self.emit(&format!("{adj} = and i1 {nz}, {neg}"));
+                self.emitf(format_args!("{adj} = and i1 {nz}, {neg}"));
                 if op == "//" {
                     let q1 = self.reg();
-                    self.emit(&format!("{q1} = sub i64 {q}, 1"));
+                    self.emitf(format_args!("{q1} = sub i64 {q}, 1"));
                     let v = self.reg();
-                    self.emit(&format!("{v} = select i1 {adj}, i64 {q1}, i64 {q}"));
+                    self.emitf(format_args!("{v} = select i1 {adj}, i64 {q1}, i64 {q}"));
                     v
                 } else {
                     let r1 = self.reg();
-                    self.emit(&format!("{r1} = add i64 {rem}, {b}"));
+                    self.emitf(format_args!("{r1} = add i64 {rem}, {b}"));
                     let v = self.reg();
-                    self.emit(&format!("{v} = select i1 {adj}, i64 {r1}, i64 {rem}"));
+                    self.emitf(format_args!("{v} = select i1 {adj}, i64 {r1}, i64 {rem}"));
                     v
                 }
             }
         };
         let v = self.reg();
-        self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
-        self.emit(&format!("store %V {v}, ptr {slot}"));
+        self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
+        self.emitf(format_args!("store %V {v}, ptr {slot}"));
         self.br(&done);
         self.place(&slow);
         let sv = self.binop_slow(op, l, r, span)?;
@@ -3597,29 +3679,29 @@ impl<'a> Gen<'a> {
                     _ => "smul",
                 };
                 let pair = self.reg();
-                self.emit(&format!("{pair} = call {{ i64, i1 }} @llvm.{f}.with.overflow.i64(i64 {a}, i64 {b})"));
+                self.emitf(format_args!("{pair} = call {{ i64, i1 }} @llvm.{f}.with.overflow.i64(i64 {a}, i64 {b})"));
                 let ovf = self.reg();
-                self.emit(&format!("{ovf} = extractvalue {{ i64, i1 }} {pair}, 1"));
+                self.emitf(format_args!("{ovf} = extractvalue {{ i64, i1 }} {pair}, 1"));
                 let ok = self.label();
                 self.cond_br(&ovf, &fail, &ok);
                 self.place(&ok);
                 let v = self.reg();
-                self.emit(&format!("{v} = extractvalue {{ i64, i1 }} {pair}, 0"));
+                self.emitf(format_args!("{v} = extractvalue {{ i64, i1 }} {pair}, 0"));
                 v
             }
             _ => {
                 let zero = self.reg();
-                self.emit(&format!("{zero} = icmp eq i64 {b}, 0"));
+                self.emitf(format_args!("{zero} = icmp eq i64 {b}, 0"));
                 let m1 = self.reg();
-                self.emit(&format!("{m1} = icmp eq i64 {b}, -1"));
+                self.emitf(format_args!("{m1} = icmp eq i64 {b}, -1"));
                 let bad = if op == "//" {
                     // MIN // -1 does not fit
                     let min = self.reg();
-                    self.emit(&format!("{min} = icmp eq i64 {a}, -9223372036854775808"));
+                    self.emitf(format_args!("{min} = icmp eq i64 {a}, -9223372036854775808"));
                     let both = self.reg();
-                    self.emit(&format!("{both} = and i1 {m1}, {min}"));
+                    self.emitf(format_args!("{both} = and i1 {m1}, {min}"));
                     let bad = self.reg();
-                    self.emit(&format!("{bad} = or i1 {zero}, {both}"));
+                    self.emitf(format_args!("{bad} = or i1 {zero}, {both}"));
                     bad
                 } else {
                     zero
@@ -3629,43 +3711,43 @@ impl<'a> Gen<'a> {
                 self.place(&ok);
                 // x % -1 is 0 (and srem would trap on MIN % -1)
                 let bsafe = self.reg();
-                self.emit(&format!("{bsafe} = select i1 {m1}, i64 1, i64 {b}"));
+                self.emitf(format_args!("{bsafe} = select i1 {m1}, i64 1, i64 {b}"));
                 let q = self.reg();
-                self.emit(&format!("{q} = sdiv i64 {a}, {bsafe}"));
+                self.emitf(format_args!("{q} = sdiv i64 {a}, {bsafe}"));
                 let rem = self.reg();
-                self.emit(&format!("{rem} = srem i64 {a}, {bsafe}"));
+                self.emitf(format_args!("{rem} = srem i64 {a}, {bsafe}"));
                 let nz = self.reg();
-                self.emit(&format!("{nz} = icmp ne i64 {rem}, 0"));
+                self.emitf(format_args!("{nz} = icmp ne i64 {rem}, 0"));
                 let x = self.reg();
-                self.emit(&format!("{x} = xor i64 {rem}, {bsafe}"));
+                self.emitf(format_args!("{x} = xor i64 {rem}, {bsafe}"));
                 let neg = self.reg();
-                self.emit(&format!("{neg} = icmp slt i64 {x}, 0"));
+                self.emitf(format_args!("{neg} = icmp slt i64 {x}, 0"));
                 let adj = self.reg();
-                self.emit(&format!("{adj} = and i1 {nz}, {neg}"));
+                self.emitf(format_args!("{adj} = and i1 {nz}, {neg}"));
                 if op == "//" {
                     let q1 = self.reg();
-                    self.emit(&format!("{q1} = sub i64 {q}, 1"));
+                    self.emitf(format_args!("{q1} = sub i64 {q}, 1"));
                     let v = self.reg();
-                    self.emit(&format!("{v} = select i1 {adj}, i64 {q1}, i64 {q}"));
+                    self.emitf(format_args!("{v} = select i1 {adj}, i64 {q1}, i64 {q}"));
                     // x // -1 is -x (MIN was sent to the runtime)
                     let neg_a = self.reg();
-                    self.emit(&format!("{neg_a} = sub i64 0, {a}"));
+                    self.emitf(format_args!("{neg_a} = sub i64 0, {a}"));
                     let v2 = self.reg();
-                    self.emit(&format!("{v2} = select i1 {m1}, i64 {neg_a}, i64 {v}"));
+                    self.emitf(format_args!("{v2} = select i1 {m1}, i64 {neg_a}, i64 {v}"));
                     v2
                 } else {
                     let r1 = self.reg();
-                    self.emit(&format!("{r1} = add i64 {rem}, {bsafe}"));
+                    self.emitf(format_args!("{r1} = add i64 {rem}, {bsafe}"));
                     let v = self.reg();
-                    self.emit(&format!("{v} = select i1 {adj}, i64 {r1}, i64 {rem}"));
+                    self.emitf(format_args!("{v} = select i1 {adj}, i64 {r1}, i64 {rem}"));
                     let v2 = self.reg();
-                    self.emit(&format!("{v2} = select i1 {m1}, i64 0, i64 {v}"));
+                    self.emitf(format_args!("{v2} = select i1 {m1}, i64 0, i64 {v}"));
                     v2
                 }
             }
         };
         let v = self.reg();
-        self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
+        self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
         let done = self.label();
         self.br(&done);
         // the runtime reports the error (it always fails here)
@@ -3692,7 +3774,7 @@ impl<'a> Gen<'a> {
         let a = self.bits_of(l);
         let b = self.bits_of(r);
         let c = self.reg();
-        self.emit(&format!("{c} = icmp {pred} i64 {a}, {b}"));
+        self.emitf(format_args!("{c} = icmp {pred} i64 {a}, {b}"));
         c
     }
 
@@ -3707,7 +3789,7 @@ impl<'a> Gen<'a> {
             _ => self.is_tag(r, tag),
         };
         let c = self.reg();
-        self.emit(&format!("{c} = and i1 {cl}, {cr}"));
+        self.emitf(format_args!("{c} = and i1 {cl}, {cr}"));
         c
     }
 
@@ -3729,14 +3811,14 @@ impl<'a> Gen<'a> {
         let ti = self.both_tag(l, r, T_INT);
         let tb_ = self.both_tag(l, r, T_BOOL);
         let simple = self.reg();
-        self.emit(&format!("{simple} = or i1 {ti}, {tb_}"));
+        self.emitf(format_args!("{simple} = or i1 {ti}, {tb_}"));
         self.cond_br(&simple, &fast, &slow);
         self.place(&fast);
         let a = self.bits_of(l);
         let b = self.bits_of(r);
         let c = self.reg();
-        self.emit(&format!("{c} = icmp eq i64 {a}, {b}"));
-        self.emit(&format!("store i1 {c}, ptr {slot}"));
+        self.emitf(format_args!("{c} = icmp eq i64 {a}, {b}"));
+        self.emitf(format_args!("store i1 {c}, ptr {slot}"));
         self.br(&done);
         self.place(&slow);
         let tl = self.tb(l);
@@ -3744,11 +3826,11 @@ impl<'a> Gen<'a> {
         let sp = self.span_id(span);
         let c2 = self.call_flag("nx_eq", &format!("{tl}, {tr}, i32 {sp}"));
         self.check();
-        self.emit(&format!("store i1 {c2}, ptr {slot}"));
+        self.emitf(format_args!("store i1 {c2}, ptr {slot}"));
         self.br(&done);
         self.place(&done);
         let r = self.reg();
-        self.emit(&format!("{r} = load i1, ptr {slot}"));
+        self.emitf(format_args!("{r} = load i1, ptr {slot}"));
         r
     }
 
@@ -3759,7 +3841,7 @@ impl<'a> Gen<'a> {
             "!=" => {
                 let c = self.eq(l, r, span);
                 let n = self.reg();
-                self.emit(&format!("{n} = xor i1 {c}, true"));
+                self.emitf(format_args!("{n} = xor i1 {c}, true"));
                 n
             }
             "in" | "is" => {
@@ -3788,8 +3870,8 @@ impl<'a> Gen<'a> {
                 let a = self.bits_of(l);
                 let b = self.bits_of(r);
                 let c = self.reg();
-                self.emit(&format!("{c} = icmp {pred} i64 {a}, {b}"));
-                self.emit(&format!("store i1 {c}, ptr {slot}"));
+                self.emitf(format_args!("{c} = icmp {pred} i64 {a}, {b}"));
+                self.emitf(format_args!("store i1 {c}, ptr {slot}"));
                 self.br(&done);
                 self.place(&slow);
                 let tl = self.tb(l);
@@ -3797,11 +3879,11 @@ impl<'a> Gen<'a> {
                 let sp = self.span_id(span);
                 let c2 = self.call_flag("nx_order", &format!("i32 {code}, {tl}, {tr}, i32 {sp}"));
                 self.check();
-                self.emit(&format!("store i1 {c2}, ptr {slot}"));
+                self.emitf(format_args!("store i1 {c2}, ptr {slot}"));
                 self.br(&done);
                 self.place(&done);
                 let r = self.reg();
-                self.emit(&format!("{r} = load i1, ptr {slot}"));
+                self.emitf(format_args!("{r} = load i1, ptr {slot}"));
                 r
             }
         })
@@ -3841,25 +3923,25 @@ impl<'a> Gen<'a> {
             }
         };
         let ip = self.reg();
-        self.emit(&format!("{ip} = getelementptr inbounds i8, ptr %tls, i64 24"));
+        self.emitf(format_args!("{ip} = getelementptr inbounds i8, ptr %tls, i64 24"));
         let iso = self.reg();
-        self.emit(&format!("{iso} = load i64, ptr {ip}"));
+        self.emitf(format_args!("{iso} = load i64, ptr {ip}"));
         let mut c = self.reg();
-        self.emit(&format!("{c} = icmp ne i64 {iso}, 0"));
+        self.emitf(format_args!("{c} = icmp ne i64 {iso}, 0"));
         if let Some(cell) = cell_birth {
             // a cell made by the task itself is its own
             let bp = self.reg();
-            self.emit(&format!("{bp} = getelementptr inbounds i8, ptr {cell}, i64 24"));
+            self.emitf(format_args!("{bp} = getelementptr inbounds i8, ptr {cell}, i64 24"));
             let birth = self.reg();
-            self.emit(&format!("{birth} = load i64, ptr {bp}"));
+            self.emitf(format_args!("{birth} = load i64, ptr {bp}"));
             let sp_ptr = self.reg();
-            self.emit(&format!("{sp_ptr} = getelementptr inbounds i8, ptr %tls, i64 16"));
+            self.emitf(format_args!("{sp_ptr} = getelementptr inbounds i8, ptr %tls, i64 16"));
             let stamp = self.reg();
-            self.emit(&format!("{stamp} = load i64, ptr {sp_ptr}"));
+            self.emitf(format_args!("{stamp} = load i64, ptr {sp_ptr}"));
             let old = self.reg();
-            self.emit(&format!("{old} = icmp ult i64 {birth}, {stamp}"));
+            self.emitf(format_args!("{old} = icmp ult i64 {birth}, {stamp}"));
             let both = self.reg();
-            self.emit(&format!("{both} = and i1 {c}, {old}"));
+            self.emitf(format_args!("{both} = and i1 {c}, {old}"));
             c = both;
         }
         let bad = self.label();
@@ -3982,7 +4064,7 @@ impl<'a> Gen<'a> {
         let tl = self.tb(&limit);
         let sp = self.span_id(s.span);
         let idx = self.reg();
-        self.emit(&format!("{idx} = call i64 @nx_select(ptr {arr}, i64 {}, {tl}, ptr {out}, i32 {sp})", chans.len()));
+        self.emitf(format_args!("{idx} = call i64 @nx_select(ptr {arr}, i64 {}, {tl}, ptr {out}, i32 {sp})", chans.len()));
         self.check();
         self.drop_all(&chans);
         self.drop_val(&limit);
@@ -3998,7 +4080,7 @@ impl<'a> Gen<'a> {
                 chans.len()
             };
             let c = self.reg();
-            self.emit(&format!("{c} = icmp eq i64 {idx}, {want}"));
+            self.emitf(format_args!("{c} = icmp eq i64 {idx}, {want}"));
             let yes = self.label();
             let next = self.label();
             self.cond_br(&c, &yes, &next);
@@ -4056,6 +4138,11 @@ impl<'a> Gen<'a> {
             NameRes::Builtin(n) => return Ok(self.builtin_value(n)),
             NameRes::Bindings { cands, row, builtin, suggestion } => (cands.clone(), *row, *builtin, suggestion.clone()),
         };
+        if row.is_none() && cands.len() == 1 && self.statically_defined(cands[0]) {
+            let v = self.load_binding(cands[0]);
+            self.rc_inc(&v);
+            return Ok(self.owned(v));
+        }
         if row.is_none() && cands.len() == 1 && self.res.bindings[cands[0]].entry {
             let b = cands[0];
             let v = self.load_binding(b);
@@ -4078,9 +4165,9 @@ impl<'a> Gen<'a> {
             let v = self.call_v("nx_row_get", &format!("{ti}, {n}, ptr {found}"));
             self.store(&slot, &v);
             let f = self.reg();
-            self.emit(&format!("{f} = load i8, ptr {found}"));
+            self.emitf(format_args!("{f} = load i8, ptr {found}"));
             let c = self.reg();
-            self.emit(&format!("{c} = icmp ne i8 {f}, 0"));
+            self.emitf(format_args!("{c} = icmp ne i8 {f}, 0"));
             let next = self.label();
             self.cond_br(&c, &done, &next);
             self.place(&next);
@@ -4090,7 +4177,7 @@ impl<'a> Gen<'a> {
             self.store(&slot, &v);
             let t = self.tag_of(&v);
             let c = self.reg();
-            self.emit(&format!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
+            self.emitf(format_args!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
             let next = self.label();
             let yes = self.label();
             self.cond_br(&c, &yes, &next);
@@ -4109,15 +4196,18 @@ impl<'a> Gen<'a> {
                 let item = self.load(&islot);
                 let ti = self.tb(&item);
                 let n = self.strarg(name);
-                let s = match &suggestion {
-                    Some(s) => self.strarg(s),
+                let s = match self.res.suggestion(&suggestion, name) {
+                    Some(s) => self.strarg(&s),
                     None => "ptr null, i64 0".into(),
                 };
                 let sp = self.span_id(span);
                 self.call_void("nx_row_missing", &format!("{ti}, {n}, {s}, i32 {sp}"));
                 self.fail_here();
             }
-            None => self.name_error(name, suggestion.as_deref(), span),
+            None => {
+                let s = self.res.suggestion(&suggestion, name);
+                self.name_error(name, s.as_deref(), span)
+            }
         }
         self.place(&done);
         // owned on every path (builtin values are constants)
@@ -4277,15 +4367,15 @@ impl<'a> Gen<'a> {
                     let res = self.alloca("%V");
                     let tv = self.tb(&vals[0]);
                     let done = self.reg();
-                    self.emit(&format!("{done} = call i8 @nx_list_add(ptr {ptr}, {tv})"));
+                    self.emitf(format_args!("{done} = call i8 @nx_list_add(ptr {ptr}, {tv})"));
                     let isdone = self.reg();
-                    self.emit(&format!("{isdone} = icmp ne i8 {done}, 0"));
+                    self.emitf(format_args!("{isdone} = icmp ne i8 {done}, 0"));
                     let fast = self.label();
                     let slow = self.label();
                     let merge = self.label();
                     self.cond_br(&isdone, &fast, &slow);
                     self.place(&fast);
-                    self.emit(&format!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {res}"));
+                    self.emitf(format_args!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {res}"));
                     self.br(&merge);
                     self.place(&slow);
                     let r = self.call_v("nx_call_method_at", &format!("ptr {ptr}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
@@ -4338,15 +4428,18 @@ impl<'a> Gen<'a> {
         let suggestion = suggestion.clone();
         let tv = self.load_binding(cands[0]);
         let tslot = self.temp(&tv);
-        let tag = self.tag_of(&tv);
-        let undef = self.reg();
-        self.emit(&format!("{undef} = icmp eq i64 {tag}, {T_UNDEF}"));
-        let bad = self.label();
-        let ok = self.label();
-        self.cond_br(&undef, &bad, &ok);
-        self.place(&bad);
-        self.name_error(name, suggestion.as_deref(), func.span);
-        self.place(&ok);
+        if !self.statically_defined(cands[0]) {
+            let tag = self.tag_of(&tv);
+            let undef = self.reg();
+            self.emitf(format_args!("{undef} = icmp eq i64 {tag}, {T_UNDEF}"));
+            let bad = self.label();
+            let ok = self.label();
+            self.cond_br(&undef, &bad, &ok);
+            self.place(&bad);
+            let s = self.res.suggestion(&suggestion, name);
+            self.name_error(name, s.as_deref(), func.span);
+            self.place(&ok);
+        }
         let mut vals = Vec::new();
         for a in args {
             let v = self.expr(&a.value, true)?;
@@ -4417,7 +4510,7 @@ impl<'a> Gen<'a> {
         let sp = self.span_id(span);
         let arr = self.values_array(&vals);
         let r = self.reg();
-        self.emit(&format!("{r} = call %V {fname}(ptr %tls, ptr null, ptr {arr}, i32 {sp})"));
+        self.emitf(format_args!("{r} = call %V {fname}(ptr %tls, ptr null, ptr {arr}, i32 {sp})"));
         self.check();
         for v in evaluated.iter().rev() {
             self.drop_val(v);
@@ -4475,23 +4568,25 @@ impl<'a> Gen<'a> {
             }
             inside = self.res.frames[fr].parent;
         }
-        let defined = own_call || inside.is_some();
+        let defined = own_call || inside.is_some() || self.statically_defined(b);
         let needs_value = !own_call && !self.res.frames[frame].free.is_empty();
         let fv = if defined && !needs_value { lit(T_OBJ, "0") } else { self.load_binding(b) };
         let fslot = self.temp(&fv);
-        let t = if defined { T_OBJ.to_string() } else { self.tag_of(&fv) };
-        let undef = self.reg();
-        self.emit(&format!("{undef} = icmp eq i64 {t}, {T_UNDEF}"));
-        let bad = self.label();
-        let ok = self.label();
-        self.cond_br(&undef, &bad, &ok);
-        self.place(&bad);
-        let sugg = match self.res.names.get(&func.id) {
-            Some(NameRes::Bindings { suggestion, .. }) => suggestion.clone(),
-            _ => None,
-        };
-        self.name_error(name, sugg.as_deref(), func.span);
-        self.place(&ok);
+        if !defined {
+            let t = self.tag_of(&fv);
+            let undef = self.reg();
+            self.emitf(format_args!("{undef} = icmp eq i64 {t}, {T_UNDEF}"));
+            let bad = self.label();
+            let ok = self.label();
+            self.cond_br(&undef, &bad, &ok);
+            self.place(&bad);
+            let sugg = match self.res.names.get(&func.id) {
+                Some(NameRes::Bindings { suggestion, .. }) => self.res.suggestion(suggestion, name),
+                _ => None,
+            };
+            self.name_error(name, sugg.as_deref(), func.span);
+            self.place(&ok);
+        }
         let mut vals: Vec<Val> = vec![lit(T_MISSING, "0"); n];
         if let Some(fst) = first {
             vals[0] = fst.clone();
@@ -4523,7 +4618,7 @@ impl<'a> Gen<'a> {
             let fv = self.load(&fslot);
             let tb = self.tb(&fv);
             let p = self.reg();
-            self.emit(&format!("{p} = call ptr @nx_func_ptr({tb})"));
+            self.emitf(format_args!("{p} = call ptr @nx_func_ptr({tb})"));
             p
         };
         let sp = self.span_id(span);
@@ -4538,7 +4633,7 @@ impl<'a> Gen<'a> {
                         Val::Lit(_, x) => format!("i64 {x}"),
                         Val::Reg(x) => {
                             let p = self.reg();
-                            self.emit(&format!("{p} = extractvalue %V {x}, 1"));
+                            self.emitf(format_args!("{p} = extractvalue %V {x}, 1"));
                             format!("i64 {p}")
                         }
                     });
@@ -4547,24 +4642,24 @@ impl<'a> Gen<'a> {
                     Some(d) => d,
                     None => {
                         let dp = self.reg();
-                        self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+                        self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
                         let d = self.reg();
-                        self.emit(&format!("{d} = load i64, ptr {dp}"));
+                        self.emitf(format_args!("{d} = load i64, ptr {dp}"));
                         d
                     }
                 };
-                self.emit(&format!("{r} = call %V {worker}(ptr %tls, ptr {clo}, i64 {d}, {}, i32 {sp})", ps.join(", ")));
+                self.emitf(format_args!("{r} = call %V {worker}(ptr %tls, ptr {clo}, i64 {d}, {}, i32 {sp})", ps.join(", ")));
                 if !self.f().int_params {
                     // the worker leaves its own depth in the thread state
                     let dp = self.reg();
-                    self.emit(&format!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
-                    self.emit(&format!("store i64 {d}, ptr {dp}"));
+                    self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+                    self.emitf(format_args!("store i64 {d}, ptr {dp}"));
                 }
                 // it returns an int unless it failed
                 let t = self.reg();
-                self.emit(&format!("{t} = extractvalue %V {r}, 0"));
+                self.emitf(format_args!("{t} = extractvalue %V {r}, 0"));
                 let c = self.reg();
-                self.emit(&format!("{c} = icmp ne i64 {t}, {T_INT}"));
+                self.emitf(format_args!("{c} = icmp ne i64 {t}, {T_INT}"));
                 let ok = self.label();
                 let unwind = self.unwind_label();
                 self.cond_br(&c, &unwind, &ok);
@@ -4572,7 +4667,7 @@ impl<'a> Gen<'a> {
             }
             _ => {
                 let arr = self.values_array(&vals);
-                self.emit(&format!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {sp})"));
+                self.emitf(format_args!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {sp})"));
                 self.check();
             }
         }
@@ -4609,9 +4704,9 @@ impl<'a> Gen<'a> {
         let cur = self.load(&src_slot);
         let tb = self.tb(&cur);
         let plain = self.reg();
-        self.emit(&format!("{plain} = call i8 @nx_pipe_plain({tb})"));
+        self.emitf(format_args!("{plain} = call i8 @nx_pipe_plain({tb})"));
         let isplain = self.reg();
-        self.emit(&format!("{isplain} = icmp ne i8 {plain}, 0"));
+        self.emitf(format_args!("{isplain} = icmp ne i8 {plain}, 0"));
         let fused = self.label();
         let slow = self.label();
         let merge = self.label();
@@ -4641,7 +4736,7 @@ impl<'a> Gen<'a> {
                 let cv = self.load(&cs);
                 let cb = self.tb(&cv);
                 let p = self.reg();
-                self.emit(&format!("{p} = call ptr @nx_func_ptr({cb})"));
+                self.emitf(format_args!("{p} = call ptr @nx_func_ptr({cb})"));
                 (p, Some(cs))
             };
             fns.push((fname, clo.0, clo.1));
@@ -4650,21 +4745,21 @@ impl<'a> Gen<'a> {
         let cur = self.load(&src_slot);
         let tb = self.tb(&cur);
         let it = self.reg();
-        self.emit(&format!("{it} = call ptr @nx_iter({tb}, i32 {first_sp})"));
+        self.emitf(format_args!("{it} = call ptr @nx_iter({tb}, i32 {first_sp})"));
         self.check();
         self.f().live.push(Live::Iter(it.clone()));
         let is_sum = steps[last].kind == StepKind::Sum;
         let (acc, rest) = if is_sum {
             let acc = self.alloca("%V");
-            self.emit(&format!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {acc}"));
+            self.emitf(format_args!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {acc}"));
             let rest = self.alloca("%V");
-            self.emit(&format!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {rest}"));
+            self.emitf(format_args!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {rest}"));
             self.f().live.push(Live::Slot(acc.clone()));
             self.f().live.push(Live::Slot(rest.clone()));
             (acc, rest)
         } else {
             let n = self.alloca("i64");
-            self.emit(&format!("store i64 0, ptr {n}"));
+            self.emitf(format_args!("store i64 0, ptr {n}"));
             (n, String::new())
         };
         let item = self.alloca("%V");
@@ -4685,7 +4780,7 @@ impl<'a> Gen<'a> {
             let (fname, clo, _) = fns[i].clone();
             let arr = self.values_array(std::slice::from_ref(&v));
             let r = self.reg();
-            self.emit(&format!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {esp})"));
+            self.emitf(format_args!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {esp})"));
             self.check();
             let r = self.owned(Val::Reg(r));
             // a step that names a function calls it with the element (D51)
@@ -4715,16 +4810,16 @@ impl<'a> Gen<'a> {
             self.call_void("nx_sum_push", &format!("ptr {acc}, ptr {rest}, {vt}"));
         } else {
             let c = self.reg();
-            self.emit(&format!("{c} = load i64, ptr {acc}"));
+            self.emitf(format_args!("{c} = load i64, ptr {acc}"));
             let c1 = self.reg();
-            self.emit(&format!("{c1} = add i64 {c}, 1"));
-            self.emit(&format!("store i64 {c1}, ptr {acc}"));
+            self.emitf(format_args!("{c1} = add i64 {c}, 1"));
+            self.emitf(format_args!("store i64 {c1}, ptr {acc}"));
         }
         self.drop_val(&v);
         self.br(&head);
         self.place(&end);
         self.unlive(&Live::Iter(it.clone()));
-        self.emit(&format!("call void @nx_iter_free(ptr {it})"));
+        self.emitf(format_args!("call void @nx_iter_free(ptr {it})"));
         let tsp = self.span_id(steps[last].span);
         let r = if is_sum {
             // the slots are emptied before the total is computed
@@ -4735,9 +4830,9 @@ impl<'a> Gen<'a> {
             self.owned(r)
         } else {
             let c = self.reg();
-            self.emit(&format!("{c} = load i64, ptr {acc}"));
+            self.emitf(format_args!("{c} = load i64, ptr {acc}"));
             let r = self.reg();
-            self.emit(&format!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {c}, 1"));
+            self.emitf(format_args!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {c}, 1"));
             Val::Reg(r)
         };
         for (_, _, cs) in fns.iter().rev() {
@@ -4783,7 +4878,7 @@ impl<'a> Gen<'a> {
                     let x = step.expr.as_ref().unwrap();
                     let cur = self.load(&slot);
                     let tc = self.tb(&cur);
-                    self.emit(&format!("call void @nx_pipe_check_call({tc}, i32 {ssp})"));
+                    self.emitf(format_args!("call void @nx_pipe_check_call({tc}, i32 {ssp})"));
                     self.check();
                     let cur = self.load(&slot);
                     match &x.kind {
@@ -4986,21 +5081,21 @@ impl<'a> Gen<'a> {
                 _ => {
                     let c = self.cell_ptr(b);
                     let p = self.reg();
-                    self.emit(&format!("{p} = getelementptr inbounds i8, ptr {c}, i64 24"));
+                    self.emitf(format_args!("{p} = getelementptr inbounds i8, ptr {c}, i64 24"));
                     let x = self.reg();
-                    self.emit(&format!("{x} = load i64, ptr {p}"));
+                    self.emitf(format_args!("{x} = load i64, ptr {p}"));
                     Some(x)
                 }
             }
         };
         let sp_ptr = self.reg();
-        self.emit(&format!("{sp_ptr} = getelementptr inbounds i8, ptr %tls, i64 16"));
+        self.emitf(format_args!("{sp_ptr} = getelementptr inbounds i8, ptr %tls, i64 16"));
         let stamp = self.reg();
-        self.emit(&format!("{stamp} = load i64, ptr {sp_ptr}"));
+        self.emitf(format_args!("{stamp} = load i64, ptr {sp_ptr}"));
         let c = self.reg();
         match birth {
-            None => self.emit(&format!("{c} = icmp ne i64 {stamp}, 0")),
-            Some(x) => self.emit(&format!("{c} = icmp ult i64 {x}, {stamp}")),
+            None => self.emitf(format_args!("{c} = icmp ne i64 {stamp}, 0")),
+            Some(x) => self.emitf(format_args!("{c} = icmp ult i64 {x}, {stamp}")),
         }
         let bad = self.label();
         let ok = self.label();

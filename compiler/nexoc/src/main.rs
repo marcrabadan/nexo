@@ -32,6 +32,7 @@ mod phase5;
 mod prove;
 mod resolve;
 mod sbom;
+mod split;
 mod suggest;
 mod typecheck;
 
@@ -523,21 +524,98 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     let dir = work_dir().join(BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_string());
     let _ = std::fs::create_dir_all(&dir);
     let ll = dir.join("program.ll");
-    std::fs::write(&ll, ir).map_err(|e| e.to_string())?;
     let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
-    let output = Command::new(&cc)
-        .arg(opt)
-        .arg("-Wno-override-module")
-        .arg(&ll)
-        .arg(runtime_lib())
-        .args(["-o"])
-        .arg(out)
-        .args(["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("{cc}: {e}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    let libs = ["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
+    let fail = |output: std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
+    // development mode calls the reference-count helpers instead of copying
+    // them into every use: clang compiles half the code (D135)
+    let pat = "attributes #0 = { alwaysinline }";
+    let dev = opt != "-O2";
+    let mut parts = 1;
+    if dev {
+        // a large program is compiled in parts, at the same time (D135)
+        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        parts = (ir.len() / (2 << 20)).clamp(1, cores.min(8));
+    }
+    if parts == 1 {
+        use std::io::Write;
+        let mut f = std::io::BufWriter::new(std::fs::File::create(&ll).map_err(|e| e.to_string())?);
+        let head = &ir[..ir.len().min(4096)];
+        let w = match head.find(pat) {
+            Some(i) if dev => f
+                .write_all(ir[..i].as_bytes())
+                .and_then(|_| f.write_all(b"attributes #0 = { noinline }"))
+                .and_then(|_| f.write_all(ir[i + pat.len()..].as_bytes())),
+            _ => f.write_all(ir.as_bytes()),
+        };
+        w.and_then(|_| f.flush()).map_err(|e| e.to_string())?;
+        let output = Command::new(&cc)
+            .arg(opt)
+            .arg("-Wno-override-module")
+            .arg(&ll)
+            .arg(runtime_lib())
+            .args(["-o"])
+            .arg(out)
+            .args(libs)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("{cc}: {e}"))?;
+        if !output.status.success() {
+            return Err(fail(output));
+        }
+    } else {
+        let text = ir.replacen(pat, "attributes #0 = { noinline }", 1);
+        let modules = split::split(&text, parts);
+        drop(text);
+        let mut objects = Vec::new();
+        for (k, m) in modules.iter().enumerate() {
+            let part = dir.join(format!("program.{k}.ll"));
+            std::fs::write(&part, m).map_err(|e| e.to_string())?;
+            objects.push((part, dir.join(format!("program.{k}.o"))));
+        }
+        drop(modules);
+        let results: Vec<Result<std::process::Output, String>> = std::thread::scope(|sc| {
+            let handles: Vec<_> = objects
+                .iter()
+                .map(|(src, obj)| {
+                    let cc = cc.clone();
+                    sc.spawn(move || {
+                        Command::new(&cc)
+                            .arg(opt)
+                            .arg("-Wno-override-module")
+                            .arg("-c")
+                            .arg(src)
+                            .arg("-o")
+                            .arg(obj)
+                            .stdin(Stdio::null())
+                            .output()
+                            .map_err(|e| format!("{cc}: {e}"))
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("clang".into()))).collect()
+        });
+        for r in results {
+            let output = r?;
+            if !output.status.success() {
+                return Err(fail(output));
+            }
+        }
+        let output = Command::new(&cc)
+            .args(objects.iter().map(|(_, o)| o))
+            .arg(runtime_lib())
+            .args(["-o"])
+            .arg(out)
+            .args(libs)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("{cc}: {e}"))?;
+        if !output.status.success() {
+            return Err(fail(output));
+        }
+        if std::env::var("NEXO_KEEP_IR").is_ok() {
+            let _ = std::fs::write(&ll, ir);
+        }
     }
     // NEXO_KEEP_IR=1 keeps the IR next to the program (out.ll)
     if std::env::var("NEXO_KEEP_IR").is_ok() {

@@ -275,3 +275,20 @@ def test_fuzz():
     proc = subprocess.run([sys.executable, str(ROOT / "compiler" / "scripts" / "fuzz.py"), f"--nexo={nexo}",
                            "--seed=0", "--count=12"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1200)
     assert proc.returncode == 0, proc.stdout.decode()
+
+
+def test_a_large_program_compiled_in_parts(tmp_path):
+    """Development mode compiles a large program in parts at the same time
+    (D135); it prints what phase 0 prints."""
+    import importlib.util
+    nexo = compiler()
+    if nexo is None:
+        pytest.skip("needs cargo and clang")
+    spec = importlib.util.spec_from_file_location("goals", ROOT / "compiler" / "bench" / "goals.py")
+    goals = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(goals)
+    (tmp_path / "big.nexo").write_text(goals.program(3000))
+    a = run(PHASES[0][1], ["big.nexo"], tmp_path, timeout=600)
+    b = run([str(nexo)], ["big.nexo"], tmp_path, timeout=900)
+    assert a.returncode == b.returncode == 0
+    assert a.stdout == b.stdout

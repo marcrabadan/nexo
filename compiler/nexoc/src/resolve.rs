@@ -124,8 +124,18 @@ pub enum Node {
 pub enum NameRes {
     /// candidate bindings, innermost first; `row` is the `it` binding of a
     /// pipeline step whose row columns are looked up first
-    Bindings { cands: Vec<BindingId>, row: Option<BindingId>, builtin: bool, suggestion: Option<String> },
+    Bindings { cands: Vec<BindingId>, row: Option<BindingId>, builtin: bool, suggestion: Option<SuggestAt> },
     Builtin(String),
+}
+
+/// The names visible at a lookup: each scope of the chain, innermost
+/// first, with how many names it had then. The "Did you mean...?" of a
+/// name is only looked for when the compiler writes an error that may need
+/// it (D135), among exactly those names.
+#[derive(Clone, Debug)]
+pub struct SuggestAt {
+    chain: Vec<(ScopeId, u32)>,
+    sync: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -176,6 +186,10 @@ pub struct Resolution {
     pub task_outputs: HashMap<FrameId, Vec<BindingId>>,
     /// the program has `use nexo.sync`
     pub sync: bool,
+    /// indexes of the names of large scopes and of the builtins, for the
+    /// suggestions of `suggestion` (D127, D135)
+    pub suggest_index: std::cell::RefCell<HashMap<ScopeId, nexo_diag::SuggestIndex>>,
+    pub builtin_index: std::cell::OnceCell<nexo_diag::SuggestIndex>,
     /// the program has `use nexo.db`
     pub db: bool,
     /// top-level names no function, lambda, task or test uses: they are
@@ -272,6 +286,45 @@ impl Resolution {
         &self.bindings[id]
     }
 
+    /// The closest name to `name` among those visible at the lookup that
+    /// recorded `at`; the first wins between equally close ones.
+    pub fn suggestion(&self, at: &Option<SuggestAt>, name: &str) -> Option<String> {
+        let at = at.as_ref()?;
+        let mut best: Option<(usize, String)> = None;
+        let mut better = |found: Option<(usize, String)>| {
+            if let Some((d, n)) = found {
+                if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    best = Some((d, n));
+                }
+            }
+        };
+        for &(id, len) in &at.chain {
+            let names = &self.scopes[id].names[..len as usize];
+            if names.len() > 32 {
+                let mut cache = self.suggest_index.borrow_mut();
+                let index = cache.entry(id).or_insert_with(|| nexo_diag::SuggestIndex::new(std::iter::empty()));
+                let all = &self.scopes[id].names;
+                for (n, _) in &all[index.len()..] {
+                    index.push(n);
+                }
+                better(index.best_match_below(name, names.len()).map(|(d, i)| (d, index.name(i).to_string())));
+            } else {
+                better(nexo_diag::best_match(name, names.iter().map(|(n, _)| n.as_str())).map(|(d, i)| (d, names[i].0.clone())));
+            }
+        }
+        let builtins = self.builtin_index.get_or_init(|| nexo_diag::SuggestIndex::new(builtin_names()));
+        let mut found = builtins.best_match(name).map(|(d, i)| (d, builtins.name(i).to_string()));
+        if at.sync {
+            if let Some((d, _)) = nexo_diag::best_match(name, ["channel"]) {
+                if found.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    found = Some((d, "channel".to_string()));
+                }
+            }
+        }
+        better(found);
+        best.map(|(_, n)| n)
+    }
+
     /// Names of the top level of the program that a function uses live in
     /// static storage; every other binding belongs to the frame (function)
     /// that runs its scope.
@@ -303,6 +356,8 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             self_calls: std::collections::HashSet::new(),
             task_outputs: HashMap::new(),
             sync: uses(program, "nexo.sync"),
+            suggest_index: std::cell::RefCell::new(HashMap::new()),
+            builtin_index: std::cell::OnceCell::new(),
             db: uses(program, "nexo.db"),
             main_local: std::collections::HashSet::new(),
             module_roots: std::collections::HashSet::new(),
@@ -578,6 +633,16 @@ impl Resolver {
     }
 
     /// Names visible from `scope`, innermost first, then the builtins.
+    fn snapshot(&self, scope: ScopeId) -> Option<SuggestAt> {
+        let mut chain = Vec::new();
+        let mut s = Some(scope);
+        while let Some(id) = s {
+            chain.push((id, self.r.scopes[id].names.len() as u32));
+            s = self.r.scopes[id].parent;
+        }
+        Some(SuggestAt { chain, sync: self.r.sync })
+    }
+
     /// The closest visible name ("Did you mean...?"): the names of each
     /// scope from the innermost, then the builtins; the first wins between
     /// equally close ones. Large scopes use an index, so resolving a big
@@ -691,7 +756,7 @@ impl Resolver {
         if let Some(r) = row {
             self.note_use(scope, r);
         }
-        let suggestion = self.suggestion(scope, name);
+        let suggestion = self.snapshot(scope);
         let builtin = cands.is_empty() && is_builtin(name);
         NameRes::Bindings { cands, row, builtin, suggestion }
     }
@@ -760,7 +825,7 @@ impl Resolver {
         if found != Some(own) || self.r.is_static(own) {
             return false;
         }
-        let suggestion = self.suggestion(scope, n);
+        let suggestion = self.snapshot(scope);
         self.r.names.insert(func.id, NameRes::Bindings { cands: vec![own], row: None, builtin: false, suggestion });
         self.pending_self.push((func.id, scope, own));
         true
