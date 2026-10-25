@@ -1,4 +1,4 @@
-# Nexo — phases 0 to 4
+# Nexo — phases 0 to 5
 
 The core of Nexo, a new programming language, in two implementations
 (section 25 of the specification):
@@ -14,7 +14,9 @@ The core of Nexo, a new programming language, in two implementations
   `check`, `lsp`, the compiler's REPL — and the VS Code extension in
   `editors/vscode` (D85-D88);
 - phase 4, in both: the standard library of section 15, `nexo.ai`,
-  `nexo.web`, `nexo.db`, `use c` and `use python` (D89-D112).
+  `nexo.web`, `nexo.db`, `use c` and `use python` (D89-D112);
+- phase 5, in both: `nexo.infra`, `nexo.ci`, `nexo.stream`, flags and
+  privacy (D113-D123).
 
 ## Source of truth
 
@@ -38,14 +40,23 @@ nexo/
   errors.py       error type + section 14 renderer + i18n (es default, en)
   stdlib/         builtins, io, data (JSON/CSV), sync (nexo.sync); phase 4:
                   clock, text, crypto, http, db, web, ai, clib (use c),
-                  pylib (use python)
+                  pylib (use python); phase 5: cfg (the blocks of D114),
+                  flags, privacy, stream, infra (model and plan),
+                  infra_cloud (the clients and commands),
+                  infra_providers.json (shared by both phases), ci,
+                  ci_export
   fmt.py          `nexo fmt`: token-preserving formatter (D85)
   lint.py         `nexo lint` / `nexo fix`: warnings and safe fixes (D86)
   lsp.py          `nexo lsp`: language server (D87)
   cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test|fmt|lint|fix|check|lsp`,
-                  `nexo db diff|migrate`, `nexo ai setup|usage`
+                  `nexo db diff|migrate`, `nexo ai setup|usage`; phase 5:
+                  `nexo plan|apply|destroy|drift|cost|import`, `nexo ci run|export`,
+                  `nexo flags set`, `nexo privacy report`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text)
+  infra/          NAME.nexo + NAME.expected (nexo plan; tests/test_infra.py)
+  ci/             pipelines and the files nexo ci export writes
+  cloud_emulator.py  local stand-in for the AWS, Azure, GCP and k8s APIs
   fmt/            NAME.nexo + NAME.formatted (nexo fmt)
   lint/           NAME.nexo + NAME.expected (nexo lint) + NAME.fixed (nexo fix)
   unit/           pytest unit tests per layer
@@ -54,17 +65,20 @@ compiler/
   nexoc/          the `nexo` driver: lexer, parser, checker, resolve
                   (scopes, closures), typecheck (gradual), codegen (LLVM IR),
                   fmt, lint, lsp (+ json), the REPL, cheader (C headers
-                  read at compile time), ai_cmd
+                  read at compile time), ai_cmd, phase5 (the commands of
+                  flags, privacy, infra and ci)
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
-                  http, db, web, ai, clib, pylib)
+                  http, db, web, ai, clib, pylib; phase 5: cfg, flags,
+                  privacy, stream, infra, infra_cloud, ci, ci_export)
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py
   bench/          benchmarks (run.sh; compare.py against rust/*.rs)
 examples/         real programs; NAME.expected (and NAME.stdin) checked by
                   tests/test_examples.py; they are formatted and lint-clean;
   shop_api/       the exit criterion of phase 4 (tests/test_exit_criterion.py)
+  deploy/         the exit criterion of phase 5 (tests/test_exit_criterion_5.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 ```
@@ -80,6 +94,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/nexo fmt|lint|fix|check [path]
 .venv/bin/nexo lsp               # language server on stdio
 .venv/bin/nexo --lang en file.nexo
+.venv/bin/nexo plan|apply|drift|destroy [--stage prod] [file]   # nexo.infra
+.venv/bin/nexo ci run [--yes] | ci export github [file]         # nexo.ci
+python3 tests/cloud_emulator.py 8765   # the cloud APIs, locally (prints the env)
 ```
 
 Phase 1 (needs cargo and clang):
@@ -102,7 +119,7 @@ in Spanish (the default); a `NAME.args` file holds extra CLI arguments
 placed before the file name, such as `--lang en` (see `tests/conformance/en/`)
 or `test`.
 
-## Scope (phases 0 to 4)
+## Scope (phases 0 to 5)
 
 Included: lexer/parser per section 24; constants and `var`; `type`
 (records, unions, enums with data, methods); `trait`; `fn` with named and
@@ -142,9 +159,21 @@ Tests that need a network use local servers: tests/test_http.py,
 test_web.py, test_db.py, test_ai.py, test_interop.py,
 test_exit_criterion.py.
 
-Excluded (do not implement yet): infra, CI pipelines, stream, ml, ui,
-notify, policy, when/every/lifecycle, AI budgets and MCP, PostgreSQL,
-use rust/wasm, YAML/XML/Parquet (D89, D112).
+Phase 5: the blocks of D114 (`infra`, `stage`, `pipeline`, `flags`) are
+read by both parsers into `__cfg` entries. `nexo.infra` (D118-D121): the
+portable resources of section 11 and `native` on AWS, Azure, GCP and
+k8s from one provider table, plan/apply/destroy/drift/cost/import
+through each cloud's own API, state in `.nexo/state` or S3, references
+between infra blocks. `nexo.ci` (D122-D123): pipelines, `nexo ci run`,
+`nexo ci export github|gitlab|azure|jenkins`. `nexo.stream` on a local
+broker (D117), flags (D115), privacy (D116). Tests that talk to clouds
+use tests/cloud_emulator.py: tests/test_infra.py, test_ci.py,
+test_exit_criterion_5.py.
+
+Excluded (do not implement yet): ml, ui, notify, the program policy,
+every/lifecycle, canary and blue/green releases, chaos, AI budgets and
+MCP, vault and cloud secret managers, brokers on the network,
+PostgreSQL, use rust/wasm, YAML/XML/Parquet (D89, D112, D113).
 
 ## Rules
 

@@ -1,0 +1,104 @@
+# The exit criterion of phase 5: one file holds an app, the four places it
+# runs (AWS, Azure, GCP and Kubernetes) and how it gets there.
+#     nexo shop.nexo                serves it on port 8080
+#     nexo test shop.nexo           runs its tests
+#     nexo plan / nexo apply        deploys it to the four targets
+#     nexo ci run --yes             builds its image and deploys it
+#     nexo ci export github         writes the workflow that does the same
+
+flags:
+    express_shipping = 20%
+
+type Order:
+    item: str
+    quantity: int
+
+## The price of shipping an order: express for some users (a flag).
+fn shipping(order: Order, user: str) -> money:
+    if flag("express_shipping", user):
+        return 4.90 EUR
+    return 2.50 EUR + 0.10 EUR * order.quantity
+
+test "shipping grows with the quantity":
+    assert shipping(Order(item: "tea", quantity: 1), "nobody") <= shipping(Order(item: "tea", quantity: 3), "nobody")
+
+server shop:
+    port = 8080
+
+    @public
+    get "/health":
+        return {"ok": true}
+
+    @public
+    post "/orders"(order: Order, user: str):
+        return {"item": order.item, "shipping": shipping(order, user)}
+
+infra shop_aws:
+    cloud = "aws"
+    region = "eu-west-1"
+    budget = 200 EUR per month
+    network net:
+        allow from internet to api, port: 443
+    database orders
+    app api:
+        image = "shop:1.0"
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret("API_KEY")
+    output url = api.url
+
+infra shop_azure:
+    cloud = "azure"
+    region = "westeurope"
+    database orders
+    app api:
+        image = "shop:1.0"
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret("API_KEY")
+    output url = api.url
+
+infra shop_gcp:
+    cloud = "gcp"
+    region = "europe-west1"
+    database orders
+    app api:
+        image = "shop:1.0"
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret("API_KEY")
+    output url = api.url
+
+infra shop_k8s:
+    cloud = "k8s"
+    namespace = "shop"
+    app api:
+        image = "shop:1.0"
+        port = 8080
+        scale 2..6:
+            cpu > 60%
+        env:
+            DB = shop_gcp.orders.url
+            API_KEY = secret("API_KEY")
+    output url = api.url
+
+stage prod:
+    size = medium
+
+pipeline main:
+    trigger push to main
+    secrets = ["API_KEY"]
+    version = "1.1.0"
+
+    step checks:
+        test()
+
+    step build:
+        image = build_image("shop")
+
+    step deploy:
+        approve(by: ["ops@shop.example"])
+        apply(stage: "prod", image: image)
