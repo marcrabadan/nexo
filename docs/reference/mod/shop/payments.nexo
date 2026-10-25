@@ -1,0 +1,11 @@
+pub type Status:
+    Paid(amount: int)
+    Pending
+
+pub fn charge(amount: int) -> Status:
+    if amount == 0:
+        return Pending
+    return Paid(amount)
+
+fn audit():
+    print("only visible inside the module")

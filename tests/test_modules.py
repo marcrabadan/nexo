@@ -58,11 +58,11 @@ def test_without_nexo_toml_the_root_is_the_folder_of_the_program(phase, tmp_path
     proc = run(phase[1], ["app/main.nexo"], tmp_path)
     assert proc.returncode == 1
     assert proc.stdout.decode() == (
-        "Error en app/main.nexo, línea 1:\n"
+        "Error in app/main.nexo, line 1:\n"
         "  use shop.payments\n"
         "  ^^^^^^^^^^^^^^^^^\n"
-        "No existe el módulo shop.payments: no hay ningún archivo app/shop/payments.nexo. Crea el archivo o "
-        "corrige el nombre; el nombre de un módulo es su ruta (shop/payments.nexo es shop.payments).\n"
+        "There is no module shop.payments: there is no file app/shop/payments.nexo. Create the file or "
+        "fix the name; a module's name is its path (shop/payments.nexo is shop.payments).\n"
     )
 
 
@@ -71,30 +71,30 @@ def test_a_module_runs_its_own_tests(phase, tmp_path):
     project(tmp_path)
     proc = run(phase[1], ["test", "shop/payments.nexo"], tmp_path)
     assert proc.returncode == 0, proc.stdout.decode()
-    assert proc.stdout.decode() == "✓ charge\n1 prueba: 1 correcta, 0 fallidas\n"
+    assert proc.stdout.decode() == "✓ charge\n1 test: 1 passed, 0 failed\n"
     # and the program that uses it does not run them
     with (tmp_path / "app" / "main.nexo").open("a", encoding="utf-8") as f:
         f.write('\n\ntest "main":\n    assert payments.charge(0) == payments.Pending\n')
     proc = run(phase[1], ["test", "app/main.nexo"], tmp_path)
-    assert proc.stdout.decode() == "paid 11\n✓ main\n1 prueba: 1 correcta, 0 fallidas\n"
+    assert proc.stdout.decode() == "paid 11\n✓ main\n1 test: 1 passed, 0 failed\n"
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
 def test_check_and_lint_read_the_modules(phase, tmp_path):
     project(tmp_path)
     proc = run(phase[1], ["check", "app/main.nexo"], tmp_path)
-    assert (proc.returncode, proc.stdout.decode()) == (0, "No hay errores en app/main.nexo.\n")
+    assert (proc.returncode, proc.stdout.decode()) == (0, "No errors in app/main.nexo.\n")
     proc = run(phase[1], ["lint", "app/main.nexo"], tmp_path)
-    assert (proc.returncode, proc.stdout.decode()) == (0, "No hay avisos en app/main.nexo.\n")
+    assert (proc.returncode, proc.stdout.decode()) == (0, "No warnings in app/main.nexo.\n")
     (tmp_path / "app" / "main.nexo").write_text(MAIN.replace("payments.Pending", "payments.Waiting"), encoding="utf-8")
     proc = run(phase[1], ["check", "app/main.nexo"], tmp_path)
     assert proc.returncode == 1
     assert proc.stdout.decode() == (
-        "Error en app/main.nexo, línea 5:\n"
+        "Error in app/main.nexo, line 5:\n"
         '  payments.Waiting: print("pending")\n'
         "  ^^^^^^^^^^^^^^^^\n"
-        'El módulo shop.payments no tiene "Waiting". Revisa el nombre; un módulo solo exporta sus funciones y '
-        "tipos pub.\n"
+        'Module shop.payments has no "Waiting". Check the name; a module only exports its pub functions and '
+        "types.\n"
     )
 
 
@@ -105,10 +105,10 @@ def test_the_repl_remembers_the_modules_of_the_session(phase, tmp_path):
     out = proc.stdout.decode().split("\n", 1)[1]
     assert out == (
         ">>> >>> 5\n"
-        ">>> Error en <repl>, línea 1:\n"
+        ">>> Error in <repl>, line 1:\n"
         "  taxes.nope(1)\n"
         "  ^^^^^^^^^^\n"
-        'El módulo shop.taxes no tiene "nope". Revisa el nombre; un módulo solo exporta sus funciones y tipos pub.\n'
+        'Module shop.taxes has no "nope". Check the name; a module only exports its pub functions and types.\n'
         ">>> 1\n"
         ">>> \n"
     )

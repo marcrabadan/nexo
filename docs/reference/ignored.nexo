@@ -1,0 +1,4 @@
+fn load(path):
+    return read(path)
+
+load("notes.txt")

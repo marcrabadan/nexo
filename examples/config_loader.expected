@@ -1,5 +1,5 @@
 data/app.json: shop on db.internal:5433 with 8 workers (debug: true)
 data/missing.json: not found, using default on localhost:5432 with 4 workers (debug: false)
-data/broken.json: Datos no válidos: el JSON no es válido (línea 2, columna 1)
-data/no_database.json: Datos no válidos: falta el campo "database" de Config
+data/broken.json: Invalid data: the JSON is not valid (line 2, column 1)
+data/no_database.json: Invalid data: the field "database" of Config is missing
 data/bad_workers.json: workers must be at least 1, not 0

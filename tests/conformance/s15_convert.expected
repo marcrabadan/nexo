@@ -18,7 +18,7 @@ Ana,10.5
   ]
 }
 10.80 USD
-Error en s15_convert.nexo, línea 10:
+Error in s15_convert.nexo, line 10:
   convert(10 EUR, to: USD)
   ^^^^^^^^^^^^^^^^^^^^^^^^
-Falta el argumento "rate" en la llamada a "convert". Pásalo así: convert(..., rate: valor).
+The argument "rate" is missing in the call to "convert". Pass it like this: convert(..., rate: value).

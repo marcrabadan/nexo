@@ -1,4 +1,0 @@
-Error in s03_question_on_optional.nexo, line 2:
-  return email?
-         ^^^^^^
-? only works on values that can fail (T!). For values that may be missing (T?) use ?? with a default.

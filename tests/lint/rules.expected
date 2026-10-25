@@ -1,65 +1,65 @@
-Aviso en rules.nexo, línea 2:
+Warning in rules.nexo, line 2:
   use nexo.sync
   ^^^^^^^^^^^^^
-use nexo.sync no se usa. Borra esta línea.
-Aviso en rules.nexo, línea 11:
+use nexo.sync is not used. Remove this line.
+Warning in rules.nexo, line 11:
   Rect(w, h): return w * 2.0
           ^
-"h" se captura en el patrón pero no se usa. Escribe _ en su lugar.
-Aviso en rules.nexo, línea 14:
+"h" is bound by the pattern but never used. Write _ instead.
+Warning in rules.nexo, line 14:
   var label = "number"
   ^^^
-"label" se declara con var pero nunca cambia. Quita var: un nombre que no cambia es inmutable.
-Aviso en rules.nexo, línea 15:
+"label" is declared with var but never changes. Remove var: a name that does not change is immutable.
+Warning in rules.nexo, line 15:
   unused = n * 2
   ^^^^^^
-"unused" se asigna pero nunca se usa. Bórralo o úsalo.
-Aviso en rules.nexo, línea 16:
+"unused" is assigned but never used. Remove it or use it.
+Warning in rules.nexo, line 16:
   if n == true:
      ^^^^^^^^^
-Comparar con true o false sobra. Escribe n.
-Aviso en rules.nexo, línea 19:
+Comparing with true or false is redundant. Write n.
+Warning in rules.nexo, line 19:
   print("never")
   ^^^^^^^^^^^^^^
-Este código nunca se ejecuta. Va después de return o fail(); bórralo o muévelo antes.
-Aviso en rules.nexo, línea 23:
+This code never runs. It comes after return or fail(); remove it or move it earlier.
+Warning in rules.nexo, line 23:
   if not not flag:
      ^^^^^^^^^^^^
-Dos not seguidos se anulan. Quita los dos not.
-Aviso en rules.nexo, línea 25:
+Two nots in a row cancel out. Remove both nots.
+Warning in rules.nexo, line 25:
   elif flag != false:
        ^^^^^^^^^^^^^
-Comparar con true o false sobra. Escribe flag.
-Aviso en rules.nexo, línea 30:
+Comparing with true or false is redundant. Write flag.
+Warning in rules.nexo, line 30:
   for i in 1..3:
   ^^^
-"i" no se usa dentro del bucle. Usa repeat 3 para repetir el bloque.
-Aviso en rules.nexo, línea 32:
+"i" is not used inside the loop. Use repeat 3 to repeat the block.
+Warning in rules.nexo, line 32:
   for k in range(2):
   ^^^
-"k" no se usa dentro del bucle. Usa repeat 2 para repetir el bloque.
-Aviso en rules.nexo, línea 34:
+"k" is not used inside the loop. Use repeat 2 to repeat the block.
+Warning in rules.nexo, line 34:
   total = total
   ^^^^^
-"total" se asigna a sí mismo. Borra esta línea.
-Aviso en rules.nexo, línea 35:
+"total" is assigned to itself. Remove this line.
+Warning in rules.nexo, line 35:
   counts = {"a": 1, "b": 2, "a": 3}
                             ^^^
-La clave "a" está repetida en este mapa. Una clave repetida sustituye a la anterior; deja solo una.
-Aviso en rules.nexo, línea 36:
+The key "a" is repeated in this map. A repeated key replaces the earlier one; keep only one.
+Warning in rules.nexo, line 36:
   if false:
      ^^^^^
-La condición de if es siempre false. Usa una condición que pueda cambiar, o quita el if.
-Aviso en rules.nexo, línea 38:
+The condition of if is always false. Use a condition that can change, or remove the if.
+Warning in rules.nexo, line 38:
   while false:
         ^^^^^
-La condición de while es siempre false. Usa una condición que pueda cambiar, o quita el while.
-Aviso en rules.nexo, línea 40:
+The condition of while is always false. Use a condition that can change, or remove the while.
+Warning in rules.nexo, line 40:
   total + 1
   ^^^^^^^^^
-El valor de esta expresión no se usa. Guárdalo en una variable, pásalo a una función o bórralo.
-Aviso en rules.nexo, línea 41:
+The value of this expression is not used. Store it in a variable, pass it to a function or remove it.
+Warning in rules.nexo, line 41:
   [1, 2] |> map it * 2
             ^^^^^^^^^^
-Este pipeline termina en map, así que nunca se ejecuta. Guarda el resultado o termina con |> each, |> save(...), |> count o |> sum.
-Avisos: 16. Arreglos seguros con nexo fix: 8.
+This pipeline ends in map, so it never runs. Store the result or end it with |> each, |> save(...), |> count or |> sum.
+Warnings: 16. Safe fixes with nexo fix: 8.

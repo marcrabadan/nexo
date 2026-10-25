@@ -1,4 +1,4 @@
-Error en s03_else_without_var.nexo, línea 3:
+Error in s03_else_without_var.nexo, line 3:
   else:
   ^^^^
-else en un try necesita un nombre para el error. Escribe else e: y usa e.message.
+else in a try needs a name for the error. Write else e: and use e.message.

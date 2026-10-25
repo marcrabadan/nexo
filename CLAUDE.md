@@ -38,7 +38,7 @@ nexo/
   modules.py      `use shop.payments`: the modules of the program's files (D124)
   numbers.py      section 17 arithmetic: int overflow, float/decimal, money, units
   types.py        runtime values: decimal/money/units, records, enums, errors
-  errors.py       error type + section 14 renderer + i18n (es default, en)
+  errors.py       error type + section 14 renderer + message catalog (English, D125)
   stdlib/         builtins, io, data (JSON/CSV), sync (nexo.sync); phase 4:
                   clock, text, crypto, http, db, web, ai, clib (use c),
                   pylib (use python); phase 5: cfg (the blocks of D114),
@@ -63,7 +63,7 @@ tests/
   lint/           NAME.nexo + NAME.expected (nexo lint) + NAME.fixed (nexo fix)
   unit/           pytest unit tests per layer
 compiler/
-  diag/           es/en message catalog and the section 14 renderer
+  diag/           message catalog and the section 14 renderer
   nexoc/          the `nexo` driver: lexer, parser, checker, modules (D124), resolve
                   (scopes, closures), typecheck (gradual), codegen (LLVM IR),
                   fmt, lint, lsp (+ json), the REPL, cheader (C headers
@@ -76,13 +76,18 @@ compiler/
                   privacy, stream, infra, infra_cloud, ci, ci_export)
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py
-  bench/          benchmarks (run.sh; compare.py against rust/*.rs)
+  bench/          benchmarks (run.sh; compare.py against rust/*.rs; languages.py
+                  against c, rust, go, java, js, python -> languages.json, shown
+                  on the site by site.py)
 examples/         real programs; NAME.expected (and NAME.stdin) checked by
                   tests/test_examples.py; they are formatted and lint-clean;
   shop_api/       the exit criterion of phase 4 (tests/test_exit_criterion.py)
   deploy/         the exit criterion of phase 5 (tests/test_exit_criterion_5.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
+docs/index.html, reference.html  the GitHub Pages site; reference.html is built from
+                  docs/reference/ (page.tmpl + the programs it runs) by
+                  docs/reference/build.py
 ```
 
 ## Running
@@ -95,7 +100,6 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/nexo test [path]       # run `test` blocks
 .venv/bin/nexo fmt|lint|fix|check [path]
 .venv/bin/nexo lsp               # language server on stdio
-.venv/bin/nexo --lang en file.nexo
 .venv/bin/nexo plan|apply|drift|destroy [--stage prod] [file]   # nexo.infra
 .venv/bin/nexo ci run [--yes] | ci export github [file]         # nexo.ci
 python3 tests/cloud_emulator.py 8765   # the cloud APIs, locally (prints the env)
@@ -116,10 +120,9 @@ the compiled binaries inside pytest (skipped without cargo/clang).
 
 Conformance pairs: `tests/conformance/NAME.nexo` runs from the directory
 `tests/conformance/` and its stdout (plus the rendered error, if the program
-fails) must equal `NAME.expected` exactly. Messages in `.expected` files are
-in Spanish (the default); a `NAME.args` file holds extra CLI arguments
-placed before the file name, such as `--lang en` (see `tests/conformance/en/`)
-or `test`.
+fails) must equal `NAME.expected` exactly. Messages are in English (the
+only language, D125); a `NAME.args` file holds extra CLI arguments placed
+before the file name, such as `test`.
 
 ## Scope (phases 0 to 5)
 
@@ -184,7 +187,7 @@ PostgreSQL, use rust/wasm, YAML/XML/Parquet (D89, D112, D113).
   differential test without unexpected differences; a new intended
   difference goes to compiler/tests/differences.txt and docs/decisions.md.
 - Messages exist in nexo/errors.py and compiler/diag/src/catalog.rs; keep
-  them in sync. Every message that reports a problem has its `fix.` sentence.
+  them in sync (the same English text). Every message that reports a problem has its `fix.` sentence.
 - Phase 3: fmt, lint/fix and lsp give the same output in both phases; a
   change to one goes to the other in the same commit.
 - Build in layers (lexer, parser, interpreter, stdlib); each layer has
@@ -192,8 +195,8 @@ PostgreSQL, use rust/wasm, YAML/XML/Parquet (D89, D112, D113).
 - Conformance tests come from the examples in the specification.
 - Error messages follow the section 14 format exactly: file and line,
   highlighted snippet, what went wrong, how to fix it, "Did you mean...?".
-  Spanish by default, English with `--lang en`. Every new message needs
-  both translations in `nexo/errors.py`.
+  Messages are in English only (D125): no `--lang`, one text per key in
+  `nexo/errors.py`, the same text in `compiler/diag/src/catalog.rs`.
 - Unhandled errors and compile errors are two different things: error
   values (`NexoFailure`) are caught by `try`; diagnostics (`NexoError`)
   never are. See docs/decisions.md D17-D24.

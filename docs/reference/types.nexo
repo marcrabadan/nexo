@@ -1,0 +1,39 @@
+type User:
+    name: str
+    age: int
+    email: str? = none
+
+    fn is_adult(self) -> bool:
+        return self.age >= 18
+
+type Status = "active" | "closed"
+
+type Event:
+    Click(x: int, y: int)
+    Key(code: str)
+    Quit
+
+trait Shape:
+    fn area(self) -> float
+
+type Square is Shape:
+    side: float
+
+    fn area(self) -> float:
+        return self.side ** 2
+
+ana = User(name: "Ana", age: 30)
+print(ana.is_adult(), ana.email ?? "-")
+s: Status = "active"
+print(s)
+print(Square(2.0).area())
+
+fn describe(e: Event) -> str:
+    match e:
+        Click(x, y) if x > 100: return "click on the right at {y}"
+        Click(x, y): return "click at {x}, {y}"
+        Key("q") or Quit: return "quit"
+        _: return "a key"
+
+for e in [Click(150, 4), Click(3, 4), Key("q"), Key("a"), Quit]:
+    print(describe(e))

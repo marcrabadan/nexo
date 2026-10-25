@@ -8,13 +8,12 @@ let client;
 function settings() {
   const config = vscode.workspace.getConfiguration("nexo");
   const command = config.get("path") || "nexo";
-  const lang = config.get("lang") || "";
-  return { command, langArgs: lang ? ["--lang", lang] : [] };
+  return { command };
 }
 
 function startClient(context) {
-  const { command, langArgs } = settings();
-  const server = { command, args: [...langArgs, "lsp"] };
+  const { command } = settings();
+  const server = { command, args: ["lsp"] };
   client = new LanguageClient(
     "nexo",
     "Nexo",
@@ -34,13 +33,13 @@ function runInTerminal(subcommand) {
   if (!editor || editor.document.languageId !== "nexo") {
     return;
   }
-  const { command, langArgs } = settings();
+  const { command } = settings();
   const file = editor.document.fileName;
   editor.document.save().then(() => {
     const terminal = vscode.window.terminals.find((t) => t.name === "Nexo") || vscode.window.createTerminal("Nexo");
     terminal.show(true);
     const quote = (s) => `"${s.replace(/"/g, '\\"')}"`;
-    terminal.sendText([quote(command), ...langArgs, ...subcommand, quote(file)].join(" "));
+    terminal.sendText([quote(command), ...subcommand, quote(file)].join(" "));
   });
 }
 

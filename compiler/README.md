@@ -9,7 +9,6 @@ code generation to LLVM IR, which clang links with the runtime library.
     target/release/nexo app.nexo                     # compile and run
     target/release/nexo build --release app.nexo -o app
     target/release/nexo test [paths]                 # run the test blocks
-    target/release/nexo --lang en app.nexo
     target/release/nexo                              # the REPL
     target/release/nexo fmt|lint|fix|check [paths]   # the tools of phase 3
     target/release/nexo lsp                          # language server

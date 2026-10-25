@@ -1,4 +1,4 @@
-Error en s03_question_on_optional.nexo, línea 2:
+Error in s03_question_on_optional.nexo, line 2:
   return email?
          ^^^^^^
-? solo sirve para valores que pueden fallar (T!). Para valores que pueden faltar (T?) usa ?? con un valor por defecto.
+? only works on values that can fail (T!). For values that may be missing (T?) use ?? with a default.

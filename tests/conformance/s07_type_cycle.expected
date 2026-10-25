@@ -1,4 +1,4 @@
-Error en s07_type_cycle.nexo, línea 8:
+Error in s07_type_cycle.nexo, line 8:
   department: Department?
               ^^^^^^^^^^^
-Los types Department, Employee se refieren unos a otros: forman un ciclo de referencias que nunca se liberaría. Marca uno de los campos como weak, por ejemplo department: weak Department?
+The types Department, Employee refer to each other: they form a reference cycle that would never be freed. Mark one of the fields as weak, for example department: weak Department?

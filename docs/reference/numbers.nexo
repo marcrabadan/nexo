@@ -1,0 +1,15 @@
+print(0.1 + 0.2)
+x: decimal = 0.1
+print(x + 0.2)
+print(7 / 2, 7 // 2, 7 % 2, 2 ** 10)
+
+invoice: money = 120.00 EUR
+print(invoice * 21%)
+print(split(100.00 EUR, 3))
+print(round(2.5), round(3.5), round(19.987, 2))
+print(round(2.5, mode: half_up))
+
+try:
+    print(9223372036854775807 + 1)
+else e is Overflow:
+    print(e.kind)

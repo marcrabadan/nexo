@@ -1,7 +1,7 @@
-Error en s15_web_status.nexo, línea 5:
+Error in s15_web_status.nexo, line 5:
   get "/odd"():
   ^^^
-999 no es un código de estado HTTP. Devuelve un número entre 100 y 599 (204, 404...), o el valor que se envía como JSON.
-GET URL/odd respondió 500 Internal Server Error
+999 is not an HTTP status code. Return a number between 100 and 599 (204, 404...), or the value to send as JSON.
+GET URL/odd answered 500 Internal Server Error
 ✓ a wrong status fails the request
-1 prueba: 1 correcta, 0 fallidas
+1 test: 1 passed, 0 failed

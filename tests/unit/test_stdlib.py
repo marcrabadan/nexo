@@ -23,8 +23,8 @@ def test_csv_columns_have_one_type(in_tmp):
 
 def test_read_missing_file_is_not_found():
     e = error_of('read("missing.txt")\n')
-    assert e.kind == "NotFound" and e.message == 'No se encuentra el archivo "missing.txt"'
-    e = error_of('read_lines("missing.txt")\n', lang="en")
+    assert e.kind == "NotFound" and e.message == 'File "missing.txt" not found'
+    e = error_of('read_lines("missing.txt")\n')
     assert e.message == 'File "missing.txt" not found'
 
 
@@ -53,14 +53,14 @@ def test_json_parse_with_and_without_type():
 
 def test_json_errors_are_invalid_data():
     src = 'type C:\n    port: int\ntry:\n    json.parse("{{\\"port\\": \\"x\\"}", as: C)\nelse e is InvalidData:\n    print(e.message)\ntry:\n    json.parse("{{bad")\nelse e:\n    print(e.kind)\ntry:\n    json.parse("{{}", as: C)\nelse e:\n    print(e.message)\n'
-    assert run(src) == ('Datos no válidos: el campo "port" debe ser int, pero es str\nInvalidData\n'
-                        'Datos no válidos: falta el campo "port" de C\n')
+    assert run(src) == ('Invalid data: the field "port" must be int, but it is str\nInvalidData\n'
+                        'Invalid data: the field "port" of C is missing\n')
 
 
 def test_validate():
     src = ('fn age(text) -> int!:\n    return validate(text, as: int, range: 0..120)?\n'
            'for t in ["42", "x", "200"]:\n    try:\n        print(age(t))\n    else e:\n        print(e.message)\n')
-    assert run(src) == '42\n"x" no es un valor int válido\n200 está fuera del rango 0..120\n'
+    assert run(src) == '42\n"x" is not a valid int\n200 is outside the range 0..120\n'
 
 
 def test_len_and_range():

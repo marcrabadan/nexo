@@ -1,4 +1,4 @@
-Error en s08_ai_option.nexo, línea 2:
+Error in s08_ai_option.nexo, line 2:
   print(ask("Write a poem", creativity: wild))
         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-creativity no acepta wild. Usa low, medium, high.
+creativity does not accept wild. Use low, medium, high.

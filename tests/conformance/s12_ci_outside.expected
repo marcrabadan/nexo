@@ -1,5 +1,5 @@
 antes
-Error en s12_ci_outside.nexo, línea 6:
+Error in s12_ci_outside.nexo, line 6:
   approve(by: ["ana@company.com"])
   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-approve() solo funciona en un step de un pipeline. Llámalo dentro de step nombre: y ejecútalo con nexo ci run.
+approve() only works in a step of a pipeline. Call it inside step name: and run it with nexo ci run.

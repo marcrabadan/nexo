@@ -11,11 +11,11 @@ true true true
 2026-01-01T00:00:00Z 2026-01-01T00:00:01.500Z 90s 172800s 2026-01-01
 [2026-10-24, 2026-01-01T00:00:00Z] launch
 Event(name: "launch", day: 2026-10-24, starts: 2026-10-24T09:30:00+02:00) 9 6
-"2026-02-30" no es un valor date válido
-"Mars/Olympus" no es una zona horaria conocida
+"2026-02-30" is not a valid date
+"Mars/Olympus" is not a known time zone
 2026-02-28 2026-01-01T10:00:00Z
 true true true
-Error en s15_time.nexo, línea 37:
+Error in s15_time.nexo, line 37:
   print(d + 3h)
         ^^^^^^
-Una fecha solo avanza días enteros, y 3h no lo es. Suma días (2 days) a una fecha, o usa un time (now + 3h) para horas y minutos.
+A date only moves by whole days, and 3h is not. Add days (2 days) to a date, or use a time (now + 3h) for hours and minutes.

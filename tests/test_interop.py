@@ -65,12 +65,12 @@ c_library("./libgreet.so")
 """
 
 C_ERRORS = [
-    ('greet.sum(1, 2)', 'greet.sum recibe un número variable de argumentos, que Nexo no puede pasar a C.'),
-    ('greet.fill("x")', 'greet.fill usa el tipo "char *", que Nexo no puede pasar a C.'),
-    ('greet.origin()', 'greet.origin usa el tipo "struct point", que Nexo no puede pasar a C.'),
-    ('greet.half("x")', 'greet.half: espera float, pero recibe str.'),
-    ('greet.half(1, 2)', '"greet.half" recibe como mucho 1 argumentos, pero se le pasan 2.'),
-    ('greet.gret("x")', 'c_library no tiene ningún campo ni método "gret". ¿Quisiste decir "greet"?'),
+    ('greet.sum(1, 2)', 'greet.sum takes a variable number of arguments, which Nexo cannot pass to C.'),
+    ('greet.fill("x")', 'greet.fill uses the type "char *", which Nexo cannot pass to C.'),
+    ('greet.origin()', 'greet.origin uses the type "struct point", which Nexo cannot pass to C.'),
+    ('greet.half("x")', 'greet.half: expects float, but gets str.'),
+    ('greet.half(1, 2)', '"greet.half" takes at most 1 arguments, but 2 are given.'),
+    ('greet.gret("x")', 'c_library has no field or method "gret". Did you mean "greet"?'),
 ]
 
 
@@ -99,9 +99,9 @@ def test_use_c(phase, greet_lib):
 def test_use_c_missing(phase, tmp_path):
     (tmp_path / "app.nexo").write_text('print("start")\nuse c "libnexo_not_there"\n')
     out = run(phase[1], ["app.nexo"], tmp_path).stdout.decode()
-    assert out == ('start\nError en app.nexo, línea 2:\n  use c "libnexo_not_there"\n  ^^^^^^^^^^^^^^^^^^^^^^^^^\n'
-                   'No se encuentra la biblioteca de C "libnexo_not_there". Instala la biblioteca (y su paquete de '
-                   'desarrollo, con la cabecera) o escribe su ruta: use c "./lib/milib.so" as milib.\n')
+    assert out == ('start\nError in app.nexo, line 2:\n  use c "libnexo_not_there"\n  ^^^^^^^^^^^^^^^^^^^^^^^^^\n'
+                   'The C library "libnexo_not_there" cannot be found. Install the library (and its development package, with the '
+                   'header) or write its path: use c "./lib/mylib.so" as mylib.\n')
 
 
 PY_PROGRAM = """use python math
@@ -146,16 +146,16 @@ PY_EXPECTED = """4.0 true 2
 Fraction(1, 3) 1 Fraction(1, 3)
 P(a=1, b=2)
 <module 'math' (built-in)>
-Error ValueError en Python: math domain error
-JSONDecodeError en Python: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
+Error ValueError in Python: math domain error
+JSONDecodeError in Python: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)
 """
 
 PY_ERRORS = [
-    ("use python nexo_no_such_module", 'No se puede importar el módulo de Python "nexo_no_such_module" '
+    ("use python nexo_no_such_module", 'The Python module "nexo_no_such_module" cannot be imported '
                                        "(ModuleNotFoundError: No module named 'nexo_no_such_module')."),
-    ("use python math\nmath.sqroot(2)", 'python no tiene ningún campo ni método "sqroot". ¿Quisiste decir "sqrt"?'),
-    ("use python math\nmath.floor(5 EUR)", "Un valor money no se puede pasar a Python."),
-    ("use python math\nmath.factorial(30)", "Error sin gestionar (Overflow)"),
+    ("use python math\nmath.sqroot(2)", 'python has no field or method "sqroot". Did you mean "sqrt"?'),
+    ("use python math\nmath.floor(5 EUR)", "A money value cannot be passed to Python."),
+    ("use python math\nmath.factorial(30)", "Unhandled error (Overflow)"),
 ]
 
 

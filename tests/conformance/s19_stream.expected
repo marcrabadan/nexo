@@ -1,6 +1,6 @@
 order 1 30
-orders: el mensaje 2 falla tras 4 intentos y pasa a orders.dead: Error sin gestionar: negative total. Gestiónalo con try y else e.
-orders: el mensaje 3 falla tras 4 intentos y pasa a orders.dead: Error sin gestionar (InvalidData): Datos no válidos: el JSON no es válido (línea 1, columna 1). Corrige los datos de entrada, o gestiónalo con try y else e is InvalidData.
+orders: message 2 fails after 4 tries and goes to orders.dead: Unhandled error: negative total. Handle it with try and else e.
+orders: message 3 fails after 4 tries and goes to orders.dead: Unhandled error (InvalidData): Invalid data: the JSON is not valid (line 1, column 1). Fix the input data, or handle it with try and else e is InvalidData.
 ✓ orders are processed once
 metrics {"page": "/a", "count": 2}
 metrics {"page": "/b", "count": 1}
@@ -15,4 +15,4 @@ pages in the session: 1
 welcome ana@company.com
 welcome luis@company.com
 ✓ the same key is processed once
-4 pruebas: 4 correctas, 0 fallidas
+4 tests: 4 passed, 0 failed

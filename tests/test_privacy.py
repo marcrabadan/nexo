@@ -90,7 +90,7 @@ def test_private_fields_keep_and_rights(phase, tmp_path):
     reader = APP.split("ana = ")[0] + "print(db.Customer.all())\n"
     (tmp_path / "reader.nexo").write_text(reader, encoding="utf-8")
     proc = run(phase[1], ["reader.nexo"], tmp_path, env={"DB_KEY": "another key"})
-    assert "no se pueden descifrar con esta clave" in proc.stdout.decode()
+    assert "cannot be decrypted with this key" in proc.stdout.decode()
 
 
 def test_both_phases_send_the_same_sql(tmp_path):
@@ -112,7 +112,7 @@ def test_both_phases_send_the_same_sql(tmp_path):
 def test_a_private_field_needs_a_key(phase, tmp_path):
     (tmp_path / "app.nexo").write_text(APP.replace(', key: secret("DB_KEY")', ""), encoding="utf-8")
     out = run(phase[1], ["app.nexo"], tmp_path).stdout.decode()
-    assert "La tabla customer tiene campos @private y la base de datos no tiene clave" in out
+    assert "The table customer has @private fields and the database has no key" in out
 
 
 REPORTED = APP + """
@@ -128,21 +128,21 @@ infra shop:
     database customers
 """
 
-REPORT = """Datos personales de app.nexo:
+REPORT = """Personal data of app.nexo:
 
-Contact: no se guarda en una base de datos
+Contact: not stored in a database
   phone  personal
-  se guarda: (sin declarar)
-  finalidad: (sin declarar)
-  lo leen: el programa
+  kept: (not declared)
+  purpose: (not declared)
+  read by: the program
 
-Customer: tabla customer en shop.db
+Customer: table customer in shop.db
   name         personal
   email        personal
-  national_id  sensible, cifrado en reposo
-  se guarda: 5 years after last_activity
-  finalidad: billing and shipping
-  lo leen: el programa, api_id (infra shop, database customers)
+  national_id  sensitive, encrypted at rest
+  kept: 5 years after last_activity
+  purpose: billing and shipping
+  read by: the program, api_id (infra shop, database customers)
 """
 
 
@@ -153,8 +153,8 @@ def test_report_and_lint(phase, tmp_path):
     assert proc.stdout.decode() == REPORT
     assert not (tmp_path / "shop.db").exists()
     lint = run(phase[1], ["lint", "app.nexo"], tmp_path).stdout.decode()
-    assert lint.count('El type "Contact" tiene datos personales') == 2
-    assert "Avisos: 2." in lint
+    assert lint.count('The type "Contact" has personal data') == 2
+    assert "Warnings: 2." in lint
 
 
 def test_release_build_needs_keep_and_purpose(tmp_path):
@@ -165,7 +165,7 @@ def test_release_build_needs_keep_and_purpose(tmp_path):
                                        encoding="utf-8")
     proc = run([str(nexo)], ["build", "--release", "app.nexo"], tmp_path)
     assert proc.returncode == 1
-    assert 'El type "Contact" tiene datos personales sin keep.' in proc.stdout.decode()
+    assert 'The type "Contact" has personal data without keep.' in proc.stdout.decode()
 
 
 UNIQUE = """use nexo.db

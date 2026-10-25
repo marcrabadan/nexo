@@ -42,22 +42,22 @@ def repo(tmp_path):
 
 KEY = {"DEPLOY_KEY": "k"}
 
-RUN_OK = """== paso build
+RUN_OK = """== step build
 hola ci
 compilando
-== paso dev
+== step dev
 shop:1.3.0 dev
-== paso prod
-¿Aprobar el paso prod? Lo aprueban ana@company.com, luis@company.com. Escribe sí para seguir: prod shop:1.3.0
+== step prod
+Approve the step prod? ana@company.com, luis@company.com approve it. Type yes to go on: prod shop:1.3.0
 == after success
 v1.3.0 en producción
-Pipeline main: 3 pasos correctos, versión 1.3.0.
+Pipeline main: 3 steps passed, version 1.3.0.
 """
 
 
 @pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
 def test_run_with_an_approval(phase, repo):
-    code, out = nexo(phase, ["ci", "run"], repo, stdin=b"si\n", env=KEY)
+    code, out = nexo(phase, ["ci", "run"], repo, stdin=b"yes\n", env=KEY)
     assert (code, out) == (0, RUN_OK)
     state = json.loads((repo / ".nexo" / "ci" / "main.json").read_text())
     assert state["vars"]["image"] == "shop:1.3.0"
@@ -67,20 +67,20 @@ def test_run_with_an_approval(phase, repo):
 def test_a_refused_approval_fails_the_step(phase, repo):
     code, out = nexo(phase, ["ci", "run", "main", "app.nexo"], repo, stdin=b"no\n", env=KEY)
     assert code == 1
-    assert "El paso prod no se ha aprobado." in out
-    assert out.endswith("Pipeline main: el paso prod ha fallado.\n== after failure\nfallo en prod\n")
+    assert "The step prod was not approved." in out
+    assert out.endswith("Pipeline main: the step prod failed.\n== after failure\nfallo en prod\n")
 
 
 @pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
 def test_steps_one_by_one(phase, repo):
     # as the exported jobs run them: the state travels in .nexo/ci
     code, out = nexo(phase, ["ci", "run", "--step", "dev", "--yes"], repo, env=KEY)
-    assert code == 1 and "image no tiene valor en este paso" in out
+    assert code == 1 and "image has no value in this step" in out
     assert nexo(phase, ["ci", "run", "--step", "build", "--yes"], repo, env=KEY)[0] == 0
     code, out = nexo(phase, ["ci", "run", "--step", "dev", "--yes"], repo, env=KEY)
-    assert (code, out) == (0, "== paso dev\nshop:1.3.0 dev\n")
+    assert (code, out) == (0, "== step dev\nshop:1.3.0 dev\n")
     code, out = nexo(phase, ["ci", "run", "--step", "prod", "--yes"], repo, env=KEY)
-    assert "Paso prod aprobado con --yes (lo aprueban ana@company.com, luis@company.com).\n" in out
+    assert "Step prod approved with --yes (ana@company.com, luis@company.com approve it).\n" in out
     code, out = nexo(phase, ["ci", "run", "--after", "success"], repo, env=KEY)
     assert (code, out) == (0, "== after success\nv1.3.0 en producción\n")
 
@@ -91,7 +91,7 @@ def test_a_failing_command(phase, repo):
     path.write_text(path.read_text().replace('run("echo compilando")', 'run("echo roto; exit 2")'))
     code, out = nexo(phase, ["ci", "run", "--yes"], repo, env=KEY)
     assert code == 1
-    assert 'El comando "echo roto; exit 2" ha terminado con el código 2.' in out
+    assert 'The command "echo roto; exit 2" ended with code 2.' in out
     assert out.endswith("== after failure\nfallo en build\n")
     state = json.loads((repo / ".nexo" / "ci" / "main.json").read_text())
     assert state["failed"] == "build"
@@ -102,16 +102,16 @@ def test_a_failing_command(phase, repo):
 @pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
 def test_missing_secret_and_names(phase, repo):
     code, out = nexo(phase, ["ci", "run"], repo)
-    assert code == 1 and "Faltan los secretos DEPLOY_KEY del pipeline main." in out
+    assert code == 1 and "The secrets DEPLOY_KEY of the pipeline main are missing." in out
     code, out = nexo(phase, ["ci", "run", "mian"], repo, env=KEY)
-    assert code == 1 and '¿Quisiste decir "main"?' in out
+    assert code == 1 and 'Did you mean "main"?' in out
 
 
 @pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
 def test_version_auto_needs_git(phase, tmp_path):
     shutil.copy(CASES / "app.nexo", tmp_path / "app.nexo")
     code, out = nexo(phase, ["ci", "run"], tmp_path, env=dict(KEY, GIT_CEILING_DIRECTORIES=str(tmp_path.parent)))
-    assert code == 1 and "version = auto necesita un repositorio git." in out
+    assert code == 1 and "version = auto needs a git repository." in out
 
 
 @pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
@@ -119,7 +119,7 @@ def test_version_auto_needs_git(phase, tmp_path):
 def test_export(phase, target, tmp_path):
     shutil.copy(CASES / "app.nexo", tmp_path / "app.nexo")
     code, out = nexo(phase, ["ci", "export", target], tmp_path)
-    assert (code, out) == (0, f"Escrito {EXPORTS[target]}.\n")
+    assert (code, out) == (0, f"Wrote {EXPORTS[target]}.\n")
     assert (tmp_path / EXPORTS[target]).read_text() == (CASES / f"{target}.expected").read_text()
 
 
@@ -131,7 +131,7 @@ def test_tests_in_a_step(phase, tmp_path):
     assert code == 0 and "✓ ok" in out, out
     (tmp_path / "bad.nexo").write_text('test "broken":\n    assert 1 == 2\n')
     code, out = nexo(phase, ["ci", "run", "app.nexo"], tmp_path)
-    assert code == 1 and "Hay tests que fallan." in out, out
+    assert code == 1 and "Some tests fail." in out, out
 
 
 @pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
@@ -143,12 +143,12 @@ def test_deploy_from_a_pipeline(phase, tmp_path):
         env = dict(emu.environment(server), NEXO_CONTAINER_TOOL="echo")
         code, out = nexo(phase, ["ci", "run"], tmp_path, env=env)
         assert code == 0, out
-        assert out.startswith("== paso build\nbuild -t shop-api:1.4.0 .\n== paso review\nComentario para la revisión:\n"
-                              "Plan de web (k8s, etapa prod):\n")
-        assert out.endswith("Aplicado: 3 creados, 0 cambiados, 0 borrados.\n"
-                            "Pipeline release: 3 pasos correctos, versión 1.4.0.\n")
+        assert out.startswith("== step build\nbuild -t shop-api:1.4.0 .\n== step review\nComment for the review:\n"
+                              "Plan for web (k8s, stage prod):\n")
+        assert out.endswith("Applied: 3 created, 0 changed, 0 deleted.\n"
+                            "Pipeline release: 3 steps passed, version 1.4.0.\n")
         comment = (tmp_path / ".nexo" / "ci" / "comment.md").read_text()
-        assert comment.startswith("Plan de web (k8s, etapa prod):\n") and "Crear: 3" in comment
+        assert comment.startswith("Plan for web (k8s, stage prod):\n") and "To create: 3" in comment
         deploy = next(v for k, v in emu.STATE.k8s.items() if k.endswith("/deployments/web-api"))
         assert deploy["spec"]["template"]["spec"]["containers"][0]["image"] == "shop-api:1.4.0"
         assert deploy["spec"]["replicas"] == 2

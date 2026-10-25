@@ -128,7 +128,7 @@ errors.
 **D21. Error values.** An error has `message`, `cause`, `line` (rule 5) and
 `kind`. `fail("...")` makes an error of kind `Error`; `else e is Error`
 matches any error; `fail(e)` passes an existing error on. Messages of
-system errors are written in the language selected for the run.
+system errors are written in English (D125).
 
 **D22. Division by zero.** The spec does not say. `/`, `//` and `%` by zero
 raise a `DivisionByZero` error for int, float and decimal alike, instead of
@@ -313,7 +313,8 @@ phase 0.
 
 **D55. Language of messages.** Section 16 says messages use the system
 language; the prompt fixes Spanish by default and English with `--lang
-en`, and the prompt wins.
+en`, and the prompt wins. Superseded by D125: messages are in English
+only and there is no `--lang`.
 
 **D56. Format details.** The snippet is the source line without its leading
 indentation; the carets cover the whole expression involved (cut at the
@@ -421,7 +422,7 @@ found them when the line ran).
 
 **D75. Language of messages.** `--lang` is fixed when the program is
 compiled: a native program reports its errors in the language it was
-compiled with.
+compiled with. Superseded by D125: there is one language, English.
 
 ## Phase 2: memory and concurrency (section 25)
 
@@ -678,9 +679,8 @@ with their edits; offers them as quick fixes and "apply the safe fixes"
 (`nexo fix`); formats with `nexo fmt`; and gives go to definition, hover
 (the definition line and its `##` comments), the outline of the file and
 completion (names of the file, builtins and keywords; fields and methods
-after `.`). Messages use `--lang` or, without it, the language of the
-editor when it is Spanish or English (section 16), Spanish otherwise
-(D55). Definitions are found by scope the way D25 describes them,
+after `.`). Messages are in English whatever the editor's locale
+(D125). Definitions are found by scope the way D25 describes them,
 without types: `p.norm` goes to the first field or method of that name.
 `nexo check [paths]` runs the same checks without running anything
 (section "Goals and guarantees" names it; `--intent` needs `nexo.ai`).
@@ -1121,8 +1121,8 @@ valid value is sent back with the reason and asked again, up to
 - `redact: private` (the default) shows the input with its `@private`
   fields as `"***"`, as `log` does (D105); `redact: none` sends them. A
   secret is never sent (D97).
-- The system message and these instructions are in English for every
-  language of the messages, so the same program sends the same request.
+- The system message and these instructions are in English, like every
+  message (D125), so the same program sends the same request.
 
 **D109. Tools and agents.** Section 8 shows `@tool "description"`, an
 `agent` block with `model`, `tools`, `goal`, `max_steps` and `confirm`,
@@ -1613,3 +1613,34 @@ modules.rs) do this:
   for the later passes, so calls to it take the same fast paths. Two files
   may define types with the same name; the contract prover (D83) then does
   not prove `ensure`s that depend on the int fields of either.
+
+## Messages in one language
+
+**D125. English only.** Section 14 and section 16 describe messages in the
+system language, and D55 made Spanish the default with English behind
+`--lang en`. The owner of the project decided that Nexo has one language
+for its messages: English. This is the simplest option consistent with
+section 1 ("one way to do each thing"): one catalog, one expected output
+per program, nothing to choose.
+
+- `--lang` no longer exists in either phase; `nexo --lang en file.nexo`
+  is a usage error (exit code 2), like any other unknown option. The
+  language server ignores the editor's locale, and the VS Code extension
+  has no `nexo.lang` setting.
+- The catalogs (`nexo/errors.py`, `compiler/diag/src/catalog.rs`) hold
+  one text per key, and both phases hold the same text for every key
+  (tests/unit/test_errors.py). The rule that every message has its fix
+  sentence (section 14) is unchanged.
+- The summary of `nexo test` ("2 tests: 2 passed, 0 failed"), the usage
+  line, the REPL banner and every word of the parser's messages are in
+  English. Questions that wait for a confirmation (`nexo apply`, an
+  approval in `nexo ci run`, an agent's `confirm`) accept `yes` and `y`
+  (and `n` to refuse a tool, D109) only.
+- A compiled program no longer receives a language when it starts: the
+  runtime's `nx_init` lost its language argument.
+- The conformance cases that only existed to show the English messages
+  (`tests/conformance/en/`, `s14_es`) were removed; `s14_en` became `s14`.
+  Every `.expected` now holds the English text.
+- Keywords were already in English (section 16); the editor views of
+  keywords in other languages (`nexo fmt --view es`, `nexo config lang`)
+  were never implemented and are not planned.

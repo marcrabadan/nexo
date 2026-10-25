@@ -1,4 +1,0 @@
-Error in s03_question_no_bang.nexo, line 2:
-  text = read(path)?
-         ^^^^^^^^^^^
-"port_of" can fail, but its return type int does not end in !. Write it as int!.

@@ -1,22 +1,19 @@
 import io
 
-from nexo import errors
 from nexo.errors import NexoError
 from nexo.interpreter import Interpreter
 from nexo.types import NexoFailure
 
 
-def run(src: str, lang: str = "es") -> str:
+def run(src: str) -> str:
     """Run a program and return what it printed."""
-    errors.set_lang(lang)
     out = io.StringIO()
     Interpreter(out=out).run(src, "t.nexo")
     return out.getvalue()
 
 
-def error_of(src: str, lang: str = "es"):
+def error_of(src: str):
     """Run a program that must fail; return the NexoError or ErrorValue."""
-    errors.set_lang(lang)
     try:
         Interpreter(out=io.StringIO()).run(src, "t.nexo")
     except NexoError as e:

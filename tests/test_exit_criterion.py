@@ -69,7 +69,7 @@ def test_the_shop_passes_its_tests(phase, tmp_path):
     shutil.copy(APP / "shop.nexo", tmp_path)
     proc = run(phase[1], ["test", "shop.nexo"], tmp_path, env={"SHOP_JWT_KEY": "k", "XDG_CONFIG_HOME": str(tmp_path)})
     out = proc.stdout.decode("utf-8")
-    assert out.endswith("3 pruebas: 3 correctas, 0 fallidas\n"), out
+    assert out.endswith("3 tests: 3 passed, 0 failed\n"), out
     assert proc.returncode == 0
 
 
@@ -83,21 +83,21 @@ def test_the_shop_serves(phase, model, tmp_path):
     proc = subprocess.Popen([*phase[1], "shop.nexo"], cwd=tmp_path, env=env, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
     try:
-        assert proc.stderr.readline().decode() == f"shop escucha en http://127.0.0.1:{port}\n"
+        assert proc.stderr.readline().decode() == f"shop listens on http://127.0.0.1:{port}\n"
         status, login = request(port, "POST", "/login?name=ana")
         token = login["token"]
         assert request(port, "POST", "/products", {"name": "Desk", "price": 120})[0] == 401
         assert request(port, "POST", "/products", {"name": "Desk", "price": 120}, token) == (
             201, {"id": 1, "name": "Desk", "price": 120})
         assert request(port, "POST", "/products", {"name": "Desk", "price": 99}, token) == (
-            409, {"error": 'Ya hay un Product con name = "Desk"'})
+            409, {"error": 'There is already a Product with name = "Desk"'})
         assert request(port, "POST", "/products/1/reviews", {"text": "Great desk"}) == (
             201, {"id": 1, "product": {"id": 1, "name": "Desk", "price": 120}, "text": "Great desk",
                   "tone": "positive", "score": 5})
         assert request(port, "POST", "/products/1/reviews", {"text": "A leg broke"})[1]["tone"] == "negative"
         assert request(port, "GET", "/products/1/summary") == (
             200, {"product": "Desk", "reviews": 2, "score": 3.5, "summary": "Mixed: some love it, one broke."})
-        assert request(port, "GET", "/products/7") == (404, {"error": "No hay ningún Product con id = 7"})
+        assert request(port, "GET", "/products/7") == (404, {"error": "There is no Product with id = 7"})
         assert request(port, "POST", "/products/7/reviews", {"text": "?"})[0] == 404
         assert request(port, "GET", "/products") == (200, [{"id": 1, "name": "Desk", "price": 120}])
     finally:

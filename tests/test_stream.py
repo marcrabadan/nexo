@@ -50,7 +50,7 @@ def test_a_consumer_reads_what_producers_send(producer, consumer, tmp_path):
         os.killpg(proc.pid, signal.SIGTERM)
         out, err = proc.communicate(timeout=30)
     assert out.decode() == OUT
-    assert err.decode().startswith('Escuchando kafka("notices")')
+    assert err.decode().startswith('Listening to kafka("notices")')
 
 
 WINDOWED = """when kafka("clicks") as msg:

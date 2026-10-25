@@ -1,4 +1,4 @@
-Error en modules_name_taken.nexo, línea 4:
+Error in modules_name_taken.nexo, line 4:
   for tax in [1, 2]:
   ^^^
-"tax" ya es el nombre del módulo shop.tax en este archivo. Usa otro nombre, o importa el módulo con otro: use shop.tax as otro_nombre.
+"tax" is already the name of module shop.tax in this file. Use another name, or import the module with another one: use shop.tax as other_name.

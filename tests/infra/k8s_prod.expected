@@ -1,4 +1,4 @@
-Error en k8s_prod.nexo, línea 4:
+Error in k8s_prod.nexo, line 4:
   database customers
   ^^^^^^^^
-En k8s una database (customers) es solo para desarrollo, no para la etapa prod. Usa una database de una nube para prod, o otra etapa.
+On k8s a database (customers) is for development only, not for the prod stage. Use a cloud database for prod, or another stage.

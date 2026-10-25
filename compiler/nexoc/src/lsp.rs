@@ -662,7 +662,6 @@ struct Server {
     docs: HashMap<String, String>,
     indexes: HashMap<String, Index>,
     shutdown: bool,
-    lang_given: bool,
 }
 
 fn send(out: &mut impl Write, message: Json) {
@@ -728,12 +727,6 @@ impl Server {
         let uri = params.get("textDocument").get("uri").str().unwrap_or("").to_string();
         Some(match method {
             "initialize" => {
-                let locale: String = params.get("locale").str().unwrap_or("").chars().take(2).collect();
-                if !self.lang_given {
-                    if let Some(l) = nexo_diag::parse_lang(&locale) {
-                        nexo_diag::set_lang(l);
-                    }
-                }
                 obj(vec![
                     (
                         "capabilities",
@@ -822,12 +815,12 @@ impl Server {
 }
 
 /// Serve until `exit`: 0 after a `shutdown`, 1 otherwise.
-pub fn serve(lang_given: bool) -> u8 {
+pub fn serve() -> u8 {
     let stdin = std::io::stdin();
     let mut inp = stdin.lock();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    let mut server = Server { docs: HashMap::new(), indexes: HashMap::new(), shutdown: false, lang_given };
+    let mut server = Server { docs: HashMap::new(), indexes: HashMap::new(), shutdown: false };
     loop {
         let Some(message) = read(&mut inp) else { return if server.shutdown { 0 } else { 1 } };
         let method = message.get("method").str().unwrap_or("").to_string();

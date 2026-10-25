@@ -1,0 +1,5 @@
+use shop.payments
+
+match payments.charge(10):
+    payments.Paid(n): print("paid {n}")
+    payments.Pending: print("nothing to pay")

@@ -1,4 +1,4 @@
-Error en cycle/b.nexo, línea 1:
+Error in cycle/b.nexo, line 1:
   use cycle.a
   ^^^^^^^^^^^
-Los módulos se importan en círculo: cycle.a -> cycle.b -> cycle.a. Mueve lo que comparten a otro módulo que importen los dos.
+The modules import each other in a cycle: cycle.a -> cycle.b -> cycle.a. Move what they share to another module that both import.

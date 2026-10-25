@@ -461,10 +461,9 @@ def completion(index: Index | None, text: str, line: int, col: int) -> list[dict
 # --------------------------------------------------------------- server
 
 class Server:
-    def __init__(self, inp, out, lang_given: bool):
+    def __init__(self, inp, out):
         self.inp = inp
         self.out = out
-        self.lang_given = lang_given
         self.docs: dict[str, str] = {}
         self.indexes: dict[str, Index] = {}  # the last version that parsed
         self.shutdown = False
@@ -541,9 +540,6 @@ class Server:
 
     def handle(self, method: str, params: dict):
         if method == "initialize":
-            locale = (params.get("locale") or "")[:2]
-            if not self.lang_given and locale in ("es", "en"):
-                errors.set_lang(locale)
             return {"capabilities": {
                 "positionEncoding": "utf-16",
                 "textDocumentSync": {"openClose": True, "change": 1},
@@ -604,8 +600,8 @@ class Server:
         return NotImplemented
 
 
-def serve(lang_given: bool) -> int:
-    return Server(sys.stdin.buffer, sys.stdout.buffer, lang_given).run()
+def serve() -> int:
+    return Server(sys.stdin.buffer, sys.stdout.buffer).run()
 
 
 def apply(text: str, edits: list[Edit]) -> str:  # used by the tests

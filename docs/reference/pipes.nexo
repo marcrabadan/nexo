@@ -1,0 +1,25 @@
+type Sale:
+    region: str
+    product: str
+    amount: float
+
+sales = [
+    Sale("north", "laptop", 1200.0),
+    Sale("south", "mouse", 25.0),
+    Sale("north", "mouse", 30.0),
+    Sale("east", "laptop", 1100.0),
+    Sale("south", "laptop", -50.0)
+]
+
+sales
+  |> where amount > 0
+  |> group by region
+  |> sum amount
+  |> sort by amount desc
+  |> each print("{it["region"]}: {it["amount"]}")
+
+print(sales |> where product == "laptop" |> count)
+print(sales |> map amount |> avg)
+print(sales |> sort by amount |> take 2 |> map product)
+print(sales |> pick region, amount |> take 1)
+print([3, -1, 2] |> where it > 0 |> map it * 10)

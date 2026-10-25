@@ -19,30 +19,29 @@ COMPARE_OPS = ("==", "!=", "<", ">", "<=", ">=")
 
 # Descriptions used in "Unexpected X here. Expected Y."
 WORDS = {
-    "NEWLINE": {"es": "el fin de la línea", "en": "the end of the line"},
-    "EOF": {"es": "el final del archivo", "en": "the end of the file"},
-    "INDENT": {"es": "una indentación", "en": "an indentation"},
-    "DEDENT": {"es": "el final del bloque", "en": "the end of the block"},
-    "STRING": {"es": "un texto", "en": "a text"},
-    "expr": {"es": "una expresión", "en": "an expression"},
-    "name": {"es": "un nombre", "en": "a name"},
-    "type": {"es": "un tipo", "en": "a type"},
-    "newline": {"es": "el fin de la línea", "en": "the end of the line"},
-    "block": {"es": '":" y un bloque indentado en la línea siguiente',
-              "en": '":" and an indented block on the next line'},
-    "indented": {"es": "un bloque indentado 4 espacios", "en": "a block indented 4 spaces"},
-    "pattern": {"es": "un patrón (_, un literal o un nombre)", "en": "a pattern (_, a literal or a name)"},
-    "else": {"es": "else e: después del try", "en": "else e: after the try"},
-    "by": {"es": '"by"', "en": '"by"'},
-    "string": {"es": "un texto entre comillas", "en": "a quoted text"},
-    "member": {"es": "el nombre de un campo o método", "en": "the name of a field or method"},
-    "call": {"es": "una llamada, por ejemplo nombre(...)", "en": "a call, for example name(...)"},
-    "route": {"es": "una ruta: get, post, put, patch o delete y su camino", "en": "a route: get, post, put, patch or delete and its path"},
+    "NEWLINE": "the end of the line",
+    "EOF": "the end of the file",
+    "INDENT": "an indentation",
+    "DEDENT": "the end of the block",
+    "STRING": "a text",
+    "expr": "an expression",
+    "name": "a name",
+    "type": "a type",
+    "newline": "the end of the line",
+    "block": '":" and an indented block on the next line',
+    "indented": "a block indented 4 spaces",
+    "pattern": "a pattern (_, a literal or a name)",
+    "else": "else e: after the try",
+    "by": '"by"',
+    "string": "a quoted text",
+    "member": "the name of a field or method",
+    "call": "a call, for example name(...)",
+    "route": "a route: get, post, put, patch or delete and its path",
 }
 
 
 def word(key: str) -> str:
-    return WORDS[key][errors.LANG]
+    return WORDS[key]
 
 
 def describe(tok: Token) -> str:

@@ -257,14 +257,16 @@ enum Area<'a> {
 }
 
 impl<'a> Area<'a> {
-    fn key(self) -> usize {
+    /// The kind of area and its address: a body and its first statement
+    /// share an address, so the kind is part of the key.
+    fn key(self) -> (u8, usize) {
         match self {
-            Area::Body(b) => b.as_ptr() as usize,
-            Area::Fn(d) => d as *const FnDef as usize,
-            Area::Stmt(s) => s as *const Stmt as usize,
-            Area::Arm(a) => a as *const MatchArm as usize,
-            Area::Handler(h) => h as *const Handler as usize,
-            Area::Select(a) => a as *const SelectArm as usize,
+            Area::Body(b) => (0, b.as_ptr() as usize),
+            Area::Fn(d) => (1, d as *const FnDef as usize),
+            Area::Stmt(s) => (2, s as *const Stmt as usize),
+            Area::Arm(a) => (3, a as *const MatchArm as usize),
+            Area::Handler(h) => (4, h as *const Handler as usize),
+            Area::Select(a) => (5, a as *const SelectArm as usize),
         }
     }
 
@@ -436,8 +438,8 @@ pub struct Linter<'a> {
     /// every name the program defines
     declared: HashSet<String>,
     scopes: Vec<Scope<'a>>,
-    reads_cache: HashMap<usize, HashSet<String>>,
-    writes_cache: HashMap<usize, HashSet<String>>,
+    reads_cache: HashMap<(u8, usize), HashSet<String>>,
+    writes_cache: HashMap<(u8, usize), HashSet<String>>,
 }
 
 impl<'a> Linter<'a> {

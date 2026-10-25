@@ -1,4 +1,4 @@
-Error en s17_int_overflow.nexo, línea 2:
+Error in s17_int_overflow.nexo, line 2:
   print(x + 1)
         ^^^^^
-Error sin gestionar (Overflow): El resultado no cabe en un int de 64 bits. Usa valores más pequeños, o decimal(x) o float(x) para números grandes.
+Unhandled error (Overflow): The result does not fit in a 64-bit int. Use smaller values, or decimal(x) or float(x) for large numbers.

@@ -63,7 +63,7 @@ def error_of_thread(src):
     with tempfile.TemporaryDirectory() as d:
         f = Path(d) / "t.nexo"
         f.write_text(src)
-        p = subprocess.run([sys.executable, "-m", "nexo", "--lang", "en", str(f)], capture_output=True, text=True)
+        p = subprocess.run([sys.executable, "-m", "nexo", str(f)], capture_output=True, text=True)
     assert p.returncode == 1
     return "spawn_read" if "spawned task cannot read" in p.stderr else p.stderr
 

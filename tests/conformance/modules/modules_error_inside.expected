@@ -1,5 +1,5 @@
 2
-Error en shop/math.nexo, línea 2:
+Error in shop/math.nexo, line 2:
   return a // b
          ^^^^^^
-Error sin gestionar (DivisionByZero): División por cero. Comprueba que el divisor no sea 0 antes de dividir.
+Unhandled error (DivisionByZero): Division by zero. Check that the divisor is not 0 before dividing.

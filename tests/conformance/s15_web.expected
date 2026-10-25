@@ -1,8 +1,8 @@
 ✓ public routes answer JSON
-GET URL/items/9 respondió 404 Not Found
-GET URL/items/x respondió 400 Bad Request
-POST URL/items respondió 401 Unauthorized
+GET URL/items/9 answered 404 Not Found
+GET URL/items/x answered 400 Bad Request
+POST URL/items answered 401 Unauthorized
 ✓ errors become status codes
-GET URL/admin respondió 403 Forbidden
+GET URL/admin answered 403 Forbidden
 ✓ a token opens the private routes
-3 pruebas: 3 correctas, 0 fallidas
+3 tests: 3 passed, 0 failed

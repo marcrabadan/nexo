@@ -1,4 +1,4 @@
-Error en no_region.nexo, línea 1:
+Error in no_region.nexo, line 1:
   infra shop:
   ^^^^^
-La infra "shop" en azure necesita region. Añade region = "..." (por ejemplo "eu-west-1", "westeurope" o "europe-west1").
+The infra "shop" on azure needs region. Add region = "..." (for example "eu-west-1", "westeurope" or "europe-west1").

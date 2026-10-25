@@ -53,16 +53,6 @@
           "type": "string",
           "default": "nexo",
           "description": "The nexo command: the compiler (compiler/target/release/nexo) or the phase 0 interpreter (.venv/bin/nexo)."
-        },
-        "nexo.lang": {
-          "type": "string",
-          "enum": [
-            "",
-            "es",
-            "en"
-          ],
-          "default": "",
-          "description": "Language of messages. Empty: the language of VS Code (Spanish or English)."
         }
       }
     },

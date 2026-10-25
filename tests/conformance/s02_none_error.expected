@@ -1,4 +1,4 @@
-Error en s02_none_error.nexo, línea 1:
+Error in s02_none_error.nexo, line 1:
   age: int = none
              ^^^^
-"age" es de tipo int y no puede ser none. Si puede faltar, decláralo como int?.
+"age" has type int and cannot be none. If it may be missing, declare it as int?.

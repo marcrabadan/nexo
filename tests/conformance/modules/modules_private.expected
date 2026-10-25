@@ -1,4 +1,4 @@
-Error en modules_private.nexo, línea 4:
+Error in modules_private.nexo, line 4:
   print(payments.hidden())
         ^^^^^^^^^^^^^^^
-"hidden" no es pub en el módulo shop.payments. Escribe pub delante de su fn o type en shop/payments.nexo; un módulo solo exporta sus funciones y tipos pub.
+"hidden" is not pub in module shop.payments. Write pub before its fn or type in shop/payments.nexo; a module only exports its pub functions and types.

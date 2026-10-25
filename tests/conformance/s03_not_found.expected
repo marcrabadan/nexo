@@ -1,4 +1,4 @@
-Error en s03_not_found.nexo, línea 1:
+Error in s03_not_found.nexo, line 1:
   text = read("nope.txt")
          ^^^^^^^^^^^^^^^^
-Error sin gestionar (NotFound): No se encuentra el archivo "nope.txt". Comprueba la ruta, o gestiónalo con try y else e is NotFound.
+Unhandled error (NotFound): File "nope.txt" not found. Check the path, or handle it with try and else e is NotFound.

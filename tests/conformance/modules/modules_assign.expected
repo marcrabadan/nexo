@@ -1,4 +1,4 @@
-Error en modules_assign.nexo, línea 4:
+Error in modules_assign.nexo, line 4:
   tax.due = 3
   ^^^^^^^
-"tax.due" pertenece al módulo shop.tax y no se puede cambiar desde otro archivo. Cámbialo dentro de shop/tax.nexo, o exporta una función pub que lo haga.
+"tax.due" belongs to module shop.tax and cannot be changed from another file. Change it inside shop/tax.nexo, or export a pub function that does it.

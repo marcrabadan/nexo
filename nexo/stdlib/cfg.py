@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import errors
 from ..errors import NexoError
 from ..types import Native, repr_value
 
@@ -166,6 +165,3 @@ def exports() -> dict:
         "__cond": Builtin("__cond", b_cond),
     }
 
-
-def lang() -> str:
-    return errors.LANG

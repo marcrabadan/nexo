@@ -1,5 +1,5 @@
-//! Error messages of Nexo (section 14): the message catalog in Spanish and
-//! English, the renderer and the "Did you mean...?" suggestions.
+//! Error messages of Nexo (section 14): the message catalog (in English,
+//! D125), the renderer and the "Did you mean...?" suggestions.
 //!
 //! Every message is two sentences: what went wrong and how to fix it. They
 //! are rendered as
@@ -15,36 +15,6 @@
 //! reads the same whether it is found before or while the program runs.
 
 mod catalog;
-
-use std::sync::atomic::{AtomicU8, Ordering};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lang {
-    Es,
-    En,
-}
-
-static LANG: AtomicU8 = AtomicU8::new(0);
-
-pub fn set_lang(lang: Lang) {
-    LANG.store(if lang == Lang::En { 1 } else { 0 }, Ordering::Relaxed);
-}
-
-pub fn lang() -> Lang {
-    if LANG.load(Ordering::Relaxed) == 1 {
-        Lang::En
-    } else {
-        Lang::Es
-    }
-}
-
-pub fn parse_lang(text: &str) -> Option<Lang> {
-    match text {
-        "es" => Some(Lang::Es),
-        "en" => Some(Lang::En),
-        _ => None,
-    }
-}
 
 /// A position in the source: one line, columns counted in characters,
 /// 1-based, `end_col` exclusive.
@@ -99,11 +69,8 @@ pub fn file_of(id: u32) -> Option<(&'static str, &'static str)> {
     FILES.lock().unwrap().iter().find(|f| f.0 == id).map(|f| (f.1, f.2))
 }
 
-fn lookup(table: &'static [(&'static str, &'static str, &'static str)], key: &str) -> Option<&'static str> {
-    table
-        .iter()
-        .find(|(k, _, _)| *k == key)
-        .map(|(_, es, en)| if lang() == Lang::En { *en } else { *es })
+fn lookup(table: &'static [(&'static str, &'static str)], key: &str) -> Option<&'static str> {
+    table.iter().find(|(k, _)| *k == key).map(|(_, text)| *text)
 }
 
 pub fn has(key: &str) -> bool {
@@ -320,7 +287,6 @@ mod tests {
 
     #[test]
     fn renders_the_section_14_example() {
-        set_lang(Lang::En);
         let d = Diagnostic::new("name_not_found", Span::new(4, 7, 11))
             .fix("suggest")
             .arg("name", "nmae")
@@ -331,13 +297,11 @@ mod tests {
             text,
             "Error in app.nexo, line 4:\n  print(nmae)\n        ^^^^\n\"nmae\" does not exist. Did you mean \"name\"?\n"
         );
-        set_lang(Lang::Es);
-        assert_eq!(d.text(), "\"nmae\" no existe. ¿Quisiste decir \"name\"?");
     }
 
     #[test]
     fn format_keeps_literal_braces() {
-        assert_eq!(format("La interpolación {{}} está vacía.", &[]), "La interpolación {} está vacía.");
+        assert_eq!(format("The interpolation {{}} is empty.", &[]), "The interpolation {} is empty.");
     }
 
     #[test]

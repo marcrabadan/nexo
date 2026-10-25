@@ -1,0 +1,24 @@
+type Account:
+    owner: str
+    balance: money
+
+fn deposit(account: Account, amount: money):
+    expect amount > 0.00 EUR
+    ensure account.balance == old(account.balance) + amount
+    account.balance += amount
+
+ana = Account(owner: "Ana", balance: 10.00 EUR)
+deposit(ana, 5.00 EUR)
+print(ana.balance)
+try:
+    deposit(ana, -1.00 EUR)
+else e is ContractBroken:
+    print(e.message)
+
+test "a deposit adds to the balance":
+    a = Account(owner: "A", balance: 0.00 EUR)
+    deposit(a, 2.00 EUR)
+    assert a.balance == 2.00 EUR
+
+test "a negative deposit fails":
+    assert deposit(Account(owner: "B", balance: 0.00 EUR), -1.00 EUR) fails

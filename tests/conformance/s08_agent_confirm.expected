@@ -1,4 +1,4 @@
-Error en s08_agent_confirm.nexo, línea 10:
+Error in s08_agent_confirm.nexo, line 10:
   agent support:
   ^^^^^
-"delete_order" está en confirm pero no en tools. Añádela a tools o quítala de confirm.
+"delete_order" is in confirm but not in tools. Add it to tools or remove it from confirm.

@@ -40,7 +40,7 @@ def test_conformance_compiled(source, tmp_path, nexo):
     proc = run([str(nexo), *args, source.name], work)
     expected = source.with_suffix(".expected").read_text(encoding="utf-8")
     assert proc.stdout.decode("utf-8") == expected
-    is_error = any(line.startswith(("Error en ", "Error in ")) for line in expected.splitlines())
+    is_error = any(line.startswith("Error in ") for line in expected.splitlines())
     assert proc.returncode == (1 if is_error else 0)
 
 

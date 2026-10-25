@@ -1,6 +1,0 @@
-pub fn price(amount: int) -> int:
-    return amount + margin()
-
-
-fn margin() -> int:
-    return 1
