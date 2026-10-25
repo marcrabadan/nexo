@@ -935,6 +935,7 @@ pub fn serve_in_background() -> bool {
         };
         // the thread looks its server up on every connection, so it owns
         // nothing when the program releases the library at its end
+        crate::value::going_multi();
         std::thread::spawn(move || {
             for conn in l.incoming().flatten() {
                 let Some(owner) = SERVERS.lock().unwrap().get(i).cloned() else { return };

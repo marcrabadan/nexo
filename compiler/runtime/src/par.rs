@@ -135,6 +135,7 @@ fn run(tasks: &[(V, Option<V>)], max: Option<usize>, span: u32) -> R<Vec<Val>> {
     if extra == 0 {
         work();
     } else {
+        crate::value::going_multi();
         std::thread::scope(|sc| {
             for _ in 0..extra {
                 let w = &work;

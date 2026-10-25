@@ -217,7 +217,7 @@ impl<'a> Ints<'a> {
             }
             ExprKind::Unary { op: "-", operand } => self.certain(operand),
             ExprKind::Name(_) => self.int_name(e),
-            ExprKind::Attr { obj, name, .. } => self.field_of(obj, name).is_some_and(|(_, f)| is_int_type(&f.ty)),
+            ExprKind::Attr { obj, name, .. } => self.field_of(obj, name).is_some_and(|(_, f, _)| is_int_type(&f.ty)),
             ExprKind::Call { func, .. } => match &func.kind {
                 ExprKind::Name(_) => match self.res.names.get(&func.id) {
                     Some(NameRes::Builtin(n)) => n == "len",
@@ -264,14 +264,14 @@ impl<'a> Ints<'a> {
 
     /// `obj.name` where obj is certainly a record with a field `name` that
     /// is not weak: its index and declaration.
-    pub fn field_of(&self, obj: &Expr, name: &str) -> Option<(usize, &'a FieldDef)> {
+    pub fn field_of(&self, obj: &Expr, name: &str) -> Option<(usize, &'a FieldDef, usize)> {
         let t = self.types[&self.record_of(obj)?];
         let i = t.fields.iter().position(|f| f.name == name)?;
         let f = &t.fields[i];
         if matches!(&f.ty, TypeExpr::Name(tn) if tn.weak) {
             return None;
         }
-        Some((i, f))
+        Some((i, f, t.fields.len()))
     }
 
     fn int_name(&self, e: &Expr) -> bool {

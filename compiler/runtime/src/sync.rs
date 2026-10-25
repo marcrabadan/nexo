@@ -341,6 +341,7 @@ pub fn spawn(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<()> {
         id
     };
     let deadlines = state::with_task(|s| s.deadlines.clone());
+    crate::value::going_multi();
     let started = std::thread::Builder::new().stack_size(TASK_STACK).spawn(move || {
         TASK.with(|t| t.set(id));
         state::set_stamp(crate::par::new_stamp());

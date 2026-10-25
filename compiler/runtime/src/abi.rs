@@ -102,6 +102,7 @@ pub unsafe extern "C" fn nx_init(
         enable_leakcheck();
     }
     *CLEANUP.lock().unwrap() = Some(cleanup);
+    find_field_offset();
     let spans: &'static [SpanRec] = if nspans == 0 { &[] } else { std::slice::from_raw_parts(spans, nspans as usize) };
     state::init(text(file, file_len), text(src, src_len), spans);
 }
@@ -153,6 +154,7 @@ pub extern "C" fn nx_exit(code: i32) -> ! {
         if !crate::web::has_servers() {
             crate::stream::listen_forever(&file);
         }
+        crate::value::going_multi();
         std::thread::spawn(move || crate::stream::listen_forever(&file));
     }
     if code == 0 && !crate::web::serve_forever() {
@@ -565,6 +567,33 @@ pub unsafe extern "C" fn nx_attr_ic(
     ret(call::get_attr(obj, text(name, len), span))
 }
 
+/// Where the first field of a record with at most four fields is, from
+/// the start of its heap object: the compiled code reads such fields
+/// directly (D126). Set by `nx_init`.
+#[no_mangle]
+pub static nx_field_off: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn find_field_offset() {
+    let rt: &'static RecordType = Box::leak(Box::new(RecordType {
+        id: 0,
+        name: String::new(),
+        fields: Vec::new(),
+        methods: Mut::new(Vec::new()),
+        traits: Mut::new(Vec::new()),
+    }));
+    let r = Val::new(Obj::Record(Record {
+        ty: rt,
+        fields: Mut::new(Fields::with(0, |_| Val::none())),
+        birth: std::cell::Cell::new(0),
+    }));
+    if let Some(Obj::Record(rec)) = r.v().get() {
+        if let Fields::Inline(_, vals) = rec.fields.borrow() {
+            let off = vals.as_ptr() as u64 - r.v().bits;
+            nx_field_off.store(off, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
 /// Field `i` (not weak) of a value that is certainly a record (D126).
 #[no_mangle]
 pub unsafe extern "C" fn nx_record_get(b: u64, i: u64) -> V {
@@ -760,6 +789,19 @@ pub unsafe extern "C" fn nx_call_method(
 pub unsafe extern "C" fn nx_record_new(t: u64, b: u64, args: *const V, n: u64, span: u32) -> V {
     let args = values(args, n);
     match v(t, b).get() {
+        Some(Obj::Type(TypeRef::Record(rt))) if rt.fields.len() == args.len() && args.len() <= 4 && rt.fields.iter().all(|f| !f.weak) => {
+            // the common case, written out: the values move into the object
+            let mut vals = [NONE; 4];
+            for (slot, x) in vals.iter_mut().zip(args) {
+                *slot = x.plain();
+            }
+            Val::new(Obj::Record(Record {
+                ty: rt,
+                fields: Mut::new(Fields::Inline(args.len() as u8, vals)),
+                birth: std::cell::Cell::new(crate::state::stamp()),
+            }))
+            .into_raw()
+        }
         Some(Obj::Type(TypeRef::Record(rt))) if rt.fields.len() == args.len() => {
             let fields = Fields::with(args.len(), |i| {
                 let x = Val::adopt(args[i]).plain();

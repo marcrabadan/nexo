@@ -110,12 +110,34 @@ fn heap(v: V) -> &'static Heap {
     unsafe { &*(v.bits as *const Heap) }
 }
 
+/// Whether a second thread may touch values (D126). Until the program
+/// starts one (`parallel`, `spawn`, a server, a stream), counts change
+/// without atomic instructions; the flag is set before the first such
+/// thread starts and is never cleared, so every later change is atomic.
+#[no_mangle]
+pub static nx_multi: AtomicBool = AtomicBool::new(false);
+
+/// Called before starting a thread that may touch values.
+pub fn going_multi() {
+    nx_multi.store(true, Ordering::SeqCst);
+}
+
+#[inline]
+fn single() -> bool {
+    !nx_multi.load(Ordering::Relaxed)
+}
+
 /// Take one more reference.
 #[inline]
 pub fn retain(v: V) {
     match v.tag {
         T_OBJ => {
-            heap(v).rc.fetch_add(1, Ordering::Relaxed);
+            let rc = &heap(v).rc;
+            if single() {
+                rc.store(rc.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+            } else {
+                rc.fetch_add(1, Ordering::Relaxed);
+            }
         }
         T_WEAK => {
             heap(v).weak.fetch_add(1, Ordering::Relaxed);
@@ -129,7 +151,14 @@ pub fn retain(v: V) {
 pub fn release(v: V) {
     match v.tag {
         T_OBJ => {
-            if heap(v).rc.fetch_sub(1, Ordering::Release) == 1 {
+            let rc = &heap(v).rc;
+            if single() {
+                let n = rc.load(Ordering::Relaxed);
+                rc.store(n - 1, Ordering::Relaxed);
+                if n == 1 {
+                    destroy_later(v.bits as *mut Heap);
+                }
+            } else if rc.fetch_sub(1, Ordering::Release) == 1 {
                 fence(Ordering::Acquire);
                 destroy_later(v.bits as *mut Heap);
             }

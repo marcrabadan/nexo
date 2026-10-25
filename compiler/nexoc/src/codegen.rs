@@ -2154,6 +2154,49 @@ impl<'a> Gen<'a> {
             StmtKind::For { iterable, body, .. } => {
                 let scope = self.res.scope_of[&Node::Stmt(s.id)];
                 let var = self.res.decl[&Node::Stmt(s.id)];
+                if let ExprKind::Range { start, end } = &iterable.kind {
+                    if self.certain_int(start) && self.certain_int(end) {
+                        // a range of ints: a counted loop, no range object
+                        let a = self.expr(start, false)?;
+                        let a = self.bits_of(&a);
+                        let b = self.expr(end, false)?;
+                        let b = self.bits_of(&b);
+                        let i = self.alloca("i64");
+                        self.emit(&format!("store i64 {a}, ptr {i}"));
+                        let head = self.label();
+                        let yes = self.label();
+                        let next = self.label();
+                        let done = self.label();
+                        let c = self.reg();
+                        self.emit(&format!("{c} = icmp sle i64 {a}, {b}"));
+                        self.cond_br(&c, &head, &done);
+                        self.place(&head);
+                        let cur = self.reg();
+                        self.emit(&format!("{cur} = load i64, ptr {i}"));
+                        self.br(&yes);
+                        self.place(&yes);
+                        let v = self.reg();
+                        self.emit(&format!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {cur}, 1"));
+                        self.enter_scope(scope);
+                        self.store_binding(var, &Val::Reg(v));
+                        self.block(body)?;
+                        self.br(&next);
+                        self.place(&next);
+                        let cur2 = self.reg();
+                        self.emit(&format!("{cur2} = load i64, ptr {i}"));
+                        let last = self.reg();
+                        self.emit(&format!("{last} = icmp eq i64 {cur2}, {b}"));
+                        let inc = self.label();
+                        self.cond_br(&last, &done, &inc);
+                        self.place(&inc);
+                        let n = self.reg();
+                        self.emit(&format!("{n} = add i64 {cur2}, 1"));
+                        self.emit(&format!("store i64 {n}, ptr {i}"));
+                        self.br(&head);
+                        self.place(&done);
+                        return Ok(());
+                    }
+                }
                 let it = self.expr(iterable, false)?;
                 self.for_each(&it, iterable.span, |g, item| {
                     g.enter_scope(scope);
@@ -3185,9 +3228,29 @@ impl<'a> Gen<'a> {
             ExprKind::Attr { obj, name, name_span } => {
                 let o = self.expr(obj, false)?;
                 // a field of a record whose type is known: read by its index
-                if let Some((i, _)) = self.ints.as_ref().and_then(|x| x.field_of(obj, name)) {
+                if let Some((i, f, n)) = self.ints.as_ref().and_then(|x| x.field_of(obj, name)) {
                     let b = self.bits_of(&o);
-                    let r = self.call_v("nx_record_get", &format!("i64 {b}, i64 {i}"));
+                    let r = if n <= 4 {
+                        // kept inside the object, at an offset the runtime
+                        // finds when it starts
+                        let off = self.reg();
+                        self.emit(&format!("{off} = load i64, ptr @nx_field_off"));
+                        let at = self.reg();
+                        self.emit(&format!("{at} = add i64 {off}, {}", 16 * i));
+                        let addr = self.reg();
+                        self.emit(&format!("{addr} = add i64 {b}, {at}"));
+                        let p = self.reg();
+                        self.emit(&format!("{p} = inttoptr i64 {addr} to ptr"));
+                        let r = Val::Reg(self.reg());
+                        let Val::Reg(rn) = &r else { unreachable!() };
+                        self.emit(&format!("{rn} = load %V, ptr {p}"));
+                        if !crate::narrow::is_int_type(&f.ty) {
+                            self.rc_inc(&r);
+                        }
+                        r
+                    } else {
+                        self.call_v("nx_record_get", &format!("i64 {b}, i64 {i}"))
+                    };
                     self.drop_val(&o);
                     return Ok(self.owned(r));
                 }
@@ -4692,7 +4755,10 @@ impl<'a> Gen<'a> {
 
 pub const RUNTIME_DECLS: &str = r#"attributes #0 = { alwaysinline }
 
-; reference counts (section 7): the count is the first word of a heap value
+; reference counts (section 7): the count is the first word of a heap value;
+; atomic only once a second thread may touch values (nx_multi, D126)
+@nx_multi = external global i8
+
 define internal void @rc_inc(%V %v) #0 {
   %t = extractvalue %V %v, 0
   %o = icmp eq i64 %t, 4
@@ -4700,7 +4766,16 @@ define internal void @rc_inc(%V %v) #0 {
 yes:
   %b = extractvalue %V %v, 1
   %p = inttoptr i64 %b to ptr
+  %m = load atomic i8, ptr @nx_multi monotonic, align 1
+  %multi = icmp ne i8 %m, 0
+  br i1 %multi, label %atomic, label %plain
+atomic:
   %x = atomicrmw add ptr %p, i64 1 monotonic
+  ret void
+plain:
+  %c = load atomic i64, ptr %p monotonic, align 8
+  %c1 = add i64 %c, 1
+  store atomic i64 %c1, ptr %p monotonic, align 8
   ret void
 no:
   ret void
@@ -4713,11 +4788,24 @@ define internal void @rc_dec(%V %v) #0 {
 yes:
   %b = extractvalue %V %v, 1
   %p = inttoptr i64 %b to ptr
+  %m = load atomic i8, ptr @nx_multi monotonic, align 1
+  %multi = icmp ne i8 %m, 0
+  br i1 %multi, label %atomic, label %plain
+atomic:
   %x = atomicrmw sub ptr %p, i64 1 release
   %last = icmp eq i64 %x, 1
   br i1 %last, label %free, label %no
 free:
   fence acquire
+  call void @nx_destroy(ptr %p)
+  ret void
+plain:
+  %c = load atomic i64, ptr %p monotonic, align 8
+  %c1 = sub i64 %c, 1
+  store atomic i64 %c1, ptr %p monotonic, align 8
+  %plast = icmp eq i64 %c, 1
+  br i1 %plast, label %pfree, label %no
+pfree:
   call void @nx_destroy(ptr %p)
   ret void
 no:
@@ -4818,6 +4906,7 @@ declare %V @nx_call_method(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32)
 declare %V @nx_call_method_ic(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32, ptr)
 declare %V @nx_attr_ic(i64, i64, ptr, i64, i32, ptr)
 declare %V @nx_record_get(i64, i64)
+@nx_field_off = external global i64
 declare %V @nx_record_new(i64, i64, ptr, i64, i32)
 declare %V @nx_builtin_call(i32, ptr, ptr, i64, i32)
 declare %V @nx_closure(ptr, ptr, ptr, i64)
