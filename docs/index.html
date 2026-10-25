@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexo programming language</title>
-<meta name="description" content="Nexo is a small, readable programming language with one way to do each thing: errors as values, exact money, data pipelines and contracts. It runs today with a Python interpreter and a native LLVM compiler, with real parallelism and no garbage collector.">
+<meta name="description" content="Nexo is a small, readable programming language with one way to do each thing: errors as values, exact money, data pipelines and contracts, with its infrastructure and CI in the same file. It runs today with a Python interpreter and a native LLVM compiler, with real parallelism and no garbage collector.">
 <meta property="og:title" content="Nexo programming language">
 <meta property="og:description" content="One way to do each thing. Errors as values, exact money, data pipelines and contracts.">
 <meta name="color-scheme" content="light dark">
@@ -31,9 +31,9 @@
 <div class="hero">
   <div class="wrap">
     <div>
-      <span class="badge">Edition 0.1 · phase 4</span>
+      <span class="badge">Edition 0.1 · phase 5</span>
       <h1>One way to do <em>each thing</em>.</h1>
-      <p class="lede">Nexo is a small programming language you can understand by reading it. Errors are values, money is exact, data flows through pipelines and functions state their contracts. Databases, web servers and AI come in the standard library. It runs today as a Python interpreter and as a native compiler built on LLVM.</p>
+      <p class="lede">Nexo is a small programming language you can understand by reading it. Errors are values, money is exact, data flows through pipelines and functions state their contracts. Databases, web servers and AI come in the standard library, and the same file can describe the cloud an app runs on and how it gets there. It runs today as a Python interpreter and as a native compiler built on LLVM.</p>
       <div class="actions">
         <a class="btn btn-primary" href="#start">Get started</a>
         <a class="btn btn-ghost" href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Read the specification</a>
@@ -287,6 +287,18 @@ A task cannot change a Counter created before it started: other tasks may be rea
         <p><code>use c</code> reads a C header and calls its functions. <code>use python</code> imports a Python module, so existing libraries stay within reach.</p>
       </div>
       <div class="card">
+        <h3>Infrastructure in the same file</h3>
+        <p><code>infra</code> blocks declare apps, databases, storage, queues, networks and identities once, for AWS, Azure, GCP or Kubernetes. <code>nexo plan</code> shows the changes, the cost and the availability; <code>apply</code>, <code>drift</code>, <code>destroy</code> and <code>import</code> talk to each cloud's own API.</p>
+      </div>
+      <div class="card">
+        <h3>Pipelines that are ordinary code</h3>
+        <p>The steps of a <code>pipeline</code> are Nexo code with <code>run</code>, <code>test()</code>, <code>build_image</code>, <code>approve</code> and <code>apply</code>. <code>nexo ci run</code> runs it on your machine and <code>nexo ci export</code> writes the GitHub, GitLab, Azure or Jenkins file.</p>
+      </div>
+      <div class="card">
+        <h3>Streams, flags and privacy</h3>
+        <p><code>when kafka("orders") as msg</code> handles messages with retries and dead letters, with <code>window</code> steps in pipelines. <code>flags</code> roll features out by percentage or audience, and <code>@personal</code> and <code>@private</code> fields are kept, encrypted and erased by rule.</p>
+      </div>
+      <div class="card">
         <h3>Two implementations, one output</h3>
         <p>The interpreter and the compiler run the same conformance suite and a differential test, and must print the same thing for every program.</p>
       </div>
@@ -305,6 +317,7 @@ A task cannot change a Counter created before it started: other tasks may be rea
       <button class="tab" role="tab" id="tab-grades" aria-controls="panel-grades" aria-selected="false" tabindex="-1">Grade book</button>
       <button class="tab" role="tab" id="tab-tests" aria-controls="panel-tests" aria-selected="false" tabindex="-1">Tests</button>
       <button class="tab" role="tab" id="tab-shop" aria-controls="panel-shop" aria-selected="false" tabindex="-1">Shop API</button>
+      <button class="tab" role="tab" id="tab-deploy" aria-controls="panel-deploy" aria-selected="false" tabindex="-1">Deploy</button>
     </div>
     <div class="panel" role="tabpanel" id="panel-sales" aria-labelledby="tab-sales">
       <p>Totals per region from a CSV file, with <code>where</code>, <code>group by</code>, <code>sum</code>, <code>sort by</code>, <code>take</code> and <code>save</code>.</p>
@@ -604,6 +617,113 @@ test &quot;a missing product is a 404&quot;:
 ✓ a missing product is a 404
 3 tests: 3 passed, 0 failed</code></pre></div></div>
     </div>
+    <div class="panel" role="tabpanel" id="panel-deploy" aria-labelledby="tab-deploy" hidden>
+      <p>The exit criterion of phase 5: one file holds an app, its tests, the four places it runs (AWS, Azure, GCP and Kubernetes) and the pipeline that builds and deploys it. The app on Kubernetes reads the database on GCP, so <code>nexo apply</code> deploys GCP first.</p>
+      <div class="code"><div class="code-bar"><span>examples/deploy/shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># The exit criterion of phase 5: one file holds an app, the four places it
+# runs (AWS, Azure, GCP and Kubernetes) and how it gets there.
+#     nexo shop.nexo                serves it on port 8080
+#     nexo test shop.nexo           runs its tests
+#     nexo plan / nexo apply        deploys it to the four targets
+#     nexo ci run --yes             builds its image and deploys it
+#     nexo ci export github         writes the workflow that does the same
+
+flags:
+    express_shipping = 20%
+
+type Order:
+    item: str
+    quantity: int
+
+## The price of shipping an order: express for some users (a flag).
+fn shipping(order: Order, user: str) -&gt; money:
+    if flag(&quot;express_shipping&quot;, user):
+        return 4.90 EUR
+    return 2.50 EUR + 0.10 EUR * order.quantity
+
+test &quot;shipping grows with the quantity&quot;:
+    assert shipping(Order(item: &quot;tea&quot;, quantity: 1), &quot;nobody&quot;) &lt;= shipping(Order(item: &quot;tea&quot;, quantity: 3), &quot;nobody&quot;)
+
+server shop:
+    port = 8080
+
+    @public
+    get &quot;/health&quot;:
+        return {&quot;ok&quot;: true}
+
+    @public
+    post &quot;/orders&quot;(order: Order, user: str):
+        return {&quot;item&quot;: order.item, &quot;shipping&quot;: shipping(order, user)}
+
+infra shop_aws:
+    cloud = &quot;aws&quot;
+    region = &quot;eu-west-1&quot;
+    budget = 200 EUR per month
+    network net:
+        allow from internet to api, port: 443
+    database orders
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url
+
+infra shop_azure:
+    cloud = &quot;azure&quot;
+    region = &quot;westeurope&quot;
+    database orders
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url
+
+infra shop_gcp:
+    cloud = &quot;gcp&quot;
+    region = &quot;europe-west1&quot;
+    database orders
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url
+
+infra shop_k8s:
+    cloud = &quot;k8s&quot;
+    namespace = &quot;shop&quot;
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        scale 2..6:
+            cpu &gt; 60%
+        env:
+            DB = shop_gcp.orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url
+
+stage prod:
+    size = medium
+
+pipeline main:
+    trigger push to main
+    secrets = [&quot;API_KEY&quot;]
+    version = &quot;1.1.0&quot;
+
+    step checks:
+        test()
+
+    step build:
+        image = build_image(&quot;shop&quot;)
+
+    step deploy:
+        approve(by: [&quot;ops@shop.example&quot;])
+        apply(stage: &quot;prod&quot;, image: image)</code></pre><div class="out"><div class="out-label">$ nexo --lang en ci export github shop.nexo</div><pre><code>Wrote .github/workflows/main.yml.</code></pre></div></div>
+    </div>
   </div>
 </section>
 
@@ -658,7 +778,7 @@ compiler/target/release/nexo build --release app.nexo -o app
   <div class="wrap">
     <p class="eyebrow">Roadmap</p>
     <h2>Where Nexo is today</h2>
-    <p class="section-intro">Nexo is built in phases, and each one ends with something usable. The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> describes the whole language, including modules for infrastructure, CI and streams that are not implemented yet. Every choice made where it was ambiguous is recorded in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>.</p>
+    <p class="section-intro">Nexo is built in phases, and each one ends with something usable. The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> describes the whole language, including modules such as machine learning, user interfaces and notifications that are not implemented yet. Every choice made where it was ambiguous is recorded in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>.</p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Phase</th><th>Deliverable</th><th>Status</th></tr></thead>
@@ -668,7 +788,7 @@ compiler/target/release/nexo build --release app.nexo -o app
           <tr><td>2. Memory and concurrency</td><td>Memory model, real <code>parallel</code>, <code>nexo.sync</code>, contracts the compiler proves</td><td><span class="status done">Done</span></td></tr>
           <tr><td>3. Tooling</td><td><code>nexo fmt</code>, <code>lint</code>, <code>fix</code>, <code>check</code>, <code>lsp</code>, a REPL in the compiler, the VS Code extension, a fix for every error</td><td><span class="status done">Done</span></td></tr>
           <tr><td>4. Library and modules</td><td>Standard library, <code>nexo.ai</code>, <code>nexo.web</code>, <code>nexo.db</code>, C and Python interop</td><td><span class="status done">Done</span></td></tr>
-          <tr><td>5. Cloud and operations</td><td><code>nexo.infra</code>, <code>nexo.ci</code>, <code>nexo.stream</code>, feature flags, privacy</td><td><span class="status next">Planned</span></td></tr>
+          <tr><td>5. Cloud and operations</td><td><code>nexo.infra</code> for AWS, Azure, GCP and k8s, <code>nexo.ci</code>, <code>nexo.stream</code>, feature flags, privacy</td><td><span class="status done">Done</span></td></tr>
           <tr><td>6. Optimisation and 1.0</td><td>Performance goals, external audit, user studies</td><td><span class="status next">Planned</span></td></tr>
           <tr><td>7. Self-hosting</td><td>The compiler rewritten in Nexo</td><td><span class="status next">Planned</span></td></tr>
         </tbody>
