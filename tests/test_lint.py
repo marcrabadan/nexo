@@ -79,6 +79,14 @@ def test_lint_without_warnings(tmp_path):
     assert (code, out) == (0, "No warnings in ok.nexo.\n")
 
 
+def test_a_loop_first_in_a_block_does_not_hide_later_reads(compiled, tmp_path):
+    # a block and its first statement start at the same place
+    (tmp_path / "loop.nexo").write_text("for i in 1..3:\n    print(i)\nvar n = 0\nwhile n < 3:\n    n += 1\n"
+                                        "print(n)\n", encoding="utf-8")
+    for cmd in (interpreter(), [str(compiled)]):
+        assert run(cmd + ["lint", "loop.nexo"], tmp_path) == (0, "No warnings in loop.nexo.\n")
+
+
 def programs():
     found = []
     for path in sorted(ROOT.rglob("*.nexo")):
