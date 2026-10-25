@@ -1,0 +1,4 @@
+# a module is a file: shop/discounts.nexo does not exist
+use shop.discounts
+
+print("never")

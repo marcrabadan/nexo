@@ -323,6 +323,7 @@ def run_db(args: list[str]) -> int:
         program = interp.load(source, file)
         if db_path is None:
             db_path = db.connect_literal(program)
+        interp.module_filter = db.schema_program
         for stmt in db.schema_program(program):
             interp.exec(stmt, interp.globals)
     except (NexoError, NexoFailure) as exc:
@@ -423,6 +424,7 @@ def run_privacy(args: list[str]) -> int:
         return 1
     try:
         program = interp.load(source, path)
+        interp.module_filter = db.schema_program
         for stmt in db.schema_program(program):
             interp.exec(stmt, interp.globals)
     except (NexoError, NexoFailure) as exc:
@@ -485,6 +487,7 @@ def run_infra(command: str, args: list[str]) -> int:
         return 1
     try:
         program = interp.load(source, path)
+        interp.module_filter = infra_program
         for stmt in infra_program(program):
             interp.exec(stmt, interp.globals)
         if not infra.INFRAS:
@@ -574,6 +577,7 @@ def run_ci(args: list[str]) -> int:
             raise NexoError("ci_target", None, target=target)
         interp = Interpreter()
         program = interp.load(loaded[0], path)
+        interp.module_filter = ci_program
         for stmt in ci_program(program):
             interp.exec(stmt, interp.globals)
         ci.FILE[0] = path

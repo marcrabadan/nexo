@@ -1207,6 +1207,7 @@ impl<'a> TypeChecker<'a> {
 
     fn stmt(&self, s: &'a Stmt, func: Option<&'a FnDef>) -> TResult<()> {
         match &s.kind {
+            StmtKind::Module { body: Some(b), .. } => self.block(b, None)?,
             StmtKind::Expr(e) | StmtKind::Ensure(e) => {
                 self.ty(e)?;
             }

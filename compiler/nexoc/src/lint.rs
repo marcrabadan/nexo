@@ -973,7 +973,10 @@ impl<'a> Linter<'a> {
 
     fn bindings(&self, p: &Pattern, out: &mut Vec<(String, Span)>) {
         match p {
-            Pattern::Name(span, name) if !self.type_names.contains(name) => out.push((name.clone(), *span)),
+            // payments.Paid is a variant of another module (D124)
+            Pattern::Name(span, name) if !self.type_names.contains(name) && !name.contains('.') => {
+                out.push((name.clone(), *span))
+            }
             Pattern::Ctor(_, _, args) => args.iter().for_each(|a| self.bindings(a, out)),
             _ => {}
         }

@@ -1,0 +1,5 @@
+## Taxes: used by shop.payments and by the program.
+print("shop.tax loaded")
+
+pub fn due(amount: int) -> int:
+    return amount // 10

@@ -1,0 +1,7 @@
+# the variants of a pub enum are exported with it
+use shop.payments
+
+print(payments.Pending)
+print(payments.Paid(3))
+x: payments.Status = payments.Paid(4)
+print(x)

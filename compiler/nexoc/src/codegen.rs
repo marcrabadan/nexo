@@ -156,6 +156,8 @@ pub struct Gen<'a> {
     src: &'a str,
     /// the program's own statements (to find the top level in the REPL)
     top_body: *const Stmt,
+    /// ids of the module files the program uses (D124)
+    program_files: Vec<u32>,
     repl_live: bool,
     /// the statement about to be compiled is at the top level of the new REPL input
     echo_next: bool,
@@ -173,7 +175,7 @@ pub struct Gen<'a> {
     lit_floats: HashMap<String, String>,
     descs: HashMap<String, String>,
     spans: Vec<Span>,
-    span_ids: HashMap<(u32, u32, u32), u32>,
+    span_ids: HashMap<(u32, u32, u32, u32), u32>,
     frame_fns: HashMap<FrameId, (String, String)>,
     /// the closures of the values of `where` conditions, by expression
     leaf_fns: HashMap<u32, (String, String)>,
@@ -380,6 +382,7 @@ impl<'a> Gen<'a> {
         Gen {
             src,
             top_body: std::ptr::null(),
+            program_files: Vec::new(),
             repl_live: false,
             echo_next: false,
             res,
@@ -488,7 +491,7 @@ impl<'a> Gen<'a> {
     }
 
     fn span_id(&mut self, span: Span) -> u32 {
-        let key = (span.line, span.col, span.end_col);
+        let key = (span.line, span.col, span.end_col, span.file);
         if let Some(id) = self.span_ids.get(&key) {
             return *id;
         }
@@ -1767,6 +1770,7 @@ impl<'a> Gen<'a> {
     // ------------------------------------------------------------ module
 
     pub fn program(mut self, program: &'a Program) -> GResult<String> {
+        self.program_files = program.files.clone();
         self.find_known_fns(program);
         self.prover = Some(crate::prove::Types::new(program));
         self.ints = Some(crate::narrow::Ints::new(program, self.res, &self.known_fns));
@@ -1802,6 +1806,14 @@ impl<'a> Gen<'a> {
             "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, i32 {}, ptr @nexo_cleanup)",
             self.opts.lang
         ));
+        // the files of the modules the program uses (D124)
+        for id in self.program_files.clone() {
+            if let Some((name, source)) = nexo_diag::file_of(id) {
+                let n = self.strarg(name);
+                let s = self.strarg(source);
+                self.emit(&format!("call void @nx_add_file(i32 {id}, {n}, {s})"));
+            }
+        }
         self.emit("call void @nx_module_init()");
         self.init_frame_slots();
         // every top-level name starts unassigned
@@ -1857,15 +1869,15 @@ impl<'a> Gen<'a> {
             .map(|s| {
                 // in the REPL, lines are counted from the new input
                 let shift = self.opts.repl_line.saturating_sub(1);
-                let line = if s.line > shift { s.line - shift } else { 0 };
-                format!("[3 x i32] [i32 {}, i32 {}, i32 {}]", line, s.col, s.end_col.min(i32::MAX as u32))
+                let line = if s.file != 0 { s.line } else if s.line > shift { s.line - shift } else { 0 };
+                format!("[4 x i32] [i32 {}, i32 {}, i32 {}, i32 {}]", line, s.col, s.end_col.min(i32::MAX as u32), s.file)
             })
             .collect();
         let _ = writeln!(
             out,
-            "@nx_spans = private constant [{} x [3 x i32]] [{}]",
+            "@nx_spans = private constant [{} x [4 x i32]] [{}]",
             spans.len().max(1),
-            if spans.is_empty() { "[3 x i32] zeroinitializer".to_string() } else { spans.join(", ") }
+            if spans.is_empty() { "[4 x i32] zeroinitializer".to_string() } else { spans.join(", ") }
         );
         out.push_str(&self.consts);
         out.push('\n');
@@ -1970,6 +1982,12 @@ impl<'a> Gen<'a> {
                 self.drop_val(&v);
             }
             StmtKind::Pass | StmtKind::Ensure(_) => {}
+            // the module's code runs at its first use (D124)
+            StmtKind::Module { body, .. } => {
+                if let Some(b) = body {
+                    self.block(b)?;
+                }
+            }
             StmtKind::Assign { target, op, value, ty } => self.assign(s, target, op, value, ty.as_ref())?,
             StmtKind::VarDecl { name, name_span, ty, value } => {
                 let v = self.expr(value, ty.is_some())?;
@@ -4695,6 +4713,7 @@ declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
 declare void @nx_too_deep()
 declare void @nx_init(ptr, i64, ptr, i64, ptr, i64, i32, ptr)
+declare void @nx_add_file(i32, ptr, i64, ptr, i64)
 declare void @nx_exit(i32) noreturn
 declare void @nx_unhandled() noreturn
 declare void @nx_run_tests() noreturn

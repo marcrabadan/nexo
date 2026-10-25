@@ -23,6 +23,7 @@ mod json;
 mod lexer;
 mod lint;
 mod lsp;
+mod modules;
 mod narrow;
 mod parser;
 mod phase5;
@@ -49,11 +50,15 @@ struct CompileError(String);
 /// Compile Nexo source to LLVM IR.
 fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Result<String, CompileError> {
     let fail = |d: Diagnostic| CompileError(render(name, source, d.span, &d.text()));
-    let mut program = parser::parse(source).map_err(fail)?;
+    let (mut program, next_id) = parser::parse_file(source, 0, 0).map_err(fail)?;
     // `use c`: the headers are read now (D110)
     let folder = Path::new(name).parent().map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p }).unwrap_or(Path::new("."));
     cheader::embed(&mut program, folder);
     checker::check(&program).map_err(fail)?;
+    // the modules of the program's files (D124)
+    let mut linker = modules::Linker::new(name, next_id);
+    linker.link(&mut program).map_err(fail)?;
+    program.files = linker.files;
     let res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
     let lang = if nexo_diag::lang() == Lang::En { 1 } else { 0 };
@@ -106,13 +111,12 @@ fn run_db(args: &[String]) -> u8 {
     };
     let fail = |d: Diagnostic| render(&file, &source, d.span, &d.text());
     let compiled = (|| {
-        let mut program = parser::parse(&source).map_err(fail)?;
-        checker::check(&program).map_err(fail)?;
+        let mut program = linked(&file, &source).map_err(fail)?;
         resolve::resolve(&program).map_err(fail)?;
         if db_path.is_none() {
             db_path = connect_literal(&program);
         }
-        program.body.retain(|s| match &s.kind {
+        retain_tree(&mut program.body, &|s| match &s.kind {
             ast::StmtKind::Type(_) | ast::StmtKind::Trait { .. } | ast::StmtKind::Use { .. } => true,
             ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call { func, .. }, .. }) => {
                 matches!(&func.kind, ast::ExprKind::Name(n) if n == "__db_table")
@@ -165,6 +169,27 @@ fn run_db(args: &[String]) -> u8 {
     }
 }
 
+/// A program parsed and checked, with the modules it uses (D124).
+fn linked(file: &str, source: &str) -> Result<ast::Program, Diagnostic> {
+    let (mut program, next_id) = parser::parse_file(source, 0, 0)?;
+    checker::check(&program)?;
+    let mut linker = modules::Linker::new(file, next_id);
+    linker.link(&mut program)?;
+    program.files = linker.files;
+    Ok(program)
+}
+
+/// Keep the statements of a program, and of the modules it uses, that
+/// `keep` accepts.
+fn retain_tree(body: &mut Vec<ast::Stmt>, keep: &dyn Fn(&ast::Stmt) -> bool) {
+    body.retain(|s| matches!(s.kind, ast::StmtKind::Module { .. }) || keep(s));
+    for s in body.iter_mut() {
+        if let ast::StmtKind::Module { body: Some(b), .. } = &mut s.kind {
+            retain_tree(b, keep);
+        }
+    }
+}
+
 /// Compile only the types of a program and the `keep` calls (`__db_table`
 /// and the like), run it with `env` set, and return its exit code: the
 /// runtime carries out the command of a module (D101, D116).
@@ -179,11 +204,10 @@ pub fn module_command(file: &str, env: &[(&str, String)], keep: &[&str], literal
     let fail = |d: Diagnostic| render(file, &source, d.span, &d.text());
     let mut db_path = None;
     let compiled = (|| {
-        let mut program = parser::parse(&source).map_err(fail)?;
-        checker::check(&program).map_err(fail)?;
+        let mut program = linked(file, &source).map_err(fail)?;
         resolve::resolve(&program).map_err(fail)?;
         db_path = connect_literal(&program);
-        program.body.retain(|s| match &s.kind {
+        retain_tree(&mut program.body, &|s| match &s.kind {
             ast::StmtKind::Type(_) | ast::StmtKind::Trait { .. } | ast::StmtKind::Use { .. } => true,
             ast::StmtKind::Fn(_) => fns,
             ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call { func, .. }, .. }) => {
@@ -363,9 +387,12 @@ fn repl() -> u8 {
             db_command: false,
         };
         let compiled = (|| {
-            let mut program = parser::parse(&candidate)?;
+            let (mut program, next_id) = parser::parse_file(&candidate, 0, 0)?;
             cheader::embed(&mut program, Path::new("."));
             checker::check(&program)?;
+            let mut linker = modules::Linker::new("<repl>", next_id);
+            linker.link(&mut program)?;
+            program.files = linker.files;
             let res = resolve::resolve(&program)?;
             typecheck::check(&program, &res)?;
             codegen::Gen::new(&candidate, &res, &opts).program(&program)
@@ -375,7 +402,7 @@ fn repl() -> u8 {
             Err(mut d) => {
                 // errors point into the new input, counted from its first line
                 let shown = match d.span {
-                    Some(sp) if sp.line >= first => {
+                    Some(sp) if sp.line >= first && sp.file == 0 => {
                         d.span = Some(nexo_diag::Span::new(sp.line - first + 1, sp.col, sp.end_col));
                         render("<repl>", &cell, d.span, &d.text())
                     }
@@ -410,26 +437,29 @@ fn repl() -> u8 {
     0
 }
 
-/// The checks of a compilation that happen before code generation.
-fn front_end(source: &str) -> Result<ast::Program, Diagnostic> {
-    let program = parser::parse(source)?;
+/// The checks of a compilation that happen before code generation; the
+/// program is returned as written (without the modules it uses).
+fn front_end(source: &str, file: &str) -> Result<ast::Program, Diagnostic> {
+    let (program, next_id) = parser::parse_file(source, 0, 0)?;
     checker::check(&program)?;
-    let res = resolve::resolve(&program)?;
-    typecheck::check(&program, &res)?;
+    let mut linked = program.clone();
+    modules::Linker::new(file, next_id).link(&mut linked)?;
+    let res = resolve::resolve(&linked)?;
+    typecheck::check(&linked, &res)?;
     Ok(program)
 }
 
 /// The warnings of a file, or the compile error that stops it (D86).
-fn lint_source(source: &str) -> Result<Vec<lint::Finding>, Diagnostic> {
-    let program = front_end(source)?;
+fn lint_source(source: &str, file: &str) -> Result<Vec<lint::Finding>, Diagnostic> {
+    let program = front_end(source, file)?;
     let tokens = lexer::tokenize(source)?;
     Ok(lint::Linter::new(source, &tokens, &program).run())
 }
 
 /// Apply every safe fix, again and again until none is left.
-fn fix_source(mut source: String) -> String {
+fn fix_source(mut source: String, file: &str) -> String {
     for _ in 0..100 {
-        match lint_source(&source) {
+        match lint_source(&source, file) {
             Err(d) => match lint::error_fix(&d, &source) {
                 Some(fix) if fix.safe => source = lint::apply_edits(&source, &fix.edits),
                 _ => break,
@@ -778,7 +808,7 @@ fn run_lint(paths: &[String]) -> u8 {
             }
         };
         let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
-        match lint_source(&source) {
+        match lint_source(&source, &display) {
             Ok(findings) => {
                 for finding in &findings {
                     print!("{}", nexo_diag::render_warning(&name, &source, finding.span, &finding.text()));
@@ -817,7 +847,7 @@ fn run_fix(paths: &[String]) -> u8 {
             }
         };
         let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
-        let fixed = fix_source(source.clone());
+        let fixed = fix_source(source.clone(), &display);
         if let Err(d) = lexer::tokenize(&fixed) {
             eprint!("{}", render(&name, &fixed, d.span, &d.text()));
             status = 1;
@@ -849,7 +879,7 @@ fn run_check(paths: &[String]) -> u8 {
             }
         };
         let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
-        if let Err(d) = front_end(&source) {
+        if let Err(d) = front_end(&source, &display) {
             eprint!("{}", render(&name, &source, d.span, &d.text()));
             status = 1;
         }

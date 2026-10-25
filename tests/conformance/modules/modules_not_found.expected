@@ -1,0 +1,4 @@
+Error en modules_not_found.nexo, línea 2:
+  use shop.discounts
+  ^^^^^^^^^^^^^^^^^^
+No existe el módulo shop.discounts: no hay ningún archivo shop/discounts.nexo. Crea el archivo o corrige el nombre; el nombre de un módulo es su ruta (shop/payments.nexo es shop.payments).

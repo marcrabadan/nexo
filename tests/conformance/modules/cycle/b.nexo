@@ -1,0 +1,4 @@
+use cycle.a
+
+pub fn two() -> int:
+    return 2

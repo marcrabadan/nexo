@@ -1,0 +1,4 @@
+# the names of a module are changed inside it
+use shop.tax
+
+tax.due = 3

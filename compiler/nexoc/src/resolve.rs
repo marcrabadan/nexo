@@ -179,6 +179,8 @@ pub struct Resolution {
     /// top-level names no function, lambda, task or test uses: they are
     /// locals of the main program (kept in registers) instead of statics
     pub main_local: std::collections::HashSet<BindingId>,
+    /// the top scope of each module the program uses (D124)
+    pub module_roots: std::collections::HashSet<ScopeId>,
 }
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
@@ -254,6 +256,10 @@ struct Resolver {
     tasks: Vec<(FrameId, bool)>,
     /// top-level names used from another frame
     used_outside: std::collections::HashSet<BindingId>,
+    /// the top scope of each module, by name, and the modules each file
+    /// (its top scope) uses, by the name it uses them with (D124)
+    module_scope: HashMap<String, ScopeId>,
+    aliases: HashMap<ScopeId, HashMap<String, ScopeId>>,
 }
 
 impl Resolution {
@@ -265,7 +271,8 @@ impl Resolution {
     /// static storage; every other binding belongs to the frame (function)
     /// that runs its scope.
     pub fn is_static(&self, b: BindingId) -> bool {
-        self.bindings[b].scope == self.frames[GLOBAL_FRAME].root && !self.main_local.contains(&b)
+        let scope = self.bindings[b].scope;
+        (scope == self.frames[GLOBAL_FRAME].root && !self.main_local.contains(&b)) || self.module_roots.contains(&scope)
     }
 }
 
@@ -290,10 +297,13 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             next_type_id: 1,
             self_calls: std::collections::HashSet::new(),
             task_outputs: HashMap::new(),
-            sync: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.sync")),
-            db: program.body.iter().any(|s| matches!(&s.kind, StmtKind::Use { what, .. } if what == "nexo.db")),
+            sync: uses(program, "nexo.sync"),
+            db: uses(program, "nexo.db"),
             main_local: std::collections::HashSet::new(),
+            module_roots: std::collections::HashSet::new(),
         },
+        module_scope: HashMap::new(),
+        aliases: HashMap::new(),
         used_outside: std::collections::HashSet::new(),
         tasks: Vec::new(),
         self_fn: Vec::new(),
@@ -303,6 +313,7 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
     let root = res.new_scope(None, SKind::Normal, GLOBAL_FRAME, true);
     res.r.frames.push(Frame { parent: None, kind: FrameKind::Global, root, free: Vec::new(), params: Vec::new() });
     res.assign_type_ids(&program.body);
+    res.modules(root, &program.body)?;
     res.declare_block(root, &program.body);
     res.block(root, &program.body)?;
     res.finish_self_calls(program);
@@ -314,7 +325,46 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
     Ok(res.r)
 }
 
+/// Does the program (or a module it uses) have `use what`?
+fn uses(program: &Program, what: &str) -> bool {
+    let mut found = false;
+    crate::checker::walk_stmts(&program.body, false, &mut |s| {
+        found |= matches!(&s.kind, StmtKind::Use { what: w, .. } if w == what);
+    });
+    found
+}
+
 impl Resolver {
+    /// The modules a file uses (D124): each one's code is resolved in its
+    /// own top scope, which sees only the builtins, before the file's.
+    fn modules(&mut self, file_root: ScopeId, body: &[Stmt]) -> RResult<()> {
+        for s in body {
+            let StmtKind::Module { name, alias, body } = &s.kind else { continue };
+            if let Some(b) = body {
+                let root = self.new_scope(None, SKind::Normal, GLOBAL_FRAME, true);
+                self.r.module_roots.insert(root);
+                self.module_scope.insert(name.clone(), root);
+                self.modules(root, b)?;
+                self.declare_block(root, b);
+                self.block(root, b)?;
+            }
+            let root = self.module_scope[name];
+            self.aliases.entry(file_root).or_default().insert(alias.clone(), root);
+        }
+        Ok(())
+    }
+
+    /// The binding of `payments.add` in the file of `scope`.
+    fn module_member(&self, scope: ScopeId, name: &str) -> Option<BindingId> {
+        let (alias, member) = name.split_once('.')?;
+        let mut root = scope;
+        while let Some(p) = self.r.scopes[root].parent {
+            root = p;
+        }
+        let module = *self.aliases.get(&root)?.get(alias)?;
+        self.lookup_local(module, member)
+    }
+
     fn new_scope(&mut self, parent: Option<ScopeId>, kind: SKind, frame: FrameId, is_fn: bool) -> ScopeId {
         self.r.scopes.push(Scope { parent, kind, frame, is_fn, names: Vec::new() });
         self.r.scopes.len() - 1
@@ -562,6 +612,10 @@ impl Resolver {
     }
 
     fn lookup(&mut self, scope: ScopeId, name: &str) -> NameRes {
+        if let Some(b) = self.module_member(scope, name) {
+            self.note_use(scope, b);
+            return NameRes::Bindings { cands: vec![b], row: None, builtin: false, suggestion: None };
+        }
         let mut cands = Vec::new();
         let mut row = None;
         let mut s = Some(scope);
@@ -739,6 +793,8 @@ impl Resolver {
 
     fn stmt(&mut self, scope: ScopeId, s: &Stmt) -> RResult<()> {
         match &s.kind {
+            // resolved before the file (Resolver::modules)
+            StmtKind::Module { .. } => Ok(()),
             StmtKind::Expr(e) => self.expr(scope, e),
             StmtKind::Assign { target, value, ty, .. } => {
                 self.expr(scope, value)?;
@@ -1006,6 +1062,11 @@ impl Resolver {
 
     /// A type name used in a type: a user type, a builtin type or an error kind.
     fn type_name(&mut self, scope: ScopeId, name: &str) -> Option<TypeRes> {
+        if let Some(b) = self.module_member(scope, name) {
+            if let Origin::Type(t) | Origin::Trait(t) | Origin::Variant(t, _) = self.r.bindings[b].origin {
+                return Some(TypeRes::User(t, name.to_string()));
+            }
+        }
         let mut s = Some(scope);
         while let Some(id) = s {
             if let Some(b) = self.lookup_local(id, name) {

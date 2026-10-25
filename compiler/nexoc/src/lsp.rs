@@ -127,7 +127,12 @@ fn fix_json(lines: &[Vec<char>], title: String, fix: &crate::lint::Fix) -> Json 
 
 // ----------------------------------------------------------- diagnostics
 
-fn diagnostics(text: &str) -> Vec<Json> {
+/// The file name of a document, as phase 0's lsp.py gives it.
+fn name_of(uri: &str) -> &str {
+    uri.rsplit('/').next().unwrap_or(uri)
+}
+
+fn diagnostics(text: &str, name: &str) -> Vec<Json> {
     let lines = lines_of(text);
     let diag = |range: Json, severity: u32, code: &str, message: String, fixes: Vec<Json>| {
         obj(vec![
@@ -139,7 +144,7 @@ fn diagnostics(text: &str) -> Vec<Json> {
             ("data", obj(vec![("fixes", Json::Arr(fixes))])),
         ])
     };
-    match crate::lint_source(text) {
+    match crate::lint_source(text, name) {
         Err(d) => {
             let mut fixes = Vec::new();
             if let Some(fix) = crate::lint::error_fix(&d, text) {
@@ -197,7 +202,7 @@ fn code_actions(text: &str, uri: &str, params: &Json) -> Json {
     if only.is_empty() || only.iter().any(|k| k.starts_with("source")) {
         let parses = crate::parser::parse(text).is_ok();
         if parses {
-            let fixed = crate::fix_source(text.to_string());
+            let fixed = crate::fix_source(text.to_string(), name_of(uri));
             if fixed != text {
                 actions.push(obj(vec![
                     ("title", s(msg("lsp_fix_all", &[]))),
@@ -698,7 +703,7 @@ impl Server {
     }
 
     fn publish(&self, out: &mut impl Write, uri: &str) {
-        let diags = self.docs.get(uri).map(|t| diagnostics(t)).unwrap_or_default();
+        let diags = self.docs.get(uri).map(|t| diagnostics(t, name_of(uri))).unwrap_or_default();
         send(
             out,
             obj(vec![

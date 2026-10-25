@@ -1563,3 +1563,53 @@ GitLab job, an Azure `ManualValidation` task notifying those people, a
 Jenkins `input` with them as submitters), which is why the job passes
 `--yes`. `after success` and `after failure` become jobs that run when
 the steps pass or fail.
+
+## Modules of the program's own files (section 13)
+
+**D124. `use` of a file of the program.** Section 13 says "a module is a
+file; its name is its path (`shop/payments.nexo` is `shop.payments`)" and
+"only what is marked `pub` is exported", and the grammar has `use_stmt`,
+but neither says where paths start, how imported names are written or when
+a module's code runs. Both phases (nexo/modules.py, compiler/nexoc/src/
+modules.rs) do this:
+
+- `use shop.payments` (any name that does not start with `nexo.`) loads
+  `shop/payments.nexo` from the root of the project: the folder of the
+  nearest nexo.toml above the program, or the program's own folder when
+  there is none. So a module has one name wherever it is used from, and
+  `nexo test shop/payments.nexo` finds the modules it uses in a project
+  with a nexo.toml. Messages show the module's path relative to the
+  current folder.
+- Its names are used qualified, with the last part of its name
+  (`payments.charge(...)`, `payments.Order`, `payments.Paid(x)` in a
+  pattern) or with the name given by `as`. There is no unqualified import:
+  one way to name each thing (section 1). Patterns accept a dotted name for
+  the variants of another module; nothing else changes in the grammar.
+- The grammar only allows `pub` on `fn` and `type`, so a module exports
+  its `pub` functions, its `pub` types and the variants of a `pub` enum.
+  Constants, `var`s and traits are not exported; a `pub` function can
+  return a constant.
+- A module's code runs once, at its first `use`, in its own top scope,
+  which sees only the builtins and the modules it uses itself. Its `test`
+  blocks only run when it is the file given to `nexo test`.
+- `use` of a module is only allowed at the top level of a file.
+- The commands that run only part of a program (`nexo db`, `nexo privacy
+  report`, the commands of nexo.infra and nexo.ci, D101, D116, D121,
+  D122) run the same part of each module it uses.
+- Everything about modules is a compile error, checked before the program
+  runs: a missing file, a cycle (the chain is shown), a name the module does
+  not have ("Did you mean...?") or that is not `pub`, the module's name used
+  as a value, bound to anything else in the file (a variable, a parameter,
+  another module) or assigned through (`payments.charge = ...`).
+- Every file is parsed and checked on its own (the `T!` and `?` rules of
+  D17-D24 look only at the file's own functions, as in phase 0). An error
+  inside a module shows the module's file and line in both phases: the
+  compiler's spans carry the file, and a compiled program registers the
+  source of each module for its messages. `nexo check`, `nexo lint` and the
+  language server read the modules too; the language server takes the
+  folder it was started in as the program's folder.
+- In the compiler each module is resolved in its own top scope and its
+  names are static like the program's; `payments.charge` is a plain name
+  for the later passes, so calls to it take the same fast paths. Two files
+  may define types with the same name; the contract prover (D83) then does
+  not prove `ensure`s that depend on the int fields of either.

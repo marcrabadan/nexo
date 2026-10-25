@@ -1,0 +1,23 @@
+# use loads a file of the program once; its pub names are used qualified
+use shop.payments
+use shop.tax as taxes
+
+order = payments.Order(total: 50)
+print(order)
+print(order.with_fee())
+status: payments.Status = payments.charge(order)
+match status:
+    payments.Paid(amount): print("paid {amount}")
+    payments.Pending: print("pending")
+print(payments.charge(payments.Order(total: 0)))
+print(taxes.due(200))
+
+
+fn total(orders: list[payments.Order]) -> int:
+    var n = 0
+    for o in orders:
+        n += o.total
+    return n
+
+
+print(total([order, payments.Order(total: 5)]))

@@ -283,6 +283,33 @@ by_region |> save("summary.csv")
 positives = numbers |> where it > 0 |> map it * 2
 ```
 
+### Modules
+
+A module is a file of the program, named by its path from the folder of
+`nexo.toml` (or of the program). Only what is `pub` is exported, and it is
+used through the module's name:
+
+```nexo
+# shop/payments.nexo
+pub type Status:
+    Paid(amount: int)
+    Pending
+
+pub fn charge(amount: int) -> Status:
+    if amount == 0:
+        return Pending
+    return Paid(amount)
+```
+
+```nexo
+# main.nexo
+use shop.payments
+
+match payments.charge(10):
+    payments.Paid(n): print("paid {n}")
+    payments.Pending: print("nothing to pay")
+```
+
 ### Contracts and tests
 
 ```nexo
@@ -337,7 +364,9 @@ cd examples
 This repository covers phases 0 to 5 of the plan in section 25 of
 the specification.
 
-**Included:** constants and `var`; `type` (records, unions, enums with
+**Included:** modules of the program's own files (`use shop.payments`
+loads `shop/payments.nexo`; its `pub` functions and types are used as
+`payments.charge(...)`); constants and `var`; `type` (records, unions, enums with
 data, methods); `trait`; functions with named and default arguments;
 lambdas; `if`/`elif`/`else`, `for`, `while`, `repeat`, `match` with
 guards; comprehensions; errors (`T!`, `?`, `try`/`else e`, `fail()`);
@@ -531,6 +560,7 @@ in [`docs/decisions.md`](docs/decisions.md) (D67 to D75, D88).
 nexo/                 phase 0: Python interpreter
   lexer.py parser.py  tokens and recursive-descent parser (section 24)
   checker.py          static pre-pass for compile errors
+  modules.py          use shop.payments: the program's own modules
   interpreter.py      tree-walking evaluator
   numbers.py types.py arithmetic, money, units and runtime values
   errors.py           error renderer and es/en messages
@@ -542,7 +572,7 @@ nexo/                 phase 0: Python interpreter
   lsp.py              nexo lsp, the language server
   cli.py              the `nexo` command
 compiler/             phase 1: Rust compiler
-  nexoc/              driver, lexer, parser, resolver, type checker, LLVM codegen,
+  nexoc/              driver, lexer, parser, modules, resolver, type checker, LLVM codegen,
                       fmt, lint, lsp (with json), the REPL, cheader (use c),
                       ai_cmd (nexo ai setup|usage)
   runtime/            static library linked into every program (repl.rs: the REPL journal;

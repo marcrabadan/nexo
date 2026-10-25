@@ -53,21 +53,50 @@ pub struct Span {
     pub line: u32,
     pub col: u32,
     pub end_col: u32,
+    /// 0 for the file being compiled, else a module of the program (D124)
+    /// registered with `add_file`
+    pub file: u32,
 }
 
 impl Span {
     pub const fn new(line: u32, col: u32, end_col: u32) -> Span {
-        Span { line, col, end_col }
+        Span { line, col, end_col, file: 0 }
+    }
+
+    pub const fn in_file(file: u32, line: u32, col: u32, end_col: u32) -> Span {
+        Span { line, col, end_col, file }
     }
 
     /// From the start of `self` to the end of `other`; cut at the end of the
     /// line when they are on different lines.
     pub fn to(self, other: Span) -> Span {
         if other.line != self.line {
-            return Span::new(self.line, self.col, 1_000_000_000);
+            return Span::in_file(self.file, self.line, self.col, 1_000_000_000);
         }
-        Span::new(self.line, self.col, self.end_col.max(other.end_col))
+        Span::in_file(self.file, self.line, self.col, self.end_col.max(other.end_col))
     }
+}
+
+/// The files of the modules a program uses (D124): id -> (name, source).
+static FILES: std::sync::Mutex<Vec<(u32, &'static str, &'static str)>> = std::sync::Mutex::new(Vec::new());
+
+/// Register a module file; its spans carry the id returned.
+pub fn add_file(name: &str, source: &str) -> u32 {
+    let mut files = FILES.lock().unwrap();
+    let id = files.iter().map(|f| f.0).max().unwrap_or(0) + 1;
+    files.push((id, Box::leak(name.to_string().into_boxed_str()), Box::leak(source.to_string().into_boxed_str())));
+    id
+}
+
+/// Register a module file under a known id (the runtime of a compiled
+/// program, with the ids the compiler gave).
+pub fn set_file(id: u32, name: &'static str, source: &'static str) {
+    FILES.lock().unwrap().push((id, name, source));
+}
+
+/// (name, source) of a registered module file.
+pub fn file_of(id: u32) -> Option<(&'static str, &'static str)> {
+    FILES.lock().unwrap().iter().find(|f| f.0 == id).map(|f| (f.1, f.2))
 }
 
 fn lookup(table: &'static [(&'static str, &'static str, &'static str)], key: &str) -> Option<&'static str> {
@@ -187,6 +216,10 @@ fn render_with(header: &str, file: &str, source: &str, span: Option<Span>, text:
     let Some(span) = span else {
         return format!("Error: {text}\n");
     };
+    let (file, source) = match file_of(span.file) {
+        Some((f, s)) if span.file != 0 => (f, s),
+        _ => (file, source),
+    };
     let mut out = vec![msg(header, &[("file", file.to_string()), ("line", span.line.to_string())])];
     let lines: Vec<&str> = source.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
     let count = if source.ends_with('\n') { lines.len() - 1 } else { lines.len() };
@@ -211,6 +244,10 @@ fn render_with(header: &str, file: &str, source: &str, span: Option<Span>, text:
 
 /// The text of the source between the columns of a span ("" if outside).
 pub fn source_text(source: &str, span: Span) -> String {
+    let source = match file_of(span.file) {
+        Some((_, s)) if span.file != 0 => s,
+        _ => source,
+    };
     let Some(line) = source.split('\n').nth(span.line as usize - 1) else {
         return String::new();
     };

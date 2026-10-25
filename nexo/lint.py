@@ -57,6 +57,9 @@ def front_end(source: str, file: str) -> tuple[list[Token], A.Program]:
     tokens = tokenize(source, file)
     program = Parser(list(tokens), file).program()
     Checker().check(program)
+    # the modules it uses (D124)
+    from .modules import Linker
+    Linker(file).link(program)
     return tokens, program
 
 
@@ -452,7 +455,8 @@ class Linter:
         self.add("compare_bool", n.span, fix, suggestion=shown if positive else f"not {shown}")
 
     def bindings(self, p: A.Pattern):
-        if isinstance(p, A.PName) and p.name not in self.type_names:
+        # payments.Paid is a variant of another module (D124)
+        if isinstance(p, A.PName) and p.name not in self.type_names and "." not in p.name:
             yield p.name, p.span
         elif isinstance(p, A.PCtor):
             for sub in p.args:

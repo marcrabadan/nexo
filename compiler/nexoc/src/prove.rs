@@ -85,7 +85,15 @@ pub struct Types {
 impl Types {
     pub fn new(program: &Program) -> Types {
         let mut int_fields = HashMap::new();
+        // a name two files give to different types proves nothing (D124)
+        let mut seen = std::collections::HashSet::new();
+        let mut twice = Vec::new();
         crate::checker::walk_stmts(&program.body, true, &mut |s| {
+            if let StmtKind::Type(t) = &s.kind {
+                if !seen.insert(t.name.clone()) {
+                    twice.push(t.name.clone());
+                }
+            }
             if let StmtKind::Type(t) = &s.kind {
                 if t.alias.is_none() && t.variants.is_empty() {
                     let ints = t
@@ -98,6 +106,9 @@ impl Types {
                 }
             }
         });
+        for name in twice {
+            int_fields.remove(&name);
+        }
         Types { int_fields }
     }
 }

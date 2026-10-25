@@ -69,6 +69,7 @@ pub struct SpanRec {
     pub line: u32,
     pub col: u32,
     pub end_col: u32,
+    pub file: u32,
 }
 
 pub struct Program {
@@ -181,7 +182,7 @@ pub fn span(id: u32) -> Option<Span> {
     if id == 0 {
         return None;
     }
-    program().spans.get(id as usize - 1).map(|s| Span::new(s.line, s.col, s.end_col))
+    program().spans.get(id as usize - 1).map(|s| Span::in_file(s.file, s.line, s.col, s.end_col))
 }
 
 /// Raise an error value of a system kind (NotFound, Overflow...).

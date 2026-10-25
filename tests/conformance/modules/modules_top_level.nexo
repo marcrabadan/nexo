@@ -1,0 +1,5 @@
+# use of a module only at the top level
+fn load():
+    use shop.tax
+
+load()

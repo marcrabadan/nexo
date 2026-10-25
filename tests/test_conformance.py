@@ -1,6 +1,7 @@
 """Conformance tests: every tests/conformance/**/NAME.nexo is run with the
 `nexo` CLI from a scratch copy of its directory, and stdout + stderr must equal
-NAME.expected exactly. NAME.args, if present, holds extra CLI arguments placed
+NAME.expected exactly (a .nexo without .expected is a module that other
+cases use). NAME.args, if present, holds extra CLI arguments placed
 before the file name (for example `--lang en` or `test`).
 
 A case listed in tests/conformance/PENDING is expected to fail (xfail); the
@@ -25,7 +26,8 @@ def pending():
 
 
 def cases():
-    return sorted(CONFORMANCE.rglob("*.nexo"))
+    # a .nexo without .expected is a module the cases use (D124)
+    return sorted(p for p in CONFORMANCE.rglob("*.nexo") if p.with_suffix(".expected").exists())
 
 
 def case_id(path):
