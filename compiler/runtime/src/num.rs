@@ -635,14 +635,14 @@ pub fn py_eq(a: V, b: V) -> bool {
         (Obj::Map(x), Obj::Map(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
             x.entries.len() == y.entries.len()
-                && x.index.iter().all(|(k, i)| match y.index.get(k) {
-                    Some(j) => py_eq(x.entries[*i].1.v(), y.entries[*j].1.v()),
+                && x.index.iter().all(|(k, i)| match y.index.get(&k) {
+                    Some(j) => py_eq(x.entries[i].1.v(), y.entries[*j].1.v()),
                     None => false,
                 })
         }
         (Obj::Set(x), Obj::Set(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
-            x.items.len() == y.items.len() && x.index.keys().all(|k| y.index.contains_key(k))
+            x.items.len() == y.items.len() && x.index.iter().all(|(k, _)| y.index.contains_key(&k))
         }
         (Obj::Range(a1, b1), Obj::Range(a2, b2)) => a1 == a2 && b1 == b2,
         (Obj::Record(x), Obj::Record(y)) => {

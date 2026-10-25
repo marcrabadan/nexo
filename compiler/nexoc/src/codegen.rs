@@ -2301,13 +2301,13 @@ impl<'a> Gen<'a> {
         self.drop_val(iterable);
         self.f().live.push(Live::Iter(it.clone()));
         let item = self.alloca("%V");
+        let view = self.iter_view(&it);
         let head = self.label();
         let yes = self.label();
         let end = self.label();
         self.br(&head);
         self.place(&head);
-        let ok = self.call_flag("nx_iter_next", &format!("ptr {it}, ptr {item}"));
-        self.check();
+        let ok = self.iter_next(&it, &view, &item);
         self.cond_br(&ok, &yes, &end);
         self.place(&yes);
         let v = self.load(&item);
@@ -2319,6 +2319,69 @@ impl<'a> Gen<'a> {
         self.unlive(&Live::Iter(it.clone()));
         self.emit(&format!("call void @nx_iter_free(ptr {it})"));
         Ok(())
+    }
+
+    /// The elements of a list being iterated stay where they are (the
+    /// iterator holds the list, so a change through a variable copies it):
+    /// the loop reads them in place (D134). (pointer or null, length, index)
+    fn iter_view(&mut self, it: &str) -> (String, String, String) {
+        let len = self.alloca("i64");
+        let idx = self.alloca("i64");
+        self.emit(&format!("store i64 0, ptr {idx}"));
+        let view = self.reg();
+        self.emit(&format!("{view} = call ptr @nx_iter_view(ptr {it}, ptr {len})"));
+        (view, len, idx)
+    }
+
+    /// The next element in `item` (owned); an i1 that is false at the end.
+    fn iter_next(&mut self, it: &str, view: &(String, String, String), item: &str) -> String {
+        let (view, len, idx) = view;
+        let ok = self.alloca("i8");
+        let isview = self.reg();
+        self.emit(&format!("{isview} = icmp ne ptr {view}, null"));
+        let fast = self.label();
+        let more = self.label();
+        let done = self.label();
+        let general = self.label();
+        let join = self.label();
+        self.cond_br(&isview, &fast, &general);
+        self.place(&fast);
+        let i = self.reg();
+        self.emit(&format!("{i} = load i64, ptr {idx}"));
+        let n = self.reg();
+        self.emit(&format!("{n} = load i64, ptr {len}"));
+        let lt = self.reg();
+        self.emit(&format!("{lt} = icmp ult i64 {i}, {n}"));
+        self.cond_br(&lt, &more, &done);
+        self.place(&more);
+        let p = self.reg();
+        self.emit(&format!("{p} = getelementptr inbounds %V, ptr {view}, i64 {i}"));
+        let x = self.reg();
+        self.emit(&format!("{x} = load %V, ptr {p}"));
+        let x2 = self.reg();
+        self.emit(&format!("{x2} = call %V @nx_plainv(%V {x})"));
+        self.emit(&format!("call void @rc_inc(%V {x2})"));
+        self.emit(&format!("store %V {x2}, ptr {item}"));
+        let i1 = self.reg();
+        self.emit(&format!("{i1} = add i64 {i}, 1"));
+        self.emit(&format!("store i64 {i1}, ptr {idx}"));
+        self.emit(&format!("store i8 1, ptr {ok}"));
+        self.br(&join);
+        self.place(&done);
+        self.emit(&format!("store i8 0, ptr {ok}"));
+        self.br(&join);
+        self.place(&general);
+        let r = self.reg();
+        self.emit(&format!("{r} = call i8 @nx_iter_next(ptr {it}, ptr {item})"));
+        self.emit(&format!("store i8 {r}, ptr {ok}"));
+        self.check();
+        self.br(&join);
+        self.place(&join);
+        let o = self.reg();
+        self.emit(&format!("{o} = load i8, ptr {ok}"));
+        let c = self.reg();
+        self.emit(&format!("{c} = icmp ne i8 {o}, 0"));
+        c
     }
 
     /// Check a value against a declared type; the result is owned and the
@@ -4209,8 +4272,33 @@ impl<'a> Gen<'a> {
                 let nm = self.names_array(&names);
                 let na = self.strarg(&name);
                 let nsp = self.span_id(name_span);
-                let r = self.call_v("nx_call_method_at", &format!("ptr {ptr}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
-                self.check();
+                let r = if name == "add" && n == 1 && names.iter().all(|x| x.is_none()) {
+                    // a list this place alone owns takes the value here (D134)
+                    let res = self.alloca("%V");
+                    let tv = self.tb(&vals[0]);
+                    let done = self.reg();
+                    self.emit(&format!("{done} = call i8 @nx_list_add(ptr {ptr}, {tv})"));
+                    let isdone = self.reg();
+                    self.emit(&format!("{isdone} = icmp ne i8 {done}, 0"));
+                    let fast = self.label();
+                    let slow = self.label();
+                    let merge = self.label();
+                    self.cond_br(&isdone, &fast, &slow);
+                    self.place(&fast);
+                    self.emit(&format!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {res}"));
+                    self.br(&merge);
+                    self.place(&slow);
+                    let r = self.call_v("nx_call_method_at", &format!("ptr {ptr}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
+                    self.check();
+                    self.store(&res, &r);
+                    self.br(&merge);
+                    self.place(&merge);
+                    self.load(&res)
+                } else {
+                    let r = self.call_v("nx_call_method_at", &format!("ptr {ptr}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
+                    self.check();
+                    r
+                };
                 self.drop_all(&own_args);
                 self.drop_place(place);
                 r
@@ -4500,7 +4588,174 @@ impl<'a> Gen<'a> {
     }
 
     fn pipeline(&mut self, e: &'a Expr, source: &'a Expr, steps: &'a [PipeStep]) -> GResult<Val> {
-        let mut v = self.expr(source, false)?;
+        let v = self.expr(source, false)?;
+        let fusable = steps.len() >= 2
+            && matches!(steps[steps.len() - 1].kind, StepKind::Sum | StepKind::Count)
+            && steps[steps.len() - 1].expr.is_none()
+            && steps[..steps.len() - 1].iter().all(|s| matches!(s.kind, StepKind::Where | StepKind::Map) && s.expr.is_some());
+        if fusable {
+            return self.fused_pipeline(e, v, steps);
+        }
+        self.pipeline_steps(e, v, steps)
+    }
+
+    /// `src |> where ... |> map ... |> sum` (or `count`): one loop that
+    /// calls the functions of the steps directly, with no lazy values in
+    /// between (D134). A database query, a stream or a grouped value takes
+    /// the usual steps, which know how to translate them.
+    fn fused_pipeline(&mut self, e: &'a Expr, src: Val, steps: &'a [PipeStep]) -> GResult<Val> {
+        let src_slot = self.spill_owned(&src);
+        let res = self.alloca("%V");
+        let cur = self.load(&src_slot);
+        let tb = self.tb(&cur);
+        let plain = self.reg();
+        self.emit(&format!("{plain} = call i8 @nx_pipe_plain({tb})"));
+        let isplain = self.reg();
+        self.emit(&format!("{isplain} = icmp ne i8 {plain}, 0"));
+        let fused = self.label();
+        let slow = self.label();
+        let merge = self.label();
+        self.cond_br(&isplain, &fused, &slow);
+        // the usual steps
+        self.place(&slow);
+        let cur = self.load(&src_slot);
+        let r = self.pipeline_steps(e, cur, steps)?;
+        self.own(&r);
+        self.store(&res, &r);
+        self.br(&merge);
+        // one loop
+        self.place(&fused);
+        let last = steps.len() - 1;
+        let mut fns: Vec<(String, String, Option<String>)> = Vec::new();
+        for (i, step) in steps[..last].iter().enumerate() {
+            let x = step.expr.as_ref().unwrap();
+            let node = Node::Step(e.id, i);
+            let frame = self.res.frame_of[&node];
+            let (fname, _) = self.frame_fn(frame, FrameSrc::Step(x))?;
+            let clo = if self.res.frames[frame].free.is_empty() {
+                (String::from("null"), None)
+            } else {
+                let c = self.step_closure(node, x)?;
+                let cs = self.spill_owned(&c);
+                self.drop_val(&c);
+                let cv = self.load(&cs);
+                let cb = self.tb(&cv);
+                let p = self.reg();
+                self.emit(&format!("{p} = call ptr @nx_func_ptr({cb})"));
+                (p, Some(cs))
+            };
+            fns.push((fname, clo.0, clo.1));
+        }
+        let first_sp = self.span_id(steps[0].span);
+        let cur = self.load(&src_slot);
+        let tb = self.tb(&cur);
+        let it = self.reg();
+        self.emit(&format!("{it} = call ptr @nx_iter({tb}, i32 {first_sp})"));
+        self.check();
+        self.f().live.push(Live::Iter(it.clone()));
+        let is_sum = steps[last].kind == StepKind::Sum;
+        let (acc, rest) = if is_sum {
+            let acc = self.alloca("%V");
+            self.emit(&format!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {acc}"));
+            let rest = self.alloca("%V");
+            self.emit(&format!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {rest}"));
+            self.f().live.push(Live::Slot(acc.clone()));
+            self.f().live.push(Live::Slot(rest.clone()));
+            (acc, rest)
+        } else {
+            let n = self.alloca("i64");
+            self.emit(&format!("store i64 0, ptr {n}"));
+            (n, String::new())
+        };
+        let item = self.alloca("%V");
+        let view = self.iter_view(&it);
+        let head = self.label();
+        let body = self.label();
+        let end = self.label();
+        self.br(&head);
+        self.place(&head);
+        let ok = self.iter_next(&it, &view, &item);
+        self.cond_br(&ok, &body, &end);
+        self.place(&body);
+        let v = self.load(&item);
+        let mut v = self.owned(v);
+        for (i, step) in steps[..last].iter().enumerate() {
+            let x = step.expr.as_ref().unwrap();
+            let esp = self.span_id(x.span);
+            let (fname, clo, _) = fns[i].clone();
+            let arr = self.values_array(std::slice::from_ref(&v));
+            let r = self.reg();
+            self.emit(&format!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {esp})"));
+            self.check();
+            let r = self.owned(Val::Reg(r));
+            // a step that names a function calls it with the element (D51)
+            let rt = self.tb(&r);
+            let vt = self.tb(&v);
+            let r2 = self.call_v("nx_pipe_step", &format!("{rt}, {vt}, i32 {esp}"));
+            self.check();
+            let r2 = self.owned(r2);
+            self.drop_val(&r);
+            if step.kind == StepKind::Where {
+                let c = self.truth(&r2, x.span, "where");
+                let keep = self.label();
+                let skip = self.label();
+                self.cond_br(&c, &keep, &skip);
+                self.place(&skip);
+                self.rc_dec(&v);
+                self.br(&head);
+                self.place(&keep);
+            } else {
+                let nv = self.bind(r2, x);
+                self.drop_val(&v);
+                v = nv;
+            }
+        }
+        if is_sum {
+            let vt = self.tb(&v);
+            self.call_void("nx_sum_push", &format!("ptr {acc}, ptr {rest}, {vt}"));
+        } else {
+            let c = self.reg();
+            self.emit(&format!("{c} = load i64, ptr {acc}"));
+            let c1 = self.reg();
+            self.emit(&format!("{c1} = add i64 {c}, 1"));
+            self.emit(&format!("store i64 {c1}, ptr {acc}"));
+        }
+        self.drop_val(&v);
+        self.br(&head);
+        self.place(&end);
+        self.unlive(&Live::Iter(it.clone()));
+        self.emit(&format!("call void @nx_iter_free(ptr {it})"));
+        let tsp = self.span_id(steps[last].span);
+        let r = if is_sum {
+            // the slots are emptied before the total is computed
+            self.unlive(&Live::Slot(rest.clone()));
+            self.unlive(&Live::Slot(acc.clone()));
+            let r = self.call_v("nx_sum_end", &format!("ptr {acc}, ptr {rest}, i32 {tsp}"));
+            self.check();
+            self.owned(r)
+        } else {
+            let c = self.reg();
+            self.emit(&format!("{c} = load i64, ptr {acc}"));
+            let r = self.reg();
+            self.emit(&format!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {c}, 1"));
+            Val::Reg(r)
+        };
+        for (_, _, cs) in fns.iter().rev() {
+            if let Some(cs) = cs {
+                self.drop_slot(cs);
+            }
+        }
+        self.own(&r);
+        self.store(&res, &r);
+        self.br(&merge);
+        self.place(&merge);
+        self.drop_slot(&src_slot);
+        let out = self.load(&res);
+        Ok(self.owned(out))
+    }
+
+    fn pipeline_steps(&mut self, e: &'a Expr, src: Val, steps: &'a [PipeStep]) -> GResult<Val> {
+        let mut v = src;
         let mut grouped = false;
         for (i, step) in steps.iter().enumerate() {
             let ssp = self.span_id(step.span);
@@ -4912,6 +5167,11 @@ declare %V @nx_call_method(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32)
 declare %V @nx_call_method_ic(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32, ptr)
 declare %V @nx_attr_ic(i64, i64, ptr, i64, i32, ptr)
 declare %V @nx_record_get(i64, i64)
+declare i8 @nx_pipe_plain(i64, i64)
+declare i8 @nx_list_add(ptr, i64, i64)
+declare %V @nx_pipe_step(i64, i64, i64, i64, i32)
+declare void @nx_sum_push(ptr, ptr, i64, i64)
+declare %V @nx_sum_end(ptr, ptr, i32)
 @nx_field_off = external global i64
 declare %V @nx_record_new(i64, i64, ptr, i64, i32)
 declare %V @nx_builtin_call(i32, ptr, ptr, i64, i32)
@@ -4943,6 +5203,7 @@ declare %V @nx_row_get(i64, i64, ptr, i64, ptr)
 declare void @nx_row_missing(i64, i64, ptr, i64, ptr, i64, i32)
 declare ptr @nx_iter(i64, i64, i32)
 declare i8 @nx_iter_next(ptr, ptr)
+declare ptr @nx_iter_view(ptr, ptr)
 declare i64 @nx_repeat_count(i64, i64, i32)
 declare void @nx_parallel_max(i64, i64, i32)
 declare %V @nx_deep_copy(i64, i64)

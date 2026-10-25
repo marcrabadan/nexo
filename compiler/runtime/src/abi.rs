@@ -388,6 +388,26 @@ pub extern "C" fn nx_range(at: u64, ab: u64, bt: u64, bb: u64, span: u32) -> V {
 
 #[no_mangle]
 pub extern "C" fn nx_index(ot: u64, ob: u64, it: u64, ib: u64, span: u32) -> V {
+    // an int index of a map or a list, the common case (D134)
+    if it == T_INT {
+        match v(ot, ob).get() {
+            Some(Obj::Map(m)) => {
+                let m = m.borrow();
+                let x = m.index.get_int(ib as i64).map(|i| m.entries[*i].1.v()).unwrap_or(NONE);
+                retain(x);
+                return x;
+            }
+            Some(Obj::List(items)) => {
+                let items = items.borrow();
+                if let Some(x) = usize::try_from(ib as i64).ok().and_then(|i| items.get(i)) {
+                    let x = x.v();
+                    retain(x);
+                    return x;
+                }
+            }
+            _ => {}
+        }
+    }
     ret(coll::get_index(v(ot, ob), v(it, ib), span))
 }
 
@@ -424,6 +444,9 @@ fn scratch(v: Val) -> *mut V {
 }
 
 fn scratch_clear() {
+    if SCRATCH.with(|s| s.borrow().is_empty()) {
+        return;
+    }
     let old = SCRATCH.with(|s| {
         let mut s = s.borrow_mut();
         if s.is_empty() {
@@ -441,6 +464,23 @@ pub extern "C" fn nx_scratch_clear() {
 }
 
 /// The variable at `slot` is about to be changed: make its collection unique.
+/// `xs.add(x)` on a list that this place alone owns (it was just made
+/// unique) and a value that is not lazy: pushed here, 1. Otherwise 0, and
+/// the compiled code calls the method as usual (D134).
+#[no_mangle]
+pub unsafe extern "C" fn nx_list_add(slot: *mut V, t: u64, b: u64) -> u8 {
+    let obj = *slot;
+    let arg = v(t, b);
+    if let Some(Obj::List(items)) = obj.get() {
+        if owners(obj) <= 1 && !matches!(arg.get(), Some(Obj::Lazy(_) | Obj::Grouped(_))) {
+            let x = coll::stored_in(obj, Val::from(arg.plain()));
+            items.borrow_mut().push(x);
+            return 1;
+        }
+    }
+    0
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn nx_unique_slot(slot: *mut V) {
     crate::cow::make_unique(slot);
@@ -477,6 +517,16 @@ pub unsafe extern "C" fn nx_index_slot(slot: *mut V, it: u64, ib: u64, span: u32
 #[no_mangle]
 pub unsafe extern "C" fn nx_set_index_at(slot: *mut V, it: u64, ib: u64, t: u64, b: u64, span: u32) {
     let container = crate::cow::make_unique(slot);
+    // `counts[k] = value` with an int key and a value that is not lazy (D134)
+    if it == T_INT && t != T_OBJ {
+        if let Some(Obj::Map(m)) = container.get() {
+            if owners(container) <= 1 {
+                m.borrow_mut().insert(Key::Int(ib as i64), Val::int(ib as i64), Val::from(v(t, b).plain()));
+                scratch_clear();
+                return;
+            }
+        }
+    }
     let _ = coll::set_index(container, v(it, ib), v(t, b), span);
     scratch_clear();
 }
@@ -1250,6 +1300,73 @@ pub extern "C" fn nx_pipe_count(t: u64, b: u64, span: u32) -> V {
     ret(pipe::count(v(t, b), span))
 }
 
+/// Whether a fused pipeline (D134) can read this source directly: a
+/// collection, a range, a text or a lazy value that is neither a database
+/// query nor a stream.
+#[no_mangle]
+pub extern "C" fn nx_pipe_plain(t: u64, b: u64) -> u8 {
+    let x = v(t, b);
+    match x.get() {
+        Some(Obj::List(_) | Obj::Set(_) | Obj::Map(_) | Obj::Range(..) | Obj::Str(_)) => 1,
+        Some(Obj::Lazy(_)) => u8::from(crate::db::query_of(x).is_none() && crate::stream::query_of(x).is_none()),
+        _ => 0,
+    }
+}
+
+/// The value of a step for one element: when the step names a function,
+/// the function called with the element (D51). Borrows both; owned result.
+#[no_mangle]
+pub extern "C" fn nx_pipe_step(rt: u64, rb: u64, it: u64, ib: u64, span: u32) -> V {
+    let r = v(rt, rb);
+    if r.tag == T_OBJ && call::is_callable(r) {
+        return ret(call::call_value(r, &[v(it, ib)], span));
+    }
+    retain(r);
+    r
+}
+
+/// Add an element to the total of a fused `sum` (D134). While every
+/// element is an int and nothing overflows, `acc` keeps the exact total;
+/// otherwise the elements wait in `rest` (a list that starts with the
+/// total so far) and `nx_sum_end` adds them as `sum` does, after every
+/// element has been read, so an error of a step still comes first.
+#[no_mangle]
+pub unsafe extern "C" fn nx_sum_push(acc: *mut V, rest: *mut V, t: u64, b: u64) {
+    let item = v(t, b).plain();
+    if (*rest).tag == T_NONE {
+        if (*acc).tag == T_UNDEF {
+            retain(item);
+            *acc = item;
+            return;
+        }
+        if (*acc).tag == T_INT && item.tag == T_INT {
+            if let Some(s) = ((*acc).bits as i64).checked_add(item.bits as i64) {
+                (*acc).bits = s as u64;
+                return;
+            }
+        }
+        let first = std::mem::replace(&mut *acc, UNDEF);
+        *rest = list(vec![Val::adopt(first)]).into_raw();
+    }
+    if let Some(Obj::List(items)) = (*rest).get() {
+        items.borrow_mut().push(Val::from(item));
+    }
+}
+
+/// The total of a fused `sum`; the slots are left empty.
+#[no_mangle]
+pub unsafe extern "C" fn nx_sum_end(acc: *mut V, rest: *mut V, span: u32) -> V {
+    let a = Val::adopt(std::mem::replace(&mut *acc, UNDEF));
+    let r = Val::adopt(std::mem::replace(&mut *rest, NONE));
+    if let Some(Obj::List(items)) = r.get() {
+        return ret(pipe::total(&items.borrow(), span));
+    }
+    if a.tag == T_UNDEF {
+        return V::int(0);
+    }
+    a.into_raw()
+}
+
 #[no_mangle]
 pub extern "C" fn nx_pipe_sum(t: u64, b: u64, span: u32) -> V {
     if let Some(q) = stream_op(v(t, b), false, move |x| pipe::sum(x, span)) {
@@ -1322,25 +1439,87 @@ pub unsafe extern "C" fn nx_row_missing(t: u64, b: u64, name: *const u8, len: us
 
 // ------------------------------------------------------------- iteration
 
-pub struct Iter(Items);
+/// An iterator of the compiled code. A list and a range are read
+/// directly; anything else through `pipe::iterate` (D134).
+pub enum Iter {
+    /// the list (one more owner, so changing the variable copies it) and
+    /// the next index
+    List(Val, usize),
+    Range(i64, i64, bool),
+    Other(Items),
+}
 
 #[no_mangle]
 pub extern "C" fn nx_iter(t: u64, b: u64, span: u32) -> *mut Iter {
-    match pipe::iterate(v(t, b), span) {
-        Ok(items) => Box::leak(Box::new(Iter(items))),
+    let x = v(t, b);
+    match x.get() {
+        Some(Obj::List(_)) => return Box::leak(Box::new(Iter::List(Val::from(x), 0))),
+        Some(Obj::Range(a, b)) => return Box::leak(Box::new(Iter::Range(*a, *b, a > b))),
+        _ => {}
+    }
+    match pipe::iterate(x, span) {
+        Ok(items) => Box::leak(Box::new(Iter::Other(items))),
         Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// The elements of a list being iterated, read in place by the compiled
+/// code (D134): a pointer to the first and their number; null for
+/// anything else. The iterator owns the list, so it does not change.
+#[no_mangle]
+pub unsafe extern "C" fn nx_iter_view(it: *mut Iter, len: *mut u64) -> *const V {
+    if it.is_null() {
+        return std::ptr::null();
+    }
+    match &*it {
+        Iter::List(owner, _) => match owner.get() {
+            Some(Obj::List(items)) => {
+                let items = items.borrow();
+                *len = items.len() as u64;
+                items.as_ptr() as *const V
+            }
+            _ => std::ptr::null(),
+        },
+        _ => std::ptr::null(),
     }
 }
 
 /// 1 and the next element in `out`, or 0 at the end (or on a failure).
 #[no_mangle]
 pub unsafe extern "C" fn nx_iter_next(it: *mut Iter, out: *mut V) -> u8 {
-    match (*it).0.next() {
-        Some(Ok(x)) => {
-            *out = x.plain().into_raw();
+    match &mut *it {
+        Iter::List(owner, i) => {
+            let Some(Obj::List(items)) = owner.get() else { return 0 };
+            match items.borrow().get(*i) {
+                Some(x) => {
+                    *i += 1;
+                    let x = x.v().plain();
+                    retain(x);
+                    *out = x;
+                    1
+                }
+                None => 0,
+            }
+        }
+        Iter::Range(cur, end, done) => {
+            if *done {
+                return 0;
+            }
+            *out = V::int(*cur);
+            if *cur == *end {
+                *done = true;
+            } else {
+                *cur += 1;
+            }
             1
         }
-        _ => 0,
+        Iter::Other(items) => match items.next() {
+            Some(Ok(x)) => {
+                *out = x.plain().into_raw();
+                1
+            }
+            _ => 0,
+        },
     }
 }
 

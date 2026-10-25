@@ -101,8 +101,53 @@ fn count(delta: i64) {
     }
 }
 
+/// Freed heap objects kept for the next ones, per thread (D134): every
+/// object has the same size, so a list of free blocks serves them all
+/// without asking malloc. Returned to malloc when the thread ends.
+struct Pool(UnsafeCell<Vec<*mut Heap>>);
+
+const POOL_MAX: usize = 4096;
+
+impl Drop for Pool {
+    fn drop(&mut self) {
+        for h in self.0.get_mut().drain(..) {
+            unsafe { std::alloc::dealloc(h as *mut u8, std::alloc::Layout::new::<Heap>()) };
+        }
+    }
+}
+
+thread_local! {
+    static POOL: Pool = const { Pool(UnsafeCell::new(Vec::new())) };
+}
+
 fn alloc(o: Obj, rc: u64) -> *mut Heap {
-    Box::into_raw(Box::new(Heap { rc: AtomicU64::new(rc), weak: AtomicU64::new(1), obj: ManuallyDrop::new(o) }))
+    let heap = Heap { rc: AtomicU64::new(rc), weak: AtomicU64::new(1), obj: ManuallyDrop::new(o) };
+    let block = POOL.try_with(|p| unsafe { (*p.0.get()).pop() }).ok().flatten();
+    match block {
+        Some(h) => {
+            unsafe { std::ptr::write(h, heap) };
+            h
+        }
+        None => Box::into_raw(Box::new(heap)),
+    }
+}
+
+/// The memory of an object whose contents are gone.
+fn free_block(h: *mut Heap) {
+    let kept = POOL
+        .try_with(|p| {
+            let v = unsafe { &mut *p.0.get() };
+            if v.len() < POOL_MAX {
+                v.push(h);
+                true
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
+    if !kept {
+        unsafe { std::alloc::dealloc(h as *mut u8, std::alloc::Layout::new::<Heap>()) };
+    }
 }
 
 #[inline]
@@ -174,7 +219,7 @@ fn release_weak(h: *mut Heap) {
     let weak = &unsafe { &*h }.weak;
     if weak.load(Ordering::Acquire) == 1 || weak.fetch_sub(1, Ordering::Release) == 1 {
         fence(Ordering::Acquire);
-        unsafe { drop(Box::from_raw(h)) };
+        free_block(h);
     }
 }
 
@@ -187,6 +232,17 @@ thread_local! {
 /// with a work list rather than recursively, so a long chain of records
 /// does not exhaust the stack.
 pub fn destroy_later(h: *mut Heap) {
+    // a small record of plain values owns nothing else: its memory goes
+    // back at once (D134)
+    if let Obj::Record(r) = unsafe { &*(*h).obj } {
+        if let Fields::Inline(n, vals) = r.fields.borrow() {
+            if vals[..*n as usize].iter().all(|v| v.tag != T_OBJ && v.tag != T_WEAK) {
+                count(-1);
+                release_weak(h);
+                return;
+            }
+        }
+    }
     if FREEING.with(|f| f.get()) {
         PENDING.with(|p| p.borrow_mut().push(h));
         return;
@@ -635,7 +691,71 @@ impl std::hash::Hasher for KeyHasher {
     }
 }
 
-pub type KeyIndex = HashMap<Key, usize, std::hash::BuildHasherDefault<KeyHasher>>;
+/// Hash of an int key: one multiplication spreads it over the high bits
+/// that the table looks at first.
+#[derive(Default)]
+pub struct IntHasher(u64);
+
+impl std::hash::Hasher for IntHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0 ^ *b as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        }
+    }
+    #[inline]
+    fn write_i64(&mut self, i: i64) {
+        self.0 = (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// Where each key of a map or set is in its list of entries. Int keys,
+/// the most common, have a table of their own with a cheaper hash (D134);
+/// the hash is never visible (maps keep their insertion order).
+#[derive(Default, Clone)]
+pub struct KeyIndex {
+    ints: HashMap<i64, usize, std::hash::BuildHasherDefault<IntHasher>>,
+    other: HashMap<Key, usize, std::hash::BuildHasherDefault<KeyHasher>>,
+}
+
+impl KeyIndex {
+    #[inline]
+    pub fn get(&self, k: &Key) -> Option<&usize> {
+        match k {
+            Key::Int(i) => self.ints.get(i),
+            _ => self.other.get(k),
+        }
+    }
+
+    #[inline]
+    pub fn get_int(&self, i: i64) -> Option<&usize> {
+        self.ints.get(&i)
+    }
+
+    pub fn contains_key(&self, k: &Key) -> bool {
+        self.get(k).is_some()
+    }
+
+    pub fn insert(&mut self, k: Key, i: usize) {
+        match k {
+            Key::Int(n) => {
+                self.ints.insert(n, i);
+            }
+            _ => {
+                self.other.insert(k, i);
+            }
+        }
+    }
+
+    /// Every key and its position (in no particular order).
+    pub fn iter(&self) -> impl Iterator<Item = (Key, usize)> + '_ {
+        self.ints.iter().map(|(k, i)| (Key::Int(*k), *i)).chain(self.other.iter().map(|(k, i)| (k.clone(), *i)))
+    }
+}
 
 /// An insertion-ordered map. Keys are simple values (D35).
 #[derive(Default, Clone)]

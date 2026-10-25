@@ -219,10 +219,42 @@ pub(crate) fn str_arg(fname: &str, v: V, span: u32) -> R<&'static str> {
     v.as_str().ok_or_else(|| expects(fname, "str", v, span))
 }
 
+fn len_of(x: V, span: u32) -> R<Val> {
+    let owned = bind(x)?;
+    let v = owned.v();
+    let n = match v.get() {
+        Some(Obj::Str(s)) => str_len(s),
+        Some(Obj::List(items)) => items.borrow().len(),
+        Some(Obj::Map(m)) => m.borrow().entries.len(),
+        Some(Obj::Set(s)) => s.borrow().items.len(),
+        Some(Obj::Range(x, y)) => (y - x + 1).max(0) as usize,
+        _ => return Err(expects("len", "str, list, map, set", v, span)),
+    };
+    Ok(Val::int(n as i64))
+}
+
 /// Call builtin `id` with arguments checked against its signature.
 pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     if id.0 >= crate::library::BASE {
         return crate::library::call(id, args, names, span);
+    }
+    // the common calls skip the general binding of arguments (D134)
+    if names.iter().all(|n| n.is_none()) {
+        if id == B_LEN && args.len() == 1 {
+            return len_of(args[0], span);
+        }
+        if id == B_PRINT {
+            let mut text = String::new();
+            for (i, v) in args.iter().enumerate() {
+                if i > 0 {
+                    text.push(' ');
+                }
+                text.push_str(&crate::fmt::show_checked(bind(*v)?.v(), span)?);
+            }
+            text.push('\n');
+            write_out(&text);
+            return Ok(Val::none());
+        }
     }
     let sig = &SIGS[id.0 as usize];
     let a = check_args(sig, args, names, span)?;
@@ -257,19 +289,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
             });
             Ok(Val::str(line))
         }
-        B_LEN => {
-            let owned = bind(a.get(0).unwrap())?;
-            let v = owned.v();
-            let n = match v.get() {
-                Some(Obj::Str(s)) => str_len(s),
-                Some(Obj::List(items)) => items.borrow().len(),
-                Some(Obj::Map(m)) => m.borrow().entries.len(),
-                Some(Obj::Set(s)) => s.borrow().items.len(),
-                Some(Obj::Range(x, y)) => (y - x + 1).max(0) as usize,
-                _ => return Err(expects("len", "str, list, map, set", v, span)),
-            };
-            Ok(Val::int(n as i64))
-        }
+        B_LEN => len_of(a.get(0).unwrap(), span),
         B_RANGE => {
             let start = a.get(0).unwrap();
             let end = a.get(1).filter(|v| !v.is_none());
