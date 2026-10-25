@@ -1,4 +1,4 @@
-// Syntax highlighting for Nexo snippets, copy buttons and example tabs.
+// Syntax highlighting for Nexo snippets, copy buttons, tabs, theme and menu.
 (function () {
   "use strict";
 
@@ -90,23 +90,56 @@
     });
   });
 
-  var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
-  function select(tab) {
-    tabs.forEach(function (t) {
-      var on = t === tab;
-      t.setAttribute("aria-selected", on ? "true" : "false");
-      t.tabIndex = on ? 0 : -1;
-      document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
-    });
-  }
-  tabs.forEach(function (tab, i) {
-    tab.addEventListener("click", function () { select(tab); });
-    tab.addEventListener("keydown", function (e) {
-      var d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
-      if (!d) return;
-      var next = tabs[(i + d + tabs.length) % tabs.length];
-      select(next);
-      next.focus();
+  // Each tablist switches its own panels; arrows move between its tabs.
+  document.querySelectorAll('[role="tablist"]').forEach(function (list) {
+    var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
+    var vertical = list.getAttribute("aria-orientation") === "vertical";
+    function select(tab) {
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.setAttribute("aria-selected", on ? "true" : "false");
+        t.tabIndex = on ? 0 : -1;
+        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+      });
+      tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+    tabs.forEach(function (tab, i) {
+      tab.addEventListener("click", function () { select(tab); });
+      tab.addEventListener("keydown", function (e) {
+        var k = e.key, d = 0;
+        if (k === "ArrowRight" || (vertical && k === "ArrowDown")) d = 1;
+        else if (k === "ArrowLeft" || (vertical && k === "ArrowUp")) d = -1;
+        if (!d) return;
+        e.preventDefault();
+        var next = tabs[(i + d + tabs.length) % tabs.length];
+        select(next);
+        next.focus();
+      });
     });
   });
+
+  // Theme: follows the system until the button picks one, then remembers it.
+  var root = document.documentElement;
+  var theme = document.getElementById("theme");
+  if (theme) {
+    theme.addEventListener("click", function () {
+      var dark = root.dataset.theme
+        ? root.dataset.theme === "dark"
+        : window.matchMedia("(prefers-color-scheme: dark)").matches;
+      root.dataset.theme = dark ? "light" : "dark";
+      try { localStorage.setItem("nexo-theme", root.dataset.theme); } catch (e) {}
+    });
+  }
+
+  // Menu on narrow screens.
+  var menu = document.getElementById("menu"), nav = document.getElementById("nav");
+  if (menu && nav) {
+    function setOpen(open) {
+      nav.classList.toggle("open", open);
+      menu.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    menu.addEventListener("click", function () { setOpen(!nav.classList.contains("open")); });
+    nav.addEventListener("click", function (e) { if (e.target.closest("a")) setOpen(false); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
+  }
 })();
