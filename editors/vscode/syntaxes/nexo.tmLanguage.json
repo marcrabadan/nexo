@@ -170,12 +170,17 @@
           "match": "\\b(within|fails)\\b"
         },
         {
-          "match": "^\\s*(?:(ai)(?:\\s+(models|profile))?|(agent|server))\\b(?=[^\\n]*:\\s*$)",
+          "match": "^\\s*(?:(ai)(?:\\s+(models|profile))?|(agent|server|infra|stage|pipeline|flags))\\b(?=[^\\n]*:\\s*$)",
           "captures": {
             "1": { "name": "keyword.other.module.nexo" },
             "2": { "name": "keyword.other.module.nexo" },
             "3": { "name": "keyword.other.module.nexo" }
           }
+        },
+        {
+          "comment": "the entries of infra and pipeline blocks (D114), contextual",
+          "match": "^\\s*(step|after|policy|output|native|trigger)\\b(?=\\s|:)",
+          "captures": { "1": { "name": "keyword.other.block.nexo" } }
         },
         {
           "match": "^\\s*(get|post|put|patch|delete)(?=\\s+\")",
@@ -219,7 +224,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.nexo",
-          "match": "\\b(print|input|len|range|set|round|split|convert|fail|validate|old|read|write|read_lines|save|decimal|float|int|str|channel|move_file|date|time|regex|render|secret|encrypt|decrypt|encrypt_file|decrypt_file|sign|verify|log|jwt|ask|connect)(?=\\()"
+          "match": "\\b(print|input|len|range|set|round|split|convert|fail|validate|old|read|write|read_lines|save|decimal|float|int|str|channel|move_file|date|time|regex|render|secret|encrypt|decrypt|encrypt_file|decrypt_file|sign|verify|log|jwt|ask|connect|flag|send|run|build_image|approve|comment)(?=\\()"
         },
         {
           "name": "entity.name.function.call.nexo",
