@@ -361,7 +361,7 @@ fn to_python(v: V, span: u32) -> R<P> {
             Some(Obj::Record(r)) => {
                 let values = r.fields.borrow().clone();
                 let d = (a.dict_new)();
-                for (f, val) in r.ty.fields.iter().zip(&values) {
+                for (f, val) in r.ty.fields.iter().zip(values.iter()) {
                     let vp = match to_python(val.v(), span) {
                         Ok(x) => x,
                         Err(e) => {

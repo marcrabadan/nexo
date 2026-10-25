@@ -75,7 +75,7 @@ pub fn copy_records(v: V) -> Val {
                 .iter()
                 .map(|f| if f.tag == T_WEAK { Val::none() } else { copy_records(f.v()) })
                 .collect();
-            Val::new(Obj::Record(Record { ty: r.ty, fields: Mut::new(fields), birth: std::cell::Cell::new(stamp()) }))
+            Val::new(Obj::Record(Record { ty: r.ty, fields: Mut::new(fields.into()), birth: std::cell::Cell::new(stamp()) }))
         }
         Some(Obj::List(items)) => {
             if !items.borrow().iter().any(|x| has_records(x.v())) {

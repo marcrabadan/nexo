@@ -640,9 +640,84 @@ pub enum Key {
 
 pub struct Record {
     pub ty: &'static RecordType,
-    pub fields: Mut<Vec<Val>>,
+    pub fields: Mut<Fields>,
     /// the task that created it may change it (see `cow::check_write`)
     pub birth: std::cell::Cell<u64>,
+}
+
+/// Fields kept inside a record (D126).
+const INLINE_FIELDS: usize = 4;
+
+/// The values of a record's fields. Up to four live inside the object, so
+/// building a small record is one allocation; the number of fields of a
+/// record never changes.
+pub enum Fields {
+    Inline(u8, [V; INLINE_FIELDS]),
+    Heap(Vec<Val>),
+}
+
+impl Fields {
+    pub fn with(n: usize, mut f: impl FnMut(usize) -> Val) -> Fields {
+        if n <= INLINE_FIELDS {
+            let mut vals = [NONE; INLINE_FIELDS];
+            for (i, slot) in vals.iter_mut().enumerate().take(n) {
+                *slot = f(i).into_raw();
+            }
+            Fields::Inline(n as u8, vals)
+        } else {
+            Fields::Heap((0..n).map(f).collect())
+        }
+    }
+}
+
+impl From<Vec<Val>> for Fields {
+    fn from(v: Vec<Val>) -> Fields {
+        if v.len() <= INLINE_FIELDS {
+            let n = v.len();
+            let mut it = v.into_iter();
+            Fields::with(n, |_| it.next().unwrap())
+        } else {
+            Fields::Heap(v)
+        }
+    }
+}
+
+impl FromIterator<Val> for Fields {
+    fn from_iter<I: IntoIterator<Item = Val>>(iter: I) -> Fields {
+        Fields::from(iter.into_iter().collect::<Vec<Val>>())
+    }
+}
+
+impl std::ops::Deref for Fields {
+    type Target = [Val];
+    #[inline]
+    fn deref(&self) -> &[Val] {
+        match self {
+            // Val is a transparent V that owns its reference
+            Fields::Inline(n, vals) => unsafe { std::slice::from_raw_parts(vals.as_ptr() as *const Val, *n as usize) },
+            Fields::Heap(v) => v,
+        }
+    }
+}
+
+impl std::ops::DerefMut for Fields {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [Val] {
+        match self {
+            Fields::Inline(n, vals) => unsafe { std::slice::from_raw_parts_mut(vals.as_mut_ptr() as *mut Val, *n as usize) },
+            Fields::Heap(v) => v,
+        }
+    }
+}
+
+impl Drop for Fields {
+    fn drop(&mut self) {
+        if let Fields::Inline(n, vals) = self {
+            for v in &vals[..*n as usize] {
+                release(*v);
+            }
+        }
+    }
 }
 
 pub struct VariantValue {

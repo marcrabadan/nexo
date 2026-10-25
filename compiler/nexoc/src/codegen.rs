@@ -1119,7 +1119,7 @@ impl<'a> Gen<'a> {
     /// Read lazy sequences and drop the literal tag of floats (a value
     /// that is stored somewhere).
     fn bind(&mut self, v: Val, e: &Expr) -> Val {
-        if !may_be_lazy(e) {
+        if !may_be_lazy(e) || self.ints.as_ref().is_some_and(|x| x.record_of(e).is_some()) {
             return self.plain(v);
         }
         let tb = self.tb(&v);
@@ -1772,7 +1772,7 @@ impl<'a> Gen<'a> {
         self.program_files = program.files.clone();
         self.find_known_fns(program);
         self.prover = Some(crate::prove::Types::new(program));
-        self.ints = Some(crate::narrow::Ints::new(program, self.res, &self.known_fns));
+        self.ints = Some(crate::narrow::Ints::new(program, self.res, &self.known_fns, &self.known_types));
         crate::checker::walk_stmts(&program.body, true, &mut |s| {
             if let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind {
                 if matches!(&func.kind, ExprKind::Name(n) if n == "__fake") {
@@ -3184,6 +3184,13 @@ impl<'a> Gen<'a> {
             }
             ExprKind::Attr { obj, name, name_span } => {
                 let o = self.expr(obj, false)?;
+                // a field of a record whose type is known: read by its index
+                if let Some((i, _)) = self.ints.as_ref().and_then(|x| x.field_of(obj, name)) {
+                    let b = self.bits_of(&o);
+                    let r = self.call_v("nx_record_get", &format!("i64 {b}, i64 {i}"));
+                    self.drop_val(&o);
+                    return Ok(self.owned(r));
+                }
                 let to = self.tb(&o);
                 let n = self.strarg(name);
                 let sp = self.span_id(*name_span);
@@ -4053,6 +4060,9 @@ impl<'a> Gen<'a> {
         if let Some(v) = self.direct_construct(func, args, &first, span)? {
             return Ok(v);
         }
+        if let Some(v) = self.direct_method(func, args, &first, span)? {
+            return Ok(v);
+        }
         let target = match &func.kind {
             ExprKind::Name(n) => match self.res.names.get(&func.id) {
                 Some(NameRes::Builtin(b)) if DIRECT_BUILTINS.contains(&b.as_str()) || matches!(b.as_str(), "decimal" | "float" | "int" | "str") => {
@@ -4210,6 +4220,53 @@ impl<'a> Gen<'a> {
         let r = self.call_v("nx_record_new", &format!("{tb}, ptr {arr}, i64 {}, i32 {sp}", checked.len()));
         self.check();
         Ok(Some(self.owned(r)))
+    }
+
+    /// `x.m(args)` where x is certainly a record of a type defined once
+    /// that has the method m: its LLVM function is called directly, with
+    /// the receiver as `self` (D126).
+    fn direct_method(&mut self, func: &'a Expr, args: &'a [Arg], first: &Option<Val>, span: Span) -> GResult<Option<Val>> {
+        let ExprKind::Attr { obj, name, .. } = &func.kind else { return Ok(None) };
+        if first.is_some() || args.iter().any(|a| a.name.is_some() || may_be_lazy(&a.value)) {
+            return Ok(None);
+        }
+        let Some(ints) = self.ints.as_ref() else { return Ok(None) };
+        let Some(tb) = ints.record_of(obj) else { return Ok(None) };
+        let t = ints.type_def(tb);
+        if t.fields.iter().any(|f| &f.name == name) {
+            return Ok(None);
+        }
+        let mut ms = t.methods.iter().filter(|m| &m.name == name);
+        let (Some(m), None) = (ms.next(), ms.next()) else { return Ok(None) };
+        if !m.annotations.is_empty()
+            || m.params.first().is_none_or(|p| p.name != "self")
+            || m.params.len() != args.len() + 1
+        {
+            return Ok(None);
+        }
+        let frame = self.res.frame_of[&Node::Fn(m.id)];
+        if !self.res.frames[frame].free.is_empty() {
+            return Ok(None);
+        }
+        let o = self.expr(obj, false)?;
+        let mut vals = vec![o.clone()];
+        let mut evaluated = Vec::new();
+        for a in args {
+            let v = self.expr(&a.value, true)?;
+            vals.push(v.clone());
+            evaluated.push(v);
+        }
+        let (fname, _) = self.frame_fn(frame, FrameSrc::Fn(m))?;
+        let sp = self.span_id(span);
+        let arr = self.values_array(&vals);
+        let r = self.reg();
+        self.emit(&format!("{r} = call %V {fname}(ptr %tls, ptr null, ptr {arr}, i32 {sp})"));
+        self.check();
+        for v in evaluated.iter().rev() {
+            self.drop_val(v);
+        }
+        self.drop_val(&o);
+        Ok(Some(self.owned(Val::Reg(r))))
     }
 
     fn direct_call(&mut self, func: &'a Expr, args: &'a [Arg], first: &Option<Val>, span: Span) -> GResult<Option<Val>> {
@@ -4760,6 +4817,7 @@ declare %V @nx_call(i64, i64, ptr, ptr, i64, i32)
 declare %V @nx_call_method(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32)
 declare %V @nx_call_method_ic(i64, i64, ptr, i64, ptr, ptr, i64, i32, i32, ptr)
 declare %V @nx_attr_ic(i64, i64, ptr, i64, i32, ptr)
+declare %V @nx_record_get(i64, i64)
 declare %V @nx_record_new(i64, i64, ptr, i64, i32)
 declare %V @nx_builtin_call(i32, ptr, ptr, i64, i32)
 declare %V @nx_closure(ptr, ptr, ptr, i64)

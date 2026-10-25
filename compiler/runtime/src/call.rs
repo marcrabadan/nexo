@@ -190,7 +190,7 @@ pub fn construct(rt: &'static crate::types::RecordType, args: &[V], names: &[Opt
         }
         return Ok(Val::new(Obj::Record(Record {
             ty: rt,
-            fields: Mut::new(values),
+            fields: Mut::new(values.into()),
             birth: std::cell::Cell::new(crate::state::stamp()),
         })));
     }
@@ -211,7 +211,7 @@ pub fn construct(rt: &'static crate::types::RecordType, args: &[V], names: &[Opt
         let v = conform(v.v(), f.ty.expect("record fields are typed"), &f.name, span)?;
         values.push(field_value(f, bind(v.v())?));
     }
-    Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(values), birth: std::cell::Cell::new(crate::state::stamp()) })))
+    Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(values.into()), birth: std::cell::Cell::new(crate::state::stamp()) })))
 }
 
 pub fn construct_variant(

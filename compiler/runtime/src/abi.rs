@@ -565,6 +565,19 @@ pub unsafe extern "C" fn nx_attr_ic(
     ret(call::get_attr(obj, text(name, len), span))
 }
 
+/// Field `i` (not weak) of a value that is certainly a record (D126).
+#[no_mangle]
+pub unsafe extern "C" fn nx_record_get(b: u64, i: u64) -> V {
+    match v(T_OBJ, b).get() {
+        Some(Obj::Record(r)) => {
+            let x = r.fields.borrow()[i as usize].v();
+            retain(x);
+            x
+        }
+        _ => unreachable!("nx_record_get on a value that is not a record"),
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn nx_set_attr(
     ot: u64,
@@ -748,12 +761,15 @@ pub unsafe extern "C" fn nx_record_new(t: u64, b: u64, args: *const V, n: u64, s
     let args = values(args, n);
     match v(t, b).get() {
         Some(Obj::Type(TypeRef::Record(rt))) if rt.fields.len() == args.len() => {
-            let mut fields = Vec::with_capacity(args.len());
-            for (i, x) in args.iter().enumerate() {
-                let x = Val::adopt(*x).plain();
+            let fields = Fields::with(args.len(), |i| {
+                let x = Val::adopt(args[i]).plain();
                 let f = &rt.fields[i];
-                fields.push(if f.weak { call::field_value(f, x) } else { x });
-            }
+                if f.weak {
+                    call::field_value(f, x)
+                } else {
+                    x
+                }
+            });
             Val::new(Obj::Record(Record {
                 ty: rt,
                 fields: Mut::new(fields),

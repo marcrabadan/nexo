@@ -155,7 +155,7 @@ fn restamp(v: V) {
     match v.get() {
         Some(Obj::Record(r)) => {
             r.birth.set(state::stamp());
-            for f in r.fields.borrow() {
+            for f in r.fields.borrow().iter() {
                 if f.tag != T_WEAK {
                     restamp(f.v());
                 }
@@ -427,7 +427,7 @@ fn mark_shared(v: V) {
     match v.get() {
         Some(Obj::Record(r)) => {
             r.birth.set(u64::MAX);
-            for f in r.fields.borrow() {
+            for f in r.fields.borrow().iter() {
                 if f.tag != T_WEAK {
                     mark_shared(f.v());
                 }

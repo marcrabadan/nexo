@@ -755,7 +755,7 @@ fn select(db: &Database, me: V, info: &TableInfo, wheres: &[String], params: &[S
 fn record(info: &TableInfo, vals: Vec<Val>) -> Val {
     Val::new(Obj::Record(Record {
         ty: info.rtype,
-        fields: Mut::new(vals),
+        fields: Mut::new(vals.into()),
         birth: std::cell::Cell::new(crate::state::stamp()),
     }))
 }
@@ -1071,7 +1071,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
             db.sync(me, info, span)?;
             db.guard(me, info, span)?;
             let key_i = info.key_index();
-            let fields: Vec<Val> = r.fields.borrow().clone();
+            let fields: Vec<Val> = r.fields.borrow().to_vec();
             let mut cols = Vec::new();
             let mut vals = Vec::new();
             let mut shown = Vec::new();
@@ -1111,7 +1111,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
             let Some(Obj::Record(r)) = rec.get() else { unreachable!() };
             db.sync(me, info, span)?;
             let key_i = info.key_index();
-            let fields: Vec<Val> = r.fields.borrow().clone();
+            let fields: Vec<Val> = r.fields.borrow().to_vec();
             let mut sets = Vec::new();
             let mut vals = Vec::new();
             let mut shown = Vec::new();
