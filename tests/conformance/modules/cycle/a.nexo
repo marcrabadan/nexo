@@ -1,0 +1,4 @@
+use cycle.b
+
+pub fn one() -> int:
+    return 1

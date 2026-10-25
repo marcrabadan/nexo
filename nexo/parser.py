@@ -737,7 +737,7 @@ class Parser:
         return A.MatchArm(start.span, patterns, guard, body)
 
     def pattern(self) -> A.Pattern:
-        """pattern = "_" | literal | IDENT [ "(" pattern { "," pattern } ")" ]"""
+        """pattern = "_" | literal | dotted_name [ "(" pattern { "," pattern } ")" ]"""
         tok = self.peek()
         if tok.kind == "NAME" and tok.value == "_":
             self.advance()
@@ -746,6 +746,11 @@ class Parser:
             return A.PLit(tok.span, self.literal())
         if tok.kind == "NAME":
             self.advance()
+            name = tok.value
+            # a variant of another module: payments.Paid(x) (D124)
+            while self.at_op(".") and self.peek(1).kind == "NAME":
+                self.advance()
+                name += "." + self.advance().value
             if self.at_op("("):
                 self.advance()
                 args = [self.pattern()]
@@ -753,8 +758,8 @@ class Parser:
                     self.advance()
                     args.append(self.pattern())
                 self.expect_op(")")
-                return A.PCtor(self.span_from(tok), tok.value, args)
-            return A.PName(tok.span, tok.value)
+                return A.PCtor(self.span_from(tok), name, args)
+            return A.PName(self.span_from(tok), name)
         raise self.error(word("pattern"))
 
     def try_stmt(self) -> A.TryStmt:

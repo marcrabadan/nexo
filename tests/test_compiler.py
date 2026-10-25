@@ -30,7 +30,8 @@ def run(cmd, cwd, stdin=b""):
     return subprocess.run(cmd, cwd=cwd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=120, env=env)
 
 
-@pytest.mark.parametrize("source", sorted(CONFORMANCE.rglob("*.nexo")), ids=lambda p: str(p.relative_to(CONFORMANCE)))
+@pytest.mark.parametrize("source", sorted(p for p in CONFORMANCE.rglob("*.nexo") if p.with_suffix(".expected").exists()),
+                         ids=lambda p: str(p.relative_to(CONFORMANCE)))
 def test_conformance_compiled(source, tmp_path, nexo):
     work = tmp_path / "work"
     shutil.copytree(source.parent, work)

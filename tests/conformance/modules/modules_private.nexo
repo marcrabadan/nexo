@@ -1,0 +1,4 @@
+# only what is pub is exported
+use shop.payments
+
+print(payments.hidden())

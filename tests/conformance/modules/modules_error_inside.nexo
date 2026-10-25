@@ -1,0 +1,5 @@
+# an error inside a module shows its file and line
+use shop.math
+
+print(math.ratio(6, 3))
+print(math.ratio(1, 0))

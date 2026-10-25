@@ -1,0 +1,27 @@
+## Payments of the shop: a module (section 13).
+use shop.tax
+
+print("shop.payments loaded")
+
+fee = 2
+
+pub type Status:
+    Paid(amount: int)
+    Pending
+
+pub type Order:
+    total: int
+
+    fn with_fee(self) -> int:
+        return self.total + fee
+
+pub fn charge(order: Order) -> Status:
+    if order.total == 0:
+        return Pending
+    return Paid(order.with_fee() + tax.due(order.total))
+
+fn hidden() -> int:
+    return 1
+
+test "a module's tests run only when it is the file tested":
+    assert hidden() == 2

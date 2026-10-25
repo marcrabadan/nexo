@@ -1,0 +1,4 @@
+# two modules that import each other
+use cycle.a
+
+print(a.one())

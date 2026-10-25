@@ -214,6 +214,7 @@ pub struct VariantDef {
 #[derive(Clone, Debug)]
 pub struct TypeDef {
     pub span: Span,
+    pub is_pub: bool,
     pub name: String,
     pub name_span: Span,
     /// type Status = "a" | "b"
@@ -293,6 +294,10 @@ pub enum StmtKind {
     Pass,
     /// `use nexo.db`, `use python numpy as np`, `use c "libm"`
     Use { what: String, lang: Option<String>, name: String, alias: Option<String> },
+    /// `use shop.payments` of a file of the program (D124), after loading:
+    /// the module's code at its first use (None at the others); `alias` is
+    /// the name it is used with
+    Module { name: String, alias: String, body: Option<Vec<Stmt>> },
     /// `spawn f(x)` (nexo.sync)
     Spawn { call: Expr },
     /// `select:` with `msg from channel:` and `after limit:` arms (nexo.sync)
@@ -322,4 +327,6 @@ pub enum StmtKind {
 #[derive(Clone, Debug)]
 pub struct Program {
     pub body: Vec<Stmt>,
+    /// ids of the module files merged into it (D124)
+    pub files: Vec<u32>,
 }

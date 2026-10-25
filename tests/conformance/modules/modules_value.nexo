@@ -1,0 +1,4 @@
+# a module is not a value
+use shop.tax
+
+t = tax

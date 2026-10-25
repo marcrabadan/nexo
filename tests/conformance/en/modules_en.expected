@@ -1,0 +1,4 @@
+Error in modules_en.nexo, line 5:
+  print(prices.margin())
+        ^^^^^^^^^^^^^
+"margin" is not pub in module shop.prices. Write pub before its fn or type in shop/prices.nexo; a module only exports its pub functions and types.

@@ -1,0 +1,4 @@
+Error en modules_name_taken.nexo, línea 4:
+  for tax in [1, 2]:
+  ^^^
+"tax" ya es el nombre del módulo shop.tax en este archivo. Usa otro nombre, o importa el módulo con otro: use shop.tax as otro_nombre.

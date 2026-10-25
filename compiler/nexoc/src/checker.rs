@@ -902,6 +902,7 @@ pub fn walk_stmts<'a>(body: &'a [Stmt], into_fns: bool, f: &mut dyn FnMut(&'a St
                 blocks.extend(handlers.iter().map(|h| h.body.as_slice()));
             }
             StmtKind::Select { arms } => blocks.extend(arms.iter().map(|a| a.body.as_slice())),
+            StmtKind::Module { body: Some(body), .. } => blocks.push(body),
             _ => {}
         }
         for b in blocks {

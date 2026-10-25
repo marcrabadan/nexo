@@ -35,6 +35,7 @@ nexo/
   ast.py          typed AST (dataclasses)
   interpreter.py  tree-walking evaluator (scopes, calls, pipelines, contracts)
   checker.py      static pre-pass ("compile errors": ignored T!, misplaced ?)
+  modules.py      `use shop.payments`: the modules of the program's files (D124)
   numbers.py      section 17 arithmetic: int overflow, float/decimal, money, units
   types.py        runtime values: decimal/money/units, records, enums, errors
   errors.py       error type + section 14 renderer + i18n (es default, en)
@@ -53,7 +54,8 @@ nexo/
                   `nexo plan|apply|destroy|drift|cost|import`, `nexo ci run|export`,
                   `nexo flags set`, `nexo privacy report`
 tests/
-  conformance/    .nexo + .expected pairs (stdout, or the full error text)
+  conformance/    .nexo + .expected pairs (stdout, or the full error text);
+                  a .nexo without .expected is a module the cases use
   infra/          NAME.nexo + NAME.expected (nexo plan; tests/test_infra.py)
   ci/             pipelines and the files nexo ci export writes
   cloud_emulator.py  local stand-in for the AWS, Azure, GCP and k8s APIs
@@ -62,7 +64,7 @@ tests/
   unit/           pytest unit tests per layer
 compiler/
   diag/           es/en message catalog and the section 14 renderer
-  nexoc/          the `nexo` driver: lexer, parser, checker, resolve
+  nexoc/          the `nexo` driver: lexer, parser, checker, modules (D124), resolve
                   (scopes, closures), typecheck (gradual), codegen (LLVM IR),
                   fmt, lint, lsp (+ json), the REPL, cheader (C headers
                   read at compile time), ai_cmd, phase5 (the commands of
@@ -121,7 +123,8 @@ or `test`.
 
 ## Scope (phases 0 to 5)
 
-Included: lexer/parser per section 24; constants and `var`; `type`
+Included: lexer/parser per section 24; modules of the program's own
+files (`use shop.payments`, `pub`, D124); constants and `var`; `type`
 (records, unions, enums with data, methods); `trait`; `fn` with named and
 default args; lambdas; if/elif/else, for, while, repeat, match with guards;
 comprehensions; errors (`T!`, `?`, `try`/`else e`, `fail()`, ignoring a `T!`

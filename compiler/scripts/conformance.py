@@ -30,7 +30,8 @@ count = 0
 conf = ROOT / "tests" / "conformance"
 for src in sorted(conf.rglob("*.nexo")):
     cid = str(src.relative_to(conf).with_suffix(""))
-    if flt not in cid:
+    # a .nexo without .expected is a module the cases use (D124)
+    if flt not in cid or not src.with_suffix(".expected").exists():
         continue
     count += 1
     with tempfile.TemporaryDirectory() as tmp:

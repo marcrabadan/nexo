@@ -1,0 +1,5 @@
+# the name of a module cannot be used for anything else in the file
+use shop.tax
+
+for tax in [1, 2]:
+    print(tax)

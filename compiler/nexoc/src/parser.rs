@@ -224,7 +224,7 @@ impl<'s> Parser<'s> {
             }
             self.statement_into(&mut body)?;
         }
-        let mut program = Program { body };
+        let mut program = Program { body, files: Vec::new() };
         model_aliases(&mut program, &mut self.next_id);
         Ok(program)
     }
@@ -735,13 +735,15 @@ impl<'s> Parser<'s> {
     ///            ( "=" type NEWLINE | [ "is" dotted_name ] type_body )
     fn type_def(&mut self, annotations: Vec<Annotation>) -> PResult<Stmt> {
         let start = self.peek().span;
-        if self.at_kw("pub") {
+        let is_pub = self.at_kw("pub");
+        if is_pub {
             self.advance();
         }
         self.expect_kw("type")?;
         let (name, name_span) = self.expect_name()?;
         let mut node = TypeDef {
             span: start,
+            is_pub,
             name,
             name_span,
             alias: None,
@@ -1040,8 +1042,15 @@ impl<'s> Parser<'s> {
             return Ok(Pattern::Lit(tok.span, lit));
         }
         if let Tok::Name(n) = &tok.tok {
-            let n = n.clone();
+            let mut n = n.clone();
             self.advance();
+            // a variant of another module: payments.Paid(x) (D124)
+            while self.at_op(".") && matches!(self.peek_at(1).tok, Tok::Name(_)) {
+                self.advance();
+                if let Tok::Name(m) = self.advance().tok {
+                    n = format!("{n}.{m}");
+                }
+            }
             if self.at_op("(") {
                 self.advance();
                 let mut args = vec![self.pattern()?];
@@ -1052,7 +1061,7 @@ impl<'s> Parser<'s> {
                 self.expect_op(")")?;
                 return Ok(Pattern::Ctor(self.span_from(tok.span), n, args));
             }
-            return Ok(Pattern::Name(tok.span, n));
+            return Ok(Pattern::Name(self.span_from(tok.span), n));
         }
         Err(self.error(&word("pattern")))
     }
@@ -1534,7 +1543,8 @@ impl<'s> Parser<'s> {
     }
 
     fn interpolation(&mut self, source: &str, line: u32, col: u32) -> PResult<Expr> {
-        let tokens = tokenize_expr(source, line, col)?;
+        let file = self.peek().span.file;
+        let tokens = in_file(tokenize_expr(source, line, col), file)?;
         let mut sub = Parser::new(tokens, self.source, true, self.next_id);
         let node = sub.expr()?;
         if sub.peek().tok != Tok::Eof {
@@ -2810,8 +2820,34 @@ fn valid_target(node: &Expr) -> bool {
 }
 
 pub fn parse(source: &str) -> PResult<Program> {
-    let tokens = tokenize(source)?;
-    Parser::new(tokens, source, false, 0).program()
+    Ok(parse_file(source, 0, 0)?.0)
+}
+
+/// Parse a file whose spans carry `file` (a module, D124), numbering its
+/// nodes after `next_id`; also returns the last id given.
+pub fn parse_file(source: &str, file: u32, next_id: u32) -> PResult<(Program, u32)> {
+    let tokens = in_file(tokenize(source), file)?;
+    let mut p = Parser::new(tokens, source, false, next_id);
+    let program = p.program()?;
+    Ok((program, p.next_id))
+}
+
+/// Tokens (or the error) with their spans in `file`.
+fn in_file(tokens: PResult<Vec<Token>>, file: u32) -> PResult<Vec<Token>> {
+    match tokens {
+        Ok(mut ts) => {
+            for t in &mut ts {
+                t.span.file = file;
+            }
+            Ok(ts)
+        }
+        Err(mut d) => {
+            if let Some(s) = d.span.as_mut() {
+                s.file = file;
+            }
+            Err(d)
+        }
+    }
 }
 
 #[cfg(test)]

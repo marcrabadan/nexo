@@ -1,0 +1,4 @@
+Error en modules_top_level.nexo, línea 3:
+  use shop.tax
+  ^^^^^^^^^^^^
+use shop.tax solo puede ir en el nivel superior del archivo. Mueve la línea al principio del archivo, fuera de funciones y bloques.

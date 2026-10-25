@@ -18,6 +18,7 @@ from typing import Any
 from . import ast as A
 from . import errors
 from .checker import Checker
+from .modules import Linker, ModuleValue, bound_name, is_file_module
 from .errors import NexoError, Span, suggest
 from .parser import parse, source_text
 from .types import (
@@ -86,6 +87,12 @@ class Env:
             if b is not None:
                 return b.value
             env = env.parent
+        if "." in name:
+            # a type or variant of another module: payments.Order (D124)
+            alias, _, member = name.partition(".")
+            module = self.lookup(alias)
+            if isinstance(module, ModuleValue):
+                return module.env.lookup(member)
         return MISSING
 
     def find(self, name: str) -> Binding | None:
@@ -175,6 +182,12 @@ class Interpreter:
         self.sync = False
         self.shared_names: set[str] = set()
         self.shared_uses: dict[int, bool] = {}
+        # the modules of the program's files (D124): loaded, and run
+        self.linker: Linker | None = None
+        self.module_values: dict[str, ModuleValue] = {}
+        # the commands that run part of a program run that part of its
+        # modules too (nexo db, plan, ci: cli.py)
+        self.module_filter = None
         _TASK.__init__()
         from .stdlib import sync
         sync.reset()
@@ -194,6 +207,9 @@ class Interpreter:
         checker = Checker(self.checker_fns, self.checker_methods)
         checker.check(program)
         self.checker_fns, self.checker_methods = checker.fns, checker.methods
+        if self.linker is None:
+            self.linker = Linker(file)
+        self.linker.link(program)
         return program
 
     def run(self, source: str, file: str) -> None:
@@ -555,6 +571,18 @@ class Interpreter:
             raise NexoError("assert_failed", e.span, expr=text, detail=detail)
 
     def exec_Use(self, s: A.Use, env: Env) -> None:
+        if is_file_module(s):
+            # the module's code runs once, at its first use; its tests only
+            # run when it is the file tested
+            value = self.module_values.get(s.name)
+            if value is None:
+                info = self.linker.modules[s.name]
+                module_env = Env(self.builtins)
+                value = self.module_values[s.name] = ModuleValue(s.name, module_env)
+                body = self.module_filter(info.program) if self.module_filter else info.program.body
+                self.exec_block([x for x in body if not isinstance(x, A.TestDef)], module_env)
+            env.define(bound_name(s), value)
+            return
         if s.lang is None and s.name == "nexo.sync":
             from .stdlib.sync import ChannelMaker
             self.sync = True
@@ -1297,6 +1325,8 @@ class Interpreter:
 
     # ------------------------------------------------------- attributes
     def get_attr(self, obj: Any, name: str, span: Span) -> Any:
+        if isinstance(obj, ModuleValue):
+            return obj.env.lookup(name)
         if isinstance(obj, Record):
             if name in obj.fields:
                 return field_value(obj.fields[name])
@@ -1519,7 +1549,7 @@ class Interpreter:
         if ok:
             return converted
         shown = self.type_text(t).rstrip("?")
-        alias = env.lookup(t.name) if "." not in t.name else MISSING
+        alias = env.lookup(t.name)
         if isinstance(alias, AliasType) and isinstance(alias.target, A.LiteralUnion):
             options = [self.eval(l, alias.env) for l in alias.target.literals]
             raise NexoError("type_mismatch", span, fix="type_mismatch_union", name=name, type=shown,
@@ -1576,7 +1606,7 @@ class Interpreter:
                     out.append(c)
                 return True, out
             return True, value
-        kind = env.lookup(name) if "." not in name else MISSING
+        kind = env.lookup(name)
         if kind is MISSING:
             raise NexoError("unknown_type", t.span, name=name)
         if isinstance(kind, AliasType):

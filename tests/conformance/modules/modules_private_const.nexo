@@ -1,0 +1,4 @@
+# constants are not exported: a pub function can return them
+use shop.payments
+
+print(payments.fee)

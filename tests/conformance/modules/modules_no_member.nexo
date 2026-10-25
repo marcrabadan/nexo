@@ -1,0 +1,4 @@
+# a name the module does not have, with the closest pub one
+use shop.payments
+
+print(payments.charges(payments.Order(total: 1)))
