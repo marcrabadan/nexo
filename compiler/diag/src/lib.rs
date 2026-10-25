@@ -227,21 +227,122 @@ pub fn source_text(source: &str, span: Span) -> String {
 
 /// Closest candidate by Damerau-Levenshtein distance, or None.
 pub fn suggest<'a, I: IntoIterator<Item = &'a str>>(name: &str, candidates: I) -> Option<String> {
-    let mut best: Option<(&str, usize)> = None;
-    let limit = if name.chars().count() <= 4 { 1 } else { 2 };
-    for cand in candidates {
+    let cands: Vec<&str> = candidates.into_iter().collect();
+    best_match(name, cands.iter().copied()).map(|(_, i)| cands[i].to_string())
+}
+
+fn limit_for(name: &str) -> usize {
+    if name.chars().count() <= 4 {
+        1
+    } else {
+        2
+    }
+}
+
+/// The closest candidate within the limit as (distance, position); the
+/// first one wins between equally close candidates.
+pub fn best_match<'a, I: IntoIterator<Item = &'a str>>(name: &str, candidates: I) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize)> = None;
+    let limit = limit_for(name);
+    for (i, cand) in candidates.into_iter().enumerate() {
         if cand == name || cand.starts_with("__") {
             continue;
         }
         let d = distance(name, cand);
-        if d <= limit && best.is_none_or(|(_, bd)| d < bd) {
-            best = Some((cand, d));
+        if d <= limit && best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, i));
         }
     }
-    best.map(|(c, _)| c.to_string())
+    best
+}
+
+/// The strings left after removing up to `k` characters.
+fn deletions(s: &str, k: usize, out: &mut std::collections::HashSet<String>) {
+    let chars: Vec<char> = s.chars().collect();
+    let mut frontier = vec![chars];
+    out.insert(s.to_string());
+    for _ in 0..k {
+        let mut next = Vec::new();
+        for w in &frontier {
+            for i in 0..w.len() {
+                let mut v = w.clone();
+                v.remove(i);
+                if out.insert(v.iter().collect()) {
+                    next.push(v);
+                }
+            }
+        }
+        frontier = next;
+    }
+}
+
+/// A large set of candidates indexed by the strings left after deleting up
+/// to two characters (D127): two names within distance 2 always share one,
+/// so only those candidates are compared. Gives what `best_match` gives.
+pub struct SuggestIndex {
+    names: Vec<String>,
+    by_deletion: std::collections::HashMap<String, Vec<u32>>,
+}
+
+impl SuggestIndex {
+    pub fn new<'a, I: IntoIterator<Item = &'a str>>(candidates: I) -> SuggestIndex {
+        let mut index = SuggestIndex { names: Vec::new(), by_deletion: std::collections::HashMap::new() };
+        for n in candidates {
+            index.push(n);
+        }
+        index
+    }
+
+    /// Add a candidate after the others.
+    pub fn push(&mut self, name: &str) {
+        let i = self.names.len() as u32;
+        let mut set = std::collections::HashSet::new();
+        deletions(name, 2, &mut set);
+        for d in set {
+            self.by_deletion.entry(d).or_default().push(i);
+        }
+        self.names.push(name.to_string());
+    }
+
+    pub fn len(&self) -> usize {
+        self.names.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.names.is_empty()
+    }
+
+    pub fn best_match(&self, name: &str) -> Option<(usize, usize)> {
+        let limit = limit_for(name);
+        let mut set = std::collections::HashSet::new();
+        deletions(name, limit, &mut set);
+        let mut seen: Vec<u32> = set.iter().filter_map(|d| self.by_deletion.get(d)).flatten().copied().collect();
+        seen.sort_unstable();
+        seen.dedup();
+        let mut best: Option<(usize, usize)> = None;
+        for i in seen {
+            let cand = &self.names[i as usize];
+            if cand == name || cand.starts_with("__") {
+                continue;
+            }
+            let d = distance(name, cand);
+            if d <= limit && best.is_none_or(|(bd, bi)| d < bd || (d == bd && (i as usize) < bi)) {
+                best = Some((d, i as usize));
+            }
+        }
+        best
+    }
+
+    pub fn name(&self, i: usize) -> &str {
+        &self.names[i]
+    }
 }
 
 fn distance(a: &str, b: &str) -> usize {
+    if (a.len() as i64 - b.len() as i64).abs() > 8 {
+        // more than two characters apart (a character is at most 4 bytes)
+        return 99;
+    }
     let a: Vec<char> = a.chars().collect();
     let b: Vec<char> = b.chars().collect();
     if (a.len() as i64 - b.len() as i64).abs() > 2 {

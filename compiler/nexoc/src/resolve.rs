@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use nexo_diag::{suggest, Diagnostic};
+use nexo_diag::Diagnostic;
 
 use crate::ast::*;
 
@@ -77,6 +77,8 @@ pub struct Scope {
     /// a function boundary, D26)
     pub is_fn: bool,
     pub names: Vec<(String, BindingId)>,
+    /// where each name is in `names`
+    pub index: HashMap<String, BindingId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,6 +262,9 @@ struct Resolver {
     /// (its top scope) uses, by the name it uses them with (D124)
     module_scope: HashMap<String, ScopeId>,
     aliases: HashMap<ScopeId, HashMap<String, ScopeId>>,
+    /// suggestions among the names of large scopes and the builtins (D127)
+    suggest_index: HashMap<ScopeId, nexo_diag::SuggestIndex>,
+    builtin_index: Option<nexo_diag::SuggestIndex>,
 }
 
 impl Resolution {
@@ -304,6 +309,8 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
         },
         module_scope: HashMap::new(),
         aliases: HashMap::new(),
+        suggest_index: HashMap::new(),
+        builtin_index: None,
         used_outside: std::collections::HashSet::new(),
         tasks: Vec::new(),
         self_fn: Vec::new(),
@@ -366,7 +373,7 @@ impl Resolver {
     }
 
     fn new_scope(&mut self, parent: Option<ScopeId>, kind: SKind, frame: FrameId, is_fn: bool) -> ScopeId {
-        self.r.scopes.push(Scope { parent, kind, frame, is_fn, names: Vec::new() });
+        self.r.scopes.push(Scope { parent, kind, frame, is_fn, names: Vec::new(), index: HashMap::new() });
         self.r.scopes.len() - 1
     }
 
@@ -439,7 +446,7 @@ impl Resolver {
     }
 
     fn lookup_local(&self, scope: ScopeId, name: &str) -> Option<BindingId> {
-        self.r.scopes[scope].names.iter().find(|(n, _)| n == name).map(|(_, b)| *b)
+        self.r.scopes[scope].index.get(name).copied()
     }
 
     /// Add (or update) the binding of `name` in `scope`.
@@ -472,6 +479,7 @@ impl Resolver {
         });
         let id = self.r.bindings.len() - 1;
         self.r.scopes[scope].names.push((name.to_string(), id));
+        self.r.scopes[scope].index.insert(name.to_string(), id);
         id
     }
 
@@ -570,6 +578,49 @@ impl Resolver {
     }
 
     /// Names visible from `scope`, innermost first, then the builtins.
+    /// The closest visible name ("Did you mean...?"): the names of each
+    /// scope from the innermost, then the builtins; the first wins between
+    /// equally close ones. Large scopes use an index, so resolving a big
+    /// program is not quadratic (D127).
+    fn suggestion(&mut self, scope: ScopeId, name: &str) -> Option<String> {
+        let mut best: Option<(usize, String)> = None;
+        let mut s = Some(scope);
+        while let Some(id) = s {
+            let names = &self.r.scopes[id].names;
+            let found = if names.len() > 32 {
+                let index = self.suggest_index.entry(id).or_insert_with(|| nexo_diag::SuggestIndex::new(std::iter::empty()));
+                for (n, _) in &names[index.len()..] {
+                    index.push(n);
+                }
+                index.best_match(name).map(|(d, i)| (d, index.name(i).to_string()))
+            } else {
+                nexo_diag::best_match(name, names.iter().map(|(n, _)| n.as_str())).map(|(d, i)| (d, names[i].0.clone()))
+            };
+            if let Some((d, n)) = found {
+                if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    best = Some((d, n));
+                }
+            }
+            s = self.r.scopes[id].parent;
+        }
+        let builtins = self.builtin_index.get_or_insert_with(|| nexo_diag::SuggestIndex::new(builtin_names()));
+        let mut found = builtins.best_match(name).map(|(d, i)| (d, builtins.name(i).to_string()));
+        if self.r.sync {
+            if let Some((d, _)) = nexo_diag::best_match(name, ["channel"]) {
+                if found.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                    found = Some((d, "channel".to_string()));
+                }
+            }
+        }
+        if let Some((d, n)) = found {
+            if best.as_ref().is_none_or(|(bd, _)| d < *bd) {
+                best = Some((d, n));
+            }
+        }
+        best.map(|(_, n)| n)
+    }
+
+    #[allow(dead_code)]
     fn visible(&self, mut scope: ScopeId) -> Vec<String> {
         let mut out = Vec::new();
         loop {
@@ -640,18 +691,16 @@ impl Resolver {
         if let Some(r) = row {
             self.note_use(scope, r);
         }
-        let visible = self.visible(scope);
-        let suggestion = suggest(name, visible.iter().map(|s| s.as_str()));
+        let suggestion = self.suggestion(scope, name);
         let builtin = cands.is_empty() && is_builtin(name);
         NameRes::Bindings { cands, row, builtin, suggestion }
     }
 
-    fn name_error(&self, scope: ScopeId, name: &str, span: nexo_diag::Span) -> Diagnostic {
+    fn name_error(&mut self, scope: ScopeId, name: &str, span: nexo_diag::Span) -> Diagnostic {
         if name == "connect" {
             return Diagnostic::new("needs_use", span).arg("what", "\"connect\"").arg("module", "nexo.db");
         }
-        let visible = self.visible(scope);
-        match suggest(name, visible.iter().map(|s| s.as_str())) {
+        match self.suggestion(scope, name) {
             Some(s) => Diagnostic::new("name_not_found", span).fix("suggest").arg("name", name).arg("suggestion", s),
             None => Diagnostic::new("name_not_found", span).arg("name", name),
         }
@@ -711,8 +760,7 @@ impl Resolver {
         if found != Some(own) || self.r.is_static(own) {
             return false;
         }
-        let visible = self.visible(scope);
-        let suggestion = suggest(n, visible.iter().map(|s| s.as_str()));
+        let suggestion = self.suggestion(scope, n);
         self.r.names.insert(func.id, NameRes::Bindings { cands: vec![own], row: None, builtin: false, suggestion });
         self.pending_self.push((func.id, scope, own));
         true
