@@ -1457,7 +1457,8 @@ the usual variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
 `AWS_SESSION_TOKEN`; `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`,
 `AZURE_CLIENT_SECRET`, `AZURE_SUBSCRIPTION_ID`;
 `GOOGLE_OAUTH_ACCESS_TOKEN`, `GOOGLE_CLOUD_PROJECT`; `NEXO_K8S_SERVER`
-and `NEXO_K8S_TOKEN`, or the service account of a pod), and the
+and `NEXO_K8S_TOKEN`, with `NEXO_K8S_CA` for the certificate authority of a
+cluster outside it, or the service account of a pod), and the
 addresses can be changed (`AWS_ENDPOINT_URL`, `AZURE_AUTHORITY_HOST`,
 `NEXO_AZURE_ENDPOINT`, `NEXO_GCP_ENDPOINT`), which is how the tests use
 `tests/cloud_emulator.py`, a local stand-in for those APIs that checks

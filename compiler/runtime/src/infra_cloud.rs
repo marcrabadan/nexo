@@ -54,9 +54,43 @@ impl Answer {
 
 /// (status, headers, body); a network failure is a diagnostic.
 pub fn http(method: &str, url: &str, headers: &[(String, String)], body: Option<&[u8]>) -> R<Answer> {
+    http_with(method, url, headers, body, None)
+}
+
+/// The TLS settings that also trust the certificate authority in `ca`
+/// (a PEM file): the one of a Kubernetes cluster.
+fn tls_with(ca: &str) -> R<std::sync::Arc<rustls::ClientConfig>> {
+    let bad = || fail_d(Diagnostic::new_spanless("infra_ca").arg("path", ca));
+    let pem = std::fs::read(ca).map_err(|_| bad())?;
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in rustls_native_certs::load_native_certs().into_iter().flatten() {
+        let _ = roots.add(cert);
+    }
+    let mut added = 0;
+    for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
+        let cert = cert.map_err(|_| bad())?;
+        roots.add(cert).map_err(|_| bad())?;
+        added += 1;
+    }
+    if added == 0 {
+        return Err(bad());
+    }
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|_| bad())?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    Ok(std::sync::Arc::new(config))
+}
+
+fn http_with(method: &str, url: &str, headers: &[(String, String)], body: Option<&[u8]>, ca: Option<&str>) -> R<Answer> {
     let mut b = ureq::AgentBuilder::new().redirects(0).timeout(std::time::Duration::from_secs(120)).user_agent("nexo/0.1");
     if let Some(p) = crate::http::proxy_for(url) {
         b = b.proxy(p);
+    }
+    if let Some(ca) = ca {
+        b = b.tls_config(tls_with(ca)?);
     }
     let agent = b.build();
     let mut req = agent.request(method, url);
@@ -779,6 +813,7 @@ pub struct K8s {
     server: String,
     token: Option<String>,
     namespace: String,
+    ca: Option<String>,
 }
 
 impl K8s {
@@ -792,10 +827,22 @@ impl K8s {
         }
         let Some(server) = server else { return Err(fail_d(Diagnostic::new_spanless("infra_credentials").arg("name", "NEXO_K8S_SERVER"))) };
         let mut token = std::env::var("NEXO_K8S_TOKEN").ok().filter(|t| !t.is_empty());
+        let mut ca = None;
+        let sa = "/var/run/secrets/kubernetes.io/serviceaccount";
         if token.is_none() {
-            token = std::fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/token").ok().map(|t| t.trim().to_string());
+            token = std::fs::read_to_string(format!("{sa}/token")).ok().map(|t| t.trim().to_string());
+            if token.is_some() && std::path::Path::new(&format!("{sa}/ca.crt")).exists() {
+                ca = Some(format!("{sa}/ca.crt"));
+            }
         }
-        Ok(K8s { server: server.trim_end_matches('/').to_string(), token, namespace: plan.namespace.clone() })
+        // the certificate authority of a cluster outside (kind, minikube...)
+        if let Some(path) = std::env::var("NEXO_K8S_CA").ok().filter(|p| !p.is_empty()) {
+            if !std::path::Path::new(&path).exists() {
+                return Err(fail_d(Diagnostic::new_spanless("infra_ca").arg("path", path)));
+            }
+            ca = Some(path);
+        }
+        Ok(K8s { server: server.trim_end_matches('/').to_string(), token, namespace: plan.namespace.clone(), ca })
     }
 
     fn path(&self, desc: &Json) -> String {
@@ -814,7 +861,7 @@ impl K8s {
         if data.is_some() {
             headers.push(("Content-Type".into(), content.to_string()));
         }
-        http(method, &format!("{}{path}", self.server), &headers, data.as_deref())
+        http_with(method, &format!("{}{path}", self.server), &headers, data.as_deref(), self.ca.as_deref())
     }
 }
 

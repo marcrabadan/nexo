@@ -487,6 +487,9 @@ dependencies = [
  "num-integer",
  "num-traits",
  "regex",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pemfile",
  "sha2",
  "ureq",
 ]

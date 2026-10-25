@@ -996,6 +996,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "fix.infra_target": {"es": "Quítalo de esta infra o decláralo en una infra de otra nube (sección 11).", "en": "Remove it from this infra or declare it in an infra on another cloud (section 11)."},
     "infra_network": {"es": "No hay conexión con {url} ({reason}).", "en": "There is no connection to {url} ({reason})."},
     "fix.infra_network": {"es": "Revisa la red y la dirección de la API; nada se ha cambiado después del último paso mostrado.", "en": "Check the network and the address of the API; nothing was changed after the last step shown."},
+    "infra_ca": {"es": "No se puede leer el certificado de la autoridad del clúster: {path}.", "en": "The certificate authority of the cluster cannot be read: {path}."},
+    "fix.infra_ca": {"es": "Pon en NEXO_K8S_CA la ruta de un archivo PEM, por ejemplo el de certificate-authority de tu kubeconfig.", "en": "Set NEXO_K8S_CA to the path of a PEM file, such as the certificate-authority of your kubeconfig."},
     "infra_needs_network": {"es": "En aws un {kind} ({name}) necesita una network, y la infra no tiene exactamente una.", "en": "On aws a {kind} ({name}) needs a network, and the infra does not have exactly one."},
     "fix.infra_needs_network": {"es": "Declara una network en la infra, o escribe network = nombre en {name}.", "en": "Declare a network in the infra, or write network = name in {name}."},
     "infra_dev_only": {"es": "En k8s una database ({name}) es solo para desarrollo, no para la etapa prod.", "en": "On k8s a database ({name}) is for development only, not for the prod stage."},

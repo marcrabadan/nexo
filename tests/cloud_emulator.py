@@ -359,8 +359,15 @@ class Handler(BaseHTTPRequestHandler):
         return self.reply(405)
 
 
-def start(port: int = 0):
+def start(port: int = 0, tls: tuple[str, str] | None = None):
+    """The emulator on a port; with tls=(certfile, keyfile), over HTTPS
+    (as a Kubernetes cluster with its own certificate authority)."""
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    if tls is not None:
+        import ssl
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(*tls)
+        server.socket = ctx.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 

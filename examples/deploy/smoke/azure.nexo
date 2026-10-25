@@ -1,0 +1,13 @@
+# A smoke test of nexo.infra on a real Azure subscription: a resource
+# group, a storage account and a Service Bus queue. Storage account names
+# are global, so rename the infra (smoke_az_yourname) before applying.
+#     export AZURE_TENANT_ID=... AZURE_CLIENT_ID=... AZURE_CLIENT_SECRET=...
+#     export AZURE_SUBSCRIPTION_ID=...
+#     nexo plan azure.nexo && nexo apply azure.nexo && nexo drift azure.nexo
+#     nexo destroy azure.nexo
+
+infra smoke_azure:
+    cloud = "azure"
+    region = "westeurope"
+    storage files
+    queue jobs

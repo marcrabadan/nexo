@@ -8,7 +8,8 @@ AWS_SESSION_TOKEN and AWS_ENDPOINT_URL; AZURE_TENANT_ID, AZURE_CLIENT_ID,
 AZURE_CLIENT_SECRET, AZURE_SUBSCRIPTION_ID and AZURE_AUTHORITY_HOST;
 GOOGLE_OAUTH_ACCESS_TOKEN and GOOGLE_CLOUD_PROJECT; the service account of
 a pod (KUBERNETES_SERVICE_HOST). NEXO_AZURE_ENDPOINT, NEXO_GCP_ENDPOINT,
-NEXO_K8S_SERVER and NEXO_K8S_TOKEN point them elsewhere (an emulator)."""
+NEXO_K8S_SERVER and NEXO_K8S_TOKEN point them elsewhere (an emulator);
+NEXO_K8S_CA names the certificate authority of a cluster."""
 from __future__ import annotations
 
 import base64
@@ -501,6 +502,12 @@ class K8s:
             self.token = open(f"{sa}/token", encoding="utf-8").read().strip()
             if os.path.exists(f"{sa}/ca.crt"):
                 self.context = ssl.create_default_context(cafile=f"{sa}/ca.crt")
+        # the certificate authority of a cluster outside (kind, minikube...)
+        ca = os.environ.get("NEXO_K8S_CA")
+        if ca:
+            if not os.path.exists(ca):
+                raise NexoError("infra_ca", None, path=ca)
+            self.context = ssl.create_default_context(cafile=ca)
 
     def path(self, desc: dict) -> str:
         api = desc["api"]
@@ -615,10 +622,11 @@ def apply(plan, store, yes: bool) -> int:
             return 1
     if not store.lock():
         raise NexoError("state_locked", None, where=store.where())
-    client = CLIENTS[plan.cloud](plan)
-    secrets = secret_values(plan)
     counts = {"create": 0, "update": 0, "delete": 0}
     try:
+        # inside: a client that cannot start leaves no lock behind
+        client = CLIENTS[plan.cloud](plan)
+        secrets = secret_values(plan)
         for a in actions:
             if a.op == "keep":
                 continue
@@ -677,8 +685,8 @@ def destroy(plan, store) -> int:
         return 1
     if not store.lock():
         raise NexoError("state_locked", None, where=store.where())
-    client = CLIENTS[plan.cloud](plan)
     try:
+        client = CLIENTS[plan.cloud](plan)
         for nid, e in reversed(entries):
             what = f"{e['desc'].get('type')} {e['desc'].get('name')}"
             client.delete(e["desc"], e["identifier"], what)

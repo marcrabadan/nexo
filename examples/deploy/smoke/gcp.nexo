@@ -1,0 +1,12 @@
+# A smoke test of nexo.infra on a real GCP project: a bucket and a Pub/Sub
+# topic. Bucket names are global, so rename the infra (smoke_gcp_yourname)
+# before applying.
+#     export GOOGLE_CLOUD_PROJECT=... GOOGLE_OAUTH_ACCESS_TOKEN=$(gcloud auth print-access-token)
+#     nexo plan gcp.nexo && nexo apply gcp.nexo && nexo drift gcp.nexo
+#     nexo destroy gcp.nexo
+
+infra smoke_gcp:
+    cloud = "gcp"
+    region = "europe-west1"
+    storage files
+    queue jobs

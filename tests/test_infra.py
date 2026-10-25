@@ -5,6 +5,7 @@ tests/infra/NAME.nexo is planned from a copy of tests/infra and its output
 must equal NAME.expected; a NAME.args file holds extra arguments."""
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -163,3 +164,43 @@ def test_an_infra_uses_values_of_another(phase, cloud, tmp_path):
     assert {"name": "DB", "value": "postgres://10.20.0.3/customers"} in env
     code, out = nexo(phase, ["destroy", "peers.nexo"], tmp_path, cloud, stdin=b"web\ndata\n")
     assert code == 0 and out.index("de web:") < out.index("de data:"), out
+
+
+def certificates(d):
+    """A certificate authority and a certificate for 127.0.0.1 it signs."""
+    def openssl(*args):
+        subprocess.run(["openssl", *args], cwd=d, check=True, capture_output=True)
+    openssl("req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", "ca.key", "-out", "ca.crt", "-days", "2",
+            "-subj", "/CN=nexo test ca")
+    openssl("req", "-newkey", "rsa:2048", "-nodes", "-keyout", "server.key", "-out", "server.csr",
+            "-subj", "/CN=127.0.0.1")
+    (d / "san.ext").write_text("subjectAltName=IP:127.0.0.1\nbasicConstraints=CA:FALSE\n")
+    openssl("x509", "-req", "-in", "server.csr", "-CA", "ca.crt", "-CAkey", "ca.key", "-CAcreateserial",
+            "-out", "server.crt", "-days", "2", "-extfile", "san.ext")
+    return d / "ca.crt", d / "server.crt", d / "server.key"
+
+
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="needs openssl")
+@pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
+def test_a_cluster_with_its_own_certificate_authority(phase, tmp_path):
+    certs = tmp_path / "certs"
+    certs.mkdir()
+    ca, cert, key = certificates(certs)
+    server = emu.start(tls=(str(cert), str(key)))
+    emu.STATE.__init__()
+    try:
+        url = f"https://127.0.0.1:{server.server_address[1]}"
+        (tmp_path / "app.nexo").write_text('infra web:\n    cloud = "k8s"\n    namespace = "web"\n'
+                                           '    app api:\n        image = "shop-api:1.0"\n')
+        env = {"NEXO_K8S_SERVER": url, "NEXO_K8S_TOKEN": emu.K8S_TOKEN, "NO_PROXY": "127.0.0.1",
+               "no_proxy": "127.0.0.1"}
+        # without its authority the certificate is refused, and nothing is sent
+        code, out = nexo(phase, ["apply", "--yes", "app.nexo"], tmp_path, env)
+        assert code == 1 and "No hay conexión con" in out, out
+        assert not emu.STATE.k8s
+        code, out = nexo(phase, ["apply", "--yes", "app.nexo"], tmp_path, dict(env, NEXO_K8S_CA=str(tmp_path / "x.pem")))
+        assert code == 1 and "No se puede leer el certificado de la autoridad del clúster" in out, out
+        code, out = nexo(phase, ["apply", "--yes", "app.nexo"], tmp_path, dict(env, NEXO_K8S_CA=str(ca)))
+        assert code == 0 and "Aplicado: 3 creados" in out, out
+    finally:
+        server.shutdown()
