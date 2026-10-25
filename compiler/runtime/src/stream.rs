@@ -222,11 +222,21 @@ fn append(s: &(String, String), data: String, ms: i64) -> Message {
     let _guard = BROKER.lock().unwrap();
     let path = log_path(s);
     let _ = std::fs::create_dir_all(format!("{ROOT}/{}", s.0));
-    let count = std::fs::read_to_string(&path).map(|t| t.lines().count()).unwrap_or(0) as i64;
+    // the lock of the file itself: producers in other processes count and
+    // append one at a time, so ids stay unique
+    let file = std::fs::OpenOptions::new().create(true).read(true).append(true).open(&path);
+    let mut count = 0;
+    if let Ok(f) = &file {
+        let _ = f.lock();
+        let mut text = String::new();
+        let _ = std::io::Read::read_to_string(&mut &*f, &mut text);
+        count = text.lines().count() as i64;
+    }
     let message = Message { stream: s.clone(), id: count + 1, ms, data };
     let line = json::obj(vec![("id", Json::Int(message.id)), ("time", Json::Int(ms)), ("data", json::s(message.data.clone()))]).compact();
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = file {
         let _ = writeln!(f, "{line}");
+        let _ = f.unlock();
     }
     message
 }

@@ -1789,6 +1789,10 @@ pub fn diff(plan: &Plan) -> R<Vec<Action>> {
         };
         let mut keys = Vec::new();
         changed_keys(entry.get("desc").get("body"), n.desc.get("body"), "", &mut keys);
+        // a value kept beside the body (a GCP secret version: its hash)
+        if entry.get("desc").get("value") != n.desc.get("value") {
+            keys.push("value".into());
+        }
         let old_type = entry.get("desc").get("type").clone();
         let old_name = entry.get("desc").get("name").clone();
         if old_type != *n.desc.get("type") || old_name != *n.desc.get("name") {

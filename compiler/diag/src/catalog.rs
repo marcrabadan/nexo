@@ -515,6 +515,8 @@ pub(crate) static MESSAGES: &[(&str, &str, &str)] = &[
     ("fix.infra_network", "Revisa la red y la dirección de la API; nada se ha cambiado después del último paso mostrado.", "Check the network and the address of the API; nothing was changed after the last step shown."),
     ("infra_ca", "No se puede leer el certificado de la autoridad del clúster: {path}.", "The certificate authority of the cluster cannot be read: {path}."),
     ("fix.infra_ca", "Pon en NEXO_K8S_CA la ruta de un archivo PEM, por ejemplo el de certificate-authority de tu kubeconfig.", "Set NEXO_K8S_CA to the path of a PEM file, such as the certificate-authority of your kubeconfig."),
+    ("state_changed", "Otro comando ha cambiado el estado {where} desde que este lo leyó.", "Another command changed the state {where} since this one read it."),
+    ("fix.state_changed", "Vuelve a ejecutar el comando: verás el plan con lo que hay ahora.", "Run the command again: you will see the plan for what is there now."),
     ("infra_needs_network", "En aws un {kind} ({name}) necesita una network, y la infra no tiene exactamente una.", "On aws a {kind} ({name}) needs a network, and the infra does not have exactly one."),
     ("fix.infra_needs_network", "Declara una network en la infra, o escribe network = nombre en {name}.", "Declare a network in the infra, or write network = name in {name}."),
     ("infra_dev_only", "En k8s una database ({name}) es solo para desarrollo, no para la etapa prod.", "On k8s a database ({name}) is for development only, not for the prod stage."),

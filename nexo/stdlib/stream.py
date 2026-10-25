@@ -9,6 +9,10 @@ a failing one is tried 3 more times with exponential backoff and then goes
 to `<name>.dead`."""
 from __future__ import annotations
 
+try:
+    import fcntl
+except ImportError:  # not on Windows
+    fcntl = None
 import json
 import sys
 import threading
@@ -137,14 +141,16 @@ def append(stream: Stream, data: str, ms: int) -> Message:
             return message
         path = stream.path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        count = 0
-        if path.exists():
-            with path.open("rb") as f:
-                count = sum(1 for _ in f)
-        message = Message(stream, count + 1, ms, data)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"id": message.id, "time": ms, "data": data}, ensure_ascii=False,
-                               separators=(",", ":")) + "\n")
+        # the lock of the file itself: producers in other processes count
+        # and append one at a time, so ids stay unique
+        with path.open("a+b") as f:
+            if fcntl is not None:
+                fcntl.flock(f, fcntl.LOCK_EX)
+            f.seek(0)
+            count = sum(1 for _ in f)
+            message = Message(stream, count + 1, ms, data)
+            f.write((json.dumps({"id": message.id, "time": ms, "data": data}, ensure_ascii=False,
+                                separators=(",", ":")) + "\n").encode("utf-8"))
         return message
 
 

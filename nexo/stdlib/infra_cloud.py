@@ -594,6 +594,16 @@ def confirm(prompt: str, answers: tuple) -> bool:
     return line.strip().lower() in answers
 
 
+def take_lock(plan, store) -> None:
+    """Lock the state, and check that no other command changed it since
+    this one read it (while it asked for confirmation, for example)."""
+    if not store.lock():
+        raise NexoError("state_locked", None, where=store.where())
+    if (store.load() or {}).get("serial", 0) != plan.state.serial:
+        store.unlock()
+        raise NexoError("state_changed", None, where=store.where())
+
+
 def outputs_lines(plan) -> list[str]:
     out = []
     for o in plan.infra.outputs:
@@ -620,8 +630,7 @@ def apply(plan, store, yes: bool) -> int:
         if not confirm(I.m("info.apply_confirm"), ("sí", "si", "s", "yes", "y")):
             say(I.m("info.apply_cancelled"))
             return 1
-    if not store.lock():
-        raise NexoError("state_locked", None, where=store.where())
+    take_lock(plan, store)
     counts = {"create": 0, "update": 0, "delete": 0}
     try:
         # inside: a client that cannot start leaves no lock behind
@@ -683,8 +692,7 @@ def destroy(plan, store) -> int:
     if not confirm(I.m("info.destroy_confirm", infra=plan.infra.name), (plan.infra.name.lower(),)):
         say(I.m("info.apply_cancelled"))
         return 1
-    if not store.lock():
-        raise NexoError("state_locked", None, where=store.where())
+    take_lock(plan, store)
     try:
         client = CLIENTS[plan.cloud](plan)
         for nid, e in reversed(entries):
@@ -756,8 +764,7 @@ def import_(plan, store, target: str, ident: str) -> int:
     read = client.read(n.desc, ident, what)
     if read is None:
         raise NexoError("import_missing", None, what=what, id=ident)
-    if not store.lock():
-        raise NexoError("state_locked", None, where=store.where())
+    take_lock(plan, store)
     try:
         plan.state.entries[n.id] = {"id": n.id, "resource": n.resource, "kind": n.kind, "desc": n.desc,
                                     "identifier": ident, "read": scrub(read, secret_values(plan))}

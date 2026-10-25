@@ -1012,9 +1012,7 @@ fn apply(plan: &mut Plan, store: &dyn Store, yes: bool) -> R<i32> {
             return Ok(1);
         }
     }
-    if !store.lock()? {
-        return Err(fail_d(Diagnostic::new_spanless("state_locked").arg("where", store.where_())));
-    }
+    take_lock(plan, store)?;
     let result = (|| -> R<(usize, usize, usize)> {
         let mut c = client(plan)?;
         let secrets = secret_values(plan);
@@ -1079,6 +1077,26 @@ fn apply(plan: &mut Plan, store: &dyn Store, yes: bool) -> R<i32> {
     Ok(0)
 }
 
+/// Lock the state, and check that no other command changed it since this
+/// one read it (while it asked for confirmation, for example).
+fn take_lock(plan: &Plan, store: &dyn Store) -> R<()> {
+    if !store.lock()? {
+        return Err(fail_d(Diagnostic::new_spanless("state_locked").arg("where", store.where_())));
+    }
+    let now = match store.load() {
+        Ok(d) => I::State::new(d).serial,
+        Err(e) => {
+            store.unlock();
+            return Err(e);
+        }
+    };
+    if now != plan.state.as_ref().map(|s| s.serial).unwrap_or(0) {
+        store.unlock();
+        return Err(fail_d(Diagnostic::new_spanless("state_changed").arg("where", store.where_())));
+    }
+    Ok(())
+}
+
 fn destroy(plan: &mut Plan, store: &dyn Store) -> R<i32> {
     let entries: Vec<(String, Json)> = plan.state.as_ref().unwrap().entries.clone();
     let infra = plan.infra.name.clone();
@@ -1094,9 +1112,7 @@ fn destroy(plan: &mut Plan, store: &dyn Store) -> R<i32> {
         say(&m("info.apply_cancelled", &[]));
         return Ok(1);
     }
-    if !store.lock()? {
-        return Err(fail_d(Diagnostic::new_spanless("state_locked").arg("where", store.where_())));
-    }
+    take_lock(plan, store)?;
     let result = (|| -> R<()> {
         let mut c = client(plan)?;
         for (nid, e) in entries.iter().rev() {
@@ -1199,9 +1215,7 @@ fn import(plan: &mut Plan, store: &dyn Store, target: &str, ident: &str) -> R<i3
     let Some(read) = c.read(&n.desc, ident, &what)? else {
         return Err(fail_d(Diagnostic::new_spanless("import_missing").arg("what", what).arg("id", ident)));
     };
-    if !store.lock()? {
-        return Err(fail_d(Diagnostic::new_spanless("state_locked").arg("where", store.where_())));
-    }
+    take_lock(plan, store)?;
     let secrets = secret_values(plan);
     let entry = entry_of(&n, &n.desc, ident, scrub(&read, &secrets));
     let st = plan.state.as_mut().unwrap();

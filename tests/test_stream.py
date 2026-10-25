@@ -1,5 +1,6 @@
 """nexo.stream (section 19, D117) outside tests: programs talk through the
 local broker of .nexo/streams, whichever phase runs each of them."""
+import json
 import os
 import signal
 import subprocess
@@ -87,3 +88,17 @@ def test_a_stop_keeps_the_messages_of_an_open_window(phase, tmp_path):
                 proc.wait(timeout=30)
         # the window never ran, and the message is read again each time
         assert out.read_text() == "seen 1\n"
+
+
+def test_producers_in_several_processes_get_unique_ids(tmp_path):
+    # the log is locked while a producer counts its lines and appends, so
+    # programs sending at once (in either phase) never share an id
+    (tmp_path / "producer.nexo").write_text('for i in range(1, 41):\n    kafka("clicks").send(i)\n', encoding="utf-8")
+    env = dict(os.environ, PYTHONPATH=str(ROOT))
+    prefixes = [c[1] for c in commands()] * 3
+    procs = [subprocess.Popen([*p, "producer.nexo"], cwd=tmp_path, env=env) for p in prefixes]
+    for p in procs:
+        assert p.wait(timeout=300) == 0
+    lines = (tmp_path / ".nexo" / "streams" / "kafka" / "clicks.log").read_text().splitlines()
+    ids = [json.loads(line)["id"] for line in lines]
+    assert sorted(ids) == list(range(1, 40 * len(prefixes) + 1))

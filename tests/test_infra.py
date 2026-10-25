@@ -3,7 +3,9 @@ import against the local emulator of the cloud APIs, in both phases.
 
 tests/infra/NAME.nexo is planned from a copy of tests/infra and its output
 must equal NAME.expected; a NAME.args file holds extra arguments."""
+import base64
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -32,7 +34,7 @@ def cloud(server):
 
 
 def nexo(phase, args, cwd, env, stdin=b""):
-    p = run(phase[1], args, cwd, stdin=stdin, env=dict(env, API_KEY="sk-123"), timeout=300)
+    p = run(phase[1], args, cwd, stdin=stdin, env=dict({"API_KEY": "sk-123"}, **env), timeout=300)
     return p.returncode, p.stdout.decode("utf-8")
 
 
@@ -204,3 +206,47 @@ def test_a_cluster_with_its_own_certificate_authority(phase, tmp_path):
         assert code == 0 and "Aplicado: 3 creados" in out, out
     finally:
         server.shutdown()
+
+
+GCP_SECRET = """infra web:
+    cloud = "gcp"
+    region = "europe-west1"
+    app api:
+        image = "shop-api:1.0"
+        env:
+            API_KEY = secret("API_KEY")
+"""
+
+
+@pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
+def test_a_changed_secret_is_a_change(phase, cloud, tmp_path):
+    # Secret Manager keeps the value beside the body: its hash still counts
+    (tmp_path / "app.nexo").write_text(GCP_SECRET)
+    first = dict(cloud, API_KEY="first-key")
+    assert nexo(phase, ["apply", "--yes", "app.nexo"], tmp_path, first)[0] == 0
+    assert "Sin cambios." in nexo(phase, ["plan", "app.nexo"], tmp_path, first)[1]
+    second = dict(cloud, API_KEY="second-key")
+    code, out = nexo(phase, ["apply", "--yes", "app.nexo"], tmp_path, second)
+    assert code == 0 and "      ~ secretmanager.secrets web-api-api-key: value\n" in out, out
+    versions = [e["body"] for e in emu.STATE.log if e["path"].endswith(":addVersion")]
+    assert len(versions) == 2 and base64.b64encode(b"second-key").decode() in versions[1]
+    assert "Sin cambios." in nexo(phase, ["plan", "app.nexo"], tmp_path, second)[1]
+
+
+@pytest.mark.parametrize("phase", PHASES, ids=lambda p: p[0])
+def test_a_state_changed_while_confirming_is_not_overwritten(phase, cloud, tmp_path):
+    (tmp_path / "app.nexo").write_text('infra web:\n    cloud = "k8s"\n    namespace = "web"\n'
+                                       '    app api:\n        image = "shop-api:1.0"\n')
+    env = dict(os.environ, PYTHONPATH=str(ROOT), **cloud, API_KEY="sk-123")
+    waiting = subprocess.Popen([*phase[1], "apply", "app.nexo"], cwd=tmp_path, env=env, stdin=subprocess.PIPE,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    seen = b""
+    while b"Escribe s" not in seen:
+        chunk = os.read(waiting.stdout.fileno(), 4096)
+        assert chunk, seen
+        seen += chunk
+    # another apply runs while the first one asks
+    assert nexo(phase, ["apply", "--yes", "app.nexo"], tmp_path, cloud)[0] == 0
+    out, _ = waiting.communicate("sí\n".encode(), timeout=300)
+    assert waiting.returncode == 1
+    assert "Otro comando ha cambiado el estado .nexo/state/web-default.json desde que este lo leyó." in out.decode()

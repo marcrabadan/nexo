@@ -1349,7 +1349,8 @@ network (`servers:`, `url:`...) and `websocket(...)` are reported as
 unavailable (D113). Each stream is an append-only file
 `.nexo/streams/<kind>/<name>.log`, one JSON line per message (its number,
 the time in milliseconds and the data), shared by the programs of the
-machine; under `nexo test` the broker lives in memory, starts empty for
+machine, which lock the file while they number and append a message, so
+producers in several processes never share a number; under `nexo test` the broker lives in memory, starts empty for
 each test, and `send` delivers the message at once to the program's own
 handlers and pipelines. `use nexo.stream` (like `nexo.infra` and
 `nexo.ci`) is accepted and changes nothing: the module is loaded
@@ -1486,6 +1487,11 @@ echoes back are scrubbed, and `output ..., secret` prints `(secret)`.
 `apply` asks for confirmation unless `--yes` (with no answer, as in CI
 without `--yes`, nothing changes); `destroy` asks to type the infra's name, block by block.
 `drift` compares what each API returns with the state, field by field.
+The state is locked only when the changes start: if another command
+changed it since it was read (while one asked for confirmation), the
+command stops without changing anything and asks to run it again. A
+secret whose value changed is a change (its hash differs), also for a
+GCP secret, whose version is kept beside its body.
 A value of another infra block is written `infra.resource.value`; the
 blocks are applied in the order those references need (a cycle is an
 error) and each one reads the other's values from its state, so a plan

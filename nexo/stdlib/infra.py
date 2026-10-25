@@ -1034,6 +1034,9 @@ def diff(plan: Plan) -> list[Action]:
             actions.append(Action("create", n))
             continue
         keys = changed_keys(entry.get("desc", {}).get("body"), n.desc.get("body"))
+        # a value kept beside the body (a GCP secret version: its hash)
+        if entry.get("desc", {}).get("value") != n.desc.get("value"):
+            keys.append("value")
         if entry.get("desc", {}).get("type") != n.type or entry.get("desc", {}).get("name") != n.name:
             actions.append(Action("replace", n, ["type" if entry["desc"].get("type") != n.type else "name"], entry))
         elif keys:
