@@ -13,6 +13,7 @@
   --accent-soft: #d9f1ec;
   --on-accent: #ffffff;
   --hero-glow: rgb(13 122 111 / 0.16);
+  --bar-muted: #b9bdb6;
   --code-bg: #14171b;
   --code-bar: #1b1f24;
   --code-line: #262b31;
@@ -48,6 +49,7 @@
     --accent-soft: #12332f;
     --on-accent: #06201c;
     --hero-glow: rgb(60 202 184 / 0.13);
+    --bar-muted: #4b5058;
     --code-bg: #0b0d0f;
     --code-bar: #111417;
     --code-line: #20242a;
@@ -71,6 +73,7 @@
   --accent-soft: #12332f;
   --on-accent: #06201c;
   --hero-glow: rgb(60 202 184 / 0.13);
+  --bar-muted: #4b5058;
   --code-bg: #0b0d0f;
   --code-bar: #111417;
   --code-line: #20242a;
@@ -340,36 +343,33 @@ h4 { font-size: 16.5px; margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1
 .status.done { background: var(--accent-soft); color: var(--accent-strong); }
 .status.next { background: var(--bg-alt); color: var(--muted); border: 1px solid var(--border); }
 
-.perf { display: grid; grid-template-columns: 1fr 1.2fr; gap: 48px; align-items: center; margin-top: 72px; }
-.perf-text p { color: var(--muted); margin: 0; }
-.chart { margin: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 24px 18px; min-width: 0; }
-.chart figcaption { font-size: 14px; font-weight: 600; color: var(--muted); margin-bottom: 14px; }
-.bars, .axis { --label: 150px; --max: 9.4; }
-.bars { width: 100%; border-collapse: collapse; }
-.bars th { width: var(--label); text-align: left; font-size: 14px; font-weight: 500; color: var(--text); padding: 5px 12px 5px 0; white-space: nowrap; }
-.bars td { padding: 5px 0; position: relative; }
-.bars td::before {
-  content: ""; position: absolute; top: -1px; bottom: -1px; left: calc(2 / var(--max) * 100%);
-  border-left: 1px solid var(--muted); opacity: 0.6;
-}
-.bar {
-  display: block; height: 18px; border-radius: 0 4px 4px 0;
-  width: calc(var(--v) / var(--max) * 100%);
-  background: var(--accent);
-}
-.bars tr:hover .bar { background: var(--accent-strong); }
-.val {
-  position: absolute; top: 50%; transform: translateY(-50%); left: calc(var(--v) / var(--max) * 100% + 8px);
-  font-family: var(--mono); font-size: 13px; color: var(--text);
-  background: var(--surface); padding: 0 4px; margin-left: -4px;
-}
-.axis { position: relative; height: 22px; margin-left: var(--label); border-top: 1px solid var(--border); margin-top: 6px; }
-.axis span {
-  position: absolute; top: 4px; left: calc(var(--v) / var(--max) * 100%); transform: translateX(-50%);
-  font-family: var(--mono); font-size: 11.5px; color: var(--faint); white-space: nowrap;
-}
-.axis span:first-child { transform: none; }
-.axis .goal-tick { color: var(--text); font-weight: 600; }
+/* Performance */
+.hchart { margin: 0 0 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 24px 16px; }
+.hchart figcaption { font-size: 14px; font-weight: 600; color: var(--muted); margin-bottom: 16px; }
+.hbars { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.hbar { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 12px; }
+.hb-name { font-size: 14px; color: var(--text); }
+.hbar.nexo .hb-name { font-weight: 700; }
+.hb-track { position: relative; height: 20px; margin-right: 52px; }
+.hb-fill { position: absolute; left: 0; top: 1px; bottom: 1px; border-radius: 0 4px 4px 0; background: var(--bar-muted); }
+.hbar.nexo .hb-fill { background: var(--accent); }
+.hbar:hover .hb-fill { filter: brightness(0.92); }
+.hb-val { position: absolute; top: 50%; transform: translateY(-50%); margin-left: 8px; font-family: var(--mono); font-size: 13px; color: var(--text); white-space: nowrap; }
+.haxis { display: grid; grid-template-columns: 110px 1fr; gap: 12px; margin-top: 10px; }
+.haxis-track { grid-column: 2; position: relative; height: 18px; margin-right: 52px; border-top: 1px solid var(--border); }
+.haxis-track span { position: absolute; top: 4px; transform: translateX(-50%); font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+.haxis-track span:first-child { transform: none; }
+.perf-table-wrap { margin-bottom: 32px; }
+.perf-table caption { caption-side: bottom; text-align: left; padding: 10px 16px; font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--border); }
+.perf-table td { font-family: var(--mono); font-size: 13.5px; white-space: nowrap; text-align: right; }
+.perf-table thead th:not(:first-child) { text-align: right; }
+.perf-table tbody th { text-align: left; font-weight: 500; padding: 11px 16px; border-bottom: 1px solid var(--border); }
+.perf-table tbody tr:last-child th { border-bottom: 0; }
+.perf-table tbody th span { display: block; font-size: 13px; color: var(--muted); font-weight: 400; margin-top: 2px; min-width: 180px; }
+.perf-table td.best { color: var(--accent-strong); font-weight: 700; }
+.perf-table td.nexo { color: var(--text); }
+.perf-table td:first-child { white-space: nowrap; }
+.perf-notes h3 { font-size: 18px; }
 
 /* Quick reference (landing page) */
 .qref { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
@@ -443,7 +443,7 @@ footer nav a:hover { color: var(--text); }
   .ref-toc summary { display: list-item; cursor: pointer; font-weight: 600; }
   .ref-toc ol { margin-top: 10px; columns: 2; column-gap: 24px; border-left: 0; }
   .ref-toc a { padding-left: 0; border-left: 0; }
-  .hero > .wrap:first-child, .perf { grid-template-columns: 1fr; gap: 40px; }
+  .hero > .wrap:first-child { grid-template-columns: 1fr; gap: 40px; }
   .hero-code .code { transform: none; }
   .explorer { grid-template-columns: 1fr; gap: 20px; }
   .explorer-list { position: static; flex-direction: row; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
@@ -489,8 +489,9 @@ footer nav a:hover { color: var(--text); }
   .code pre { font-size: 13px; padding: 16px; }
   .code-bar::before { display: none; }
   .step { padding-left: 0; padding-top: 46px; }
-  .chart { padding: 18px 16px 14px; }
-  .bars, .axis { --label: 112px; }
-  .bars th { font-size: 13px; white-space: normal; }
+  .hchart { padding: 18px 14px 12px; }
+  .hbar, .haxis { grid-template-columns: 84px 1fr; gap: 8px; }
+  .hb-name { font-size: 13px; }
+  .hb-track, .haxis-track { margin-right: 44px; }
   .facts dt { font-size: 24px; }
 }
