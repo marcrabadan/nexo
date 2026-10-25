@@ -1,0 +1,17 @@
+use nexo.sync
+
+sizes = parallel for word in ["one", "three", "seven"]:
+    return len(word)
+print(sizes)
+
+fn produce(out: channel[int], n: int):
+    for i in 1..n:
+        out.send(i)
+    out.close()
+
+numbers = channel[int](size: 2)
+spawn produce(numbers, 4)
+var total = 0
+for x in numbers:
+    total += x
+print(total)

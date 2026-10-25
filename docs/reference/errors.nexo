@@ -1,0 +1,25 @@
+fn parse_age(text: str) -> int!:
+    return validate(text, as: int, range: 0..150)?
+
+try:
+    print(parse_age("42"))
+    print(parse_age("abc"))
+else e:
+    print("Invalid: {e.message} ({e.kind})")
+
+try:
+    print(read("missing.txt"))
+else e is NotFound:
+    print("not found")
+else e:
+    print("other error")
+
+fn divide(a, b):
+    if b == 0:
+        fail("Cannot divide by zero")
+    return a / b
+
+try:
+    divide(1, 0)
+else e:
+    print(e.message)

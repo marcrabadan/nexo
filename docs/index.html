@@ -24,6 +24,7 @@
       <a href="#capabilities">Capabilities</a>
       <a href="#examples">Examples</a>
       <a href="#start">Get started</a>
+      <a href="reference.html">Reference</a>
       <a href="#roadmap">Roadmap</a>
     </nav>
     <div class="header-tools">
@@ -798,7 +799,28 @@ compiler/target/release/nexo build --release app.nexo -o app
   </div>
 </section>
 
-<section class="alt" id="roadmap">
+<section class="alt" id="reference">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Reference</p>
+      <h2>The whole language on one page</h2>
+      <p class="section-intro">Syntax, types, operators, errors, pipelines, contracts, modules, concurrency, the standard library and the commands, each with an example that runs.</p>
+    </div>
+    <div class="qref">
+      <a href="reference.html#values"><strong>Values</strong><code>var n = 0</code><span>Immutable by default, <code>T?</code> and <code>??</code> for missing values.</span></a>
+      <a href="reference.html#types"><strong>Types</strong><code>type Shape:</code><span>Records, unions and enums with data, methods and traits.</span></a>
+      <a href="reference.html#operators"><strong>Operators</strong><code>a ?? b |&gt; f</code><span>Every operator, from the lowest precedence to the highest.</span></a>
+      <a href="reference.html#errors"><strong>Errors</strong><code>read(path)?</code><span><code>T!</code>, <code>?</code>, <code>try</code> and <code>else e</code>, and every kind of error.</span></a>
+      <a href="reference.html#numbers"><strong>Numbers and money</strong><code>120.00 EUR * 21%</code><span>int, float, decimal and money, and the rules that keep them apart.</span></a>
+      <a href="reference.html#pipelines"><strong>Pipelines</strong><code>|&gt; group by region</code><span>Every step, from <code>where</code> to <code>save</code>.</span></a>
+      <a href="reference.html#stdlib"><strong>Standard library</strong><code>read_lines("log.txt")</code><span>Files, text, data, time, security and the network.</span></a>
+      <a href="reference.html#cli"><strong>Command line</strong><code>nexo test</code><span>Run, build, test, format, lint, deploy.</span></a>
+    </div>
+    <p class="qref-more"><a class="btn btn-ghost" href="reference.html">Open the reference</a></p>
+  </div>
+</section>
+
+<section id="roadmap">
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Roadmap</p>
@@ -855,6 +877,7 @@ compiler/target/release/nexo build --release app.nexo -o app
     </div>
     <nav aria-label="Footer">
       <a href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <a href="reference.html">Reference</a>
       <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
       <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">Design decisions</a>
       <a href="https://github.com/marcrabadan/nexo/tree/main/examples">Examples</a>

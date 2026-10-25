@@ -1,0 +1,14 @@
+name = "Ana"
+var visits = 0
+visits += 1
+age: int = 30
+email: str? = none
+
+print("Hello {name}, you are {age}")
+print(email ?? "no email")
+print("{{name} is written {name}, and visits + 1 is {visits + 1}")
+
+fruits = ["pear", "grape"]
+prices = {"pear": 1.2, "grape": 3}
+tags = set("new", "sale")
+print(len(fruits), prices["pear"], "new" in tags)

@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexo reference</title>
+<meta name="description" content="The Nexo language reference: syntax, types, operators, errors, pipelines, contracts, modules, concurrency, the standard library, the command line and the reserved words. Every example runs with both implementations.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="index.html#features">Features</a>
+      <a href="index.html#examples">Examples</a>
+      <a href="index.html#start">Get started</a>
+      <a href="reference.html" aria-current="page">Reference</a>
+      <a href="index.html#roadmap">Roadmap</a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap ref-layout">
+
+<aside class="ref-side">
+  <details class="ref-toc" open>
+    <summary>On this page</summary>
+    <nav aria-label="Reference">
+      <ol>
+        <li><a href="#lexical">Lexical structure</a></li>
+        <li><a href="#values">Values and variables</a></li>
+        <li><a href="#builtin-types">Built-in types</a></li>
+        <li><a href="#types">Your own types</a></li>
+        <li><a href="#operators">Operators</a></li>
+        <li><a href="#control">Control flow</a></li>
+        <li><a href="#functions">Functions</a></li>
+        <li><a href="#errors">Errors</a></li>
+        <li><a href="#numbers">Numbers and money</a></li>
+        <li><a href="#pipelines">Pipelines</a></li>
+        <li><a href="#contracts">Contracts and tests</a></li>
+        <li><a href="#modules">Modules</a></li>
+        <li><a href="#concurrency">Concurrency</a></li>
+        <li><a href="#stdlib">Standard library</a></li>
+        <li><a href="#official">Official modules</a></li>
+        <li><a href="#cli">Command line</a></li>
+        <li><a href="#reserved">Reserved words</a></li>
+      </ol>
+    </nav>
+  </details>
+</aside>
+
+<article class="ref-body">
+
+<header class="ref-head">
+  <p class="eyebrow">Reference</p>
+  <h1>The Nexo language</h1>
+  <p class="lede">Everything edition 0.1 has, in one page: the syntax, the types, the rules for errors and numbers, pipelines, contracts, modules, concurrency, the standard library and the commands. Every example runs with both the interpreter and the compiler, and the output under it is what both print.</p>
+  <p class="ref-note">The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> is the source of truth; every choice made where it was ambiguous is in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>, referred to below as D1, D2...</p>
+</header>
+
+<section class="ref-sec" id="lexical">
+  <h2><a href="#lexical">Lexical structure</a></h2>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Rule</th><th>What it means</th></tr></thead>
+    <tbody>
+      <tr><td>Encoding</td><td>UTF-8. Names may use Unicode letters, digits and <code>_</code>, and do not start with a digit.</td></tr>
+      <tr><td>Blocks</td><td>A colon and 4 spaces of indentation per level. A tab is an error; there are no braces.</td></tr>
+      <tr><td>Statements</td><td>A newline ends a statement, except inside <code>( )</code>, <code>[ ]</code> and <code>{ }</code>, or when the next line starts with <code>|&gt;</code>.</td></tr>
+      <tr><td>Comments</td><td><code>#</code> until the end of the line; <code>##</code> is a documentation comment, shown by the editor on hover.</td></tr>
+      <tr><td>Numbers</td><td><code>1_000</code>, <code>3.14</code>, <code>1e-3</code>. A number with a unit is a unit literal: <code>30s</code>, <code>5 km</code>, <code>2 days</code>, <code>10%</code>, <code>19.99 EUR</code>, <code>50GB</code>.</td></tr>
+      <tr><td>Text</td><td><code>"..."</code> with <code>{expr}</code> interpolation, <code>"""..."""</code> for several lines, and <code>{{</code> for a literal brace.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section class="ref-sec" id="values">
+  <h2><a href="#values">Values and variables</a></h2>
+  <p>A name is bound once with <code>=</code>; <code>var</code> makes it changeable. A type after the name is optional, and <code>T?</code> says the value may be missing (<code>none</code>); <code>??</code> gives a default for it.</p>
+<div class="code"><div class="code-bar"><span>values.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = "Ana"
+var visits = 0
+visits += 1
+age: int = 30
+email: str? = none
+
+print("Hello {name}, you are {age}")
+print(email ?? "no email")
+print("{{name} is written {name}, and visits + 1 is {visits + 1}")
+
+fruits = ["pear", "grape"]
+prices = {"pear": 1.2, "grape": 3}
+tags = set("new", "sale")
+print(len(fruits), prices["pear"], "new" in tags)</code></pre><div class="out"><div class="out-label">$ nexo values.nexo</div><pre><code>Hello Ana, you are 30
+no email
+{name} is written Ana, and visits + 1 is 2
+2 1.2 true</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="builtin-types">
+  <h2><a href="#builtin-types">Built-in types</a></h2>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Type</th><th>Values</th></tr></thead>
+    <tbody>
+      <tr><td><code>int</code></td><td>64-bit integer. Overflow is an <code>Overflow</code> error; it never wraps.</td></tr>
+      <tr><td><code>float</code></td><td>64-bit floating point (IEEE 754).</td></tr>
+      <tr><td><code>decimal</code></td><td>Exact decimal, up to 28 significant digits.</td></tr>
+      <tr><td><code>money</code></td><td>A <code>decimal</code> with an ISO 4217 currency: <code>49.90 EUR</code>.</td></tr>
+      <tr><td><code>bool</code></td><td><code>true</code> and <code>false</code>.</td></tr>
+      <tr><td><code>str</code></td><td>Text, with interpolation.</td></tr>
+      <tr><td><code>list[T]</code></td><td><code>[1, 2, 3]</code>. A value: assigning it never shares its changes (copy on write).</td></tr>
+      <tr><td><code>map[K, V]</code></td><td><code>{"pear": 1.2}</code>. A value, like lists.</td></tr>
+      <tr><td><code>set[T]</code></td><td><code>set("new", "sale")</code>. A value, like lists.</td></tr>
+      <tr><td><code>T?</code></td><td>A <code>T</code> or <code>none</code>.</td></tr>
+      <tr><td><code>T!</code></td><td>A <code>T</code> or an error: the return type of a function that can fail.</td></tr>
+      <tr><td><code>weak T?</code></td><td>A field that does not keep its record alive; it breaks a parent-child cycle.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Records are shared: two names can refer to the same record and see its changes. Durations (<code>30s</code>) and sizes (<code>50GB</code>) are unit literals with their own arithmetic.</p>
+</section>
+
+<section class="ref-sec" id="types">
+  <h2><a href="#types">Your own types</a></h2>
+  <p><code>type</code> is the only word for data you define: a record (fields, with methods inside), a union of values (<code>type Status = "active" | "closed"</code>) or an enum whose variants may carry data. A <code>trait</code> lists the methods a type promises with <code>is</code>. Records are built with positional or named arguments.</p>
+<div class="code"><div class="code-bar"><span>types.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type User:
+    name: str
+    age: int
+    email: str? = none
+
+    fn is_adult(self) -&gt; bool:
+        return self.age &gt;= 18
+
+type Status = "active" | "closed"
+
+type Event:
+    Click(x: int, y: int)
+    Key(code: str)
+    Quit
+
+trait Shape:
+    fn area(self) -&gt; float
+
+type Square is Shape:
+    side: float
+
+    fn area(self) -&gt; float:
+        return self.side ** 2
+
+ana = User(name: "Ana", age: 30)
+print(ana.is_adult(), ana.email ?? "-")
+s: Status = "active"
+print(s)
+print(Square(2.0).area())
+
+fn describe(e: Event) -&gt; str:
+    match e:
+        Click(x, y) if x &gt; 100: return "click on the right at {y}"
+        Click(x, y): return "click at {x}, {y}"
+        Key("q") or Quit: return "quit"
+        _: return "a key"
+
+for e in [Click(150, 4), Click(3, 4), Key("q"), Key("a"), Quit]:
+    print(describe(e))</code></pre><div class="out"><div class="out-label">$ nexo types.nexo</div><pre><code>true -
+active
+4.0
+click on the right at 4
+click at 3, 4
+quit
+a key
+quit</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="operators">
+  <h2><a href="#operators">Operators</a></h2>
+  <p>From the lowest precedence to the highest:</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Operator</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>x -&gt; expr</code></td><td>A lambda of one expression.</td></tr>
+      <tr><td><code>|&gt;</code></td><td>Pipes the value on the left into the step on the right.</td></tr>
+      <tr><td><code>or</code>, <code>and</code>, <code>not</code></td><td>Logic, on <code>bool</code> values.</td></tr>
+      <tr><td><code>== != &lt; &gt; &lt;= &gt;=</code>, <code>in</code>, <code>is</code></td><td>Comparison, membership and type test.</td></tr>
+      <tr><td><code>??</code></td><td>The value, or the default on the right when it is <code>none</code>.</td></tr>
+      <tr><td><code>..</code></td><td>An inclusive range: <code>1..10</code>.</td></tr>
+      <tr><td><code>+ -</code></td><td>Addition and subtraction; <code>+</code> also joins text and lists.</td></tr>
+      <tr><td><code>* / // %</code></td><td>Multiplication, division, integer division, remainder. <code>%</code> right after a number is a percentage.</td></tr>
+      <tr><td><code>**</code></td><td>Power.</td></tr>
+      <tr><td><code>-x</code></td><td>Negation.</td></tr>
+      <tr><td><code>a.b</code>, <code>f()</code>, <code>a[i]</code>, <code>?</code></td><td>Member, call, index, and passing an error up.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Assignment is a statement: <code>=</code>, <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>.</p>
+</section>
+
+<section class="ref-sec" id="control">
+  <h2><a href="#control">Control flow</a></h2>
+  <p><code>if</code>/<code>elif</code>/<code>else</code>, <code>for x in ...</code>, <code>while</code>, <code>repeat n</code> and <code>pass</code> for an empty block. A comprehension builds a list in one expression.</p>
+<div class="code"><div class="code-bar"><span>control.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">for i in 1..3:
+    print(i)
+
+repeat 2:
+    print("again")
+
+var n = 0
+while n &lt; 3:
+    n += 1
+print(n)
+
+for word in ["a", "bb"]:
+    if len(word) &gt; 1:
+        print("{word}: long")
+    elif len(word) == 1:
+        print("{word}: short")
+    else:
+        pass
+
+print([x * x for x in range(1, 8) if x % 2 == 1])</code></pre><div class="out"><div class="out-label">$ nexo control.nexo</div><pre><code>1
+2
+3
+again
+again
+3
+a: short
+bb: long
+[1, 9, 25, 49]</code></pre></div></div>
+  <p><code>match</code> compares a value with patterns in order: <code>_</code> matches anything, a literal matches itself, a variant takes its data apart (<code>Click(x, y)</code>), <code>or</code> joins patterns, and <code>if</code> adds a guard. See the <code>describe</code> function in <a href="#types">Your own types</a>.</p>
+</section>
+
+<section class="ref-sec" id="functions">
+  <h2><a href="#functions">Functions</a></h2>
+  <p><code>fn</code> defines a function; <code>return</code> is always explicit. Parameters can have defaults and every call can name its arguments. Types are optional, except on <code>pub</code> functions, which a module exports. A lambda (<code>x -&gt; x * 2</code>) works wherever a function does.</p>
+<div class="code"><div class="code-bar"><span>functions.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn greet(person, greeting = "Hello"):
+    return "{greeting}, {person}"
+
+pub fn total(prices: list[float]) -&gt; float:
+    return prices.sum()
+
+double = x -&gt; x * 2
+
+print(greet("Ana"))
+print(greet("Luis", greeting: "Hi"))
+print(total([1.5, 2.5]))
+print(double(21))
+print([1, 2, 3] |&gt; map double(it))</code></pre><div class="out"><div class="out-label">$ nexo functions.nexo</div><pre><code>Hello, Ana
+Hi, Luis
+4.0
+42
+[2, 4, 6]</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="errors">
+  <h2><a href="#errors">Errors</a></h2>
+  <p>An error is a value, never a hidden exception. A function that can fail returns <code>T!</code>, and there are only two things you can do with a possible error:</p>
+  <ul class="ref-list">
+    <li><code>?</code> after the call passes it to the caller. It is only allowed inside a function that returns <code>T!</code>.</li>
+    <li><code>try</code> with <code>else e</code> handles it on the spot; <code>else e is NotFound</code> handles one kind. <code>e.message</code> and <code>e.kind</code> describe it.</li>
+  </ul>
+  <p><code>fail("...")</code> makes an error of kind <code>Error</code>. A program that ends with an unhandled error shows it and exits with code 1.</p>
+<div class="code"><div class="code-bar"><span>errors.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn parse_age(text: str) -&gt; int!:
+    return validate(text, as: int, range: 0..150)?
+
+try:
+    print(parse_age("42"))
+    print(parse_age("abc"))
+else e:
+    print("Invalid: {e.message} ({e.kind})")
+
+try:
+    print(read("missing.txt"))
+else e is NotFound:
+    print("not found")
+else e:
+    print("other error")
+
+fn divide(a, b):
+    if b == 0:
+        fail("Cannot divide by zero")
+    return a / b
+
+try:
+    divide(1, 0)
+else e:
+    print(e.message)</code></pre><div class="out"><div class="out-label">$ nexo errors.nexo</div><pre><code>42
+Invalid: "abc" is not a valid int (InvalidValue)
+not found
+Cannot divide by zero</code></pre></div></div>
+  <p>Ignoring a call that can fail is found before the program runs:</p>
+<div class="code"><div class="code-bar"><span>ignored.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn load(path):
+    return read(path)
+
+load("notes.txt")</code></pre><div class="out"><div class="out-label">$ nexo ignored.nexo</div><pre><code>Error in ignored.nexo, line 2:
+  return read(path)
+         ^^^^^^^^^^
+The call to "read" can fail and its error is ignored. Add ? at the end to pass it to the caller, or handle it with try and else e.</code></pre></div></div>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Kind</th><th>Raised by</th></tr></thead>
+    <tbody>
+      <tr><td><code>Error</code></td><td><code>fail(...)</code></td></tr>
+      <tr><td><code>NotFound</code>, <code>IOError</code></td><td>Files: <code>read</code>, <code>write</code>, <code>read_lines</code>, <code>move_file</code></td></tr>
+      <tr><td><code>InvalidValue</code></td><td><code>validate</code> and conversions of a value that is not valid</td></tr>
+      <tr><td><code>InvalidData</code></td><td>JSON or CSV that does not fit the type it is read into</td></tr>
+      <tr><td><code>OutOfRange</code></td><td>An index outside a list or text</td></tr>
+      <tr><td><code>DivisionByZero</code>, <code>Overflow</code></td><td>Arithmetic on <code>int</code>, <code>float</code> and <code>decimal</code></td></tr>
+      <tr><td><code>ContractBroken</code></td><td>An <code>expect</code> or <code>ensure</code> that does not hold</td></tr>
+      <tr><td><code>Timeout</code></td><td><code>try within</code> a time limit</td></tr>
+      <tr><td><code>NetworkError</code>, <code>HTTPError</code></td><td>The <code>http</code> client</td></tr>
+      <tr><td><code>DatabaseError</code>, <code>AIError</code></td><td><code>nexo.db</code> and <code>nexo.ai</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Missing values and errors never mix: <code>??</code> is only for <code>T?</code>, and <code>?</code> and <code>try</code> only for <code>T!</code>.</p>
+</section>
+
+<section class="ref-sec" id="numbers">
+  <h2><a href="#numbers">Numbers and money</a></h2>
+  <ul class="ref-list">
+    <li>A number with a point is a <code>float</code> unless the variable, the parameter or the other operand is <code>decimal</code> or <code>money</code>.</li>
+    <li>Mixing <code>float</code> and <code>decimal</code> is an error; convert with <code>decimal(x)</code> or <code>float(x)</code>. Adding money in two currencies is an error too; use <code>convert(x, to: USD, rate: ...)</code>.</li>
+    <li><code>/</code> gives a <code>float</code> between integers and a <code>decimal</code> between decimals; <code>//</code> is integer division.</li>
+    <li><code>round(x, digits)</code> rounds half to even; <code>mode: half_up</code> changes it.</li>
+    <li><code>split(amount, parts)</code> shares money without losing a cent: the first parts take the remainder.</li>
+  </ul>
+<div class="code"><div class="code-bar"><span>numbers.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">print(0.1 + 0.2)
+x: decimal = 0.1
+print(x + 0.2)
+print(7 / 2, 7 // 2, 7 % 2, 2 ** 10)
+
+invoice: money = 120.00 EUR
+print(invoice * 21%)
+print(split(100.00 EUR, 3))
+print(round(2.5), round(3.5), round(19.987, 2))
+print(round(2.5, mode: half_up))
+
+try:
+    print(9223372036854775807 + 1)
+else e is Overflow:
+    print(e.kind)</code></pre><div class="out"><div class="out-label">$ nexo numbers.nexo</div><pre><code>0.30000000000000004
+0.3
+3.5 3 1 1024
+25.20 EUR
+[33.34 EUR, 33.33 EUR, 33.33 EUR]
+2.0 4.0 19.99
+3.0
+Overflow</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="pipelines">
+  <h2><a href="#pipelines">Pipelines</a></h2>
+  <p><code>|&gt;</code> passes a list, the rows of a CSV file or a table through steps. Columns of records and rows are used by name; <code>it</code> is the current element.</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Step</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>where cond</code></td><td>The elements for which <code>cond</code> holds</td></tr>
+      <tr><td><code>map expr</code></td><td>Each element turned into <code>expr</code></td></tr>
+      <tr><td><code>pick a, b</code></td><td>Only those columns</td></tr>
+      <tr><td><code>group by col</code></td><td>Groups, which must be followed by <code>sum</code>, <code>count</code> or <code>avg</code></td></tr>
+      <tr><td><code>sum col</code>, <code>count</code>, <code>avg col</code></td><td>A total, a count, an average (per group after <code>group by</code>)</td></tr>
+      <tr><td><code>sort by expr [desc]</code></td><td>Sorted, ascending unless <code>desc</code></td></tr>
+      <tr><td><code>take n</code></td><td>The first <code>n</code></td></tr>
+      <tr><td><code>each expr</code></td><td>Runs <code>expr</code> for every element</td></tr>
+      <tr><td><code>save("file.csv")</code></td><td>Writes the result as CSV or JSON, by the file's extension</td></tr>
+    </tbody>
+  </table></div>
+<div class="code"><div class="code-bar"><span>pipes.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Sale:
+    region: str
+    product: str
+    amount: float
+
+sales = [
+    Sale("north", "laptop", 1200.0),
+    Sale("south", "mouse", 25.0),
+    Sale("north", "mouse", 30.0),
+    Sale("east", "laptop", 1100.0),
+    Sale("south", "laptop", -50.0)
+]
+
+sales
+  |&gt; where amount &gt; 0
+  |&gt; group by region
+  |&gt; sum amount
+  |&gt; sort by amount desc
+  |&gt; each print("{it["region"]}: {it["amount"]}")
+
+print(sales |&gt; where product == "laptop" |&gt; count)
+print(sales |&gt; map amount |&gt; avg)
+print(sales |&gt; sort by amount |&gt; take 2 |&gt; map product)
+print(sales |&gt; pick region, amount |&gt; take 1)
+print([3, -1, 2] |&gt; where it &gt; 0 |&gt; map it * 10)</code></pre><div class="out"><div class="out-label">$ nexo pipes.nexo</div><pre><code>north: 1230.0
+east: 1100.0
+south: 25.0
+3
+461.0
+["laptop", "mouse"]
+[{"region": "north", "amount": 1200.0}]
+[30, 20]</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="contracts">
+  <h2><a href="#contracts">Contracts and tests</a></h2>
+  <p><code>expect</code> states what must hold when a function starts, <code>ensure</code> what must hold when it returns, and <code>old(expr)</code> is a value as it was on entry. A broken contract is a <code>ContractBroken</code> error with the values involved. The compiler leaves out the <code>ensure</code> checks it can prove (D83).</p>
+  <p><code>test "name":</code> blocks live next to the code and run with <code>nexo test</code>; running the file skips them. <code>assert expr</code> checks a condition, and <code>assert expr fails</code> checks that it fails.</p>
+<div class="code"><div class="code-bar"><span>contracts.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Account:
+    owner: str
+    balance: money
+
+fn deposit(account: Account, amount: money):
+    expect amount &gt; 0.00 EUR
+    ensure account.balance == old(account.balance) + amount
+    account.balance += amount
+
+ana = Account(owner: "Ana", balance: 10.00 EUR)
+deposit(ana, 5.00 EUR)
+print(ana.balance)
+try:
+    deposit(ana, -1.00 EUR)
+else e is ContractBroken:
+    print(e.message)
+
+test "a deposit adds to the balance":
+    a = Account(owner: "A", balance: 0.00 EUR)
+    deposit(a, 2.00 EUR)
+    assert a.balance == 2.00 EUR
+
+test "a negative deposit fails":
+    assert deposit(Account(owner: "B", balance: 0.00 EUR), -1.00 EUR) fails</code></pre><div class="out"><div class="out-label">$ nexo contracts.nexo</div><pre><code>15.00 EUR
+expect amount &gt; 0.00 EUR does not hold (amount = -1.00 EUR)</code></pre></div></div>
+<div class="code"><div class="out"><div class="out-label">$ nexo test contracts.nexo</div><pre><code>15.00 EUR
+expect amount &gt; 0.00 EUR does not hold (amount = -1.00 EUR)
+✓ a deposit adds to the balance
+✓ a negative deposit fails
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="modules">
+  <h2><a href="#modules">Modules</a></h2>
+  <p>A module is a file of the program: <code>use shop.payments</code> loads <code>shop/payments.nexo</code>, from the folder of <code>nexo.toml</code> or of the program. Only its <code>pub</code> functions and types are exported, and they are used through the module's last name (D124).</p>
+<div class="code"><div class="code-bar"><span>shop/payments.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">pub type Status:
+    Paid(amount: int)
+    Pending
+
+pub fn charge(amount: int) -&gt; Status:
+    if amount == 0:
+        return Pending
+    return Paid(amount)
+
+fn audit():
+    print("only visible inside the module")</code></pre></div>
+<div class="code"><div class="code-bar"><span>main.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use shop.payments
+
+match payments.charge(10):
+    payments.Paid(n): print("paid {n}")
+    payments.Pending: print("nothing to pay")</code></pre><div class="out"><div class="out-label">$ nexo main.nexo</div><pre><code>paid 10</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="concurrency">
+  <h2><a href="#concurrency">Concurrency</a></h2>
+  <p><code>parallel for</code> runs its body as tasks on threads, and the results and any output come back in the order of the list; a <code>parallel:</code> block runs its statements at the same time. A task may only change what it created itself (D80-D81). <code>use nexo.sync</code> adds <code>spawn</code>, typed <code>channel</code>s, <code>select</code> and <code>shared</code> variables; when every task waits, Nexo reports a deadlock instead of hanging.</p>
+<div class="code"><div class="code-bar"><span>parallel.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.sync
+
+sizes = parallel for word in ["one", "three", "seven"]:
+    return len(word)
+print(sizes)
+
+fn produce(out: channel[int], n: int):
+    for i in 1..n:
+        out.send(i)
+    out.close()
+
+numbers = channel[int](size: 2)
+spawn produce(numbers, 4)
+var total = 0
+for x in numbers:
+    total += x
+print(total)</code></pre><div class="out"><div class="out-label">$ nexo parallel.nexo</div><pre><code>[3, 5, 5]
+10</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="stdlib">
+  <h2><a href="#stdlib">Standard library</a></h2>
+  <p>Always available, without <code>use</code>.</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Area</th><th>Names</th></tr></thead>
+    <tbody>
+      <tr><td>Input and output</td><td><code>print</code>, <code>input</code>, <code>read</code>, <code>write</code>, <code>read_lines</code> (lazy), <code>save</code>, <code>move_file(path, to: folder)</code></td></tr>
+      <tr><td>Values</td><td><code>len</code>, <code>range(start, end)</code> (end excluded), <code>str</code>, <code>int</code>, <code>float</code>, <code>decimal</code>, <code>list</code>, <code>set</code>, <code>round</code>, <code>split</code>, <code>convert</code>, <code>validate(value, as: type, range: a..b)</code>, <code>PI</code></td></tr>
+      <tr><td>Text</td><td><code>.upper()</code>, <code>.lower()</code>, <code>.trim()</code>, <code>.replace(a, b)</code>, <code>.starts_with</code>, <code>.ends_with</code>, <code>find</code>, <code>regex</code>, <code>render</code> templates</td></tr>
+      <tr><td>Collections</td><td><code>.sum()</code>, <code>.keys()</code>, <code>.values()</code>, and the steps of <a href="#pipelines">pipelines</a></td></tr>
+      <tr><td>Data</td><td>JSON and CSV: <code>read</code> into types, <code>save</code>, <code>convert(to: json|csv)</code></td></tr>
+      <tr><td>Time</td><td><code>now</code>, <code>today</code>, <code>date</code>, <code>time</code>, durations and time zones</td></tr>
+      <tr><td>Security</td><td><code>secret("NAME")</code> (never printed), <code>password.hash</code> and <code>check</code>, <code>key</code>, <code>encrypt</code>, <code>decrypt</code>, <code>sign</code>, <code>verify</code></td></tr>
+      <tr><td>Network</td><td><code>http.get</code>, <code>post</code>, <code>put</code>, <code>patch</code>, <code>delete</code>, with retries; <code>fake</code> for tests</td></tr>
+      <tr><td>Logs</td><td><code>log</code>, which hides <code>@private</code> fields</td></tr>
+    </tbody>
+  </table></div>
+<div class="code"><div class="code-bar"><span>stdlib.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">try:
+    write("notes.txt", "one\ntwo\n")
+    print(read("notes.txt"))
+    for line in read_lines("notes.txt"):
+        print(line.upper())
+    move_file("notes.txt", to: "archive/")
+    print(len(read("archive/notes.txt")))
+else e:
+    print("could not use the file: {e.message}")
+
+print(len("hello"), range(1, 4), [1, 2, 3].sum())
+print(" hi ".trim(), "a-b".replace("-", "+"), "Nexo".lower(), "nexo".starts_with("ne"))
+m = {"a": 1, "b": 2}
+print(m.keys(), m.values())
+print(str(42) + "!", float(3), decimal(0.1) * 3)
+print(convert(10.00 EUR, to: USD, rate: 1.1))
+print(round(PI, 4))</code></pre><div class="out"><div class="out-label">$ nexo stdlib.nexo</div><pre><code>one
+two
+
+ONE
+TWO
+8
+5 [1, 2, 3] 6
+hi a+b nexo true
+["a", "b"] [1, 2]
+42! 3.0 0.3
+11.00 USD
+3.1416</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="official">
+  <h2><a href="#official">Official modules</a></h2>
+  <p>Modules of the same language, maintained with it. Some load with <code>use</code>; the others are implicit when their block appears.</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Module</th><th>What it gives</th><th>Loading</th></tr></thead>
+    <tbody>
+      <tr><td><code>nexo.sync</code></td><td><code>spawn</code>, <code>channel</code>, <code>select</code>, <code>shared</code></td><td><code>use nexo.sync</code></td></tr>
+      <tr><td><code>nexo.db</code></td><td><code>connect</code>, <code>@table</code> types, pipelines translated to SQL on SQLite, transactions, <code>nexo db diff|migrate</code></td><td><code>use nexo.db</code></td></tr>
+      <tr><td><code>nexo.web</code></td><td><code>server</code> blocks with typed routes, JWT <code>auth</code>, <code>@public</code>, <code>@role</code>, <code>@limit</code></td><td>implicit</td></tr>
+      <tr><td><code>nexo.ai</code></td><td><code>ask</code> with typed answers, the <code>ai</code> block, <code>@tool</code>, <code>agent</code> blocks, <code>fake ask</code></td><td>implicit</td></tr>
+      <tr><td><code>nexo.infra</code></td><td><code>infra</code> blocks on AWS, Azure, GCP and Kubernetes, <code>stage</code>, <code>nexo plan|apply|drift|destroy|cost|import</code></td><td>implicit</td></tr>
+      <tr><td><code>nexo.ci</code></td><td><code>pipeline</code> blocks with steps, <code>nexo ci run</code>, <code>nexo ci export</code></td><td>implicit</td></tr>
+      <tr><td><code>nexo.stream</code></td><td><code>when kafka("topic") as msg</code>, retries, dead letters, <code>window</code> steps</td><td><code>use nexo.stream</code></td></tr>
+      <tr><td>Flags and privacy</td><td><code>flags</code> blocks and <code>flag(name, user)</code>; <code>@personal</code>, <code>@private</code>, <code>keep</code>, <code>nexo privacy report</code></td><td>implicit</td></tr>
+      <tr><td><code>use c</code>, <code>use python</code></td><td>A C library from its header; a Python module</td><td><code>use c "lib"</code>, <code>use python name</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Not implemented yet: <code>nexo.ml</code>, <code>nexo.ui</code>, <code>nexo.notify</code>, <code>every</code> and <code>lifecycle</code>, canary and blue/green releases, PostgreSQL, YAML, XML and Parquet.</p>
+</section>
+
+<section class="ref-sec" id="cli">
+  <h2><a href="#cli">Command line</a></h2>
+  <p>Both implementations take the same commands: <code>.venv/bin/nexo</code> (the interpreter) and <code>compiler/target/release/nexo</code> (the compiler).</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>nexo</code></td><td>The REPL</td></tr>
+      <tr><td><code>nexo file.nexo</code></td><td>Runs a program</td></tr>
+      <tr><td><code>nexo build [--release [--trust-ensure]] [-o out] file.nexo</code></td><td>Compiles to a native program (compiler only)</td></tr>
+      <tr><td><code>nexo test [paths]</code></td><td>Runs the <code>test</code> blocks</td></tr>
+      <tr><td><code>nexo fmt [paths]</code></td><td>Formats files in place; there are no options</td></tr>
+      <tr><td><code>nexo lint [paths]</code>, <code>nexo fix [paths]</code></td><td>Warnings with their fixes, and applying the safe ones</td></tr>
+      <tr><td><code>nexo check [paths]</code></td><td>The compile checks, without running anything</td></tr>
+      <tr><td><code>nexo lsp</code></td><td>The language server, on standard input and output</td></tr>
+      <tr><td><code>nexo db diff|migrate file.nexo</code></td><td>Database migrations (<code>--db path</code>, <code>--allow-drop</code>)</td></tr>
+      <tr><td><code>nexo ai setup|usage</code></td><td>Configures the AI provider; shows the use of <code>ask</code></td></tr>
+      <tr><td><code>nexo plan|apply|destroy|drift|cost [file.nexo]</code></td><td>Infrastructure (<code>--stage</code>, <code>--yes</code>); <code>nexo import cloud resource id</code> adopts what exists</td></tr>
+      <tr><td><code>nexo ci run</code>, <code>nexo ci export github|gitlab|azure|jenkins</code></td><td>Runs a pipeline here (<code>--step</code>, <code>--after</code>, <code>--yes</code>); writes the file of a CI service</td></tr>
+      <tr><td><code>nexo flags set name value</code></td><td>Changes a flag (<code>--stage</code>)</td></tr>
+      <tr><td><code>nexo privacy report</code></td><td>The personal data of a program</td></tr>
+    </tbody>
+  </table></div>
+  <p>Messages are in English (D125). <code>NEXO_LEAKCHECK=1</code> makes a compiled program report any value it did not free.</p>
+</section>
+
+<section class="ref-sec" id="reserved">
+  <h2><a href="#reserved">Reserved words</a></h2>
+  <p>The core reserves 39 words everywhere. Module words are only reserved at the start of a line or inside their module's block, so they can still be names elsewhere.</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Group</th><th>Words</th></tr></thead>
+    <tbody>
+      <tr><td>Control</td><td><code>if</code> <code>elif</code> <code>else</code> <code>for</code> <code>in</code> <code>while</code> <code>repeat</code> <code>match</code> <code>pass</code></td></tr>
+      <tr><td>Definition</td><td><code>fn</code> <code>return</code> <code>type</code> <code>trait</code> <code>is</code> <code>pub</code> <code>use</code> <code>var</code> <code>self</code> <code>weak</code></td></tr>
+      <tr><td>Values and logic</td><td><code>true</code> <code>false</code> <code>none</code> <code>and</code> <code>or</code> <code>not</code> <code>as</code></td></tr>
+      <tr><td>Errors and contracts</td><td><code>try</code> <code>unsafe</code> <code>expect</code> <code>ensure</code></td></tr>
+      <tr><td>Concurrency and events</td><td><code>parallel</code> <code>on</code> <code>emit</code> <code>when</code> <code>every</code> <code>at</code> <code>lifecycle</code></td></tr>
+      <tr><td>Testing</td><td><code>test</code> <code>assert</code></td></tr>
+      <tr><td>Pipelines (contextual)</td><td><code>where</code> <code>map</code> <code>pick</code> <code>group</code> <code>by</code> <code>sum</code> <code>count</code> <code>avg</code> <code>sort</code> <code>desc</code> <code>take</code> <code>each</code> <code>it</code></td></tr>
+      <tr><td>Modules (contextual)</td><td><code>ai</code> <code>agent</code> <code>server</code> <code>infra</code> <code>stage</code> <code>pipeline</code> <code>step</code> <code>flags</code> <code>spawn</code> <code>channel</code> <code>select</code> <code>shared</code> and the others of section 27</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+</article>
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>One way to do each thing. Edition 0.1.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <a href="reference.html">Reference</a>
+      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
+      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">Design decisions</a>
+      <a href="https://github.com/marcrabadan/nexo/tree/main/examples">Examples</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

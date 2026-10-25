@@ -142,4 +142,28 @@
     nav.addEventListener("click", function (e) { if (e.target.closest("a")) setOpen(false); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
   }
+
+  // Reference: the contents start closed on narrow screens and mark the
+  // section being read.
+  var toc = document.querySelector(".ref-toc");
+  if (toc) {
+    if (window.matchMedia("(max-width: 1040px)").matches) toc.open = false;
+    var links = {};
+    toc.querySelectorAll("a[href^='#']").forEach(function (a) { links[a.getAttribute("href").slice(1)] = a; });
+    if ("IntersectionObserver" in window) {
+      var current = null;
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting || !links[e.target.id]) return;
+          if (current) current.classList.remove("active");
+          current = links[e.target.id];
+          current.classList.add("active");
+        });
+      }, { rootMargin: "-80px 0px -70% 0px" });
+      Object.keys(links).forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) observer.observe(el);
+      });
+    }
+  }
 })();
