@@ -61,7 +61,7 @@ def test_four_clouds_from_one_file(phase, cloud, tmp_path):
     for infra, n in (("shop_aws", 17), ("shop_azure", 15), ("shop_gcp", 13), ("shop_k8s", 13)):
         state = json.loads((tmp_path / ".nexo" / "state" / f"{infra.replace('_', '-')}-default.json").read_text())
         assert len(state["resources"]) == n
-    assert out.count("Aplicado:") == 4
+    assert out.count("Applied:") == 4
     assert "url = http://203.0.113.10\n" in out
     # the secret never reaches the state nor the output
     assert "sk-123" not in out
@@ -142,7 +142,7 @@ def test_cost(phase, cloud, tmp_path):
     copy(tmp_path, "shop.nexo")
     code, out = nexo(phase, ["cost", "--stage", "prod", "shop.nexo"], tmp_path, cloud)
     assert code == 0 and out.startswith("Cost of shop (aws, stage prod):\n"), out
-    assert out.endswith(" EUR al mes.\n")
+    assert out.endswith(" EUR per month.\n")
 
 
 def test_no_infra_block(tmp_path):
@@ -158,13 +158,13 @@ def test_an_infra_uses_values_of_another(phase, cloud, tmp_path):
     code, out = nexo(phase, ["apply", "--yes", "peers.nexo"], tmp_path, cloud)
     assert code == 0, out
     # data is applied first although it is declared after web
-    assert out.index("Plan de data") < out.index("Plan de web")
+    assert out.index("Plan for data") < out.index("Plan for web")
     assert "db = 10.20.0.3\n" in out
     deploy = next(v for k, v in emu.STATE.k8s.items() if k.endswith("/deployments/web-api"))
     env = deploy["spec"]["template"]["spec"]["containers"][0]["env"]
     assert {"name": "DB", "value": "postgres://10.20.0.3/customers"} in env
     code, out = nexo(phase, ["destroy", "peers.nexo"], tmp_path, cloud, stdin=b"web\ndata\n")
-    assert code == 0 and out.index("de web:") < out.index("de data:"), out
+    assert code == 0 and out.index("of web will") < out.index("of data will"), out
 
 
 def certificates(d):
@@ -202,7 +202,7 @@ def test_a_cluster_with_its_own_certificate_authority(phase, tmp_path):
         code, out = nexo(phase, ["apply", "--yes", "app.nexo"], tmp_path, dict(env, NEXO_K8S_CA=str(tmp_path / "x.pem")))
         assert code == 1 and "The certificate authority of the cluster cannot be read" in out, out
         code, out = nexo(phase, ["apply", "--yes", "app.nexo"], tmp_path, dict(env, NEXO_K8S_CA=str(ca)))
-        assert code == 0 and "Aplicado: 3 creados" in out, out
+        assert code == 0 and "Applied: 3 created" in out, out
     finally:
         server.shutdown()
 

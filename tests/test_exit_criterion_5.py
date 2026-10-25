@@ -48,7 +48,7 @@ def test_one_file_deploys_to_four_clouds(phase, cloud, tmp_path):
     assert "build -t shop:1.1.0 .\n" in out
     assert out.endswith("Pipeline main: 3 steps passed, version 1.1.0.\n")
     # the four targets, in the order their references need
-    order = [out.index(f"Plan de {name} ") for name in ("shop_aws", "shop_azure", "shop_gcp", "shop_k8s")]
+    order = [out.index(f"Plan for {name} ") for name in ("shop_aws", "shop_azure", "shop_gcp", "shop_k8s")]
     assert order == sorted(order)
     for target in CLOUDS.values():
         text = held(target)

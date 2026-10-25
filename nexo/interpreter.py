@@ -16,7 +16,6 @@ from decimal import Decimal
 from typing import Any
 
 from . import ast as A
-from . import errors
 from .checker import Checker
 from .modules import Linker, ModuleValue, bound_name, is_file_module
 from .errors import NexoError, Span, suggest

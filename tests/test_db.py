@@ -64,7 +64,7 @@ def test_diff_and_migrate(phase, tmp_path):
     assert "this does not run" not in "".join(out)
     assert out[2] == "shop.db already matches the types of app.nexo.\n"
     assert 'CREATE TABLE "customer_new"' in out[3]
-    assert "borra columnas o tablas" in out[4]
+    assert "drops columns or tables" in out[4]
     with sqlite3.connect(tmp_path / "shop.db") as c:
         assert list(c.execute("SELECT * FROM customer")) == [(1, "Ana", None)]
         assert [r[0] for r in c.execute("SELECT name FROM nexo_migrations")] == ["0001.sql", "0002.sql"]

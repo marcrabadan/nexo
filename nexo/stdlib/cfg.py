@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import errors
 from ..errors import NexoError
 from ..types import Native, repr_value
 

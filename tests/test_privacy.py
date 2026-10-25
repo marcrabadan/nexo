@@ -154,7 +154,7 @@ def test_report_and_lint(phase, tmp_path):
     assert not (tmp_path / "shop.db").exists()
     lint = run(phase[1], ["lint", "app.nexo"], tmp_path).stdout.decode()
     assert lint.count('The type "Contact" has personal data') == 2
-    assert "Avisos: 2." in lint
+    assert "Warnings: 2." in lint
 
 
 def test_release_build_needs_keep_and_purpose(tmp_path):
