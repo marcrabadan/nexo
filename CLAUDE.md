@@ -21,7 +21,7 @@ The core of Nexo, a new programming language, in two implementations
   reproducible release builds with an SBOM, and in both phases `nexo
   audit`, `nexo docs --for-ai`, `nexo test --suggest` and `nexo check
   --intent`; the guarantees of the specification are measured and their
-  state is in docs/guarantees.md (D126-D133).
+  state is in docs/guarantees.md (D126-D136).
 
 ## Source of truth
 
@@ -80,8 +80,8 @@ compiler/
                   fmt, lint, lsp (+ json), the REPL, cheader (C headers
                   read at compile time), ai_cmd, phase5 (the commands of
                   flags, privacy, infra and ci); phase 6: narrow (ints and
-                  records of known types, D126), sbom, audit, docs,
-                  suggest, intent
+                  records of known types, D126), sbom, split (parallel
+                  development builds, D135), audit, docs, suggest, intent
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
@@ -196,8 +196,12 @@ test_exit_criterion_5.py.
 
 Phase 6: the fast paths of D126 (records of known types, fields inside
 the object, counted range loops, counts without atomics until a second
-thread starts); linear name resolution and `-O0` in development mode
-(D127); release builds that are the same byte for byte, with
+thread starts) and D134 (fused `where`/`map`/`sum` pipelines, lists read
+in place, int-key map index, a per-thread pool of heap objects); short
+texts inside their object (D136); linear name resolution and `-O0` in
+development mode (D127); development builds that call the count helpers,
+compile large programs in parallel parts (compiler/nexoc/src/split.rs)
+and skip checks for names certainly defined (D135); release builds that are the same byte for byte, with
 `<program>.sbom.json` (D128); `nexo audit` (D129), `nexo docs --for-ai`
 from nexo/stdlib/api.json (D130), `nexo test --suggest` (D131) and `nexo
 check --intent` through `ask` (D132), in both phases with the same output

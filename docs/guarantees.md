@@ -5,7 +5,7 @@ guarantees in 'Goals and guarantees' are met or removed". This page says,
 for each one, how it is checked in this repository, what it gives today,
 and what is still missing. It is updated with each release; the numbers
 come from the scripts named, on the machine in `compiler/bench/goals.json`
-(4 cores, Linux; 2026-10-25). Decisions D126-D133 explain the choices.
+(4 cores, Linux; 2026-10-25). Decisions D126-D136 explain the choices.
 
 | State | Meaning |
 | --- | --- |
@@ -42,31 +42,37 @@ checks, since Nexo checks int overflow).
 
 | Goal | Value | Today | State |
 | --- | --- | --- | --- |
-| Performance on typical code | under 1.5× Rust's time | loop 1.25×, parallel 1.48×, hello 1.69×, fib 2.19×, records 3.16×, strings 3.57×, maps 5.21×, lists 7.02× | Not met |
-| Memory | under 1.3× Rust's RAM | 1.0× on six benchmarks; lists 2.23×, strings 3.18× | Not met |
-| Compilation | 100,000 lines in under 10 s in development mode | 208 s (about 17 s in the compiler, the rest in clang) | Not met |
+| Performance on typical code | under 1.5× Rust's time | parallel 1.20×, loop 1.27×, hello 1.41×, maps 1.65×, fib 2.07×, records 2.43×, strings 2.43×, lists 3.29× | Not met |
+| Memory | under 1.3× Rust's RAM | 1.0× on six benchmarks; lists 2.01×, strings 2.66× | Not met |
+| Compilation | 100,000 lines in under 10 s in development mode | 34 s (about 10 s in the compiler, the rest in clang on four cores) | Not met |
 | Program start-up | under 20 ms | 2.3 ms | Met |
 | First useful program | under 1 hour for someone with no experience | not measured | Needs people (user studies) |
 | From idea to production | one project for code, infrastructure and deployment | `examples/deploy` holds an app, its tests, its infrastructure on four clouds and its pipeline in one file (phase 5) | Met |
 
-What phase 6 changed (D126, D127): records went from 8.0× to 3.2× Rust,
-maps from 6.2× to 5.2× and strings from 3.8× to 3.6×, mostly by reading the
-fields of records whose type is known by their index, calling their
-methods directly, keeping small records in one allocation, counting loops
-over ranges without an iterator, and changing reference counts without
-atomic instructions until a second thread starts. Compiling 8,000 lines
-went from 2.4 s to 0.4 s in the compiler (name resolution was quadratic)
-and the development mode no longer optimises, which made clang about six
-times faster.
+What phase 6 changed (D126, D127, D134-D136), against the start of the
+phase: records went from 8.0× to 2.4× Rust, lists from 6.3× to 3.3×, maps
+from 6.2× to 1.7×, strings from 3.8× to 2.4×, and the worst ratio from
+8.0× to 3.3×. The main changes: fields of records whose type is known are
+read by their index and their methods called directly; a small record is
+one allocation and freed at once; loops over ranges are counted and lists
+are read in place; `where`/`map` pipelines that end in `sum` or `count`
+are one loop with their steps inlined; maps have a table of their own
+for int keys; short texts live inside their object; freed objects are
+reused from a list per thread; and reference counts change without
+atomic instructions until a second thread starts. Compiling 100,000 lines
+went from 208 s to 34 s: name resolution is linear, suggestions are only
+looked for where an error may show them, development mode does not
+optimise, calls the reference-count helpers instead of copying them, and
+compiles a large program in parts on every core.
 
 What is left is the shape of the compiled code: every value is two words
-with a tag, every operation on a value whose type is not known calls the
-runtime, and lists, maps and strings are reached through those calls.
-Meeting 1.5× on lists, maps and strings needs code specialised by type
-(unboxed lists of ints, maps with int or text keys known at compile
-time), and meeting 10 s for 100,000 lines needs much smaller IR or
-compiling the program in parallel parts. Both are compiler work for the
-next releases, or the goals change.
+with a tag (a list of ints takes twice the memory of Rust's), every heap
+value is an object of the same size (112 bytes), and an operation on a
+value whose type is not known calls the runtime. Meeting 1.5× and 1.3×
+on lists and strings needs values specialised by type (unboxed lists of
+ints, objects sized by their kind), and meeting 10 s for 100,000 lines
+needs much smaller IR or generating it on several threads. Both are
+compiler work for the next releases, or the goals change.
 
 ## What is needed to finish phase 6
 

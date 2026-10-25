@@ -112,7 +112,7 @@ def main():
     <div class="section-head">
       <p class="eyebrow">Performance</p>
       <h2>How fast is Nexo?</h2>
-      <p class="section-intro">The same programs in Nexo and six other languages, written the usual way in each and checked to print the same result. Over all of them, compiled Nexo sits with JavaScript and Java: behind C, Go and Rust, and several times faster than Python. It is close to C on integer loops and threads, and ahead of Go, Java and JavaScript on lists. Phase 6 made records almost three times faster; it is still slowest on maps and strings, where every value is boxed and reference-counted, and on strings even Python is faster (<a href="https://github.com/marcrabadan/nexo/blob/main/docs/guarantees.md">the goals and where Nexo stands</a>).</p>
+      <p class="section-intro">The same programs in Nexo and six other languages, written the usual way in each and checked to print the same result. Over all of them, compiled Nexo sits behind C, Rust and Go and ahead of Java, JavaScript and Python. It is close to C on integer loops and threads, ahead of Go, Java and JavaScript on lists and of Java and JavaScript on maps, and level with them on records. It is slowest on strings, where every value is boxed and reference-counted and Python and JavaScript are still faster (<a href="https://github.com/marcrabadan/nexo/blob/main/docs/guarantees.md">the goals and where Nexo stands</a>).</p>
     </div>
     <div class="tabs" role="tablist" aria-label="Benchmarks">{"".join(tabs)}</div>
     {"".join(panels)}
