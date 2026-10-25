@@ -467,7 +467,7 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<Val>> {
             let name = name.as_str();
             match name {
                 "any" => Ok(Some(Val::from(v.plain()))),
-                "int" => Ok((v.tag == T_INT).then_some(Val::simple(v))),
+                "int" => Ok((v.tag == T_INT).then(|| Val::simple(v))),
                 "float" => Ok(match v.tag {
                     T_FLOAT | T_LITFLOAT => Some(Val::simple(v.plain())),
                     T_INT => Some(Val::float(v.bits as i64 as f64)),
