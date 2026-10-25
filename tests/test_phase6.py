@@ -262,3 +262,16 @@ def test_release_builds_are_reproducible(tmp_path):
     # a development build writes no bill of materials
     run([str(nexo)], ["build", str(src), "-o", str(tmp_path / "dev")], ROOT, timeout=900)
     assert not (tmp_path / "dev.sbom.json").exists()
+
+
+def test_fuzz():
+    """A few random programs give the same output in both phases (the
+    nightly workflow runs many more)."""
+    import subprocess
+    import sys
+    nexo = compiler()
+    if nexo is None:
+        pytest.skip("needs cargo and clang")
+    proc = subprocess.run([sys.executable, str(ROOT / "compiler" / "scripts" / "fuzz.py"), f"--nexo={nexo}",
+                           "--seed=0", "--count=12"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1200)
+    assert proc.returncode == 0, proc.stdout.decode()

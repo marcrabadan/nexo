@@ -1,0 +1,31 @@
+# Continuous fuzzing of the compiler ("Goals and guarantees", D133): every
+# night, random programs run with the phase 0 interpreter and the compiled
+# binary and must print the same thing, with no crash and no leak. The
+# programs that differ are kept as an artifact.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install phase 0
+        run: pip install -e .
+      - name: Build the compiler
+        working-directory: compiler
+        run: cargo build
+      - name: Fuzz
+        run: python compiler/scripts/fuzz.py --seed=${{ github.run_number }} --count=500
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-failures
+          path: compiler/tests/fuzz/
