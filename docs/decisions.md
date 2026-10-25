@@ -1829,3 +1829,9 @@ it writes an error that may show it, among the names that were visible
 at the lookup (the resolver keeps how many names each scope had).
 Release builds are never cut: LLVM optimises the whole program at once,
 and two of them still give the same bytes (D128).
+
+**D136. Short texts inside their object.** A text was an object (112
+bytes, like every heap value) plus a separate buffer. A text of up to 70
+bytes now lives inside the object: one allocation instead of two, and less
+memory. Longer texts keep their own buffer. Nothing a program prints
+changes.

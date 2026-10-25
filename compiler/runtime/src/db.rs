@@ -605,7 +605,7 @@ fn to_sql(v: V, span: u32) -> R<Sql> {
         T_INT => Sql::Int(v.bits as i64),
         T_FLOAT => Sql::Real(f64::from_bits(v.bits)),
         _ => match v.get() {
-            Some(Obj::Str(s)) => Sql::Text(s.clone()),
+            Some(Obj::Str(s)) => Sql::Text(s.to_string()),
             Some(Obj::Decimal(d)) => Sql::Text(d.fixed()),
             Some(Obj::Money(d, c)) => Sql::Text(format!("{} {c}", d.py_str())),
             Some(Obj::Variant(var)) => Sql::Text(var.name.clone()),

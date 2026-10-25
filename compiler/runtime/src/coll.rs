@@ -19,7 +19,7 @@ pub fn key_of(v: V) -> Option<Key> {
         T_INT => Key::Int(v.bits as i64),
         T_FLOAT => float_key(f64::from_bits(v.bits)),
         T_OBJ => match v.get()? {
-            Obj::Str(s) => Key::Str(s.clone()),
+            Obj::Str(s) => Key::Str(s.to_string()),
             Obj::Decimal(d) => {
                 if d.is_integral() {
                     if let Some(i) = d.to_i64() {

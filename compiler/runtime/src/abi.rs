@@ -259,7 +259,7 @@ pub unsafe extern "C" fn nx_return_outside(span: u32) {
 
 #[no_mangle]
 pub unsafe extern "C" fn nx_str(ptr: *const u8, len: usize) -> V {
-    Val::immortal(Obj::Str(text(ptr, len).to_string())).into_raw()
+    Val::immortal(Obj::Str(text(ptr, len).into())).into_raw()
 }
 
 #[no_mangle]

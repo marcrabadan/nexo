@@ -373,7 +373,7 @@ impl Val {
         Val(V::bool(b))
     }
 
-    pub fn str(s: impl Into<String>) -> Val {
+    pub fn str(s: impl Into<NStr>) -> Val {
         Val::new(Obj::Str(s.into()))
     }
 
@@ -874,8 +874,85 @@ pub struct VariantValue {
     pub fields: Vec<Val>,
 }
 
+/// Bytes of a text kept inside its object (D136).
+const INLINE_STR: usize = 70;
+
+/// A text value. A short one (most texts) lives inside its object, so it
+/// is one allocation instead of two; a longer one is a `String`.
+pub enum NStr {
+    Inline(u8, [u8; INLINE_STR]),
+    Heap(String),
+}
+
+impl NStr {
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        match self {
+            // only valid UTF-8 is ever written into the buffer
+            NStr::Inline(n, b) => unsafe { std::str::from_utf8_unchecked(&b[..*n as usize]) },
+            NStr::Heap(s) => s,
+        }
+    }
+}
+
+impl From<&str> for NStr {
+    #[inline]
+    fn from(s: &str) -> NStr {
+        if s.len() <= INLINE_STR {
+            let mut b = [0u8; INLINE_STR];
+            b[..s.len()].copy_from_slice(s.as_bytes());
+            NStr::Inline(s.len() as u8, b)
+        } else {
+            NStr::Heap(s.to_string())
+        }
+    }
+}
+
+impl From<String> for NStr {
+    #[inline]
+    fn from(s: String) -> NStr {
+        if s.len() <= INLINE_STR {
+            NStr::from(s.as_str())
+        } else {
+            NStr::Heap(s)
+        }
+    }
+}
+
+impl From<&String> for NStr {
+    fn from(s: &String) -> NStr {
+        NStr::from(s.as_str())
+    }
+}
+
+impl std::ops::Deref for NStr {
+    type Target = str;
+    #[inline]
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Clone for NStr {
+    fn clone(&self) -> NStr {
+        NStr::from(self.as_str())
+    }
+}
+
+impl PartialEq for NStr {
+    fn eq(&self, other: &NStr) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl std::fmt::Debug for NStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.as_str().fmt(f)
+    }
+}
+
 pub enum Obj {
-    Str(String),
+    Str(NStr),
     Decimal(Dec),
     Money(Dec, &'static str),
     /// a number with a unit: 30s, 5 km, 512 MB, 10%

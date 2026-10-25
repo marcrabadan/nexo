@@ -978,7 +978,7 @@ pub fn native_value(v: V) -> Json {
         _ => {}
     }
     match v.get() {
-        Some(Obj::Str(s)) => json::s(s.clone()),
+        Some(Obj::Str(s)) => json::s(s.to_string()),
         Some(Obj::Decimal(d)) => Json::Num(d.to_f64()),
         Some(Obj::List(items)) => Json::Arr(items.borrow().iter().map(|x| native_value(x.v())).collect()),
         Some(Obj::Map(mp)) => {
