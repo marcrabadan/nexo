@@ -1,4 +1,5 @@
 """`use c` and `use python` (section 18, D110-D111) in both phases."""
+import math
 import shutil
 import subprocess
 import sys
@@ -164,7 +165,9 @@ def test_use_python(phase, tmp_path):
     env = {"NEXO_PYTHON": sys.executable}
     (tmp_path / "app.nexo").write_text(PY_PROGRAM)
     proc = run(phase[1], ["app.nexo"], tmp_path, env=env)
-    assert proc.stdout.decode() == PY_EXPECTED
+    # CPython may build math into the executable or load it from a .so.
+    expected = PY_EXPECTED.replace("<module 'math' (built-in)>", repr(math))
+    assert proc.stdout.decode() == expected
     for source, message in PY_ERRORS:
         (tmp_path / "bad.nexo").write_text(source + "\n")
         out = run(phase[1], ["bad.nexo"], tmp_path, env=env).stdout.decode()

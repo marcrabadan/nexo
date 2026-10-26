@@ -76,3 +76,14 @@ arguments and optionally mounts the public CA bundle named by `SSL_CERT_FILE`
 as a temporary BuildKit secret. TLS verification remains enabled. Private keys,
 local virtual environments, Cargo targets and environment files are excluded
 from the build context.
+
+## Remote kernel validation
+
+The [Docker validation job](https://github.com/marcrabadan/nexo/actions/runs/40401630179/job/121848682972)
+passed with Landlock ABI 7 and actual enforcement enabled. All 14 Docker
+integration tests passed. Inside the hardened container, 49 Rust tests passed
+(one optional benchmark ignored), and both normal and strict validation passed
+156 Python security/policy tests with three skips. The 13 positive Landlock
+cases that cannot run on the development host ran successfully on this runner.
+These results apply to that runner and tested profile; a deployment host must
+still pass its own strict probe. Current full-suite results are tracked in the PR.
