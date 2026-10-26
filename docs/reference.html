@@ -544,7 +544,7 @@ print(total)</code></pre><div class="out"><div class="out-label">$ nexo parallel
       <tr><td><code>write(path, text) -&gt; none!</code></td><td>Writes (or replaces) a file; its folder must exist (<code>NotFound</code> otherwise).</td></tr>
       <tr><td><code>read_lines(path) -&gt; list!</code></td><td>The lines of a file, read as they are used: <code>read_lines("50GB.log") |&gt; take 100</code> reads 100 lines.</td></tr>
       <tr><td><code>save(value, path) -&gt; none!</code></td><td>The last step of a pipeline: CSV for <code>.csv</code>, JSON for <code>.json</code>, one line per element otherwise. Money is written as text (<code>"19.99 EUR"</code>) and decimals keep every digit (D46).</td></tr>
-      <tr><td><code>move_file(path, to: place) -&gt; none!</code></td><td>Moves or renames a file; a <code>to</code> ending in <code>/</code> is a folder.</td></tr>
+      <tr><td><code>move_file(path, to: folder) -&gt; str!</code></td><td>Moves a file into a folder, creating it, and returns the new path: <code>move_file("a.txt", to: "old")</code> gives <code>"old/a.txt"</code>. It does not rename (D96).</td></tr>
       <tr><td><code>json.parse(text, as: T?) -&gt; T!</code></td><td>Reads JSON. With <code>as:</code> it builds records, applies defaults and reports a missing field or a wrong type as <code>InvalidData</code> (D47).</td></tr>
       <tr><td><code>csv.parse(text) -&gt; list!</code></td><td>A list of maps. A column of integers is <code>int</code>, of numbers <code>float</code>, otherwise text; an empty cell is <code>none</code> (D45).</td></tr>
       <tr><td><code>convert(data, to: json|csv) -&gt; str</code></td><td>Data as JSON (indented by two spaces) or CSV text.</td></tr>
