@@ -260,7 +260,8 @@ fn var_text(name: &str) -> String {
 
 /// Run a command with the shell; what it writes is shown (stdout and
 /// stderr together) and returned.
-fn shell(command: &str) -> (i32, String) {
+fn shell(command: &str, span: u32) -> R<(i32, String)> {
+    crate::policy::check("shell", command, span)?;
     crate::state::flush();
     let _ = std::io::stdout().flush();
     let out = std::process::Command::new("sh").arg("-c").arg(format!("exec 2>&1\n{command}")).stdin(std::process::Stdio::inherit()).output();
@@ -274,12 +275,12 @@ fn shell(command: &str) -> (i32, String) {
             crate::state::write_out("\n");
         }
     }
-    (code, text)
+    Ok((code, text))
 }
 
 pub fn run(command: V, span: u32) -> R<Val> {
     let Some(c) = command.as_str() else { return Err(crate::stdlib::expects("run", "str", command, span)) };
-    let (code, out) = shell(c);
+    let (code, out) = shell(c, span)?;
     if code != 0 {
         return Err(failure_as("Error", "ci_run", span, &[("command", c.to_string()), ("code", code.to_string())]));
     }
@@ -318,7 +319,7 @@ pub fn build_image(name: V, span: u32) -> R<Val> {
     let tag = format!("{}:{}", name.as_str().unwrap(), var_text("version"));
     let tool = std::env::var("NEXO_CONTAINER_TOOL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "docker".into());
     let command = format!("{tool} build -t {tag} .");
-    let (code, _) = shell(&command);
+    let (code, _) = shell(&command, span)?;
     if code != 0 {
         return Err(failure_as("Error", "ci_run", span, &[("command", command), ("code", code.to_string())]));
     }

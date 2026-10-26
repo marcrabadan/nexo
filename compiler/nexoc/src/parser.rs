@@ -36,6 +36,9 @@ pub struct Parser<'s> {
     phrase_mode: bool,
     /// names the steps of each pipeline keep (D122)
     pipeline_vars: std::collections::HashMap<String, Vec<String>>,
+    /// blocks the parser is inside; a policy only goes at the top (D142)
+    nesting: u32,
+    policy_seen: bool,
 }
 
 fn describe(tok: &Token) -> String {
@@ -80,6 +83,8 @@ impl<'s> Parser<'s> {
             in_test: false,
             phrase_mode: false,
             pipeline_vars: std::collections::HashMap::new(),
+            nesting: 0,
+            policy_seen: false,
         }
     }
 
@@ -224,6 +229,11 @@ impl<'s> Parser<'s> {
             }
             self.statement_into(&mut body)?;
         }
+        // the policy holds from the first statement on (D142)
+        if let Some(i) = body.iter().position(is_policy) {
+            let s = body.remove(i);
+            body.insert(0, s);
+        }
         let mut program = Program { body, files: Vec::new() };
         model_aliases(&mut program, &mut self.next_id);
         Ok(program)
@@ -255,9 +265,14 @@ impl<'s> Parser<'s> {
         }
         self.advance();
         let mut body = Vec::new();
+        self.nesting += 1;
         while self.peek().tok != Tok::Dedent {
-            self.statement_into(&mut body)?;
+            if let Err(e) = self.statement_into(&mut body) {
+                self.nesting -= 1;
+                return Err(e);
+            }
         }
+        self.nesting -= 1;
         self.advance();
         Ok(body)
     }
@@ -1635,7 +1650,15 @@ impl<'s> Parser<'s> {
 // checker, the resolver, the code generator) sees only core constructs.
 
 const STREAM_SOURCES: &[&str] = &["kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket"];
-const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server", "infra", "stage", "pipeline", "flags"];
+const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server", "infra", "stage", "pipeline", "flags", "policy"];
+/// what a policy can allow or deny (D142)
+pub const POLICY_KINDS: &[&str] = &["read", "write", "net", "env", "shell", "c", "python"];
+
+/// The `__policy(...)` statement a policy block becomes.
+pub fn is_policy(s: &Stmt) -> bool {
+    matches!(&s.kind, StmtKind::Expr(Expr { kind: ExprKind::Call { func, .. }, .. })
+        if matches!(&func.kind, ExprKind::Name(n) if n == "__policy"))
+}
 /// blocks of phase 5 whose body is read with the rule of D114
 const CFG_BLOCKS: &[&str] = &["infra", "stage", "pipeline", "flags"];
 /// keywords that start an expression; any other one is a word in a phrase
@@ -1754,6 +1777,9 @@ impl<'s> Parser<'s> {
         let Tok::Name(word_) = tok.tok.clone() else { unreachable!() };
         if CFG_BLOCKS.contains(&word_.as_str()) {
             return self.cfg_block(tok, &word_);
+        }
+        if word_ == "policy" {
+            return self.policy_block(tok);
         }
         let mut name: Option<String> = None;
         let mut name_span = tok.span;
@@ -1875,6 +1901,92 @@ impl<'s> Parser<'s> {
 
     /// infra NAME:, stage NAME:, pipeline NAME:, flags: as
     /// __infra("NAME", [entries]) and the like, each entry a __cfg(...).
+    /// policy: with lines `allow|deny kind "target", ...` as
+    /// __policy([[rule, kind, target...], ...]) (section 9, D142).
+    fn policy_block(&mut self, tok: Token) -> PResult<Stmt> {
+        if self.nesting > 0 {
+            return Err(Diagnostic::new("policy_place", tok.span));
+        }
+        if self.policy_seen {
+            return Err(Diagnostic::new("policy_twice", tok.span));
+        }
+        self.policy_seen = true;
+        self.expect_op(":")?;
+        self.expect_newline_raw()?;
+        if self.peek().tok != Tok::Indent {
+            return Err(self.error(&word("indented")));
+        }
+        self.advance();
+        let mut entries = Vec::new();
+        while self.peek().tok != Tok::Dedent {
+            entries.push(self.policy_entry()?);
+        }
+        self.advance();
+        self.block_end = self.p;
+        let span = tok.span;
+        let list = self.expr_node(span, ExprKind::List(entries));
+        let c = self.call(span, "__policy", vec![list], Vec::new());
+        Ok(self.expr_stmt(c))
+    }
+
+    fn policy_entry(&mut self) -> PResult<Expr> {
+        let start = self.peek().span;
+        let mut words: Vec<Token> = Vec::new();
+        while !matches!(self.peek().tok, Tok::Newline | Tok::Dedent | Tok::Eof) {
+            words.push(self.advance());
+        }
+        if self.peek().tok == Tok::Newline {
+            self.advance();
+        }
+        let whole = match words.last() {
+            Some(t) => start.to(t.span),
+            None => start,
+        };
+        let text = if words.is_empty() { String::new() } else { source_text(self.source, whole) };
+        let bad = || Diagnostic::new("policy_entry", whole).arg("entry", text.clone());
+        let name = |t: &Token| match &t.tok {
+            Tok::Name(n) => Some(n.clone()),
+            _ => None,
+        };
+        let (Some(rule), Some(kind)) = (words.first().and_then(name), words.get(1).and_then(name)) else {
+            return Err(bad());
+        };
+        if !(rule == "allow" || rule == "deny") || !POLICY_KINDS.contains(&kind.as_str()) {
+            return Err(bad());
+        }
+        let rest = &words[2..];
+        let mut targets = Vec::new();
+        for (i, t) in rest.iter().enumerate() {
+            if i % 2 == 1 {
+                if !t.is_op(",") {
+                    return Err(bad());
+                }
+                continue;
+            }
+            let Tok::Str(parts) = &t.tok else { return Err(bad()) };
+            let mut lit = String::new();
+            for p in parts {
+                match p {
+                    StrPart::Lit(s) => lit.push_str(s),
+                    StrPart::Interp { .. } => return Err(bad()),
+                }
+            }
+            if lit.is_empty() {
+                return Err(bad());
+            }
+            targets.push(lit);
+        }
+        if (kind == "shell") != targets.is_empty() || rest.last().is_some_and(|t| t.is_op(",")) {
+            return Err(bad());
+        }
+        let span = start;
+        let mut items = vec![self.text(span, &rule), self.text(span, &kind)];
+        for t in targets {
+            items.push(self.text(span, &t));
+        }
+        Ok(self.expr_node(span, ExprKind::List(items)))
+    }
+
     fn cfg_block(&mut self, tok: Token, word_: &str) -> PResult<Stmt> {
         let mut name = None;
         if word_ != "flags" {
@@ -2907,9 +3019,17 @@ mod tests {
 
     #[test]
     fn config_blocks_are_skipped() {
-        let p = parse("policy:\n    deny shell\n    nested:\n        a = 1\nprint(1)\n").unwrap();
+        let p = parse("app:\n    name = 1\n    nested:\n        a = 1\nprint(1)\n").unwrap();
         assert!(matches!(p.body[0].kind, StmtKind::Config { .. }));
         assert_eq!(p.body.len(), 2);
+    }
+
+    #[test]
+    fn the_policy_goes_first() {
+        let p = parse("print(1)\npolicy:\n    allow read \"data/\", \"x.csv\"\n    deny shell\n").unwrap();
+        assert!(is_policy(&p.body[0]));
+        assert!(parse("policy:\n    allow read data\n").is_err());
+        assert!(parse("fn f():\n    policy:\n        deny shell\n").is_err());
     }
 
     #[test]

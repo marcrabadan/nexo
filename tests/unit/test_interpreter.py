@@ -285,7 +285,7 @@ def test_collections():
 
 def test_not_supported_features_are_reported():
     assert error_of("use nexo.ui\n").key == "not_supported"
-    assert error_of('policy:\n    deny shell\n').key == "not_supported"
+    assert error_of('app:\n    name = "shop"\n').key == "not_supported"
     assert error_of("@cache(10m)\nfn f():\n    return 1\n").key == "not_supported"
     assert error_of("every 5m:\n    pass\n").key == "not_supported"
 

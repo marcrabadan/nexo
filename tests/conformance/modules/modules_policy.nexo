@@ -1,0 +1,10 @@
+# a module follows the policy of the program (D142)
+use shop.reader
+
+policy:
+    allow read "shop/"
+    deny read "modules_cycle.nexo"
+
+print(reader.size("shop/math.nexo"))
+print(reader.size("modules_assign.nexo"))
+print(reader.size("modules_cycle.nexo"))

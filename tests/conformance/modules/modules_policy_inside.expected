@@ -1,0 +1,4 @@
+Error in shop/policed.nexo, line 1:
+  policy:
+  ^^^^^^
+shop.policed has a policy block, and only the program's own file has one. Move its rules to the policy of the program: the modules it uses follow it.

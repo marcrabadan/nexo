@@ -1,0 +1,10 @@
+# nexo policy show (section 9, D142)
+policy:
+    allow read  "data/", "sales.csv"
+    allow write "output/"
+    allow net   "api.company.com", "*.openai.com"
+    allow env   "PORT"
+    deny  read  "data/private/"
+    deny  shell
+
+print("not run")

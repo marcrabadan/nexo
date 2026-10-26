@@ -1,0 +1,6 @@
+# one policy block (D142)
+policy:
+    deny shell
+
+policy:
+    allow read "sales.csv"

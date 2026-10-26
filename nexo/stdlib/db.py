@@ -789,6 +789,10 @@ def b_connect(call, url, key=None):
         raise expects(call, "connect", "str", url)
     if "://" in url:
         raise NexoError("not_supported", call.span, what=f'"connect({repr_value(url.split("://")[0] + "://...")})"')
+    if url != ":memory:":
+        from .policy import check
+        check(call, "read", url)
+        check(call, "write", url)
     secret_text = None
     if key is not None:
         from .crypto import text_or_secret

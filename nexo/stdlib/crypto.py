@@ -31,6 +31,8 @@ class Secret(Native):
         raise NexoError("secret_shown", None)
 
     def reveal(self, call) -> str:
+        from .policy import check
+        check(call, "env", self.name)
         value = os.environ.get(self.name)
         if value is None:
             raise failure("NotFound", call.span, key="NotFound.secret", name=self.name)
@@ -255,6 +257,9 @@ def put_bytes(call, path, data: bytes) -> None:
 def b_encrypt_file(call, path, key):
     from .io import check_path
     path = check_path(call, path, "encrypt_file")
+    from .policy import check
+    check(call, "read", path)
+    check(call, "write", path)
     k = need(call, "encrypt_file", key, Key, "key")
     put_bytes(call, path, seal(k.raw, file_bytes(call, path)))
     return None
@@ -263,6 +268,9 @@ def b_encrypt_file(call, path, key):
 def b_decrypt_file(call, path, key):
     from .io import check_path
     path = check_path(call, path, "decrypt_file")
+    from .policy import check
+    check(call, "read", path)
+    check(call, "write", path)
     k = need(call, "decrypt_file", key, Key, "key")
     put_bytes(call, path, unseal(call, k.raw, file_bytes(call, path)))
     return None

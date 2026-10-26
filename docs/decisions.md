@@ -1904,3 +1904,70 @@ also emits less code wherever it knows more, in both modes:
 
 Release builds are compiled as before otherwise. What a program prints
 does not change.
+
+## The program policy (section 9)
+
+**D142. Capability-based permissions: the program `policy`.** Section 9
+gives the block, the rule that a release build does nothing the policy
+does not allow, that development mode allows everything except `shell`
+and reports what is undeclared, and `nexo policy show` and `suggest`; it
+names `read`, `write`, `net`, `env` and `shell`. Both phases implement it
+with the same output (tests/test_policy.py, the `s09_policy*` and
+`modules_policy*` conformance cases):
+
+- The block is `policy:` at the top level of the program's file, with one
+  rule per line: `allow` or `deny`, a kind, and the texts it applies to,
+  separated by commas (`allow net "api.company.com", "*.openai.com"`);
+  `shell` takes no text. Section 18 says code from another language is
+  "subject to the policy", and in-process native code cannot be confined,
+  so a program with a policy also has to list it: `allow c "libz"` and
+  `allow python "numpy"`, with the name `use` gives. Texts are literals
+  (no `{...}`), so the policy is known without running the program. The
+  parser reads the block into `__policy([[rule, kind, target...], ...])`
+  and puts it first, so it holds from the first statement on, wherever it
+  is written. A second block, a block inside another one, and a block in
+  a module (D124) are errors: modules follow the program's policy, which
+  is how "dependencies inherit the policy".
+- A path rule is the file or folder it names and everything inside it
+  (`"data"` and `"data/"` are the same). Both the rule and the path used
+  are made absolute and read one component at a time, as the system
+  does: a symbolic link is replaced by its target before the `..` that
+  follows it, so neither `data/../x`, a link in `data/`, nor
+  `data/link/../x` reaches outside. A `net` rule is a host name, or `*.domain` for
+  any name below it; ports are not part of it. An `env`, `c` or `python`
+  rule is the exact name.
+- What is checked, before it happens: `read`, `read_lines` and `render`
+  (read); `write`, `save` and `privacy.export` (write); `move_file` (write,
+  on the file, the folder and the file it becomes); `encrypt_file`, `decrypt_file` and
+  `connect` to a database file (read and write); every request of `http`
+  and of `ask`, at every redirect (net); the value of a `secret` when it
+  is used (env); `run` and `build_image` of nexo.ci (shell); `use c` and
+  `use python`. What the runtime itself keeps (`.nexo/` files, the local
+  broker of nexo.stream, the AI configuration, the variables Nexo reads
+  such as `PORT` for a server) and what a server receives are not
+  accesses of the program. `fake` replaces the call, so it needs no rule.
+- A `deny` rule always stops the program; a `deny` wins over an `allow`.
+  Without a rule, a release build (`nexo build --release`, phase 1) stops
+  the program, and development mode (`nexo app.nexo`, `nexo test`, and
+  every program of phase 0) lets it happen and warns once per kind and
+  target, in the section 14 format with the `Warning` header, with the
+  rule to copy (`Add allow read "x.csv" to the policy block.`). A shell
+  command needs `allow shell` in every mode. Being stopped is a
+  diagnostic (D17-D24), not an error value: `try` cannot catch it, so a
+  program cannot probe what it may do.
+- Without a policy, development mode allows everything except shell
+  commands, and warns about nothing: there is nothing to copy into (`nexo
+  policy suggest` writes the whole block). A pipeline that runs commands
+  therefore needs `policy:` with `allow shell`. `nexo build --release`
+  without a policy fails.
+- `nexo policy show [file]` lists, for each kind, what the policy allows
+  and denies, read from the file without running it. `nexo policy suggest
+  [file]` runs `nexo test` on the file with every access allowed and
+  recorded (`NEXO_POLICY_RECORD`), and prints the smallest block that
+  allows exactly the files, hosts and names used, sorted, one line per
+  kind; a run that uses nothing gives `deny shell` (a block needs a rule).
+  It needs `test` blocks that pass. Both read the file given, or the only
+  `.nexo` file of the directory with that block.
+- Per-function permissions, `require` rules and package permissions
+  checked by `nexo add` need the package registry, which does not exist
+  (D133); a function has the permissions of its program.

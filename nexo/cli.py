@@ -23,7 +23,7 @@ from .types import NexoFailure, repr_value
 
 USAGE = ("Usage: nexo [file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs --for-ai [file.nexo] | lsp"
          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
-         " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]")
+         " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]")
 BANNER = "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit."
 
 
@@ -426,6 +426,49 @@ def run_flags(args: list[str]) -> int:
     return flags.set_command(flags.declared(read[1]), pos[0], pos[1], opts.get("--stage"))
 
 
+def run_policy(args: list[str]) -> int:
+    """`nexo policy show|suggest [file.nexo]` (section 9, D142)."""
+    from .stdlib import policy
+    if args[:1] not in (["show"], ["suggest"]) or len(args) > 2 or any(a.startswith("-") for a in args[1:]):
+        print(USAGE, file=sys.stderr)
+        return 2
+    given = args[1] if len(args) == 2 else None
+    if args[0] == "show":
+        path = program_file("policy", given)
+        if path is None:
+            return 1
+        read = read_program(path)
+        if read is None:
+            return 1
+        sys.stdout.write(policy.show_text(path, read[1]))
+        return 0
+    path = program_file("test", given)
+    if path is None:
+        return 1
+    read = read_program(path)
+    if read is None:
+        return 1
+    if not any(isinstance(s, A.TestDef) for s in read[1].body):
+        report(NexoError("policy_no_tests", None, file=path))
+        return 1
+    import os
+    import subprocess
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        record = os.path.join(tmp, "accesses")
+        open(record, "w").close()
+        env = dict(os.environ, NEXO_POLICY_RECORD=record,
+                   PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+        proc = subprocess.run([sys.executable, "-m", "nexo.cli", "test", path], env=env,
+                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        lines = Path(record).read_text(encoding="utf-8").splitlines()
+    if proc.returncode != 0:
+        report(NexoError("policy_tests_fail", None, file=path))
+        return 1
+    sys.stdout.write(policy.suggest_text(lines))
+    return 0
+
+
 def run_privacy(args: list[str]) -> int:
     """`nexo privacy report [file.nexo]` (section 23, rule 4)."""
     from .stdlib import db, privacy
@@ -525,7 +568,7 @@ def ci_program(program) -> list:
         if isinstance(s, (A.TypeDef, A.TraitDef, A.Use, A.FnDef)):
             keep.append(s)
         elif (isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and isinstance(s.expr.func, A.Name)
-              and s.expr.func.name in ("__db_table", "__privacy_type", "__infra", "__stage", "__flags", "__pipeline")):
+              and s.expr.func.name in ("__db_table", "__privacy_type", "__infra", "__stage", "__flags", "__pipeline", "__policy")):
             keep.append(s)
         elif isinstance(s, A.Assign) and s.op == "=" and isinstance(s.target, A.Name) and literal(s.value):
             keep.append(s)
@@ -743,6 +786,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_ci(rest[1:])
     if rest[:1] == ["privacy"]:
         return run_privacy(rest[1:])
+    if rest[:1] == ["policy"]:
+        return run_policy(rest[1:])
     if rest in (["ai", "setup"], ["ai", "usage"]):
         from .stdlib import ai
         return ai.setup_command() if rest[1] == "setup" else ai.usage_command()

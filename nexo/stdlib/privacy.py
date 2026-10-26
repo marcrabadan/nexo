@@ -264,6 +264,8 @@ def b_export(call, record):
         rows = Query(db, tinfo, call, [f"{quote(col.name)} = ?"], [key]).m_all(call)
         data[name] = [plain_row(r) for r in rows]
     path = f"{info.name}-{key}.json"
+    from .policy import check
+    check(call, "write", path)
     try:
         Path(path).write_text(to_json(data) + "\n", encoding="utf-8")
     except OSError as exc:

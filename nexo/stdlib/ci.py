@@ -149,6 +149,8 @@ def current(call, fn: str) -> Run:
 
 
 def shell(call, command: str) -> tuple[int, str]:
+    from .policy import check
+    check(call, "shell", command)
     sys.stdout.flush()
     p = subprocess.run(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     out = p.stdout.decode("utf-8", "replace")

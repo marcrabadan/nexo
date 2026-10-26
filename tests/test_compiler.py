@@ -59,7 +59,10 @@ def test_example_compiled(example, tmp_path, nexo):
         assert "✗" not in out
 
 
-CONTRACTS = """type Account:
+CONTRACTS = """policy:
+    deny shell
+
+type Account:
     balance: int
 fn transfer(source: Account, target: Account, amount: int):
     expect amount > 0

@@ -365,6 +365,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_READ => {
             let path_v = a.get(0).unwrap();
             let path = str_arg("read", &path_v, span)?;
+            crate::policy::check("read", path, span)?;
             let text = data::read_text(path, span)?;
             if path.to_lowercase().ends_with(".csv") {
                 return Ok(data::parse_csv(&text));
@@ -374,6 +375,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_WRITE => {
             let path_v = a.get(0).unwrap();
             let path = str_arg("write", &path_v, span)?;
+            crate::policy::check("write", path, span)?;
             let content = crate::fmt::show_checked(bind(a.get(1).unwrap())?.v(), span)?;
             data::write_text(path, &content, span)?;
             Ok(Val::none())
@@ -381,12 +383,14 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_READ_LINES => {
             let path_v = a.get(0).unwrap();
             let path = str_arg("read_lines", &path_v, span)?;
+            crate::policy::check("read", path, span)?;
             data::read_lines(path, span)
         }
         B_SAVE => {
             let value = bind(a.get(0).unwrap())?;
             let path_v = a.get(1).unwrap();
             let path = str_arg("save", &path_v, span)?;
+            crate::policy::check("write", path, span)?;
             crate::fmt::show_checked(value.v(), span)?;
             data::save(value.v(), path, span)?;
             Ok(Val::none())

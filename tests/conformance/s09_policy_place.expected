@@ -1,0 +1,4 @@
+Error in s09_policy_place.nexo, line 3:
+  policy:
+  ^^^^^^
+A policy block goes at the top level of the program's file. Move it out of the block it is in.

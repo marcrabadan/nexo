@@ -1431,6 +1431,10 @@ pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
         let what = format!("\"connect({})\"", crate::fmt::quote(&format!("{scheme}://...")));
         return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", what), span));
     }
+    if path != ":memory:" {
+        crate::policy::check("read", &path, span)?;
+        crate::policy::check("write", &path, span)?;
+    }
     let mut data_key = None;
     if let Some(k) = key.filter(|k| !k.is_none()) {
         data_key = Some(crate::privacy::data_key(&crate::crypto::text_or_secret("connect", k, span)?));
@@ -1790,6 +1794,7 @@ pub fn privacy_export(rec: V, span: u32) -> R<Val> {
         }
     }
     let path = format!("{}-{key}.json", info.name);
+    crate::policy::check("write", &path, span)?;
     crate::data::write_text(&path, &(crate::data::to_json(data.v(), 0) + "\n"), span)?;
     Ok(Val::str(path))
 }

@@ -552,6 +552,7 @@ hi a+b nexo true
       <tr><td><code>nexo.stream</code></td><td><code>when kafka("topic") as msg</code>, retries, dead letters, <code>window</code> steps</td><td><code>use nexo.stream</code></td></tr>
       <tr><td>Flags and privacy</td><td><code>flags</code> blocks and <code>flag(name, user)</code>; <code>@personal</code>, <code>@private</code>, <code>keep</code>, <code>nexo privacy report</code></td><td>implicit</td></tr>
       <tr><td><code>use c</code>, <code>use python</code></td><td>A C library from its header; a Python module</td><td><code>use c "lib"</code>, <code>use python name</code></td></tr>
+      <tr><td>The program <code>policy</code></td><td><code>allow</code> and <code>deny</code> of <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>, <code>shell</code>, <code>c</code> and <code>python</code>; a release build stops at anything else, development mode warns (D142)</td><td>implicit</td></tr>
     </tbody>
   </table></div>
   <p>Not implemented yet: <code>nexo.ml</code>, <code>nexo.ui</code>, <code>nexo.notify</code>, <code>every</code> and <code>lifecycle</code>, canary and blue/green releases, PostgreSQL, YAML, XML and Parquet.</p>
@@ -577,6 +578,7 @@ hi a+b nexo true
       <tr><td><code>nexo ci run</code>, <code>nexo ci export github|gitlab|azure|jenkins</code></td><td>Runs a pipeline here (<code>--step</code>, <code>--after</code>, <code>--yes</code>); writes the file of a CI service</td></tr>
       <tr><td><code>nexo flags set name value</code></td><td>Changes a flag (<code>--stage</code>)</td></tr>
       <tr><td><code>nexo privacy report</code></td><td>The personal data of a program</td></tr>
+      <tr><td><code>nexo policy show|suggest [file.nexo]</code></td><td>What the policy allows; the smallest policy for a test run</td></tr>
     </tbody>
   </table></div>
   <p>Messages are in English (D125). <code>NEXO_LEAKCHECK=1</code> makes a compiled program report any value it did not free.</p>

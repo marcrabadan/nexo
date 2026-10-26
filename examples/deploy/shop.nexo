@@ -6,6 +6,10 @@
 #     nexo ci run --yes             builds its image and deploys it
 #     nexo ci export github         writes the workflow that does the same
 
+policy:
+    allow env "API_KEY"
+    allow shell
+
 flags:
     express_shipping = 20%
 

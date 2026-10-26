@@ -1,0 +1,3 @@
+# a rule of the policy names texts (D142)
+policy:
+    allow read data/

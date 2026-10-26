@@ -21,7 +21,8 @@ The core of Nexo, a new programming language, in two implementations
   reproducible release builds with an SBOM, and in both phases `nexo
   audit`, `nexo docs --for-ai`, `nexo test --suggest` and `nexo check
   --intent`; the guarantees of the specification are measured and their
-  state is in docs/guarantees.md (D126-D136).
+  state is in docs/guarantees.md (D126-D136); the program `policy` of
+  section 9 with `nexo policy show|suggest` (D142).
 
 ## Source of truth
 
@@ -51,7 +52,7 @@ nexo/
                   infra_cloud (the clients and commands),
                   infra_providers.json (shared by both phases), ci,
                   ci_export; phase 6: api.json (what a program can use,
-                  shared by both phases)
+                  shared by both phases), policy (the program policy, D142)
   audit.py        `nexo audit`: the uses of C (implicit unsafe, D129)
   docs.py         `nexo docs --for-ai`: stdlib/api.json + the program (D130)
   suggest.py      `nexo test --suggest`: edge cases run by a probe (D131)
@@ -63,7 +64,7 @@ nexo/
                   `nexo test --suggest`, `nexo check --intent`, `nexo docs --for-ai`,
                   `nexo db diff|migrate`, `nexo ai setup|usage`; phase 5:
                   `nexo plan|apply|destroy|drift|cost|import`, `nexo ci run|export`,
-                  `nexo flags set`, `nexo privacy report`
+                  `nexo flags set`, `nexo privacy report`; `nexo policy show|suggest`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text);
                   a .nexo without .expected is a module the cases use
@@ -82,12 +83,14 @@ compiler/
                   flags, privacy, infra and ci); phase 6: narrow (ints and
                   records of known types, D126), sbom, split (parallel
                   development builds, D135), scalar (values as two words
-                  in development mode, D141), audit, docs, suggest, intent
+                  in development mode, D141), audit, docs, suggest, intent,
+                  policy (`nexo policy`, D142)
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
                   http, db, web, ai, clib, pylib; phase 5: cfg, flags,
-                  privacy, stream, infra, infra_cloud, ci, ci_export)
+                  privacy, stream, infra, infra_cloud, ci, ci_export;
+                  policy.rs: the checks of the program policy, D142)
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py, fuzz.py (random programs
                   in both phases), fix_rate.py (errors with a fix)
@@ -208,11 +211,21 @@ and skip checks for names certainly defined (D135); release builds that are the 
 from nexo/stdlib/api.json (D130), `nexo test --suggest` (D131) and `nexo
 check --intent` through `ask` (D132), in both phases with the same output
 (tests/test_phase6.py). External audits, user studies, the package
-registry and the program `policy` are not code; docs/guarantees.md says
-what each guarantee needs (D133).
+registry are not code; docs/guarantees.md says what each guarantee
+needs (D133).
 
-Excluded (do not implement yet): ml, ui, notify, the program policy,
-every/lifecycle, canary and blue/green releases, chaos, AI budgets and
+The program policy (D142): `policy:` with `allow`/`deny` of `read`,
+`write`, `net`, `env`, `shell`, `c` and `python`, read by both parsers
+into `__policy(...)` as the first statement. Every access of the
+standard library calls `policy.check` (nexo/stdlib/policy.py,
+compiler/runtime/src/policy.rs) before it happens. A release build
+stops what is not allowed and needs a policy; development mode warns
+once, except shell commands, which always need `allow shell` (so a
+pipeline with `run` needs a policy). `nexo policy show|suggest`. The
+sandbox escape tests are in tests/test_policy.py.
+
+Excluded (do not implement yet): ml, ui, notify, per-package
+permissions (the registry), every/lifecycle, canary and blue/green releases, chaos, AI budgets and
 MCP, vault and cloud secret managers, brokers on the network,
 PostgreSQL, use rust/wasm, YAML/XML/Parquet (D89, D112, D113).
 

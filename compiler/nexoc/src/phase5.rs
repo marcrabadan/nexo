@@ -457,5 +457,5 @@ pub fn run_ci(args: &[String]) -> u8 {
     if let Ok(exe) = std::env::current_exe() {
         env.push(("NEXO_DRIVER", exe.display().to_string()));
     }
-    crate::module_command(&path, &env, &["__db_table", "__privacy_type", "__infra", "__stage", "__flags", "__pipeline"], true, true)
+    crate::module_command(&path, &env, &["__db_table", "__privacy_type", "__infra", "__stage", "__flags", "__pipeline", "__policy"], true, true)
 }

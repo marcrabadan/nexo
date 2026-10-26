@@ -166,6 +166,8 @@ def b_render(call, path, **values):
     are escaped (section 9)."""
     from .io import check_path, read_text
     path = check_path(call, path, "render")
+    from .policy import check
+    check(call, "read", path)
     template = read_text(call, path)
     escape = path.lower().endswith((".html", ".htm"))
     interp = call.interp

@@ -1,0 +1,4 @@
+# only the program's own file has a policy (D142)
+use shop.policed
+
+print(policed.nothing())

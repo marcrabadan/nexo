@@ -76,6 +76,9 @@ class Parser:
         self.phrase_mode = False
         # names the steps of each pipeline keep (D122)
         self.pipeline_vars: dict = {}
+        # blocks the parser is inside; a policy only goes at the top (D142)
+        self.nesting = 0
+        self.policy_seen = False
 
     # -- token helpers ---------------------------------------------------
     def peek(self, k: int = 0) -> Token:
@@ -147,6 +150,11 @@ class Parser:
             if self.peek().kind == "INDENT":
                 raise NexoError("dedent_mismatch", self.peek().span)
             self.statement_into(body)
+        # the policy holds from the first statement on (D142)
+        for i, s in enumerate(body):
+            if is_policy(s):
+                body.insert(0, body.pop(i))
+                break
         program = A.Program(start.span, body)
         model_aliases(program)
         return program
@@ -172,8 +180,12 @@ class Parser:
             raise self.error(word("indented"))
         self.advance()
         body: list = []
-        while self.peek().kind != "DEDENT":
-            self.statement_into(body)
+        self.nesting += 1
+        try:
+            while self.peek().kind != "DEDENT":
+                self.statement_into(body)
+        finally:
+            self.nesting -= 1
         self.advance()
         return body
 
@@ -1210,14 +1222,21 @@ def parse(source: str, file: str = "<input>") -> A.Program:
 # builtins whose names start with "__" (D90), so every later pass (the
 # checker, the interpreter, the compiler) sees only core constructs.
 
-MODULE_BLOCKS = {"ai", "agent", "server", "infra", "stage", "pipeline", "flags"}
+MODULE_BLOCKS = {"ai", "agent", "server", "infra", "stage", "pipeline", "flags", "policy"}
 # blocks of phase 5 whose body is read with the rule of D114
 CFG_BLOCKS = {"infra", "stage", "pipeline", "flags"}
+# what a policy can allow or deny (D142)
+POLICY_KINDS = ("read", "write", "net", "env", "shell", "c", "python")
 # keywords that start an expression; any other one is a word in a phrase
 EXPR_KEYWORDS = {"true", "false", "none", "not", "self", "parallel"}
 ROUTE_METHODS = {"get", "post", "put", "patch", "delete"}
 # keys whose bare names are model aliases (section 8)
 MODEL_KEYS = {"model", "fallback", "when_over_budget"}
+
+
+def is_policy(s) -> bool:
+    return (isinstance(s, A.ExprStmt) and isinstance(s.expr, A.Call) and isinstance(s.expr.func, A.Name)
+            and s.expr.func.name == "__policy")
 
 
 def is_identifier(text: str) -> bool:
@@ -1262,6 +1281,8 @@ def _module_methods():
         word_ = tok.value
         if word_ in CFG_BLOCKS:
             return self.cfg_block(tok)
+        if word_ == "policy":
+            return self.policy_block(tok)
         name = None
         name_tok = None
         if word_ == "ai" and self.at_name("profile"):
@@ -1472,6 +1493,58 @@ def _module_methods():
         ])
         self.extra.append(A.TryStmt(span, None, body, [handler]))
         return begin
+
+    # -- the program policy (section 9, D142) ----------------------------
+    def policy_block(self, tok: Token) -> A.Stmt:
+        """policy: with lines `allow|deny kind "target", ...` as
+        __policy([[rule, kind, target...], ...])."""
+        if self.nesting:
+            raise NexoError("policy_place", tok.span)
+        if self.policy_seen:
+            raise NexoError("policy_twice", tok.span)
+        self.policy_seen = True
+        self.expect_op(":")
+        self.expect_newline_raw()
+        if self.peek().kind != "INDENT":
+            raise self.error(word("indented"))
+        self.advance()
+        entries = []
+        while self.peek().kind != "DEDENT":
+            entries.append(self.policy_entry())
+        self.advance()
+        self.block_end = self.p
+        return A.ExprStmt(tok.span, call(tok.span, "__policy", [A.ListLit(tok.span, entries)]))
+
+    def policy_entry(self) -> A.Expr:
+        start = self.peek()
+        words = []
+        while self.peek().kind not in ("NEWLINE", "DEDENT", "EOF"):
+            words.append(self.advance())
+        if self.peek().kind == "NEWLINE":
+            self.advance()
+        whole = start.span.to(words[-1].span) if words else start.span
+        bad = NexoError("policy_entry", whole, entry=source_text(whole) if words else "")
+        if len(words) < 2 or not all(t.kind == "NAME" for t in words[:2]):
+            raise bad
+        rule, kind = words[0].value, words[1].value
+        if rule not in ("allow", "deny") or kind not in POLICY_KINDS:
+            raise bad
+        targets = []
+        rest = words[2:]
+        for i, t in enumerate(rest):
+            if i % 2 == 1:
+                if not t.is_op(","):
+                    raise bad
+                continue
+            if t.kind != "STRING" or not all(isinstance(p, str) for p in t.value):
+                raise bad
+            targets.append("".join(t.value))
+        if (kind == "shell") != (not targets) or (rest and rest[-1].is_op(",")):
+            raise bad
+        if any(not t for t in targets):
+            raise bad
+        span = start.span
+        return A.ListLit(span, [text(span, rule), text(span, kind)] + [text(span, t) for t in targets])
 
     # -- phase 5 blocks (D114) ------------------------------------------
     def cfg_block(self, tok: Token) -> A.Stmt:

@@ -1,0 +1,3 @@
+# without a policy everything but shell commands is allowed (D142)
+print(len(read("sales.csv")))
+print(run("echo hi"))

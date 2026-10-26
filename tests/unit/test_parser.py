@@ -7,7 +7,8 @@ from nexo.errors import NexoError
 from nexo.parser import parse
 
 CONFORMANCE = Path(__file__).resolve().parent.parent / "conformance"
-SYNTAX_ERRORS = {"s03_else_without_var", "s24_tab", "s24_indent", "s06_sum_without_group"}
+SYNTAX_ERRORS = {"s03_else_without_var", "s24_tab", "s24_indent", "s06_sum_without_group",
+                 "s09_policy_entry", "s09_policy_place", "s09_policy_twice"}
 
 
 def stmt(src):
@@ -237,8 +238,13 @@ def test_events_and_use():
 
 
 def test_config_block_is_recognised():
-    prog = parse('policy:\n    deny shell\nprint(1)\n', "t.nexo").body
-    assert isinstance(prog[0], A.ConfigBlock) and prog[0].word == "policy"
+    prog = parse('app:\n    name = "shop"\nprint(1)\n', "t.nexo").body
+    assert isinstance(prog[0], A.ConfigBlock) and prog[0].word == "app"
+    # the policy is read into its rules and goes first (D142)
+    prog = parse('print(1)\npolicy:\n    allow read "data/", "x.csv"\n    deny shell\n', "t.nexo").body
+    assert isinstance(prog[0], A.ExprStmt) and prog[0].expr.func.name == "__policy"
+    rules = [[i.parts[0] for i in e.items] for e in prog[0].expr.args[0].value.items]
+    assert rules == [["allow", "read", "data/", "x.csv"], ["deny", "shell"]]
     prog = parse('ai:\n    provider = "anthropic"\n    key = secret("K")\nprint(1)\n', "t.nexo").body
     assert isinstance(prog[0], A.ExprStmt) and prog[0].expr.func.name == "__ai_config"
     assert isinstance(prog[1], A.ExprStmt)

@@ -1,0 +1,4 @@
+# a policy goes at the top level (D142)
+fn main():
+    policy:
+        deny shell

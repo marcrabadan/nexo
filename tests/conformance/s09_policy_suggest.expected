@@ -1,0 +1,3 @@
+policy:
+    allow read "sales.csv"
+    allow write "report.txt"

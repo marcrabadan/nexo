@@ -161,7 +161,8 @@ def test_release_build_needs_keep_and_purpose(tmp_path):
     nexo = compiler()
     if nexo is None:
         pytest.skip("the compiler is not available")
-    (tmp_path / "app.nexo").write_text('type Contact:\n    phone: str @personal\n    purpose = "calls"\nprint(1)\n',
+    (tmp_path / "app.nexo").write_text('policy:\n    deny shell\n\ntype Contact:\n    phone: str @personal\n'
+                                       '    purpose = "calls"\nprint(1)\n',
                                        encoding="utf-8")
     proc = run([str(nexo)], ["build", "--release", "app.nexo"], tmp_path)
     assert proc.returncode == 1

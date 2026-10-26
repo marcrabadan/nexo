@@ -1,3 +1,6 @@
+policy:
+    allow shell
+
 infra web:
     cloud = "k8s"
     namespace = "web"

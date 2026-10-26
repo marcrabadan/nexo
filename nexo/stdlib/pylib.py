@@ -117,6 +117,8 @@ def to_nexo(call, value: Any) -> Any:
 
 
 def b_python_import(call, name):
+    from .policy import check
+    check(call, "python", name)
     try:
         module = importlib.import_module(name)
     except Exception as exc:  # noqa: BLE001 - ImportError or an error of the module

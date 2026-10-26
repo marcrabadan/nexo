@@ -1,3 +1,6 @@
+policy:
+    deny shell
+
 var xs = []
 for i in 1..2_000_000:
     xs.add(i * 2)

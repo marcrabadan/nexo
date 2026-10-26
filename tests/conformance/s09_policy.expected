@@ -1,0 +1,12 @@
+before the block: the policy already holds
+6
+Warning in s09_policy.nexo, line 12:
+  print(read("report.txt"))
+        ^^^^^^^^^^^^^^^^^^
+The policy does not allow reading "report.txt", so a release build stops here. Add allow read "report.txt" to the policy block.
+6 rows
+6 rows
+Error in s09_policy.nexo, line 14:
+  print(read("app.json"))
+        ^^^^^^^^^^^^^^^^
+The policy denies reading "app.json" (deny read "app.json"). Remove deny read "app.json" from the policy if the program needs it.
