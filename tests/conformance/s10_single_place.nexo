@@ -1,0 +1,6 @@
+fn setup():
+    single config:
+        port = 8080
+    print(config.port)
+
+setup()

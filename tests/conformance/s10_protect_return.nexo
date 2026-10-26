@@ -1,0 +1,6 @@
+fn get(n: int) -> int!:
+    protect(get, fails: 3, wait: 30s):
+        return n
+    return 0
+
+print(get(1))

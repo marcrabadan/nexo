@@ -1,0 +1,15 @@
+8080 production
+config(port: 9090, mode: "production")
+9090
+states(order) new
+true false
+"order" cannot go from "paid" to "delivered"; from "paid" it can go to "shipped", "cancelled"
+delivered
+10
+failed: card declined
+failed: card declined
+open: "charge" is not called for 1m: it failed 2 times in a row
+open: "charge" is not called for 1m: it failed 2 times in a row
+3
+down
+page 1

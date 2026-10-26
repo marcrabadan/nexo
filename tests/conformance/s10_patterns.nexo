@@ -1,0 +1,67 @@
+# Section 10: the patterns with their own word (D143-D145)
+single config:
+    port = 8080
+    mode = "production"
+
+print(config.port, config.mode)
+config.port = 9090
+print(config)
+
+fn port() -> int:
+    return config.port
+
+print(port())
+
+states order:
+    new -> paid -> shipped -> delivered
+    new -> cancelled
+    paid -> cancelled
+
+print(order, order.state)
+print(order.can("paid"), order.can("delivered"))
+order.go("paid")
+try:
+    order.go("delivered")
+else e is InvalidValue:
+    print(e.message)
+order.go("shipped")
+order.go("delivered")
+print(order.state)
+
+var calls = 0
+
+fn charge(amount: int) -> int!:
+    calls += 1
+    if amount < 0:
+        fail("card declined")
+    return amount
+
+fn pay(amount: int) -> int!:
+    var paid = 0
+    protect(charge, fails: 2, wait: 1m):
+        paid = charge(amount)?
+    return paid
+
+print(pay(10))
+for amount in [-1, -2, -3, 5]:
+    try:
+        print(pay(amount))
+    else e is CircuitOpen:
+        print("open:", e.message)
+    else e:
+        print("failed:", e.message)
+print(calls)
+
+fn page(n: int) -> str!:
+    var shown = ""
+    protect(page, fails: 1, wait: 0s):
+        if n == 0:
+            fail("down")
+        shown = "page {n}"
+    return shown
+
+try:
+    print(page(0))
+else e:
+    print(e.message)
+print(page(1))

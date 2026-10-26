@@ -1,0 +1,4 @@
+Error in s10_state_unknown.nexo, line 4:
+  light.go("gren")
+  ^^^^^^^^^^^^^^^^
+"gren" is not a state of "light". Did you mean "green"?

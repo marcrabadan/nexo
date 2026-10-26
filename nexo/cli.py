@@ -8,6 +8,7 @@
     nexo fix [paths]     apply the safe fixes
     nexo check [paths]   the compile checks, without running anything
     nexo lsp             language server on standard input and output (D87)
+    nexo mcp             Model Context Protocol server for AI assistants (D146)
     nexo db diff|migrate file.nexo [--db path] [--allow-drop]   migrations (D101)
 """
 from __future__ import annotations
@@ -21,7 +22,7 @@ from .errors import NexoError
 from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
-USAGE = ("Usage: nexo [file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs --for-ai [file.nexo] | lsp"
+USAGE = ("Usage: nexo [file.nexo | new name | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp"
          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
          " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]")
 BANNER = "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit."
@@ -749,10 +750,57 @@ def run_suggest(args: list[str]) -> int:
     return 0
 
 
+NEW_TOML = '[project]\nname = "NAME"\nversion = "0.1.0"\nnexo = "0.1"\n'
+NEW_MAIN = ('## The greeting of NAME.\nfn greeting(name: str) -> str:\n    return "Hello, {name}!"\n\n'
+            'test "greeting":\n    assert greeting("Ana") == "Hello, Ana!"\n\nprint(greeting("world"))\n')
+
+
+def run_new(args: list[str]) -> int:
+    """`nexo new name`: a project with nexo.toml, src/ and a test (section 14, D148)."""
+    import re
+    if len(args) != 1 or args[0].startswith("-"):
+        print(USAGE, file=sys.stderr)
+        return 2
+    name = args[0]
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", name):
+        report(NexoError("new_name", None, name=name))
+        return 1
+    root = Path(name)
+    if root.exists() or root.is_symlink():
+        report(NexoError("new_exists", None, name=name))
+        return 1
+    (root / "src").mkdir(parents=True)
+    (root / "nexo.toml").write_text(NEW_TOML.replace("NAME", name), encoding="utf-8")
+    (root / "src" / "main.nexo").write_text(NEW_MAIN.replace("NAME", name), encoding="utf-8")
+    print(errors.msg("info.new_done", name=name))
+    return 0
+
+
 def run_docs(args: list[str]) -> int:
-    """`nexo docs --for-ai [file]` (D130)."""
-    from .docs import for_ai
-    if args[:1] != ["--for-ai"] or len(args) > 2:
+    """`nexo docs [paths]` (D147) and `nexo docs --for-ai [file]` (D130)."""
+    from .docs import for_ai, markdown
+    if args[:1] != ["--for-ai"]:
+        if any(a.startswith("-") for a in args):
+            print(USAGE, file=sys.stderr)
+            return 2
+        status = 0
+        pages = []
+        for f in test_files(args):
+            try:
+                source = f.read_text(encoding="utf-8")
+            except OSError:
+                sys.stderr.write(f"Error: {errors.msg('err.NotFound', path=str(f))}.\n")
+                status = 1
+                continue
+            page = markdown(str(f), source)
+            if page is not None:
+                pages.append(page)
+        if pages:
+            sys.stdout.write("\n".join(pages))
+        elif status == 0:
+            print(errors.msg("info.docs_none", path=", ".join(args) or "."))
+        return status
+    if len(args) > 2:
         print(USAGE, file=sys.stderr)
         return 2
     if len(args) == 1:
@@ -772,6 +820,8 @@ def main(argv: list[str] | None = None) -> int:
     rest = args
     if rest[:1] == ["docs"]:
         return run_docs(rest[1:])
+    if rest[:1] == ["new"]:
+        return run_new(rest[1:])
     if rest[:2] == ["test", "--suggest"]:
         return run_suggest(rest[2:])
     if rest[:2] == ["check", "--intent"]:
@@ -811,6 +861,9 @@ def main(argv: list[str] | None = None) -> int:
         return run_audit(rest[1:])
     if rest == ["lsp"]:
         from .lsp import serve
+        return serve()
+    if rest == ["mcp"]:
+        from .mcp import serve
         return serve()
     if len(rest) > 1:
         print(USAGE, file=sys.stderr)

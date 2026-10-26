@@ -1,7 +1,8 @@
 """`nexo docs --for-ai [file]`: the exact list of what a program can use,
 for a language model (section "Goals and guarantees", D130). The list is
 nexo/stdlib/api.json, shared with the compiler; with a file, the
-program's own functions and types follow, with their `##` comments."""
+program's own functions and types follow, with their `##` comments.
+`nexo docs [paths]` writes the same declarations as Markdown (D147)."""
 
 from __future__ import annotations
 
@@ -72,4 +73,28 @@ def for_ai(path: str | None = None, source: str | None = None) -> str:
         lines.append("")
         lines.append(f"## This program ({path})")
         lines.extend(outline(source))
+    return "\n".join(lines) + "\n"
+
+
+def markdown(path: str, source: str) -> str | None:
+    """The declarations of a file as Markdown: a heading for each one, its
+    `##` comments as a paragraph and its fields and methods as a list;
+    None when the file declares nothing."""
+    lines = [f"# {path}"]
+    for item in outline(source):
+        if not item.startswith("    "):
+            lines += ["", f"## `{item}`", ""]
+        elif item.startswith("    ##"):
+            text = item[6:].removeprefix(" ")
+            if lines[-1].startswith("- "):
+                lines.append("")
+            lines.append(text)
+        else:
+            if lines[-1] and not lines[-1].startswith("- "):
+                lines.append("")
+            lines.append(f"- `{item[4:]}`")
+    if len(lines) == 1:
+        return None
+    while lines[-1] == "":
+        lines.pop()
     return "\n".join(lines) + "\n"

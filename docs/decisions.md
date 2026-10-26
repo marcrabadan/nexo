@@ -1971,3 +1971,107 @@ with the same output (tests/test_policy.py, the `s09_policy*` and
 - Per-function permissions, `require` rules and package permissions
   checked by `nexo add` need the package registry, which does not exist
   (D133); a function has the permissions of its program.
+
+**D143. `single`.** Section 10 shows `single config:` with `key = value`
+lines and nothing else; section 21 calls what it holds "state". It is
+read like the other module blocks (D90) into `config = __single("config",
+port: 8080, ...)`. The value has exactly the fields written: `config.port`
+reads one and `config.port = 9090` changes it everywhere, since there is
+only one; a field it does not have is an error with "Did you mean...?",
+as for a record. The values are evaluated where the block is written
+(D29). It prints like a record, `config(port: 9090, mode: "production")`.
+A field keeps whatever value is given to it (there is no type to conform
+to), and it can be changed from any task: each read and change is whole,
+under a lock, so it is not a data race (D80). Only the top level of a
+file may hold one (`single_place`): inside a function it would be made
+again on each call, which is not a single value.
+
+**D144. `states`.** Section 10 writes the transitions as chains, `new ->
+paid -> shipped -> delivered`, one or more per line, and `order.go("paid")`.
+- The block becomes `order = __states("order", [["new", "paid"], ...])`,
+  one pair for each arrow. The first state written is where it starts.
+  A line with a single state and no arrow is a syntax error.
+- `order.state` is the current state (a text), `order.go("x")` moves to
+  it, and `order.can("x")` says whether `go` would. A name that is not a
+  state is a diagnostic with "Did you mean...?" (it is a mistake in the
+  code); a transition the block does not declare is an error value,
+  `InvalidValue`, whose message names the states that can follow, so a
+  program can handle it with `try`. Staying in the same state is a
+  transition like any other: it must be declared.
+- The value is shared, like a database (D92): `go` changes it for every
+  name it is bound to and every task, under a lock. It prints as
+  `states(order)`.
+- `on enter`/`on leave` actions and persisted states are not in the
+  specification and are not added.
+
+**D145. `protect`.** Section 10 writes `protect(payments_api, fails: 5,
+wait: 1m):` and a block; section 12 names it the circuit breaker.
+- It takes the value it protects and both `fails:` (an int from 1) and
+  `wait:` (a duration); anything else is `protect_args`. Like
+  `db.transaction` (D90) it is rewritten into a call before a `try`: the
+  block runs normally, an error that leaves it counts as a failure and
+  goes on to the caller unchanged, and the end of the block without an
+  error closes the circuit. `return` inside the block is a compile error
+  (`protect_return`), as in a transaction.
+- After `fails` failures in a row the circuit is open for `wait`: the
+  block does not run and the statement fails with a new error kind,
+  `CircuitOpen` (`"payments_api" is not called for 1m: it failed 5 times
+  in a row`). After `wait` the block runs once more: success closes the
+  circuit, a failure opens it for another `wait`.
+- The circuit belongs to the value protected, compared by the text it
+  prints as, so every `protect` of the same value shares it, in every
+  function and task; the name in the message is the expression as written.
+- `fallback` and `calls` blocks of section 12 belong to services and
+  deployments (excluded with the rest of resilience, D113).
+
+**D146. `nexo mcp`.** Section 26 lists the tools `check`, `run_tests`,
+`explain`, `docs_for_ai`, `plan` and `format`, and says the server never
+exposes `apply`, `deploy` or secrets.
+- It speaks the Model Context Protocol on standard input and output: one
+  JSON-RPC 2.0 message per line, with `initialize`, `ping`, `tools/list`
+  and `tools/call`; notifications get no answer and anything else is the
+  JSON-RPC error for it, with the section 14 sentence on how to fix it.
+- Each tool runs the binary's own command on a path of the project (the
+  folder `nexo mcp` started in): `check` is `nexo check`, `run_tests` is
+  `nexo test`, `docs_for_ai` is `nexo docs --for-ai`, `plan` is `nexo
+  plan [--stage s]`, and `format` is `nexo fmt` on one file (it rewrites
+  it, keeping its tokens, D85). The answer is the text the command
+  printed, standard output and errors together, and `isError` when it
+  ended with an error. So the tools say exactly what the commands say,
+  in both phases.
+- A path must be relative and stay inside the project once `..` and
+  links are followed; arguments are texts, and an unknown one is an
+  error, so an assistant cannot pass options to the commands.
+- `explain` is left out: `nexo explain` (section 16) does not exist in
+  this edition, and an assistant explains code on its own from
+  `docs_for_ai`. `apply`, `destroy`, `ci run` and secrets are not tools.
+
+**D147. `nexo docs`.** Section 14 says it "generates documentation from
+`##` comments" and gives no format. `nexo docs [paths]` prints Markdown
+(it can be saved with `> API.md`): for each file, in the order of `nexo
+test`, a `# path` title and, for each function, type and trait at its top
+level, a heading with its first line, the `##` lines above it as a
+paragraph and the fields and methods of a type as a list. These are the
+same declarations `nexo docs --for-ai` lists (D130). A file that declares
+nothing is left out; when no file declares anything it says so. A site
+in HTML, the documentation of the standard library and links between
+pages are not added.
+
+**D148. `nexo new`.** Section 14: "creates a project with `nexo.toml`, a
+`src/` folder and a test". `nexo new name` makes the folder `name` with
+`nexo.toml` (the `[project]` table of section 13: the name, version
+`0.1.0` and edition `0.1`) and `src/main.nexo`, a documented function, a
+`test` of it and a line that uses it, formatted and lint-clean. The name
+is letters, digits, `_` and `-`, starting with a letter, so it is a
+folder of the current one and a package name of section 13; a folder that
+exists already is never written into. There is no `nexo.lock` until there
+are dependencies, and no dependencies until the registry (D133).
+
+**D149. Release builds leave out what the program does not reach.** The
+runtime is one static library with every module of the library, and a
+program uses a few of them. `nexo build --release` links with
+`--gc-sections`, so the parts no code reaches are not in the file: the
+program of one `print` goes from 19.5 MB to 15.4 MB and starts about
+0.4 ms sooner (2.8 to 2.4 ms on the machine of goals.json, a noisy run),
+and two builds are still the same byte for byte (D128). Development
+builds do not, since linking would take longer and they are run once.

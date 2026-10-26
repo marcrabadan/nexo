@@ -107,7 +107,7 @@
   "types": [
     "int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "date", "time", "email",
     "Error", "NotFound", "IOError", "InvalidData", "Overflow", "DivisionByZero", "OutOfRange",
-    "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError", "AIError", "DatabaseError"
+    "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError", "AIError", "DatabaseError", "CircuitOpen"
   ],
   "methods": [
     ["list", "sum() count() add(item)"],

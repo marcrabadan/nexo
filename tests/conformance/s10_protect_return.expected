@@ -1,0 +1,4 @@
+Error in s10_protect_return.nexo, line 3:
+  return n
+  ^^^^^^^^
+return cannot leave a protect block. Store the result in a variable and return after the block.

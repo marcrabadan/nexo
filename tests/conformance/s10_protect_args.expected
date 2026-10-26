@@ -1,0 +1,4 @@
+Error in s10_protect_args.nexo, line 4:
+  protect(call_api, fails: 3):
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+protect takes the value it protects, fails: and wait:. Write it as protect(api, fails: 5, wait: 1m):.

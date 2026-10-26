@@ -365,7 +365,7 @@ class Symbol:
 
 ERROR_KINDS = ["Error", "NotFound", "IOError", "InvalidData", "Overflow", "DivisionByZero",
                "OutOfRange", "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError", "AIError",
-               "DatabaseError"]
+               "DatabaseError", "CircuitOpen"]
 
 
 @dataclass(eq=False)

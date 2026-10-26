@@ -1111,6 +1111,11 @@ pub trait Native: Send + Sync + 'static {
         let _ = (me, args, names);
         Err(crate::stdlib::missing_member(self.type_name(), name, &[], span))
     }
+    /// `obj.name = value`, for a value whose fields can change (`single`)
+    fn set_member(&self, name: &str, value: V, span: u32) -> Option<crate::state::R<()>> {
+        let _ = (name, value, span);
+        None
+    }
     /// called like a function (`log(x)`)
     fn call(&self, me: V, args: &[V], names: &[Option<&str>], span: u32) -> Option<crate::state::R<Val>> {
         let _ = (me, args, names, span);
