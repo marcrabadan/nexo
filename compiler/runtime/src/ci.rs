@@ -288,6 +288,9 @@ pub fn run(command: V, span: u32) -> R<Val> {
 }
 
 pub fn test(span: u32) -> R<Val> {
+    if crate::security::enforcing() {
+        crate::policy::check("shell", "nexo test", span)?;
+    }
     current("test", span)?;
     let driver = std::env::var("NEXO_DRIVER").unwrap_or_else(|_| "nexo".into());
     crate::state::flush();

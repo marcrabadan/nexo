@@ -26,3 +26,6 @@ rustls-native-certs = "0.7"
 libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 hmac = "0.12"
 sha2 = "0.10"
+
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
+libc = "0.2"

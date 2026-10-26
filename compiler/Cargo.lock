@@ -481,6 +481,7 @@ dependencies = [
  "ed25519-dalek",
  "getrandom",
  "hmac",
+ "libc",
  "libsqlite3-sys",
  "nexo-diag",
  "num-bigint",

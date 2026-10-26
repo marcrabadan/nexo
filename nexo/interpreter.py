@@ -17,6 +17,7 @@ from typing import Any
 
 from . import ast as A
 from .checker import Checker
+from . import security_context
 from .modules import Linker, ModuleValue, bound_name, is_file_module
 from .errors import NexoError, Span, suggest
 from .parser import parse, source_text
@@ -579,7 +580,8 @@ class Interpreter:
                 module_env = Env(self.builtins)
                 value = self.module_values[s.name] = ModuleValue(s.name, module_env)
                 body = self.module_filter(info.program) if self.module_filter else info.program.body
-                self.exec_block([x for x in body if not isinstance(x, A.TestDef)], module_env)
+                with security_context.scope(info.file):
+                    self.exec_block([x for x in body if not isinstance(x, A.TestDef)], module_env)
             env.define(bound_name(s), value)
             return
         if s.lang is None and s.name == "nexo.sync":
@@ -667,7 +669,11 @@ class Interpreter:
 
     # -------------------------------------------------------- expressions
     def eval(self, e: A.Expr, env: Env) -> Any:
-        return getattr(self, "eval_" + type(e).__name__)(e, env)
+        method = getattr(self, "eval_" + type(e).__name__)
+        if security_context.RULES is not None:
+            with security_context.scope(e.span.file):
+                return method(e, env)
+        return method(e, env)
 
     def eval_Num(self, e: A.Num, env: Env) -> Any:
         if e.is_float:
@@ -1143,6 +1149,15 @@ class Interpreter:
 
     # ----------------------------------------------------------- calling
     def call(self, func: Any, args: list, node: A.Node) -> Any:
+        if security_context.RULES is not None and isinstance(func, (Function, LambdaFn)):
+            span = func.decl.span if isinstance(func, Function) else func.node.span
+            with security_context.scope(span.file):
+                result = self._call_scoped(func, args, node)
+                security_context.check_result(result, node.span)
+                return result
+        return self._call_scoped(func, args, node)
+
+    def _call_scoped(self, func: Any, args: list, node: A.Node) -> Any:
         if isinstance(func, Function):
             return self.call_function(func, args, node)
         if isinstance(func, Builtin):

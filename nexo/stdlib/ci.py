@@ -170,6 +170,9 @@ def b_run(call, command):
 
 
 def b_test(call):
+    from . import policy
+    if policy.enforcing():
+        policy.check(call, "shell", "nexo test")
     current(call, "test")
     command = [sys.executable, "-m", "nexo.cli"]
     sys.stdout.flush()

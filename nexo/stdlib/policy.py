@@ -8,10 +8,12 @@ A `deny` rule always stops the program. Without a rule for an access, a
 release build stops it, and development mode allows it and warns once,
 except for shell commands. Without a policy, development mode allows
 everything except shell commands. With NEXO_POLICY_RECORD set (`nexo
-policy suggest`), every access is allowed and appended to that file."""
+policy suggest`), development accesses are allowed and appended to that file.
+Production and Shield executions never honor this recording override."""
 from __future__ import annotations
 
 import os
+import json
 import sys
 import urllib.parse
 
@@ -21,18 +23,23 @@ from ..types import Builtin
 
 KINDS = ("read", "write", "net", "env", "shell", "c", "python")
 
-STATE: dict = {"rules": None, "release": False, "reported": set()}
+STATE: dict = {"rules": None, "release": False, "reported": set(), "violations": 0}
 
 
 def reset() -> None:
     STATE["rules"] = None
     STATE["release"] = False
     STATE["reported"] = set()
+    STATE["violations"] = 0
 
 
 def b_policy(call, entries, release=False):
+    if STATE["rules"] is not None:
+        raise NexoError("policy_internal", call.span)
+    from .. import security_context
+    security_context.initialize(call.span.file)
     STATE["rules"] = [(e[0], e[1], list(e[2:])) for e in entries]
-    STATE["release"] = bool(release)
+    STATE["release"] = bool(release) or enforcing()
     return None
 
 
@@ -121,11 +128,30 @@ def rule_text(rule: str, kind: str, target: str | None) -> str:
     return f'{rule} {kind}' if target is None else f'{rule} {kind} "{target}"'
 
 
+def enforcing() -> bool:
+    return os.environ.get("NEXO_SECURITY_ENFORCE") == "1"
+
+
+def security_event(kind: str, decision: str, reason: str) -> None:
+    """Structured events contain no program-provided strings or secret values."""
+    if os.environ.get("NEXO_SECURITY_TRACE") != "1":
+        return
+    denied = decision == "deny"
+    STATE["violations"] += int(denied)
+    operations = dict(read="file.read", write="file.write", net="network.connect",
+                      env="environment.read", shell="process.execute", c="native.load", python="python.load")
+    event = dict(event="security.policy.denied" if denied else "security.policy.decision",
+                 severity="high" if denied else "info", operation=operations[kind], target="[redacted]",
+                 decision=decision, reason=reason, violations=STATE["violations"], repeated=STATE["violations"] >= 3)
+    sys.stderr.write(json.dumps(event, separators=(",", ":")) + "\n")
+    sys.stderr.flush()
+
+
 def check(call, kind: str, value: str) -> None:
     """Stop the program, warn or record before an access (D142)."""
     target = shown(value) if kind in ("read", "write") else value
     record = os.environ.get("NEXO_POLICY_RECORD")
-    if record:
+    if record and not STATE["release"] and not enforcing():
         with open(record, "a", encoding="utf-8") as f:
             f.write(f"{kind}\t{'' if kind == 'shell' else target}\n")
         return
@@ -133,6 +159,8 @@ def check(call, kind: str, value: str) -> None:
     rules = STATE["rules"]
     allow_line = rule_text("allow", kind, None if kind == "shell" else target)
     if rules is None:
+        if enforcing():
+            raise NexoError("policy_missing", call.span)
         if kind == "shell":
             raise NexoError("policy_shell", call.span, what=what)
         return
@@ -143,13 +171,24 @@ def check(call, kind: str, value: str) -> None:
         hit = not targets or any(matches(kind, value, t) for t in targets)
         if hit and rule == "deny":
             denied = next((t for t in targets if matches(kind, value, t)), None)
+            security_event(kind, "deny", "explicit_deny")
             raise NexoError("policy_deny", call.span, what=what, rule=rule_text("deny", kind, denied))
         if hit:
             allowed = True
+    if enforcing() and kind in ("c", "python", "shell"):
+        security_event(kind, "deny", "isolation_unavailable")
+        raise NexoError("security_isolation", call.span)
     if allowed:
+        from .. import security_context
+        if not security_context.allows(kind, value, call.span.file):
+            security_event(kind, "deny", "capability_missing")
+            raise NexoError("security_dependency", call.span)
+        security_event(kind, "allow", "capability_granted")
         return
-    if STATE["release"] or kind == "shell":
+    if STATE["release"] or enforcing() or kind == "shell":
+        security_event(kind, "deny", "capability_missing")
         raise NexoError("policy_denied", call.span, what=what, line=allow_line)
+    security_event(kind, "warn", "development_undeclared")
     key = (kind, target)
     if key in STATE["reported"]:
         return
@@ -161,6 +200,10 @@ def check(call, kind: str, value: str) -> None:
 
 
 def check_url(call, url: str) -> None:
+    # Avoid parser differentials with the native HTTP transport (WHATWG).
+    if any(c == "\\" or ord(c) < 32 or ord(c) == 127 for c in url):
+        security_event("net", "deny", "invalid_target")
+        raise NexoError("security_url", call.span)
     check(call, "net", url_host(url))
 
 

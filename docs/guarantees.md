@@ -24,6 +24,21 @@ come from the scripts named, on the machine in `compiler/bench/goals.json`
 | Verifiable contracts | Met | `expect`, `ensure` and `old()` in both phases; the compiler proves what it can and checks the rest (D83). |
 | Cryptography without dangerous choices | Algorithms fixed; the audit needs people | Argon2id, AES-256-GCM and Ed25519 are fixed for edition 0.1 (D97). No external audit of `crypto` has been made. |
 
+Shield phase 1 adds strict API execution and structured decisions in both
+backends; see [the threat model and limitations](shield.md). The capability
+checks above are not OS-enforced isolation: concurrent filesystem mutation,
+DNS rebinding, direct native syscalls and resource limits are outside them.
+`nexo security run` rejects C, Python and shell integrations until isolated
+workers exist; ordinary explicit D142 native grants remain trusted code.
+
+Shield phase 2 adds an explicit [Linux offline worker and dependency
+ceilings](shield-isolation.md). OS enforcement requires a supported kernel;
+this cloud host lacks Landlock, so positive Landlock validation remains pending.
+The implementation fails closed rather than treating API checks as OS isolation.
+[Docker deployment](shield-docker.md) adds a non-root, read-only, offline container
+with capability dropping, seccomp and cgroup limits. This layer works independently
+of Landlock; requesting the Linux worker still requires its kernel facilities.
+
 ## Smarter
 
 | Guarantee | State | Evidence |
