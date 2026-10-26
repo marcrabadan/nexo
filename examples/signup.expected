@@ -1,0 +1,10 @@
+signed up: Ana
+rejected Luis: "luis(at)mail.com" is not a valid email
+rejected Eva: the password needs at least 8 characters
+Ana logs in: true, with a wrong password: false
+Ana in New York: 2026-10-26T04:30:00-04:00
+parts of the email: ["ana", "mail", "com"]
+Account(name: "Ana", email: "ana@mail.com", password: "***", since: 2026-10-26T09:30:00+01:00)
+Welcome, Ana!
+Your account ana@mail.com is ready since 2026-10-26.
+signed: true, changed: false

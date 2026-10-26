@@ -1,0 +1,59 @@
+## Sign-ups: checks an email with a regular expression, stores only the
+## hash of the password, signs the welcome letter and logs the account
+## with its @private fields hidden. Shows the standard library of phase 4.
+
+type Account:
+    name: str
+    email: str
+    password: str @private
+    since: time
+
+    keep = 5 years after since
+    purpose = "logging in"
+
+email_format = regex("^([a-z0-9.]+)@([a-z0-9]+)\\.([a-z]+)$")
+
+fn sign_up(name: str, email: str, plain: str, moment: time) -> Account!:
+    if not email_format.matches(email):
+        fail("\"{email}\" is not a valid email")
+    if len(plain) < 8:
+        fail("the password needs at least 8 characters")
+    return Account(name: name, email: email, password: password.hash(plain), since: moment)
+
+fn log_in(account: Account, plain: str) -> bool:
+    return password.check(plain, account.password)
+
+opening = time(2026, 10, 26, 9, 30, zone: "Europe/Madrid")
+attempts = [
+    ["Ana", "ana@mail.com", "correct horse"],
+    ["Luis", "luis(at)mail.com", "battery staple"],
+    ["Eva", "eva@mail.com", "short"]
+]
+
+var accounts = []
+for a in attempts:
+    try:
+        accounts.add(sign_up(a[0], a[1], a[2], opening))
+        print("signed up: {a[0]}")
+    else e:
+        print("rejected {a[0]}: {e.message}")
+
+ana = accounts[0]
+print("Ana logs in: {log_in(ana, "correct horse")}, with a wrong password: {log_in(ana, "horse")}")
+print("Ana in New York: {ana.since.to_zone("America/New_York")}")
+print("parts of the email: {email_format.groups(ana.email)}")
+log(ana)
+
+letter = render("data/welcome.txt", name: ana.name, email: ana.email, since: ana.since.date)
+print(letter, end: "")
+pair = keypair.new()
+signature = sign(letter, pair.private)
+print("signed: {verify(letter, signature, pair.public)}, changed: {verify(letter + "!", signature, pair.public)}")
+
+test "a bad email is rejected":
+    assert sign_up("X", "x@", "long enough", opening) fails
+
+test "only the hash is kept":
+    a = sign_up("X", "x@mail.com", "long enough", opening)
+    assert a.password != "long enough"
+    assert log_in(a, "long enough")
