@@ -1,0 +1,35 @@
+use nexo.sync
+
+fn producer(c: channel[int], n: int):
+    for i in 1..n:
+        c.send(i)
+    c.close()
+
+fn worker(c: channel[int], done: channel[int]):
+    var total = 0
+    for n in c:
+        total += n * n
+    done.send(total)
+
+queue = channel[int](size: 10)
+done = channel[int](size: 4)
+spawn producer(queue, 100)
+repeat 4:
+    spawn worker(queue, done)
+var total = 0
+repeat 4:
+    total += done.receive()
+print("sum of squares:", total)
+
+alerts = channel(size: 1)
+alerts.send("disk full")
+select:
+    a from alerts: print("alert", a)
+    after 1s: print("quiet")
+
+shared seen = {}
+fn remember(k, v):
+    seen[k] = v
+parallel for n in 1..10:
+    remember(n, n * 2)
+print(len(seen), seen[7])

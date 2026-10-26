@@ -1,0 +1,44 @@
+use nexo.db
+
+db = connect("shop.db")
+
+@table
+type Customer:
+    id: id
+    name: str
+    email: str @unique
+    orders: many Order
+
+@table
+type Order:
+    id: id
+    customer: ref Customer
+    amount: float
+    date: date = date(2026, 10, 1)
+
+ana = db.Customer.add(name: "Ana", email: "ana@mail.com")
+luis = db.Customer.add(name: "Luis", email: "luis@mail.com")
+db.Order.add(customer: ana, amount: 49.9)
+db.Order.add(customer: ana, amount: 150.0, date: date(2026, 10, 20))
+db.Order.add(customer: luis, amount: 320.5, date: date(2026, 10, 5))
+
+# one SQL query: WHERE amount > ? ORDER BY date DESC LIMIT 20
+for o in db.Order |> where amount > 100 |> sort by date desc |> take 20:
+    print(o.amount, o.date, o.customer.name)
+
+found = db.Customer.find(email: "ana@mail.com")
+print(found.name, found.orders.count(), found.orders |> map it.amount |> sum)
+
+try:
+    db.transaction:
+        db.Order.add(customer: luis, amount: 1.0)
+        db.Customer.add(name: "Copy", email: "ana@mail.com")
+else e:
+    print(e.kind, e.message)
+print(db.Order.count())
+
+db.Customer.update(found, name: "Ana G.")
+db.Order.remove(1)
+minimum = 100
+print(db.sql("SELECT id, amount FROM order WHERE amount > {minimum} ORDER BY amount"))
+print(db.Customer.all() |> map it.name)

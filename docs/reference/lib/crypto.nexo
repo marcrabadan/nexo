@@ -1,0 +1,28 @@
+stored = password.hash("hunter2")
+print(stored.starts_with("$argon2id$"), password.check("hunter2", stored), password.check("nope", stored))
+print(len(password.generate(length: 24)))
+
+k = key.new()
+hidden = encrypt("Ana's card", k)
+print(hidden == "Ana's card", decrypt(hidden, k), decrypt(hidden, key.load(k.export())))
+try:
+    decrypt(hidden, key.new())
+else e is InvalidData:
+    print(e.message)
+
+pair = keypair.new()
+signature = sign("contract v1", pair.private)
+print(verify("contract v1", signature, pair.public), verify("contract v2", signature, pair.public))
+
+type Login:
+    user: str
+    password: str @private
+    day: date
+
+    keep = 30 days after day
+    purpose = "sign in"
+
+log(Login(user: "ana", password: "hunter2", day: date(2026, 10, 24)))
+
+db_password = secret("DB_PASSWORD")  # read from the environment when it is used
+print(db_password)

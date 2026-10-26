@@ -58,8 +58,29 @@
         <li><a href="#contracts">Contracts and tests</a></li>
         <li><a href="#modules">Modules</a></li>
         <li><a href="#concurrency">Concurrency</a></li>
-        <li><a href="#stdlib">Standard library</a></li>
-        <li><a href="#official">Official modules</a></li>
+        <li><a href="#stdlib">Standard library</a>
+          <ol>
+            <li><a href="#std-files">Files and data</a></li>
+            <li><a href="#std-values">Values and methods</a></li>
+            <li><a href="#std-text">Text</a></li>
+            <li><a href="#std-time">Time</a></li>
+            <li><a href="#std-crypto">Security</a></li>
+            <li><a href="#std-http">Network and tests</a></li>
+          </ol>
+        </li>
+        <li><a href="#official">Official modules</a>
+          <ol>
+            <li><a href="#mod-db">nexo.db</a></li>
+            <li><a href="#mod-sync">nexo.sync</a></li>
+            <li><a href="#mod-web">nexo.web</a></li>
+            <li><a href="#mod-ai">nexo.ai</a></li>
+            <li><a href="#mod-stream">nexo.stream</a></li>
+            <li><a href="#mod-flags">Flags and privacy</a></li>
+            <li><a href="#mod-infra">Infra and CI</a></li>
+            <li><a href="#mod-interop">C and Python</a></li>
+            <li><a href="#policy">Policy</a></li>
+          </ol>
+        </li>
         <li><a href="#cli">Command line</a></li>
         <li><a href="#reserved">Reserved words</a></li>
       </ol>
@@ -218,6 +239,14 @@
       <tr><td><code>save("file.csv")</code></td><td>Writes the result as CSV or JSON, by the file's extension</td></tr>
     </tbody>
   </table></div>
+  <ul class="ref-list">
+    <li><strong>Names.</strong> In a step, a bare name is first a column of the current row or a field of the current record, then a variable; <code>it</code> is the whole element (D44).</li>
+    <li><strong>Lazy.</strong> Nothing is read until the result is stored, passed, iterated or printed, or a final step (<code>each</code>, <code>save</code>, <code>count</code>, <code>sum</code>, <code>avg</code>) needs it; so <code>read_lines(path) |&gt; take 100</code> stops reading early (D50).</li>
+    <li><strong>Functions.</strong> Any function is a step: <code>xs |&gt; f</code> is <code>f(xs)</code>. In <code>map</code> and <code>each</code>, a step that is a function is called with the element: <code>each print</code>, <code>map double</code> (D51).</li>
+    <li><strong>Groups.</strong> After <code>group by region</code> each row has the key column <code>region</code> and the aggregate column named after its argument (<code>sum amount</code> gives <code>amount</code>, <code>count</code> gives <code>count</code>) (D48).</li>
+    <li><strong>Empty.</strong> <code>sum</code> of nothing is <code>0</code> and <code>avg</code> of nothing is <code>none</code>; <code>avg</code> of ints is a <code>float</code> (D49).</li>
+    <li><strong>Everywhere.</strong> The same steps run on lists, CSV tables, the lines of a file, <a href="#mod-db">database tables</a> (as SQL) and <a href="#mod-stream">streams</a> (with time windows), and the compiler fuses <code>where</code>, <code>map</code> and <code>sum</code> into one loop (D134).</li>
+  </ul>
 {{run:pipes.nexo}}
 </section>
 
@@ -244,43 +273,203 @@
 
 <section class="ref-sec" id="stdlib">
   <h2><a href="#stdlib">Standard library</a></h2>
-  <p>Always available, without <code>use</code>.</p>
+  <p>Always available, without <code>use</code>. A function that can fail returns <code>T!</code>, so it is called with <code>?</code> inside a function that can fail, or inside <code>try</code>. Every access to files, the network, the environment, commands, C or Python first asks the program's <a href="#policy">policy</a>. <code>nexo docs --for-ai</code> prints this list, from <code>nexo/stdlib/api.json</code>, the same file both implementations use.</p>
   <div class="table-wrap"><table class="ref-table">
     <thead><tr><th>Area</th><th>Names</th></tr></thead>
     <tbody>
-      <tr><td>Input and output</td><td><code>print</code>, <code>input</code>, <code>read</code>, <code>write</code>, <code>read_lines</code> (lazy), <code>save</code>, <code>move_file(path, to: folder)</code></td></tr>
-      <tr><td>Values</td><td><code>len</code>, <code>range(start, end)</code> (end excluded), <code>str</code>, <code>int</code>, <code>float</code>, <code>decimal</code>, <code>list</code>, <code>set</code>, <code>round</code>, <code>split</code>, <code>convert</code>, <code>validate(value, as: type, range: a..b)</code>, <code>PI</code></td></tr>
-      <tr><td>Text</td><td><code>.upper()</code>, <code>.lower()</code>, <code>.trim()</code>, <code>.replace(a, b)</code>, <code>.starts_with</code>, <code>.ends_with</code>, <code>find</code>, <code>regex</code>, <code>render</code> templates</td></tr>
-      <tr><td>Collections</td><td><code>.sum()</code>, <code>.keys()</code>, <code>.values()</code>, and the steps of <a href="#pipelines">pipelines</a></td></tr>
-      <tr><td>Data</td><td>JSON and CSV: <code>read</code> into types, <code>save</code>, <code>convert(to: json|csv)</code></td></tr>
-      <tr><td>Time</td><td><code>now</code>, <code>today</code>, <code>date</code>, <code>time</code>, durations and time zones</td></tr>
-      <tr><td>Security</td><td><code>secret("NAME")</code> (never printed), <code>password.hash</code> and <code>check</code>, <code>key</code>, <code>encrypt</code>, <code>decrypt</code>, <code>sign</code>, <code>verify</code></td></tr>
-      <tr><td>Network</td><td><code>http.get</code>, <code>post</code>, <code>put</code>, <code>patch</code>, <code>delete</code>, with retries; <code>fake</code> for tests</td></tr>
-      <tr><td>Logs</td><td><code>log</code>, which hides <code>@private</code> fields</td></tr>
+      <tr><td><a href="#std-files">Files and data</a></td><td><code>print</code>, <code>input</code>, <code>read</code>, <code>write</code>, <code>read_lines</code>, <code>save</code>, <code>move_file</code>, <code>json.parse</code>, <code>csv.parse</code>, <code>convert(to: json|csv)</code></td></tr>
+      <tr><td><a href="#std-values">Values and methods</a></td><td><code>len</code>, <code>range</code>, <code>set</code>, <code>int</code>, <code>float</code>, <code>decimal</code>, <code>str</code>, <code>round</code>, <code>split</code>, <code>convert</code>, <code>validate</code>, <code>PI</code>, and the methods of lists, maps, sets and text</td></tr>
+      <tr><td><a href="#std-text">Text</a></td><td>interpolation, <code>find</code>, <code>regex</code>, <code>render</code></td></tr>
+      <tr><td><a href="#std-time">Time</a></td><td><code>now</code>, <code>today</code>, <code>date</code>, <code>time</code>, durations, time zones</td></tr>
+      <tr><td><a href="#std-crypto">Security</a></td><td><code>secret</code>, <code>password</code>, <code>key</code>, <code>keypair</code>, <code>encrypt</code>, <code>decrypt</code>, <code>sign</code>, <code>verify</code>, <code>log</code></td></tr>
+      <tr><td><a href="#std-http">Network and tests</a></td><td><code>http.get</code>, <code>post</code>, <code>put</code>, <code>patch</code>, <code>delete</code>; <code>fake</code></td></tr>
     </tbody>
   </table></div>
-{{run:stdlib.nexo}}
+
+  <h3 id="std-files">Files and data</h3>
+  <div class="table-wrap"><table class="ref-table sig">
+    <thead><tr><th>Call</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>print(values..., end: "\n")</code></td><td>Writes the values separated by spaces, then <code>end</code>. Text inside a list or map is shown with quotes.</td></tr>
+      <tr><td><code>input(prompt?) -&gt; str</code></td><td>Shows the prompt and reads one line, without its newline; <code>""</code> at the end of the input.</td></tr>
+      <tr><td><code>read(path) -&gt; str!</code></td><td>The text of a file; a <code>.csv</code> file is read as a table: a list of rows, each a map from column to value (D43, D44). Fails with <code>NotFound</code> or <code>IOError</code>.</td></tr>
+      <tr><td><code>write(path, text) -&gt; none!</code></td><td>Writes (or replaces) a file; its folder must exist (<code>NotFound</code> otherwise).</td></tr>
+      <tr><td><code>read_lines(path) -&gt; list!</code></td><td>The lines of a file, read as they are used: <code>read_lines("50GB.log") |&gt; take 100</code> reads 100 lines.</td></tr>
+      <tr><td><code>save(value, path) -&gt; none!</code></td><td>The last step of a pipeline: CSV for <code>.csv</code>, JSON for <code>.json</code>, one line per element otherwise. Money is written as text (<code>"19.99 EUR"</code>) and decimals keep every digit (D46).</td></tr>
+      <tr><td><code>move_file(path, to: place) -&gt; none!</code></td><td>Moves or renames a file; a <code>to</code> ending in <code>/</code> is a folder.</td></tr>
+      <tr><td><code>json.parse(text, as: T?) -&gt; T!</code></td><td>Reads JSON. With <code>as:</code> it builds records, applies defaults and reports a missing field or a wrong type as <code>InvalidData</code> (D47).</td></tr>
+      <tr><td><code>csv.parse(text) -&gt; list!</code></td><td>A list of maps. A column of integers is <code>int</code>, of numbers <code>float</code>, otherwise text; an empty cell is <code>none</code> (D45).</td></tr>
+      <tr><td><code>convert(data, to: json|csv) -&gt; str</code></td><td>Data as JSON (indented by two spaces) or CSV text.</td></tr>
+    </tbody>
+  </table></div>
+{{run:lib/files.nexo}}
+
+  <h3 id="std-values">Values and methods</h3>
+  <div class="table-wrap"><table class="ref-table sig">
+    <thead><tr><th>Call</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>len(x) -&gt; int</code></td><td>Elements of a list, map or set; characters of a text (not bytes).</td></tr>
+      <tr><td><code>range(end)</code>, <code>range(start, end, step?)</code></td><td>The ints up to <code>end</code>, without it. <code>1..10</code> includes both ends (D60).</td></tr>
+      <tr><td><code>set(items...)</code></td><td>A set of its arguments, without repeats.</td></tr>
+      <tr><td><code>int</code>, <code>float</code>, <code>decimal</code>, <code>str</code></td><td>Conversions between values; <code>int</code> truncates toward zero. They do not read text: that is <code>validate</code> (D41).</td></tr>
+      <tr><td><code>validate(x, as: T, range: a..b?) -&gt; T!</code></td><td>Checks outside data against <code>int</code>, <code>float</code>, <code>decimal</code>, <code>bool</code>, <code>str</code>, <code>date</code>, <code>time</code> or a record type; fails with <code>InvalidValue</code>.</td></tr>
+      <tr><td><code>round(x, digits?, mode: half_up?)</code></td><td>Keeps the type; half to even unless <code>mode: half_up</code> (D40).</td></tr>
+      <tr><td><code>split(amount, parts) -&gt; list</code></td><td>Shares money in parts that add up exactly; the first parts take the leftover cents.</td></tr>
+      <tr><td><code>convert(m, to: USD, rate: r)</code></td><td>Money in another currency; the rate is always explicit.</td></tr>
+      <tr><td><code>PI</code>, <code>half_up</code>, <code>half_even</code></td><td>Built-in values.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Quantities of one dimension add and compare, and the result takes the smaller unit: <code>30s + 1m</code> is <code>90s</code>, <code>2GB + 500MB</code> is <code>2500 MB</code>. The units are time (<code>ms s m h day days year years</code>), sizes (<code>B KB MB GB TB</code>, 1 KB = 1000 B), <code>km</code>, <code>%</code> and the currency codes (D2, D39). A missing map key gives <code>none</code>, so <code>m[k] ?? default</code> works; an index outside a list is <code>OutOfRange</code> (D64).</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Type</th><th>Methods</th></tr></thead>
+    <tbody>
+      <tr><td><code>list</code></td><td><code>.sum()</code>, <code>.count()</code>, <code>.add(x)</code>; <code>xs[i] = v</code> changes an element</td></tr>
+      <tr><td><code>map</code></td><td><code>.keys()</code>, <code>.values()</code>, <code>.count()</code>; <code>m[k] = v</code> adds or changes a key</td></tr>
+      <tr><td><code>set</code></td><td><code>.add(x)</code>, <code>.count()</code>; <code>x in s</code></td></tr>
+      <tr><td><code>str</code></td><td><code>.upper()</code>, <code>.lower()</code>, <code>.trim()</code>, <code>.split(sep?)</code>, <code>.replace(old, new)</code>, <code>.starts_with(s)</code>, <code>.ends_with(s)</code>, <code>.find(s)</code></td></tr>
+      <tr><td><code>channel</code></td><td><code>.send(x)</code>, <code>.receive()</code>, <code>.close()</code> (<a href="#mod-sync"><code>nexo.sync</code></a>)</td></tr>
+    </tbody>
+  </table></div>
+{{run:lib/values.nexo}}
+
+  <h3 id="std-text">Text</h3>
+  <p><code>"Hi {name}"</code> interpolates any expression; <code>{{</code> writes a literal brace. <code>text.find(s)</code> is the position of <code>s</code> in characters, or <code>none</code>. <code>regex(pattern)</code> is a regular expression without lookarounds or backreferences, so it always runs in linear time (D95):</p>
+  <div class="table-wrap"><table class="ref-table sig">
+    <thead><tr><th>Method</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>r.matches(t) -&gt; bool</code></td><td>Whether the whole text matches</td></tr>
+      <tr><td><code>r.find(t) -&gt; str?</code>, <code>r.find_all(t) -&gt; list</code></td><td>The first match, or every match</td></tr>
+      <tr><td><code>r.replace(t, with) -&gt; str</code>, <code>r.split(t) -&gt; list</code></td><td>Every match replaced; the text cut at each match</td></tr>
+      <tr><td><code>r.groups(t) -&gt; list?</code></td><td>The groups of the first match, or <code>none</code></td></tr>
+    </tbody>
+  </table></div>
+  <p><code>render(path, name: value...) -&gt; str!</code> fills the <code>{name}</code> slots of a template file; in an <code>.html</code> file the values are escaped. A slot without a value is an <code>InvalidData</code> error (D96).</p>
+{{run:lib/text.nexo}}
+
+  <h3 id="std-time">Time</h3>
+  <ul class="ref-list">
+    <li><code>date(y, m, d)</code> is a day: <code>.year</code>, <code>.month</code>, <code>.day</code>, <code>.weekday</code> (1 is Monday). It moves by whole days, months or years, and two dates subtract to days.</li>
+    <li><code>time(y, m, d, hour, minute, second, zone: "Europe/Madrid")</code> is an instant in a time zone (by default the machine's: <code>TZ</code>, then <code>/etc/localtime</code>, then UTC); a zone is an IANA name, <code>"UTC"</code> or an offset such as <code>"+05:30"</code>: <code>.hour</code>, <code>.date</code>, <code>.zone</code>, <code>.to_zone(z)</code>. Adding hours follows daylight saving time.</li>
+    <li><code>now</code> and <code>today</code> are read from the clock each time. Durations are units: <code>1500ms</code>, <code>90s</code>, <code>5m</code>, <code>2h</code>, <code>3 days</code>, <code>1 year</code>.</li>
+    <li>Dates and times are written as ISO 8601, read from JSON into <code>date</code> and <code>time</code> fields, and checked with <code>validate(x, as: date)</code> (D94).</li>
+  </ul>
+{{run:lib/time.nexo}}
+
+  <h3 id="std-crypto">Security</h3>
+  <div class="table-wrap"><table class="ref-table sig">
+    <thead><tr><th>Call</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>secret("NAME", from: ...?)</code></td><td>A value from the environment that can only be passed where it is needed (<code>key:</code>, a header). Printing it, <code>str()</code> or writing it is an error.</td></tr>
+      <tr><td><code>password.hash(p)</code>, <code>password.check(p, stored)</code>, <code>password.generate(length?)</code></td><td>Argon2id hashes and random passwords</td></tr>
+      <tr><td><code>key.new()</code>, <code>key.load(text)</code>, <code>k.export()</code></td><td>A key for AES-256-GCM</td></tr>
+      <tr><td><code>encrypt(data, k)</code>, <code>decrypt(text, k) -&gt; str!</code></td><td>Encrypts text; a wrong key or changed data fails with <code>InvalidData</code></td></tr>
+      <tr><td><code>encrypt_file(path, k)</code>, <code>decrypt_file(path, k)</code></td><td>The same, on a file in place</td></tr>
+      <tr><td><code>keypair.new()</code>, <code>keypair.load(text)</code></td><td>An Ed25519 pair: <code>.private</code> and <code>.public</code></td></tr>
+      <tr><td><code>sign(doc, pair.private)</code>, <code>verify(doc, signature, pair.public)</code></td><td>Signs a text and checks a signature</td></tr>
+      <tr><td><code>log(values...)</code></td><td>A line on standard error; <code>@private</code> fields show as <code>***</code></td></tr>
+    </tbody>
+  </table></div>
+{{run:lib/crypto.nexo}}
+
+  <h3 id="std-http">Network and tests</h3>
+  <p><code>http.get(url, headers:, timeout:, retries:)</code>, <code>http.post(url, body, ...)</code>, <code>put</code>, <code>patch</code> and <code>delete</code> return a response with <code>.status</code>, <code>.text</code>, <code>.headers</code> and <code>.json()</code>. A map or record body is sent as JSON. A status of 400 or more is an <code>HTTPError</code>, and a connection that fails a <code>NetworkError</code>; <code>get</code>, <code>put</code> and <code>delete</code> retry twice after a network error or a 502, 503 or 504; <code>post</code> and <code>patch</code> never retry, since repeating them may repeat their effect. The timeout is 30s by default (D98). Inside a <code>test</code>, <code>fake f returns value</code> replaces a function, a library one or <code>ask</code>, until the test ends (D99). The example starts a <a href="#mod-web"><code>nexo.web</code></a> server and calls it:</p>
+{{src:lib/web.nexo}}
+{{test:lib/web.nexo}}
 </section>
 
 <section class="ref-sec" id="official">
   <h2><a href="#official">Official modules</a></h2>
-  <p>Modules of the same language, maintained with it. Some load with <code>use</code>; the others are implicit when their block appears.</p>
+  <p>Modules of the same language, maintained with it. Two load with <code>use</code>; the others are implicit when their block or function appears. Their blocks follow one pattern, <code>word name?:</code> and <code>key = value</code> lines, and both parsers read them into calls of the library (D90).</p>
   <div class="table-wrap"><table class="ref-table">
     <thead><tr><th>Module</th><th>What it gives</th><th>Loading</th></tr></thead>
     <tbody>
-      <tr><td><code>nexo.sync</code></td><td><code>spawn</code>, <code>channel</code>, <code>select</code>, <code>shared</code></td><td><code>use nexo.sync</code></td></tr>
-      <tr><td><code>nexo.db</code></td><td><code>connect</code>, <code>@table</code> types, pipelines translated to SQL on SQLite, transactions, <code>nexo db diff|migrate</code></td><td><code>use nexo.db</code></td></tr>
-      <tr><td><code>nexo.web</code></td><td><code>server</code> blocks with typed routes, JWT <code>auth</code>, <code>@public</code>, <code>@role</code>, <code>@limit</code></td><td>implicit</td></tr>
-      <tr><td><code>nexo.ai</code></td><td><code>ask</code> with typed answers, the <code>ai</code> block, <code>@tool</code>, <code>agent</code> blocks, <code>fake ask</code></td><td>implicit</td></tr>
-      <tr><td><code>nexo.infra</code></td><td><code>infra</code> blocks on AWS, Azure, GCP and Kubernetes, <code>stage</code>, <code>nexo plan|apply|drift|destroy|cost|import</code></td><td>implicit</td></tr>
-      <tr><td><code>nexo.ci</code></td><td><code>pipeline</code> blocks with steps, <code>nexo ci run</code>, <code>nexo ci export</code></td><td>implicit</td></tr>
-      <tr><td><code>nexo.stream</code></td><td><code>when kafka("topic") as msg</code>, retries, dead letters, <code>window</code> steps</td><td><code>use nexo.stream</code></td></tr>
-      <tr><td>Flags and privacy</td><td><code>flags</code> blocks and <code>flag(name, user)</code>; <code>@personal</code>, <code>@private</code>, <code>keep</code>, <code>nexo privacy report</code></td><td>implicit</td></tr>
-      <tr><td><code>use c</code>, <code>use python</code></td><td>A C library from its header; a Python module</td><td><code>use c "lib"</code>, <code>use python name</code></td></tr>
-      <tr><td>The program <code>policy</code></td><td><code>allow</code> and <code>deny</code> of <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>, <code>shell</code>, <code>c</code> and <code>python</code>; a release build stops at anything else, development mode warns (D142)</td><td>implicit</td></tr>
+      <tr><td><a href="#mod-db"><code>nexo.db</code></a></td><td><code>connect</code>, <code>@table</code> types, pipelines translated to SQL on SQLite, transactions, <code>nexo db diff|migrate</code></td><td><code>use nexo.db</code></td></tr>
+      <tr><td><a href="#mod-sync"><code>nexo.sync</code></a></td><td><code>spawn</code>, <code>channel</code>, <code>select</code>, <code>shared</code></td><td><code>use nexo.sync</code></td></tr>
+      <tr><td><a href="#mod-web"><code>nexo.web</code></a></td><td><code>server</code> blocks with typed routes, JWT <code>auth</code>, <code>@public</code>, <code>@role</code>, <code>@limit</code></td><td>implicit</td></tr>
+      <tr><td><a href="#mod-ai"><code>nexo.ai</code></a></td><td><code>ask</code> with typed answers, the <code>ai</code> block, <code>@tool</code>, <code>agent</code> blocks</td><td>implicit</td></tr>
+      <tr><td><a href="#mod-stream"><code>nexo.stream</code></a></td><td><code>when kafka("topic") as msg</code>, retries, dead letters, <code>window</code>, <code>sliding</code> and <code>session</code> steps</td><td><code>use nexo.stream</code></td></tr>
+      <tr><td><a href="#mod-flags">Flags and privacy</a></td><td><code>flags</code> blocks and <code>flag(name, user)</code>; <code>@personal</code>, <code>@private</code>, <code>keep</code>, <code>privacy.*</code></td><td>implicit</td></tr>
+      <tr><td><a href="#mod-infra"><code>nexo.infra</code>, <code>nexo.ci</code></a></td><td><code>infra</code> and <code>stage</code> blocks on AWS, Azure, GCP and Kubernetes; <code>pipeline</code> blocks</td><td>implicit</td></tr>
+      <tr><td><a href="#mod-interop"><code>use c</code>, <code>use python</code></a></td><td>A C library from its header; a Python module</td><td><code>use c "lib"</code>, <code>use python name</code></td></tr>
+      <tr><td><a href="#policy">The program <code>policy</code></a></td><td><code>allow</code> and <code>deny</code> of <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>, <code>shell</code>, <code>c</code> and <code>python</code></td><td>implicit</td></tr>
     </tbody>
   </table></div>
-  <p>Not implemented yet: <code>nexo.ml</code>, <code>nexo.ui</code>, <code>nexo.notify</code>, <code>every</code> and <code>lifecycle</code>, canary and blue/green releases, PostgreSQL, YAML, XML and Parquet.</p>
+  <p>Not implemented yet: <code>nexo.ml</code>, <code>nexo.ui</code>, <code>nexo.notify</code>, <code>every</code> and <code>lifecycle</code>, canary and blue/green releases, AI budgets and MCP, brokers on the network, PostgreSQL, YAML, XML and Parquet. Using one is an error that says so, never a silent no-op.</p>
+
+  <h3 id="mod-db"><code>nexo.db</code>: databases</h3>
+  <ul class="ref-list">
+    <li><code>db = connect("shop.db", key: secret(...)?)</code> opens or creates an SQLite file. Each <code>@table</code> type is a table: <code>id: id</code> is the automatic key, <code>@unique</code> a unique column, <code>ref T</code> a foreign key and <code>many T</code> the rows that point back.</li>
+    <li><code>db.T.add(field: value...)</code> inserts and returns the record; <code>db.T.find(field: value) -&gt; T!</code> fails with <code>NotFound</code>; <code>db.T.update(record, field: value)</code>, <code>db.T.remove(id)</code>, <code>db.T.all()</code> and <code>db.T.count()</code>.</li>
+    <li>A pipeline on <code>db.T</code> becomes one parameterised SQL query: <code>where</code> comparing columns with values, <code>sort by</code>, <code>take</code> and <code>count</code> run in the database; from the first step that cannot be translated, the rest runs in memory with the same result. <code>NEXO_SQL_LOG=1</code> shows the SQL (D100).</li>
+    <li><code>db.transaction:</code> keeps or undoes everything inside together; a failure in it is a <code>DatabaseError</code>.</li>
+    <li><code>db.sql("... {value}")</code> runs raw SQL written in the call; the values in braces are always parameters, so a query built from text is an error.</li>
+    <li><code>nexo db diff file.nexo</code> compares the types with the database and writes a migration; <code>nexo db migrate</code> applies it in a transaction, and dropping a column needs <code>--allow-drop</code> (D101).</li>
+  </ul>
+{{run:lib/db.nexo}}
+
+  <h3 id="mod-sync"><code>nexo.sync</code>: workers and channels</h3>
+  <ul class="ref-list">
+    <li><code>spawn f(args)</code> starts a task that runs on its own; it is not waited for.</li>
+    <li><code>channel[T](size: n)</code> is a typed queue: <code>send</code> waits while it is full, <code>receive</code> while it is empty, and <code>for x in c</code> reads until <code>close()</code>. A record sent through a channel is copied, so each task owns what it gets.</li>
+    <li><code>select:</code> waits on several channels with <code>name from channel:</code> lines and an optional <code>after 5s:</code>.</li>
+    <li><code>shared x = ...</code> is the only state tasks may change together; the locks are added by the compiler. When every task waits, Nexo reports a deadlock instead of hanging (D82).</li>
+  </ul>
+{{run:lib/sync.nexo}}
+
+  <h3 id="mod-web"><code>nexo.web</code>: servers</h3>
+  <ul class="ref-list">
+    <li><code>server name:</code> with <code>port = n</code> and routes <code>get|post|put|patch|delete "/path/{param}"(param: type, ...):</code>. Path, query and JSON body parameters are checked against their types; a wrong one answers 400.</li>
+    <li>What a route returns is the answer: a status code (<code>return 404</code>), <code>none</code> (204), a text (<code>text/plain</code>) or any other value as JSON, with 201 for <code>post</code> and 200 otherwise. An error that leaves the route answers too: <code>NotFound</code> is 404, <code>InvalidValue</code> and <code>InvalidData</code> 400, a repeated <code>@unique</code> 409, anything else 500.</li>
+    <li><code>auth = jwt(key: ...)</code> protects every route; <code>@public</code> opens one, <code>@role("admin")</code> asks for a role, <code>@limit(10 per minute per ip)</code> limits the calls. <code>tokens.sign(claims, expires: 1h)</code> makes a token.</li>
+    <li>Secure headers are always sent, and a POST, PUT, PATCH or DELETE from another origin answers 403. Under <code>nexo test</code> the server answers on a free port, and <code>name.url</code> is its address (D102-D104). The example is in <a href="#std-http">Network and tests</a>.</li>
+  </ul>
+
+  <h3 id="mod-ai"><code>nexo.ai</code>: language models</h3>
+  <p><code>ask(instruction, input?, options...)</code> returns text, or a checked value when it is assigned to a typed variable (with up to 3 retries). Without a provider it fails with <code>AIError</code>. The settings come from the first place that has them: the call, its <code>profile:</code>, the file's <code>ai</code> block, <code>nexo.toml</code>, then <code>nexo ai setup</code>.</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Option</th><th>Values</th><th>Default</th></tr></thead>
+    <tbody>
+      <tr><td><code>model</code></td><td>an alias of <code>ai models</code> or <code>"provider:model"</code></td><td>the configured one</td></tr>
+      <tr><td><code>creativity</code></td><td><code>low</code>, <code>medium</code>, <code>high</code></td><td><code>medium</code></td></tr>
+      <tr><td><code>max</code></td><td><code>20 words</code>, <code>500 tokens</code></td><td>no limit</td></tr>
+      <tr><td><code>timeout</code>, <code>retries</code></td><td>a duration; a number</td><td><code>60s</code>; 3 with a type, 1 without</td></tr>
+      <tr><td><code>stream</code></td><td><code>true</code> gives the answer in pieces for a <code>for</code></td><td><code>false</code></td></tr>
+      <tr><td><code>profile</code></td><td>the name of an <code>ai profile</code> block</td><td>none</td></tr>
+    </tbody>
+  </table></div>
+  <p>A tool is a function marked <code>@tool "what it does"</code>; an <code>agent name:</code> block takes <code>model</code>, <code>tools</code>, <code>goal</code>, <code>max_steps</code> and <code>confirm</code> (tools that need a person's approval), and runs with <code>name.handle(input)</code>. Its tools obey the program's policy. <code>nexo ai usage</code> shows the calls and tokens per model and day (D106-D109).</p>
+{{src:lib/ai.nexo}}
+{{test:lib/ai.nexo}}
+
+  <h3 id="mod-stream"><code>nexo.stream</code>: real-time data</h3>
+  <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when kafka("orders") as msg:</code> handles one message at a time: a message that fails is tried 4 times and then goes to <code>orders.dead</code>, and <code>key:</code> makes a repeated key run once. <code>|&gt; window 1m</code>, <code>sliding 5m</code> and <code>session 30s</code> group messages by time for the usual steps. <code>kafka("t").send(value, at: time?)</code> publishes. This edition runs on a local broker, which <code>nexo test</code> drives (D117).</p>
+{{src:lib/stream.nexo}}
+{{test:lib/stream.nexo}}
+
+  <h3 id="mod-flags">Flags and privacy</h3>
+  <p>A <code>flags:</code> block declares each flag once: <code>on</code>, <code>off</code>, a percentage of users (stable per user), or <code>users where condition</code>; <code>nexo lint</code> warns about a flag whose <code>expires:</code> day has passed. <code>flag(name, user?)</code> reads it, and <code>nexo flags set name value --stage prod</code> changes it without a deploy (D115).</p>
+{{run:lib/flags.nexo}}
+  <p>Fields marked <code>@personal</code> or <code>@private</code> are personal data: <code>@private</code> ones are encrypted in the database with the <code>key:</code> of <code>connect</code> and hidden by <code>log</code>. <code>keep = 2 years after field</code> erases old rows by itself and <code>purpose</code> says why the data is kept. <code>privacy.export(record)</code> writes its data to <code>table-id.json</code>, <code>privacy.erase(record)</code> deletes or anonymises it, and <code>privacy.restrict(record)</code> keeps it out of every query (D116).</p>
+{{run:lib/privacy.nexo}}
+{{out:privacy report:lib/privacy.nexo}}
+
+  <h3 id="mod-infra"><code>nexo.infra</code> and <code>nexo.ci</code>: deployment</h3>
+  <ul class="ref-list">
+    <li><code>infra name:</code> with <code>cloud = "aws"|"azure"|"gcp"|"k8s"</code> declares portable resources (<code>app</code>, <code>database</code>, <code>storage</code>, <code>queue</code>, <code>network</code>...) and <code>native</code> ones of a cloud. <code>stage prod:</code> changes values per stage, and <code>state = s3("bucket")</code> keeps the state outside <code>.nexo/state</code>.</li>
+    <li><code>nexo plan</code> asks the cloud's own API what exists and shows the changes, the cost and the availability; <code>apply</code>, <code>destroy</code>, <code>drift</code>, <code>cost</code> and <code>import</code> use the same API (D118-D121).</li>
+    <li><code>pipeline name:</code> has <code>step</code>s that call <code>run(command)</code>, <code>test()</code>, <code>build_image(name)</code>, <code>plan(...)</code>, <code>apply(...)</code>, <code>approve(by: [...])</code> and <code>comment(text)</code>. <code>nexo ci run</code> runs it here, and <code>nexo ci export github|gitlab|azure|jenkins</code> writes the file of that service (D122-D123). A pipeline that runs commands needs <code>allow shell</code>.</li>
+  </ul>
+{{src:lib/deploy.nexo}}
+
+  <h3 id="mod-interop"><code>use c</code> and <code>use python</code></h3>
+  <p><code>use c "libm"</code> reads the library's C header when the program is compiled, so every call is checked against the real signature; <code>use c "./lib.so" as name</code> loads a file. <code>use python module as name</code> imports a Python module; numbers, text, lists and maps cross both ways. Calls into C are the only unsafe code in this edition, and <code>nexo audit</code> lists every one (D110, D111, D129).</p>
+{{run:lib/interop.nexo}}
+{{out:audit:lib/interop.nexo}}
+
+  <h3 id="policy">The program policy</h3>
+  <p>A <code>policy:</code> block lists, with <code>allow</code> and <code>deny</code>, what the program may <code>read</code>, <code>write</code>, reach on the <code>net</code>, take from the <code>env</code>ironment, run as a <code>shell</code> command, and load with <code>c</code> and <code>python</code>. Every access of the library asks it first, following links and <code>..</code>. A release build stops at anything not allowed; development mode warns once, except shell commands, which always need <code>allow shell</code>. <code>nexo policy show</code> prints what a program may do and <code>nexo policy suggest</code> learns the smallest policy from its tests (D142).</p>
+{{run:lib/policy/report.nexo}}
+{{out:policy show:lib/policy/report.nexo}}
 </section>
 
 <section class="ref-sec" id="cli">

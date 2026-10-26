@@ -1,0 +1,31 @@
+use nexo.stream
+
+type Order:
+    id: int
+    total: int
+
+when kafka("orders") as msg, key: msg.id:
+    o: Order = validate(msg.json(), as: Order)?
+    if o.total < 0:
+        fail("negative total")
+    print("order", o.id, o.total)
+
+fn publish(row):
+    print("clicks", row)
+
+kafka("clicks")
+  |> window 1m
+  |> group by page
+  |> count
+  |> each publish
+
+test "a failing message goes to the dead letters":
+    kafka("orders").send({"id": 1, "total": 30})
+    kafka("orders").send({"id": 2, "total": -5})
+
+test "clicks per page and minute":
+    start = time(2026, 10, 24, 9, 0, zone: "UTC")
+    kafka("clicks").send({"page": "/a"}, at: start)
+    kafka("clicks").send({"page": "/b"}, at: start + 10s)
+    kafka("clicks").send({"page": "/a"}, at: start + 20s)
+    kafka("clicks").send({"page": "/a"}, at: start + 70s)

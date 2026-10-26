@@ -1,0 +1,8 @@
+name = "Ana"
+print("Hi {name}, {{braces} stay", "hello world".find("o"), "hello".find("z"))
+digits = regex("[0-9]+")
+print(digits.matches("2026"), digits.find("order 42, row 7"), digits.find_all("order 42, row 7"))
+print(digits.replace("a1b22c", "#"), digits.split("a1b22c"))
+email = regex("(\\w+)@(\\w+)\\.com")
+print(email.groups("write to ana@mail.com"), email.groups("nobody"))
+print(render("templates/mail.html", name: "<Luis>", count: 3))

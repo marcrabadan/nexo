@@ -1,0 +1,41 @@
+type Opinion:
+    tone: "positive" | "negative" | "neutral"
+    score: 1..5
+
+fn classify(review: str) -> Opinion!:
+    o: Opinion = ask("Analyse this review", review)?  # checked against the type
+    return o
+
+fn summary(text: str) -> str!:
+    return ask("Summarise this text", text, max: 20 words, creativity: low, timeout: 30s)?
+
+@tool "Looks up an order by its number"
+fn find_order(id: str) -> str:
+    return "order {id}: shipped"
+
+agent support:
+    model = "anthropic:claude-opus"
+    tools = [find_order]
+    goal = "Answer order questions politely"
+    max_steps = 5
+
+test "ask answers with the declared type":
+    fake ask returns Opinion(tone: "positive", score: 4)
+    o = classify("Great!")
+    print(o.tone, o.score)
+
+test "ask answers with text":
+    fake ask returns "A short text."
+    print(summary("A very long text"))
+
+test "an agent needs its provider's key":
+    try:
+        support.handle("Where is order 7?")
+    else e is AIError:
+        print(e.message)
+
+test "without a provider ask fails":
+    try:
+        ask("hi")
+    else e is AIError:
+        print(e.message)

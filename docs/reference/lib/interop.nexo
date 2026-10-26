@@ -1,0 +1,8 @@
+use c "libm"
+use python statistics as stats
+use python collections
+
+print(libm.sqrt(2.0), libm.pow(2, 10))
+print(stats.mean([1, 2, 3, 4]), stats.median([3, 1, 2]))
+print(collections.Counter("banana").most_common(1))
+print(libm.sqrt("two"))

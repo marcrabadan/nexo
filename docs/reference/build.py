@@ -50,19 +50,20 @@ def window(name, code, label=None, out=None):
 
 
 def expand(m):
-    kind, name = m.group(1), m.group(2)
+    kind, name = m.group(1), m.group(3)
     code = (HERE / name).read_text(encoding="utf-8")
     shown = Path(name).name if kind != "src" else name.split("/", 1)[-1]
     if kind == "src":
         return window(shown, code)
-    if kind == "test":  # only the output: the program is shown just before
-        result = html.escape(run(["test"], name).rstrip(), quote=False)
-        return (f'<div class="code"><div class="out"><div class="out-label">$ nexo test {html.escape(shown)}</div>'
-                f'<pre><code>{result}</code></pre></div></div>')
+    if kind in ("test", "out"):  # only the output: the program is shown just before
+        args = ["test"] if kind == "test" else m.group(2).split()
+        result = html.escape(run(args, name).rstrip(), quote=False)
+        return (f'<div class="code"><div class="out"><div class="out-label">$ nexo {html.escape(" ".join(args))} '
+                f'{html.escape(shown)}</div><pre><code>{result}</code></pre></div></div>')
     return window(shown, code, f"$ nexo {shown}", run([], name))
 
 
 page = (HERE / "page.tmpl").read_text(encoding="utf-8")
-out = re.sub(r"\{\{(run|test|src):([\w./]+)\}\}", expand, page)
+out = re.sub(r"\{\{(run|test|src|out):(?:([a-z -]+):)?([\w./]+)\}\}", expand, page)
 (ROOT / "docs" / "reference.html").write_text(out, encoding="utf-8")
 print("wrote docs/reference.html")

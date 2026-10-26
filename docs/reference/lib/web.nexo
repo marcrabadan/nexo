@@ -1,0 +1,49 @@
+tokens = jwt(key: password.generate(32))
+
+type Item:
+    name: str
+    price: decimal
+
+items = [Item(name: "pen", price: 1.50)]
+
+server shop:
+    port = 8080
+    auth = tokens
+
+    @public
+    get "/items/{n}"(n: int):
+        if n >= len(items):
+            return 404
+        return items[n]
+
+    @public
+    get "/hello"(name: str = "world"):
+        return "hello {name}"
+
+    @role("admin")
+    post "/items"(item: Item):
+        return item
+
+test "the client talks to the server":
+    r = http.get("{shop.url}/items/0")
+    print(r.status, r.json()["name"], http.get("{shop.url}/hello?name=Ana").text)
+    try:
+        http.get("{shop.url}/items/9", retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(shop.url, "URL"))
+
+test "a token with a role opens the private routes":
+    token = tokens.sign({"sub": "ana", "role": "admin"}, expires: 1h)
+    r = http.post("{shop.url}/items", {"name": "cup", "price": 2}, headers: {"Authorization": "Bearer {token}"})
+    print(r.status, r.json())
+    try:
+        http.post("{shop.url}/items", {"name": "cup", "price": 2}, retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(shop.url, "URL"))
+
+fn dollar_rate() -> decimal!:
+    return http.get("https://rates.example/usd", timeout: 5s)?.json()?["usd"]
+
+test "fake replaces a call in a test":
+    fake dollar_rate returns 1.08
+    assert dollar_rate() * 10 == 10.8

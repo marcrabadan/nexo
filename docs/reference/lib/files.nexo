@@ -1,0 +1,20 @@
+type Sale:
+    region: str
+    amount: float
+
+try:
+    write("sales.csv", "region,amount\nnorth,120.5\nsouth,80\nnorth,30\n")
+    rows = read("sales.csv")  # a .csv file is read as a table
+    print(rows[0], rows[0]["amount"])
+    for line in read_lines("sales.csv") |> take 2:
+        print(line)
+    rows |> group by region |> sum amount |> save("totals.json")
+    print(read("totals.json"))
+    sale = json.parse("{{\"region\": \"east\", \"amount\": 9.5}", as: Sale)
+    print(sale, sale.amount)
+    print(csv.parse("a,b\n1,x\n"))
+    print(convert([sale], to: csv), end: "")
+    move_file("totals.json", to: "archive/")
+    print(read("totals.json"))
+else e is NotFound:
+    print("missing:", e.message)
