@@ -63,17 +63,29 @@ def shown(path: str) -> str:
 
 
 def resolve(path: str) -> str:
-    """The absolute path, with the symbolic links of the part that exists
-    followed, so a link cannot lead out of an allowed folder."""
+    """The absolute path the system opens: each component in turn, a
+    symbolic link replaced by its target before the `..` after it, so
+    neither a link nor `link/..` can lead out of an allowed folder."""
     full = path if path.startswith("/") else os.getcwd() + "/" + path
-    comps = parts(full)
-    for i in range(len(comps), 0, -1):
-        prefix = "/" + "/".join(comps[:i])
-        if os.path.exists(prefix):
-            real = os.path.realpath(prefix)
-            rest = comps[i:]
-            return real if not rest else real.rstrip("/") + "/" + "/".join(rest)
-    return "/" + "/".join(comps)
+    todo = [c for c in reversed(full.split("/")) if c not in ("", ".")]
+    out: list[str] = []
+    links = 0
+    while todo:
+        c = todo.pop()
+        if c == "..":
+            if out:
+                out.pop()
+            continue
+        here = "/" + "/".join(out + [c])
+        if links < 40 and os.path.islink(here):
+            links += 1
+            target = os.readlink(here)
+            if target.startswith("/"):
+                out = []
+            todo.extend(t for t in reversed(target.split("/")) if t not in ("", "."))
+            continue
+        out.append(c)
+    return "/" + "/".join(out)
 
 
 def path_matches(path: str, target: str) -> bool:

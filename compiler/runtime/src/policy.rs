@@ -73,24 +73,41 @@ pub fn shown(path: &str) -> String {
     }
 }
 
-/// The absolute path, with the symbolic links of the part that exists
-/// followed, so a link cannot lead out of an allowed folder.
+/// The absolute path the system opens: each component in turn, a
+/// symbolic link replaced by its target before the `..` after it, so
+/// neither a link nor `link/..` can lead out of an allowed folder.
 fn resolve(path: &str) -> String {
     let full = if path.starts_with('/') {
         path.to_string()
     } else {
         format!("{}/{path}", std::env::current_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_default())
     };
-    let comps = parts(&full);
-    for i in (1..=comps.len()).rev() {
-        let prefix = format!("/{}", comps[..i].join("/"));
-        if std::path::Path::new(&prefix).exists() {
-            let real = std::fs::canonicalize(&prefix).map(|p| p.to_string_lossy().to_string()).unwrap_or(prefix);
-            let rest = &comps[i..];
-            return if rest.is_empty() { real } else { format!("{}/{}", real.trim_end_matches('/'), rest.join("/")) };
+    let split = |p: &str| -> Vec<String> { p.split('/').filter(|c| !c.is_empty() && *c != ".").map(String::from).collect() };
+    let mut todo: Vec<String> = split(&full);
+    todo.reverse();
+    let mut out: Vec<String> = Vec::new();
+    let mut links = 0;
+    while let Some(c) = todo.pop() {
+        if c == ".." {
+            out.pop();
+            continue;
         }
+        let here = format!("/{}", out.iter().chain(std::iter::once(&c)).cloned().collect::<Vec<_>>().join("/"));
+        let is_link = std::fs::symlink_metadata(&here).is_ok_and(|m| m.file_type().is_symlink());
+        if links < 40 && is_link {
+            if let Ok(target) = std::fs::read_link(&here) {
+                links += 1;
+                let target = target.to_string_lossy().to_string();
+                if target.starts_with('/') {
+                    out.clear();
+                }
+                todo.extend(split(&target).into_iter().rev());
+                continue;
+            }
+        }
+        out.push(c);
     }
-    format!("/{}", comps.join("/"))
+    format!("/{}", out.join("/"))
 }
 
 fn path_matches(path: &str, target: &str) -> bool {

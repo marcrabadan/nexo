@@ -106,6 +106,8 @@ def b_move_file(call, path, to):
     folder = check_path(call, to, "move_file")
     policy(call, "write", path)
     policy(call, "write", folder)
+    # the file it becomes, which a rule may deny inside an allowed folder
+    policy(call, "write", folder.rstrip("/") + "/" + path.rsplit("/", 1)[-1])
     if not os.path.isfile(path):
         if not os.path.exists(path):
             raise failure("NotFound", call.span, path=path)

@@ -1930,14 +1930,15 @@ with the same output (tests/test_policy.py, the `s09_policy*` and
   is how "dependencies inherit the policy".
 - A path rule is the file or folder it names and everything inside it
   (`"data"` and `"data/"` are the same). Both the rule and the path used
-  are made absolute, `.` and `..` are taken away, and the symbolic links of
-  the part that exists are followed, so neither `data/../x` nor a link in
-  `data/` reaches outside. A `net` rule is a host name, or `*.domain` for
+  are made absolute and read one component at a time, as the system
+  does: a symbolic link is replaced by its target before the `..` that
+  follows it, so neither `data/../x`, a link in `data/`, nor
+  `data/link/../x` reaches outside. A `net` rule is a host name, or `*.domain` for
   any name below it; ports are not part of it. An `env`, `c` or `python`
   rule is the exact name.
 - What is checked, before it happens: `read`, `read_lines` and `render`
   (read); `write`, `save` and `privacy.export` (write); `move_file` (write,
-  on the file and on the folder); `encrypt_file`, `decrypt_file` and
+  on the file, the folder and the file it becomes); `encrypt_file`, `decrypt_file` and
   `connect` to a database file (read and write); every request of `http`
   and of `ask`, at every redirect (net); the value of a `secret` when it
   is used (env); `run` and `build_image` of nexo.ci (shell); `use c` and

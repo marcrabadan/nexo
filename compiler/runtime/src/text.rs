@@ -209,6 +209,9 @@ pub fn move_file(path: V, to: V, span: u32) -> R<Val> {
     let folder = str_arg("move_file", &to, span)?;
     crate::policy::check("write", path, span)?;
     crate::policy::check("write", folder, span)?;
+    // the file it becomes, which a rule may deny inside an allowed folder
+    let name = path.rsplit('/').next().unwrap_or(path);
+    crate::policy::check("write", &format!("{}/{name}", folder.trim_end_matches('/')), span)?;
     let meta = std::fs::metadata(path);
     match &meta {
         Err(e) => return Err(crate::data::os_failure(path, e, span)),

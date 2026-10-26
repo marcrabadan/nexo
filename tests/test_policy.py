@@ -187,3 +187,32 @@ def test_suggest_then_release(tmp_path, name, prefix):
         proc = release(tmp_path)
         assert proc.returncode == 0, proc.stdout.decode()
         assert proc.stdout.decode() == "ok\n\n"
+
+
+@pytest.mark.parametrize("name,prefix", commands(), ids=[n for n, _ in commands()])
+def test_a_link_then_dotdot_is_the_file_the_system_opens(tmp_path, name, prefix):
+    """data/link/../secret.txt opens outside/secret.txt when data/link
+    points to outside/sub: the link is followed before the `..`."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "outside" / "sub").mkdir(parents=True)
+    (tmp_path / "outside" / "secret.txt").write_text("outside\n")
+    os.symlink(tmp_path / "outside" / "sub", tmp_path / "data" / "link")
+    (tmp_path / "app.nexo").write_text('policy:\n    allow read "data/"\n    deny read "outside/"\n\n'
+                                       'print(read("data/link/../secret.txt"))\n')
+    out = run(prefix, ["app.nexo"], tmp_path).stdout.decode()
+    assert "outside\n" not in out
+    assert 'The policy denies reading "data/secret.txt" (deny read "outside/").' in out
+
+
+@pytest.mark.parametrize("name,prefix", commands(), ids=[n for n, _ in commands()])
+def test_move_file_checks_the_file_it_becomes(tmp_path, name, prefix):
+    (tmp_path / "source").mkdir()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "source" / "protected.txt").write_text("new\n")
+    (tmp_path / "data" / "protected.txt").write_text("old\n")
+    (tmp_path / "app.nexo").write_text('policy:\n    allow write "source/", "data/"\n    deny write "data/protected.txt"\n\n'
+                                       'move_file("source/protected.txt", "data/")\n')
+    out = run(prefix, ["app.nexo"], tmp_path).stdout.decode()
+    assert 'The policy denies writing "data/protected.txt" (deny write "data/protected.txt").' in out
+    assert (tmp_path / "data" / "protected.txt").read_text() == "old\n"
+    assert (tmp_path / "source" / "protected.txt").exists()
