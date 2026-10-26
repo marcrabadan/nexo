@@ -72,6 +72,7 @@ pub struct Secret {
 
 impl Secret {
     pub fn reveal(&self, span: u32) -> R<String> {
+        crate::policy::check("env", &self.name, span)?;
         match std::env::var(&self.name) {
             Ok(v) => Ok(v),
             Err(_) => Err(failure_as("NotFound", "NotFound.secret", span, &[("name", self.name.clone())])),
@@ -322,6 +323,8 @@ fn put_bytes(path: &str, data: &[u8], span: u32) -> R<()> {
 
 pub fn encrypt_file(path: V, key: V, span: u32) -> R<Val> {
     let p = crate::stdlib::str_arg("encrypt_file", &path, span)?;
+    crate::policy::check("read", p, span)?;
+    crate::policy::check("write", p, span)?;
     let k = the_key("encrypt_file", key, span)?;
     let data = file_bytes(p, span)?;
     put_bytes(p, &seal(k, &data), span)?;
@@ -330,6 +333,8 @@ pub fn encrypt_file(path: V, key: V, span: u32) -> R<Val> {
 
 pub fn decrypt_file(path: V, key: V, span: u32) -> R<Val> {
     let p = crate::stdlib::str_arg("decrypt_file", &path, span)?;
+    crate::policy::check("read", p, span)?;
+    crate::policy::check("write", p, span)?;
     let k = the_key("decrypt_file", key, span)?;
     let data = file_bytes(p, span)?;
     let plain = unseal(k, Some(data), span)?;

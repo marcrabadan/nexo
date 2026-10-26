@@ -1,2 +1,5 @@
+policy:
+    allow shell
+
 print(run("echo hola"))
 out = run("exit 3")

@@ -157,6 +157,8 @@ The command line:
 | `nexo fix [paths]` | apply the safe fixes of warnings and errors |
 | `nexo check [paths]` | report compile errors without running anything |
 | `nexo lsp` | language server for any editor (the VS Code extension uses it) |
+| `nexo policy show [file]` | what the program's `policy` lets it read, write, reach and run |
+| `nexo policy suggest [file]` | the smallest `policy` that lets its tests run |
 
 Make a mistake and Nexo tells you how to fix it:
 
@@ -488,8 +490,18 @@ k8s from the same file, is [`examples/deploy/shop.nexo`](examples/deploy/shop.ne
   percentages and audiences, `nexo flags set`; `@personal`, `@private`
   (encrypted at rest), `keep`, `purpose`, `privacy.export`, `erase` and
   `restrict`, and `nexo privacy report`.
+- **The program `policy` (section 9, D142):** `allow` and `deny` of
+  `read`, `write`, `net`, `env`, `shell`, `c` and `python`. A release
+  build stops at anything the policy does not allow, and does not build
+  without one; development mode allows it with a warning that gives the
+  rule to copy, except shell commands. Paths are compared after `..` and
+  symbolic links, every redirect is checked, and modules follow the
+  program's policy. `nexo policy show` and `nexo policy suggest`.
 
 ```nexo
+policy:
+    allow shell
+
 infra shop_k8s:
     cloud = "k8s"
     app api:
@@ -517,7 +529,7 @@ compiles the app with `nexo build --release` and copies the binary, which
 needs only glibc, into `debian:bookworm-slim`; secrets are passed with
 `-e` when the container starts.
 
-**Not yet:** `ml`, `ui`, `notify`, the program `policy`, `every` and
+**Not yet:** `ml`, `ui`, `notify`, `every` and
 `lifecycle`, canary and blue/green releases, `nexo chaos`, AI budgets,
 MCP tools, PostgreSQL, brokers on the network, `use rust`/`use wasm`,
 YAML/XML/Parquet (D89, D113). Using any of them gives a clear "not

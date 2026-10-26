@@ -1,0 +1,14 @@
+# the program policy (section 9, D142): allowed, undeclared, denied
+print("before the block: the policy already holds")
+rows = read("sales.csv")
+print(len(rows))
+
+policy:
+    allow read  "sales.csv", "letter.txt"
+    allow write "report.txt"
+    deny  read  "app.json"
+
+write("report.txt", "{len(rows)} rows")
+print(read("report.txt"))
+print(read("report.txt"))
+print(read("app.json"))

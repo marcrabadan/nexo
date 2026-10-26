@@ -1,0 +1,8 @@
+# nexo policy suggest: the minimal policy of a test run (section 9, D142)
+fn total() -> int!:
+    rows = read("sales.csv")?
+    return len(rows)
+
+test "counts the sales":
+    assert total() > 0
+    write("report.txt", "ok")

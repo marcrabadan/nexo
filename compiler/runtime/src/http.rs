@@ -122,6 +122,8 @@ fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(Str
             .redirects(0)
             .timeout(std::time::Duration::from_secs_f64(limit.max(0.001)))
             .user_agent(USER_AGENT);
+        // every hop, so a redirect cannot lead outside the policy (D142)
+        crate::policy::check_url(&current, span)?;
         if let Some(p) = proxy_for(&current) {
             b = b.proxy(p);
         }
@@ -207,6 +209,14 @@ fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(Str
 }
 
 const SENSITIVE: &[&str] = &["authorization", "cookie", "proxy-authorization"];
+
+/// The host of an address, as the policy reads it (D142).
+pub fn url_host(url: &str) -> String {
+    if !url.contains("://") {
+        return String::new();
+    }
+    origin(url).1
+}
 
 /// (scheme, host, port) of an address, as phase 0 reads it.
 fn origin(url: &str) -> (String, String, u16) {

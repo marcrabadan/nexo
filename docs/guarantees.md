@@ -19,7 +19,7 @@ come from the scripts named, on the machine in `compiler/bench/goals.json`
 | --- | --- | --- |
 | No memory errors or data races | Met for the test suite | Every suite runs with the leak checker (`NEXO_LEAKCHECK=1`); the race rules of D80-D81 are compile errors. `compiler/scripts/fuzz.py` runs random programs in both phases and requires the same output with no crash or leak: 310 programs on three seeds, all identical, after it found and fixed one bug (an outer `var` assigned twice in a loop). `.github/workflows/fuzz.yml` runs 500 more every night. |
 | `unsafe` under control | Met (the tool); the registry needs people | `nexo audit` lists every use of C, the only unsafe code of this edition (D129). The public registry of reviewed packages does not exist yet. |
-| Capability-based permissions | Not implemented | The program `policy` of section 9 and `nexo policy show` were left out of every phase so far (D89, D113). Until they exist this row should not be claimed. |
+| Capability-based permissions | Met for the program; per-package permissions need the registry | The `policy` of section 9 in both phases (D142): a release build stops at every read, write, connection, environment variable, shell command and C or Python library the policy does not allow, and does not build without a policy; modules follow the program's policy. `nexo policy show` lists what a program can do and `nexo policy suggest` writes the smallest policy from a test run. `tests/test_policy.py` holds the sandbox escape tests: `..`, absolute paths, symbolic links to a file and to a folder, a module, a redirect to another host, writes, `move_file`, `connect`, secrets, shell commands and `use python`, each stopped in a release build. Permissions declared by each package and checked by `nexo add` need the package registry. |
 | Hardened supply chain | Met for builds; signing needs people | Two `nexo build --release` of the same code give the same binary byte for byte, from any directory, and the same CycloneDX SBOM (D128, `tests/test_phase6.py`). Signed packages need the registry. |
 | Verifiable contracts | Met | `expect`, `ensure` and `old()` in both phases; the compiler proves what it can and checks the rest (D83). |
 | Cryptography without dangerous choices | Algorithms fixed; the audit needs people | Argon2id, AES-256-GCM and Ed25519 are fixed for edition 0.1 (D97). No external audit of `crypto` has been made. |
@@ -83,7 +83,6 @@ compiler work for the next releases, or the goals change.
 
 - The performance and compilation goals above: more compiler work, or new
   values in the specification.
-- Capability-based permissions: the program `policy` of section 9.
 - An external security audit of the compiler and of `crypto`, studies
   with real users, the package registry with signed packages and
   reviewed `unsafe`, and the model comparisons: these need people and

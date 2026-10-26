@@ -129,6 +129,9 @@ class _Retry(Exception):
 def once(call, method, url, data, content_type, extra, limit) -> Response:
     current = url
     for _ in range(MAX_REDIRECTS + 1):
+        # every hop, so a redirect cannot lead outside the policy (D142)
+        from .policy import check_url
+        check_url(call, current)
         req = urllib.request.Request(current, data=data, method=method)
         req.add_header("User-Agent", USER_AGENT)
         if content_type:

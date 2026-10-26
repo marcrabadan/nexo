@@ -581,6 +581,7 @@ impl PyObj {
 /// found: "ok\n<libpython>\n<sys.path...>" or "err\npython_missing").
 pub fn import(name: V, info: V, span: u32) -> R<Val> {
     let name = name.as_str().unwrap_or("").to_string();
+    crate::policy::check("python", &name, span)?;
     let info = info.as_str().unwrap_or("err\npython_missing").to_string();
     let loaded = API.get_or_init(|| {
         let mut lines = info.lines();

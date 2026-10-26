@@ -60,6 +60,7 @@ impl Native for CLibrary {
 /// compiler found reading its header.
 pub fn library(name: V, bound: V, info: V, span: u32) -> R<Val> {
     let name = name.as_str().unwrap_or("").to_string();
+    crate::policy::check("c", &name, span)?;
     let bound = bound.as_str().unwrap_or("").to_string();
     let info = info.as_str().unwrap_or("err\nc_compiler");
     let mut lines = info.lines();

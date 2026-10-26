@@ -1,0 +1,5 @@
+6
+Error in s09_policy_shell.nexo, line 3:
+  print(run("echo hi"))
+        ^^^^^^^^^^^^^^
+Without a policy, a program can do anything except running the shell command "echo hi". Add a policy block with allow shell.

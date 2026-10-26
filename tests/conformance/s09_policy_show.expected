@@ -1,0 +1,9 @@
+What s09_policy_show.nexo can do (its policy, line 2):
+  read    data/, sales.csv (except data/private/)
+  write   output/
+  net     api.company.com, *.openai.com
+  env     PORT
+  shell   no
+  c       nothing
+  python  nothing
+Anything else stops a release build; nexo s09_policy_show.nexo allows it with a warning, except shell commands.

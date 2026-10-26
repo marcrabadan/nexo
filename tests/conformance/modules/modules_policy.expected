@@ -1,0 +1,10 @@
+55
+Warning in shop/reader.nexo, line 3:
+  return len(read(path)?)
+             ^^^^^^^^^^
+The policy does not allow reading "modules_assign.nexo", so a release build stops here. Add allow read "modules_assign.nexo" to the policy block.
+72
+Error in shop/reader.nexo, line 3:
+  return len(read(path)?)
+             ^^^^^^^^^^
+The policy denies reading "modules_cycle.nexo" (deny read "modules_cycle.nexo"). Remove deny read "modules_cycle.nexo" from the policy if the program needs it.

@@ -8,6 +8,7 @@ from typing import Any
 from .. import errors
 from ..types import Builtin, Lazy, failure, show
 from . import data
+from .policy import check as policy
 
 
 def check_path(call, path: Any, fn: str) -> str:
@@ -36,6 +37,7 @@ def read_text(call, path: str) -> str:
 def b_read(call, path):
     """Text of a file; a .csv file is read as a table (a list of rows)."""
     path = check_path(call, path, "read")
+    policy(call, "read", path)
     text = read_text(call, path)
     if path.lower().endswith(".csv"):
         return data.parse_csv(text)
@@ -44,6 +46,7 @@ def b_read(call, path):
 
 def b_write(call, path, content):
     path = check_path(call, path, "write")
+    policy(call, "write", path)
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(show(call.interp.bind_value(content)))
@@ -55,6 +58,7 @@ def b_write(call, path, content):
 def b_read_lines(call, path):
     """The lines of a file, read lazily one by one."""
     path = check_path(call, path, "read_lines")
+    policy(call, "read", path)
     try:
         f = open(path, encoding="utf-8")
     except OSError as exc:
@@ -75,6 +79,7 @@ def b_save(call, value, path):
     """Final pipeline step: .csv writes a table, .json writes JSON, any
     other extension writes text (one line per element of a list)."""
     path = check_path(call, path, "save")
+    policy(call, "write", path)
     interp = call.interp
     value = interp.bind_value(value)
     lower = path.lower()
@@ -99,6 +104,8 @@ def b_move_file(call, path, to):
     import shutil
     path = check_path(call, path, "move_file")
     folder = check_path(call, to, "move_file")
+    policy(call, "write", path)
+    policy(call, "write", folder)
     if not os.path.isfile(path):
         if not os.path.exists(path):
             raise failure("NotFound", call.span, path=path)

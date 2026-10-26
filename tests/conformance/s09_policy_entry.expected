@@ -1,0 +1,4 @@
+Error in s09_policy_entry.nexo, line 3:
+  allow read data/
+  ^^^^^^^^^^^^^^^^
+"allow read data/" is not a rule of the program policy. Write allow or deny, then read, write, net, env, c or python with texts (allow read "data/"), or shell.

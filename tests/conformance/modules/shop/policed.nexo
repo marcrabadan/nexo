@@ -1,0 +1,5 @@
+policy:
+    allow read "shop/"
+
+pub fn nothing() -> int:
+    return 0

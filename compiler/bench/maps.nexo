@@ -1,3 +1,6 @@
+policy:
+    deny shell
+
 var counts = {}
 for i in 1..1_000_000:
     k = i % 1000

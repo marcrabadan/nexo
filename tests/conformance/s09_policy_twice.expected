@@ -1,0 +1,4 @@
+Error in s09_policy_twice.nexo, line 5:
+  policy:
+  ^^^^^^
+The program has a policy block already. Write all its rules in one policy block.

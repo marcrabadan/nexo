@@ -135,6 +135,10 @@ class Linker:
             raise NexoError("module_not_found", s.span, name=name, path=file) from None
         SOURCES[file] = source
         program = parse(source, file)
+        from .parser import is_policy
+        for st in program.body:
+            if is_policy(st):
+                raise NexoError("policy_module", st.span, module=name)
         Checker().check(program)
         self.stack.append(name)
         self.link(program)

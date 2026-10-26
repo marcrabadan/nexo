@@ -1,3 +1,6 @@
+policy:
+    deny shell
+
 var parts = []
 for i in 1..300_000:
     parts.add("w{i % 500}")

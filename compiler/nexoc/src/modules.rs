@@ -172,6 +172,9 @@ impl Linker {
         self.files.push(id);
         let (mut program, next) = crate::parser::parse_file(&source, id, self.next_id)?;
         self.next_id = next;
+        if let Some(s) = program.body.iter().find(|s| crate::parser::is_policy(s)) {
+            return Err(Diagnostic::new("policy_module", s.span).arg("module", name.to_string()));
+        }
         let folder = path.parent().map(Path::to_path_buf).unwrap_or_default();
         crate::cheader::embed(&mut program, &folder);
         crate::checker::check(&program)?;

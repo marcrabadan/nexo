@@ -163,6 +163,7 @@ pub fn render(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
         return Err(diag(Diagnostic::new_spanless("arg_missing").arg("param", "path").arg("fn", "render"), span));
     };
     let path = str_arg("render", &path, span)?;
+    crate::policy::check("read", path, span)?;
     let template = crate::data::read_text(path, span)?;
     let escape = {
         let l = path.to_lowercase();
@@ -206,6 +207,8 @@ pub fn render(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
 pub fn move_file(path: V, to: V, span: u32) -> R<Val> {
     let path = str_arg("move_file", &path, span)?;
     let folder = str_arg("move_file", &to, span)?;
+    crate::policy::check("write", path, span)?;
+    crate::policy::check("write", folder, span)?;
     let meta = std::fs::metadata(path);
     match &meta {
         Err(e) => return Err(crate::data::os_failure(path, e, span)),

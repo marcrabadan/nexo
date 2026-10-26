@@ -407,6 +407,8 @@ class CLibrary(Native):
 
 
 def b_c_library(call, name, bound=None):
+    from .policy import check
+    check(call, "c", name)
     folder = Path(call.span.file).resolve().parent if call.span and call.span.file else Path.cwd()
     path, info = analyse(name, folder)
     if path is None:

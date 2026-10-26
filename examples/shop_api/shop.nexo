@@ -2,6 +2,14 @@
 # Run it with
 #     SHOP_JWT_KEY=... ANTHROPIC_KEY=... nexo shop.nexo
 # and test it, with the AI faked, with `nexo test shop.nexo`.
+# nexo policy show shop.nexo lists what it may do; its tests reach the
+# server on 127.0.0.1.
+policy:
+    allow read "shop.db"
+    allow write "shop.db"
+    allow net "127.0.0.1", "api.anthropic.com"
+    allow env "SHOP_JWT_KEY", "ANTHROPIC_KEY"
+
 use nexo.db
 
 db = connect("shop.db")

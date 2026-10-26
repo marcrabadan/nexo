@@ -170,7 +170,7 @@
           "match": "\\b(within|fails)\\b"
         },
         {
-          "match": "^\\s*(?:(ai)(?:\\s+(models|profile))?|(agent|server|infra|stage|pipeline|flags))\\b(?=[^\\n]*:\\s*$)",
+          "match": "^\\s*(?:(ai)(?:\\s+(models|profile))?|(agent|server|infra|stage|pipeline|flags|policy))\\b(?=[^\\n]*:\\s*$)",
           "captures": {
             "1": { "name": "keyword.other.module.nexo" },
             "2": { "name": "keyword.other.module.nexo" },

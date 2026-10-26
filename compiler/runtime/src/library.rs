@@ -55,6 +55,7 @@ static SIGS: &[Sig] = &[
     Sig { name: "__ref", params: &[] },
     Sig { name: "__cond", params: &[] },
     Sig { name: "__flags", params: &[p("entries")] },
+    Sig { name: "__policy", params: &[p("entries"), opt("release")] },
     Sig { name: "flag", params: &[p("name"), opt("user")] },
     Sig { name: "__privacy_type", params: &[p("type"), p("settings"), p("marks")] },
     Sig { name: "privacy.export", params: &[p("record")] },
@@ -145,6 +146,7 @@ pub fn release_all() {
     crate::web::release_all();
     crate::ai::release_all();
     crate::flags::release_all();
+    crate::policy::release_all();
     crate::privacy::release_all();
     crate::stream::release_all();
     crate::infra::release_all();
@@ -225,6 +227,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__web_route" => crate::web::route(x(0), x(1), x(2), x(3), x(4), a.get(5), a.get(6), a.get(7), span),
         "__cfg" => crate::cfg::cfg(x(0), x(1), x(2), x(3), span),
         "__flags" => crate::flags::flags(x(0), span),
+        "__policy" => crate::policy::policy(x(0), a.get(1), span),
         "flag" => crate::flags::flag(x(0), a.get(1), span),
         "__stream_when" => crate::stream::when(x(0), x(1), a.get(2), span),
         "__privacy_type" => crate::privacy::privacy_type(x(0), x(1), x(2), span),

@@ -29,6 +29,7 @@ mod modules;
 mod narrow;
 mod parser;
 mod phase5;
+mod policy;
 mod prove;
 mod resolve;
 mod scalar;
@@ -43,7 +44,7 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs --for-ai [file.nexo] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]"
+    "Usage: nexo [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs --for-ai [file.nexo] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]"
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -51,13 +52,20 @@ struct CompileError(String);
 
 /// Compile Nexo source to LLVM IR.
 fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Result<String, CompileError> {
-    to_ir_program(source, name, test_mode, trust_ensure).map(|(ir, _)| ir)
+    to_ir_program(source, name, test_mode, trust_ensure, false).map(|(ir, _)| ir)
 }
 
 /// The IR and the program it was made from, with its modules linked in.
-fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Result<(String, ast::Program), CompileError> {
+fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, release: bool) -> Result<(String, ast::Program), CompileError> {
     let fail = |d: Diagnostic| CompileError(render(name, source, d.span, &d.text()));
-    let (mut program, next_id) = parser::parse_file(source, 0, 0).map_err(fail)?;
+    let (mut program, mut next_id) = parser::parse_file(source, 0, 0).map_err(fail)?;
+    // a release build does only what its policy allows (section 9, D142)
+    if release {
+        next_id += 1;
+        if !policy::mark_release(&mut program, next_id) {
+            return Err(fail(Diagnostic::new_spanless("policy_missing")));
+        }
+    }
     // `use c`: the headers are read now (D110)
     let folder = Path::new(name).parent().map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p }).unwrap_or(Path::new("."));
     cheader::embed(&mut program, folder);
@@ -725,7 +733,7 @@ fn build(args: &[String]) -> u8 {
             return 1;
         }
     };
-    let (ir, program) = match to_ir_program(&source, &file, false, trust_ensure) {
+    let (ir, program) = match to_ir_program(&source, &file, false, trust_ensure, release) {
         Ok(x) => x,
         Err(CompileError(text)) => {
             eprint!("{text}");
@@ -1208,6 +1216,7 @@ fn main() -> ExitCode {
             "db" => run_db(&rest[1..]),
             "flags" => phase5::run_flags(&rest[1..]),
             "privacy" => phase5::privacy_report(&rest[1..]),
+            "policy" => policy::run(&rest[1..]),
             "plan" | "apply" | "destroy" | "drift" | "cost" | "import" => phase5::run_infra(&rest[0], &rest[1..]),
             "ci" => phase5::run_ci(&rest[1..]),
             "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),

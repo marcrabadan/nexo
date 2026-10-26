@@ -1,3 +1,6 @@
+policy:
+    deny shell
+
 fn work(n: int) -> int:
     var t = 0
     var i = 0
