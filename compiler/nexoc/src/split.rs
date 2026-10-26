@@ -102,15 +102,19 @@ pub fn split(ir: &str, n: usize) -> Vec<String> {
         }
     }
     let n = n.clamp(1, funcs.len().max(1));
-    // the largest functions first, each to the part with the least code
+    // the largest functions first, each to the part with the least work:
+    // the first part also reads the program's data, and clang takes longer
+    // per line on a very large function (the top level of a big program)
+    let cost = |len: usize| len + len / 1_000 * len / 40_000;
     let mut order: Vec<usize> = (0..funcs.len()).collect();
     order.sort_by_key(|&i| std::cmp::Reverse(funcs[i].1.len()));
     let mut owner = vec![0usize; funcs.len()];
     let mut sizes = vec![0usize; n];
+    sizes[0] = defs.len();
     for i in order {
         let p = (0..n).min_by_key(|&p| sizes[p]).unwrap();
         owner[i] = p;
-        sizes[p] += funcs[i].1.len();
+        sizes[p] += cost(funcs[i].1.len());
     }
     (0..n)
         .map(|p| {

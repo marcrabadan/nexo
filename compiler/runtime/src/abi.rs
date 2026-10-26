@@ -369,6 +369,13 @@ pub unsafe extern "C" fn nx_list(items: *const V, n: u64) -> V {
 #[no_mangle]
 pub extern "C" fn nx_list_push(lt: u64, lb: u64, t: u64, b: u64) {
     let Some(Obj::List(items)) = v(lt, lb).get() else { return };
+    // an int onto a list of ints, as in nx_list_add (D137)
+    if t == T_INT {
+        if let ListItems::Ints(xs) = items.borrow_mut() {
+            xs.push(b as i64);
+            return;
+        }
+    }
     if let Ok(x) = pipe::bind(v(t, b)) {
         items.borrow_mut().push(x);
     }

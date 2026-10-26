@@ -2201,3 +2201,42 @@ and every expression keeps its span, so errors read the same. Any other
 record is an object as before. The `records` benchmark builds such a
 record in a loop: it went from 2.5× Rust's time to about 0.4× (the Rust
 program boxes its value, as a record that escapes would need).
+
+**D155. Compiling 100,000 lines in under 10 s.** Three changes to how a
+development build is made, none of which changes the program it gives:
+- Registers, labels and stack slots are numbered again from 1 in each
+  function, so their names stay short: the IR of the program of
+  `compiler/bench/goals.py` went from 121 MB to 102 MB, and both the
+  compiler (which writes it) and clang (which reads it) take less time.
+- The parts compiled at the same time (D135) are balanced by an
+  estimate of clang's work rather than by bytes: the first part also
+  reads the program's data, and a very large function (the top level of
+  a big program) costs clang more per line than many small ones.
+- The parts are linked with lld when it is installed (`ld.lld` on the
+  PATH); otherwise with the system's linker, as before. Linking went
+  from about 1.1 s to 0.3 s. Release builds keep the system's linker, so
+  they stay the same byte for byte (D128).
+The program of goals.py now compiles in about 9.5 s on the 4 cores of
+goals.json (it took 13.9 s).
+
+**D156. An int-only function returns its int.** The body of a function
+whose parameters and result are all `int` (D84) returned a value of two
+words, and its caller checked the tag of the first to know whether it
+had failed. It now returns the int itself, or 0 when it fails, and the
+caller looks at the failure flag of the thread state, which the failure
+already set: one comparison with memory after each call, where there
+were six instructions. fib(32) went from 1.9× to about 1.55× Rust's
+time. The usual entry of such a function (called through a value, with
+named arguments...) gives back the two words as before.
+
+**D157. Fused pipelines over ints.** In a fused `where`/`map`/`sum` loop
+(D134), each step was a function called with the element as a value of
+two words, whose code checked its type at every operation even when the
+list holds ints (D137). A step that captures nothing is now also
+compiled to take the element as an int, like an int-only function
+(D84): the loop calls it when the element is an int and the usual one
+otherwise, and LLVM folds the checks away. A step that is an operator or
+a literal no longer goes through the runtime to see whether it named a
+function (D51), and `sum` adds ints in the loop itself while the total
+is an int (an overflow and any other value go to the runtime as
+before). The `lists` benchmark went from 2.1× to about 1.6× Rust's time.

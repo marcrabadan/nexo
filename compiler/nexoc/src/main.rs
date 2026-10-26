@@ -529,6 +529,20 @@ fn cc_version() -> String {
         .unwrap_or(cc)
 }
 
+/// lld, when it is installed: it links the parts of a large development
+/// build in a fraction of the time (D155).
+fn fast_linker() -> &'static [&'static str] {
+    static LLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let found = *LLD.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|d| d.join("ld.lld").is_file()))
+    });
+    if found {
+        &["-fuse-ld=lld"]
+    } else {
+        &[]
+    }
+}
+
 /// Compile IR and link it with the runtime into a native executable.
 /// Development mode does not optimise: it compiles several times faster
 /// (D127).
@@ -633,6 +647,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
         }
         drop(modules);
         let output = Command::new(&cc)
+            .args(fast_linker())
             .args(&objects)
             .arg(runtime_lib())
             .args(["-o"])

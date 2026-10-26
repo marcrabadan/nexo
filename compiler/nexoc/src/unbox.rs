@@ -327,26 +327,33 @@ fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
     types.retain(|b, _| count.get(b) == Some(&1));
     // only types written at the top level of the program, all-int fields,
     // no trait (a trait's methods may be called through any value)
-    let top: HashSet<u32> = program
+    let eligible: HashMap<BindingId, &TypeDef> = program
         .body
         .iter()
         .filter_map(|s| match &s.kind {
-            StmtKind::Type(_) => Some(s.id),
+            StmtKind::Type(_) => res.decl.get(&Node::Stmt(s.id)).copied(),
             _ => None,
         })
-        .collect();
-    let eligible: HashMap<BindingId, &TypeDef> = types
-        .iter()
+        .filter_map(|b| types.get(&b).map(|t| (b, *t)))
         .filter(|(b, t)| {
-            let at_top = res.decl.iter().any(|(n, x)| x == *b && matches!(n, Node::Stmt(id) if top.contains(id)));
-            at_top
-                && t.trait_name.is_none()
-                && t.fields.iter().all(|f| is_int_type(&f.ty))
-                && !res.bindings[**b].name.starts_with("__")
+            t.trait_name.is_none() && t.fields.iter().all(|f| is_int_type(&f.ty)) && !res.bindings[*b].name.starts_with("__")
         })
-        .map(|(b, t)| (*b, *t))
         .collect();
     if eligible.is_empty() {
+        return None;
+    }
+    // nothing to do unless some variable is given a value of such a type
+    let mut any = false;
+    crate::checker::walk_stmts(&program.body, true, &mut |s| {
+        let value = match &s.kind {
+            StmtKind::Assign { value, .. } | StmtKind::VarDecl { value, .. } => value,
+            _ => return,
+        };
+        if let ExprKind::Call { func, .. } = &value.kind {
+            any |= single(res, func).is_some_and(|tb| eligible.contains_key(&tb));
+        }
+    });
+    if !any {
         return None;
     }
     let ints = Ints::new(program, res, &fns, &types);
