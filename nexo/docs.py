@@ -11,7 +11,7 @@ from pathlib import Path
 
 API = Path(__file__).parent / "stdlib" / "api.json"
 
-DEFS = ("fn ", "pub fn ", "type ", "pub type ", "trait ", "pub trait ")
+DEFS = ("fn ", "pub fn ", "type ", "pub type ", "trait ", "pub trait ", "action ", "workflow ")
 
 
 def api() -> dict:

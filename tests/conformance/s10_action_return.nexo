@@ -1,0 +1,6 @@
+# Nothing can be returned from an action
+action save(name: str):
+    do:
+        print("save", name)
+        return name
+    undo: print("forget", name)

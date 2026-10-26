@@ -1,0 +1,4 @@
+# An action needs do: and then undo:
+action save(name: str):
+    undo: print("forget", name)
+    do: print("save", name)

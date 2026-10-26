@@ -2075,3 +2075,62 @@ program of one `print` goes from 19.5 MB to 15.4 MB and starts about
 0.4 ms sooner (2.8 to 2.4 ms on the machine of goals.json, a noisy run),
 and two builds are still the same byte for byte (D128). Development
 builds do not, since linking would take longer and they are run once.
+
+**D150. `action` and `undo()`.** Section 10 shows `action trash(path):`
+with a `do:` line and an `undo:` line, then `trash("photo.jpg")` and
+`undo()`, and gives no more.
+- An action has its parameters, as a function, and exactly `do:` and
+  then `undo:`; each is a statement on its line or an indented block
+  (`action_parts` otherwise). It goes at the top level of a file
+  (`action_place`), like `single`, and `return` inside it is a compile
+  error (`action_return`): an action gives nothing back, so `undo` has
+  nothing to answer for.
+- It is read into two functions: `name(params)`, which runs `do` and
+  then records the action with its arguments, and `__undo_name(params)`
+  with the `undo` part. Each part runs inside a `try` that passes its
+  error on, as a workflow step: the calls in it need no `?` (the example
+  of section 10 writes `move_file` without one), and so an action and
+  `undo()` can always fail (`T!`). An action whose `do` failed is not
+  recorded.
+- `undo()` reverses the last action done and not undone, with the
+  arguments it was called with, and gives `true`; with none left it
+  gives `false` (nothing to undo is not a mistake). An undo that fails
+  stays the last action, so `undo()` can try it again. The history is one
+  for the program, under a lock, and has no limit. Redo is not in the
+  specification and is not added; nor is `pub action`.
+
+**D151. `workflow`.** Section 10: "A `workflow` saves its state after every
+step and resumes after a restart or a failure. If a step fails
+permanently, the `undo` of every completed step runs in reverse order",
+with `step` lines, `undo` on the line after a step, and `step wait
+email.confirmed(email), max: 3 days`.
+- A workflow has parameters and is called like a function; it goes at
+  the top level of a file (`workflow_place`). A step is an expression,
+  run inside a `try` (no `?`, as in D150), and its value is not kept. A
+  step may have one `undo` expression, indented on the next line.
+  `step wait cond, max: d` needs both (`workflow_wait`): a wait with no
+  end would hold a run forever. The condition is checked at once and
+  then every second until it is true; after `max` the step fails with
+  `Timeout` (`The step "wait confirmed(email)" of "customer_signup" was
+  not true within 3 days`).
+- "Fails permanently" is an error value of a step: there is no retry of
+  its own, since `@retry` (section 10) already retries a function. Then
+  the `undo` of each step done runs, last first, and the call fails with
+  the step's error (a workflow is `T!`).
+- The state of a run is the number of steps done, the end of the wait
+  under way and, while its steps are undone, the error that stopped it.
+  It is saved after every change in `.nexo/workflows/<name>-<hash>.json`
+  under the folder the program runs in (like the state of `nexo.infra`
+  and `nexo.ci`), where the hash is of the name and the arguments as they
+  print, so a run is one workflow called with the same arguments. It is
+  written by the runtime, not by the program, so the policy (D142) does
+  not apply to it, and both phases read each other's files.
+- "Resumes after a restart": a call whose file exists starts after the
+  last step saved; the end of a wait is kept, so the 3 days count from
+  the first try. A step that was running when the program stopped runs
+  again (at least once). An `undo` that fails stops the undoing with its
+  own error and keeps the file, so the next call goes on undoing from it
+  and then fails with the step's error. When the run ends, in success or
+  failure, its file is removed.
+- Step results passed to later steps, signals, parallel steps and a
+  list of runs are not in the specification and are not added.

@@ -1,0 +1,4 @@
+Error in s10_action_parts.nexo, line 3:
+  undo: print("forget", name)
+  ^^^^
+An action has a do: part and then an undo: part, and nothing else. Write do: with what it does and undo: with how to reverse it.

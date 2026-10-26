@@ -1,0 +1,18 @@
+created ana@example.com
+["ana@example.com"] ["ana@example.com"]
+created bad@example.com
+deleted bad@example.com
+failed: no mailbox for bad@example.com
+["ana@example.com"] ["ana@example.com"]
+first 1
+second 1
+undo second 1
+undo first 1
+The step "wait never()" of "slow" was not true within 0s
+step one 7
+failed: the undo failed
+undone after 2 tries
+failed: step two failed
+step one 7
+undone after 3 tries
+failed: step two failed

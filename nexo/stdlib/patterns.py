@@ -1,15 +1,19 @@
-"""The patterns of section 10 that have their own word (D143-D145):
-`single name:` (one shared value with fields), `states name:` (a state
-machine whose transitions are checked) and `protect(...)` (a circuit
-breaker). The parser rewrites the three into calls of the builtins here."""
+"""The patterns of section 10 that have their own word (D143-D145,
+D150-D151): `single name:` (one shared value with fields), `states name:`
+(a state machine whose transitions are checked), `protect(...)` (a circuit
+breaker), `action name(...):` with `undo()`, and `workflow name(...):`
+(durable steps). The parser rewrites them into calls of the builtins here."""
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 from ..errors import NexoError, suggest
-from ..types import Builtin, Native, failure, repr_value, show
+from ..types import Builtin, ErrorValue, Native, NexoFailure, failure, repr_value, show
 
 
 def texts(names) -> str:
@@ -130,6 +134,7 @@ _lock = threading.Lock()
 
 def reset() -> None:
     CIRCUITS.clear()
+    DONE.clear()
 
 
 class Guard(Native):
@@ -177,10 +182,149 @@ def b_protect_end(call, guard, ok):
     return None
 
 
+# -- actions (D150) ------------------------------------------------------
+
+# the actions done and not undone, last at the end: (undo function, arguments)
+DONE: list = []
+_done_lock = threading.Lock()
+
+
+def b_action_done(call, name, undo, args):
+    with _done_lock:
+        DONE.append((undo, [call.interp.store_value(a) for a in args]))
+    return None
+
+
+def b_undo(call):
+    """Undoes the last action done; false when there is none. An undo
+    that fails stays the last action, so it can be tried again."""
+    with _done_lock:
+        if not DONE:
+            return False
+        entry = DONE.pop()
+    undo, args = entry
+    try:
+        call.interp.call(undo, [(None, a) for a in args], call.node)
+    except NexoFailure:
+        with _done_lock:
+            DONE.append(entry)
+        raise
+    return True
+
+
+# -- workflows (D151) ----------------------------------------------------
+
+WORKFLOW_DIR = Path(".nexo") / "workflows"
+
+
+class Workflow(Native):
+    """One run of a workflow: the steps done, the end of the wait under
+    way and, while its steps are undone, the error that stopped it. It is
+    saved in .nexo/workflows/ after every change."""
+
+    type_name = "workflow"
+    __slots__ = ("name", "key", "path", "done", "until", "error")
+
+    def __init__(self, name: str, key: str):
+        self.name, self.key = name, key
+        digest = hashlib.sha256(f"{name}{key}".encode()).hexdigest()[:16]
+        self.path = WORKFLOW_DIR / f"{name}-{digest}.json"
+        self.done, self.until, self.error = 0, None, None
+        if self.path.exists():
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            self.done, self.until, self.error = data["done"], data["until"], data["error"]
+
+    def repr(self) -> str:
+        return f"workflow({self.name})"
+
+    def save(self, call) -> None:
+        data = {"workflow": self.name, "args": self.key, "done": self.done, "until": self.until, "error": self.error}
+        try:
+            WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+        except OSError as exc:
+            from .io import os_failure
+            raise os_failure(call, str(self.path), exc)
+
+
+def b_workflow(call, name, args):
+    return Workflow(name, repr_value(args))
+
+
+def b_workflow_resume(call, wf):
+    """A run whose undos stopped half way goes on with them."""
+    if wf.error is not None:
+        e = wf.error
+        raise NexoFailure(ErrorValue(e["kind"], e["message"], None, call.span, e["fix"]))
+    return None
+
+
+def b_workflow_step(call, wf, n):
+    return wf.done < n
+
+
+def b_workflow_done(call, wf, n):
+    wf.done, wf.until = n, None
+    wf.save(call)
+    return None
+
+
+def b_workflow_wait(call, wf, cond, limit):
+    from .http import seconds as duration
+    seconds = duration(call, limit, "max")
+    now = time.time()
+    if wf.until is None:
+        wf.until = now + seconds
+        wf.save(call)
+    if now >= wf.until:
+        raise failure("Timeout", call.span, key="Timeout.wait", cond=cond, workflow=wf.name, limit=show(limit))
+    time.sleep(min(1.0, wf.until - now))
+    return None
+
+
+def b_workflow_failed(call, wf, e):
+    if wf.error is None:
+        wf.error = {"kind": e.kind, "message": e.message, "fix": e.fix}
+        wf.save(call)
+    return None
+
+
+def b_workflow_undo(call, wf, n):
+    return wf.done >= n
+
+
+def b_workflow_undone(call, wf, n):
+    wf.done = n - 1
+    wf.save(call)
+    return None
+
+
+def b_workflow_end(call, wf):
+    """The run is over: its file goes, and the folders if they are empty."""
+    try:
+        wf.path.unlink(missing_ok=True)
+        WORKFLOW_DIR.rmdir()
+        WORKFLOW_DIR.parent.rmdir()
+    except OSError:
+        pass
+    return None
+
+
 def exports() -> dict:
     return {
         "__single": Builtin("__single", b_single),
         "__states": Builtin("__states", b_states),
         "__protect": Builtin("__protect", b_protect),
         "__protect_end": Builtin("__protect_end", b_protect_end),
+        "__action_done": Builtin("__action_done", b_action_done),
+        "undo": Builtin("undo", b_undo),
+        "__workflow": Builtin("__workflow", b_workflow),
+        "__workflow_resume": Builtin("__workflow_resume", b_workflow_resume),
+        "__workflow_step": Builtin("__workflow_step", b_workflow_step),
+        "__workflow_done": Builtin("__workflow_done", b_workflow_done),
+        "__workflow_wait": Builtin("__workflow_wait", b_workflow_wait),
+        "__workflow_failed": Builtin("__workflow_failed", b_workflow_failed),
+        "__workflow_undo": Builtin("__workflow_undo", b_workflow_undo),
+        "__workflow_undone": Builtin("__workflow_undone", b_workflow_undone),
+        "__workflow_end": Builtin("__workflow_end", b_workflow_end),
     }

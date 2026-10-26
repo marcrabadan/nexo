@@ -23,8 +23,8 @@ The core of Nexo, a new programming language, in two implementations
   --intent`; the guarantees of the specification are measured and their
   state is in docs/guarantees.md (D126-D136); the program `policy` of
   section 9 with `nexo policy show|suggest` (D142); the patterns of
-  section 10 with their own word, `single`, `states` and `protect`
-  (D143-D145); `nexo mcp` (D146), `nexo docs` (D147) and `nexo new` (D148).
+  section 10 with their own word, `single`, `states`, `protect`,
+  `action` with `undo()` and `workflow` (D143-D145, D150-D151); `nexo mcp` (D146), `nexo docs` (D147) and `nexo new` (D148).
 
 ## Source of truth
 
@@ -55,7 +55,8 @@ nexo/
                   infra_providers.json (shared by both phases), ci,
                   ci_export; phase 6: api.json (what a program can use,
                   shared by both phases), policy (the program policy, D142),
-                  patterns (single, states and protect, D143-D145)
+                  patterns (single, states, protect, action and
+                  workflow, D143-D145, D150-D151)
   audit.py        `nexo audit`: the uses of C (implicit unsafe, D129)
   docs.py         `nexo docs --for-ai`: stdlib/api.json + the program (D130)
   suggest.py      `nexo test --suggest`: edge cases run by a probe (D131)
@@ -96,7 +97,8 @@ compiler/
                   http, db, web, ai, clib, pylib; phase 5: cfg, flags,
                   privacy, stream, infra, infra_cloud, ci, ci_export;
                   policy.rs: the checks of the program policy, D142;
-                  patterns.rs: single, states and protect, D143-D145)
+                  patterns.rs: single, states, protect, action and
+                  workflow, D143-D145, D150-D151)
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py, fuzz.py (random programs
                   in both phases), fix_rate.py (errors with a fix)
@@ -237,6 +239,12 @@ The patterns of section 10 (D143-D145): `single name:` and `states
 name:` are module blocks read into `__single(...)` and `__states(...)`;
 `protect(value, fails:, wait:):` is rewritten like `db.transaction`
 into `__protect` before a `try` (a new error kind, `CircuitOpen`).
+`action name(params):` with `do:` and `undo:` becomes two functions,
+the action and `__undo_name`, and `undo()` reverses the last one (D150);
+`workflow name(params):` with `step` lines becomes a function whose
+steps run inside a `try`, with their undos, last first, in its `else`,
+and whose state is saved in `.nexo/workflows/` after every step (D151;
+the resume after a stop is in tests/test_phase6.py).
 `nexo mcp` (D146) offers `check`, `run_tests`, `docs_for_ai`, `plan` and
 `format` over stdio by running the same binary's commands
 (tests/test_mcp.py); `nexo new` and `nexo docs` are in tests/test_project.py.

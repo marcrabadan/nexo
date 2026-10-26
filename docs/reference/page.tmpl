@@ -310,13 +310,17 @@
 
 <section class="ref-sec" id="patterns">
   <h2><a href="#patterns">Patterns</a></h2>
-  <p>Three design patterns have their own word; the rest are written with functions, <code>match</code> and named arguments (section 10).</p>
+  <p>Five design patterns have their own word; the rest are written with functions, <code>match</code> and named arguments (section 10).</p>
   <ul class="ref-list">
     <li><code>single name:</code> holds one value with the fields written in it, at the top level of a file; <code>config.port = 9090</code> changes it everywhere (D143).</li>
     <li><code>states name:</code> lists the transitions as chains, <code>new -&gt; paid -&gt; shipped</code>; it starts in the first state. <code>.state</code> is the current one, <code>.can("x")</code> says whether it may go there, and <code>.go("x")</code> goes or fails with <code>InvalidValue</code> (D144).</li>
     <li><code>protect(value, fails: 5, wait: 1m):</code> is a circuit breaker: after <code>fails</code> errors in a row its block is not run for <code>wait</code>, and it fails with <code>CircuitOpen</code> instead (D145).</li>
   </ul>
 {{run:patterns.nexo}}
+  <p><code>action name(params):</code> is a command that can be undone: <code>do:</code> says what it does and <code>undo:</code> how to reverse it, each on its line or as a block. Calling it runs <code>do</code> and remembers its arguments; <code>undo()</code> reverses the last action not yet undone and gives <code>true</code>, or <code>false</code> when there is none. The calls inside need no <code>?</code>: an error in <code>do</code> or <code>undo</code> is the error of the call, and an action that failed is not remembered. Actions go at the top level of a file (D150).</p>
+{{run:actions.nexo}}
+  <p><code>workflow name(params):</code> is a list of <code>step</code>s that runs like a function. A step may have an <code>undo</code> on the next line, indented. <code>step wait condition, max: 3 days</code> checks the condition every second until it is true, and fails with <code>Timeout</code> after <code>max</code>. When a step fails, the <code>undo</code> of every step already done runs, last first, and the call fails with the step's error. The state is saved in <code>.nexo/workflows/</code> after every step: a program that stops half way runs the same workflow with the same arguments from the step it stopped in, the next time it is called (D151).</p>
+{{run:workflows.nexo}}
 </section>
 
 <section class="ref-sec" id="stdlib">

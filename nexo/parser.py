@@ -205,6 +205,9 @@ class Parser:
             stmt = self.protect()
             if stmt is not None:
                 return stmt
+        if (tok.kind == "NAME" and tok.value in ("action", "workflow") and self.peek(1).kind == "NAME"
+                and self.peek(2).is_op("(")):
+            return self.action_def() if tok.value == "action" else self.workflow_def()
         if tok.kind == "KEYWORD":
             kw = tok.value
             if kw == "fn":
@@ -1567,6 +1570,146 @@ def _module_methods():
         self.extra.append(A.TryStmt(span, None, body, [handler]))
         return begin
 
+    def action_def(self) -> A.Stmt:
+        """action name(params): with `do:` and `undo:` (section 10, D150), as
+            fn __undo_name(params):
+                try:
+                    undo part
+                else __e:
+                    fail(__e)
+            fn name(params):
+                try:
+                    do part
+                else __e:
+                    fail(__e)
+                __action_done("name", __undo_name, [params])"""
+        tok = self.advance()
+        if self.nesting:
+            raise NexoError("action_place", tok.span)
+        name = self.expect_name()
+        params = self.params()
+        self.expect_op(":")
+        self.expect_newline_raw()
+        if self.peek().kind != "INDENT":
+            raise self.error(word("indented"))
+        self.advance()
+        parts = []
+        for key in ("do", "undo"):
+            if not self.at_name(key):
+                raise NexoError("action_parts", self.peek().span)
+            self.advance()
+            parts.append(self.part())
+        if self.peek().kind != "DEDENT":
+            raise NexoError("action_parts", self.peek().span)
+        self.advance()
+        for body in parts:
+            for s in body_returns(body):
+                raise NexoError("action_return", s.span)
+        span = tok.span
+        undo_name = "__undo_" + name.value
+        args = A.ListLit(span, [A.Name(span, p.name) for p in params])
+        done = A.ExprStmt(span, call(span, "__action_done", [text(span, name.value), A.Name(span, undo_name), args]))
+        self.extra.append(A.FnDef(span, name.value, name.span, params, None, [refail(span, parts[0]), done]))
+        return A.FnDef(span, undo_name, name.span, [A.Param(p.span, p.name, p.type, None) for p in params], None, [refail(span, parts[1])])
+
+    def part(self) -> list[A.Stmt]:
+        """`: statement` on the same line, or `:` and an indented block."""
+        self.expect_op(":")
+        if self.peek().kind == "NEWLINE":
+            return self.indented_body()
+        stmt = self.simple_stmt()
+        self.expect_newline()
+        return [stmt]
+
+    def workflow_def(self) -> A.Stmt:
+        """workflow name(params): with `step` lines (section 10, D151), as
+            fn name(params):
+                __wf = __workflow("name", [params])
+                try:
+                    __workflow_resume(__wf)
+                    if __workflow_step(__wf, 1):
+                        step 1
+                        __workflow_done(__wf, 1)
+                    if __workflow_step(__wf, 2):          # step wait cond, max: d
+                        while not cond:
+                            __workflow_wait(__wf, "cond", d)
+                        __workflow_done(__wf, 2)
+                else __e:
+                    __workflow_failed(__wf, __e)
+                    if __workflow_undo(__wf, 1):          # the undo of each step, last first
+                        try:
+                            undo 1
+                        else __u:
+                            fail(__u)
+                        __workflow_undone(__wf, 1)
+                    __workflow_end(__wf)
+                    fail(__e)
+                __workflow_end(__wf)"""
+        tok = self.advance()
+        if self.nesting:
+            raise NexoError("workflow_place", tok.span)
+        name = self.expect_name()
+        params = self.params()
+        self.expect_op(":")
+        self.expect_newline_raw()
+        if self.peek().kind != "INDENT":
+            raise self.error(word("indented"))
+        self.advance()
+        span = tok.span
+        wf = lambda: A.Name(span, "__wf")
+        steps: list[A.Stmt] = [A.ExprStmt(span, call(span, "__workflow_resume", [wf()]))]
+        undos: list[A.Stmt] = []
+        n = 0
+        while self.peek().kind != "DEDENT":
+            if not self.at_name("step"):
+                raise self.error('"step"')
+            st = self.advance()
+            n += 1
+            index = lambda: A.Num(st.span, str(n), False)
+            if self.at_name("wait") and not (self.peek(1).is_op("(", ".") or self.peek(1).kind == "NEWLINE"):
+                self.advance()
+                cond = self.expr()
+                if not (self.at_op(",") and self.at_name_at(1, "max") and self.peek(2).is_op(":")):
+                    raise NexoError("workflow_wait", st.span)
+                self.p += 3
+                limit = self.expr()
+                self.expect_newline()
+                wait = A.ExprStmt(st.span, call(st.span, "__workflow_wait", [wf(), text(st.span, source_text(cond.span)), limit]))
+                body: list[A.Stmt] = [A.While(st.span, A.Unary(cond.span, "not", cond), [wait])]
+            else:
+                e = self.expr()
+                self.expect_newline()
+                body = [A.ExprStmt(e.span, e)]
+                if self.peek().kind == "INDENT":
+                    self.advance()
+                    if not self.at_name("undo"):
+                        raise self.error('"undo"')
+                    u = self.advance()
+                    back = self.expr()
+                    self.expect_newline()
+                    if self.peek().kind != "DEDENT":
+                        raise self.error(word("DEDENT"))
+                    self.advance()
+                    handler = A.Handler(u.span, "__u", None, [A.ExprStmt(u.span, call(u.span, "fail", [A.Name(u.span, "__u")]))])
+                    undos.insert(0, A.If(u.span, [(call(u.span, "__workflow_undo", [wf(), index()]), [
+                        A.TryStmt(u.span, None, [A.ExprStmt(back.span, back)], [handler]),
+                        A.ExprStmt(u.span, call(u.span, "__workflow_undone", [wf(), index()])),
+                    ])], None))
+            body.append(A.ExprStmt(st.span, call(st.span, "__workflow_done", [wf(), index()])))
+            steps.append(A.If(st.span, [(call(st.span, "__workflow_step", [wf(), index()]), body)], None))
+        self.advance()
+        args = A.ListLit(span, [A.Name(span, p.name) for p in params])
+        begin = A.Assign(span, wf(), "=", call(span, "__workflow", [text(span, name.value), args]))
+        end = lambda: A.ExprStmt(span, call(span, "__workflow_end", [wf()]))
+        handler = A.Handler(span, "__e", None, [
+            A.ExprStmt(span, call(span, "__workflow_failed", [wf(), A.Name(span, "__e")])),
+            *undos,
+            end(),
+            A.ExprStmt(span, call(span, "fail", [A.Name(span, "__e")])),
+        ])
+        body = [begin, A.TryStmt(span, None, steps, [handler]), end()]
+        return A.FnDef(span, name.value, name.span, params, None, body)
+
     # -- the program policy (section 9, D142) ----------------------------
     def policy_block(self, tok: Token) -> A.Stmt:
         """policy: with lines `allow|deny kind "target", ...` as
@@ -1845,6 +1988,12 @@ def sql_text(s: A.Str) -> A.Call:
             parts.append("")
     return call(s.span, "__sql_text", [A.ListLit(s.span, [text(s.span, x) for x in parts]),
                                        A.ListLit(s.span, values)])
+
+
+def refail(span: Span, body: list) -> A.TryStmt:
+    """try: body else __e: fail(__e), so the calls in body need no `?`."""
+    handler = A.Handler(span, "__e", None, [A.ExprStmt(span, call(span, "fail", [A.Name(span, "__e")]))])
+    return A.TryStmt(span, None, body, [handler])
 
 
 def body_returns(body: list):

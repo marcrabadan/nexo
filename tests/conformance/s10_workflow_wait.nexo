@@ -1,0 +1,6 @@
+# step wait needs max:
+fn paid(id: int) -> bool:
+    return true
+
+workflow order(id: int):
+    step wait paid(id)

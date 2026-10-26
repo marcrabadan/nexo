@@ -1,7 +1,9 @@
-//! The patterns of section 10 that have their own word (D143-D145):
-//! `single name:` (one shared value with fields), `states name:` (a state
-//! machine whose transitions are checked) and `protect(...)` (a circuit
-//! breaker). The parser rewrites the three into calls of the builtins here.
+//! The patterns of section 10 that have their own word (D143-D145,
+//! D150-D151): `single name:` (one shared value with fields), `states
+//! name:` (a state machine whose transitions are checked), `protect(...)`
+//! (a circuit breaker), `action name(...):` with `undo()`, and `workflow
+//! name(...):` (durable steps). The parser rewrites them into calls of the
+//! builtins here.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -237,6 +239,216 @@ pub fn protect_end(guard: V, ok: V) -> R<Val> {
         if c.fails >= g.fails {
             c.until = Some(Instant::now() + Duration::from_secs_f64(g.wait.max(0.0)));
         }
+    }
+    Ok(Val::none())
+}
+
+// -- actions (D150) -------------------------------------------------------
+
+/// The actions done and not undone, last at the end: (undo function, arguments).
+static DONE: Mutex<Vec<(Val, Vec<Val>)>> = Mutex::new(Vec::new());
+
+/// `__action_done("name", __undo_name, [arguments])`
+pub fn action_done(undo: V, args: V) -> R<Val> {
+    let args = crate::cfg::items(args);
+    DONE.lock().unwrap().push((Val::from(undo), args));
+    Ok(Val::none())
+}
+
+/// `undo()`: undoes the last action done; false when there is none. An
+/// undo that fails stays the last action, so it can be tried again.
+pub fn undo(span: u32) -> R<Val> {
+    let Some(entry) = DONE.lock().unwrap().pop() else { return Ok(Val::bool(false)) };
+    let args: Vec<V> = entry.1.iter().map(|a| a.v()).collect();
+    match crate::call::call_value(entry.0.v(), &args, span) {
+        Ok(_) => {
+            drop(entry);
+            Ok(Val::bool(true))
+        }
+        Err(e) => {
+            DONE.lock().unwrap().push(entry);
+            Err(e)
+        }
+    }
+}
+
+/// End of the program (NEXO_LEAKCHECK): the actions still held.
+pub fn release_all() {
+    let old = std::mem::take(&mut *DONE.lock().unwrap());
+    drop(old);
+}
+
+// -- workflows (D151) -----------------------------------------------------
+
+const WORKFLOW_DIR: &str = ".nexo/workflows";
+
+#[derive(Default)]
+struct Run {
+    done: i64,
+    until: Option<f64>,
+    /// kind, message and fix key of the error that stopped it
+    error: Option<(String, String, Option<String>)>,
+}
+
+/// One run of a workflow: the steps done, the end of the wait under way
+/// and, while its steps are undone, the error that stopped it. It is saved
+/// in .nexo/workflows/ after every change.
+struct Workflow {
+    name: String,
+    key: String,
+    path: std::path::PathBuf,
+    run: Mutex<Run>,
+}
+
+impl Native for Workflow {
+    fn type_name(&self) -> &str {
+        "workflow"
+    }
+    fn repr(&self) -> String {
+        format!("workflow({})", self.name)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+impl Workflow {
+    fn save(&self, run: &Run, span: u32) -> R<()> {
+        use crate::json::{obj, s, Json};
+        let error = match &run.error {
+            Some((kind, message, fix)) => obj(vec![
+                ("kind", s(kind.as_str())),
+                ("message", s(message.as_str())),
+                ("fix", fix.as_ref().map(|f| s(f.as_str())).unwrap_or(Json::Null)),
+            ]),
+            None => Json::Null,
+        };
+        let data = obj(vec![
+            ("workflow", s(self.name.as_str())),
+            ("args", s(self.key.as_str())),
+            ("done", Json::Int(run.done)),
+            ("until", run.until.map(Json::Num).unwrap_or(Json::Null)),
+            ("error", error),
+        ]);
+        let written = std::fs::create_dir_all(WORKFLOW_DIR).and_then(|_| std::fs::write(&self.path, data.compact() + "\n"));
+        written.map_err(|e| crate::data::os_failure(&self.path.display().to_string(), &e, span))
+    }
+}
+
+fn workflow_of(wf: V) -> &'static Workflow {
+    wf.native::<Workflow>().expect("a workflow")
+}
+
+/// `__workflow("name", [arguments])`: the saved run, or a new one.
+pub fn workflow(name: V, args: V) -> R<Val> {
+    use sha2::{Digest, Sha256};
+    let name = name.as_str().unwrap_or("").to_string();
+    let key = crate::fmt::repr(args);
+    let digest = Sha256::digest(format!("{name}{key}").as_bytes());
+    let hex: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    let path = std::path::Path::new(WORKFLOW_DIR).join(format!("{name}-{hex}.json"));
+    let mut run = Run::default();
+    if let Some(data) = std::fs::read_to_string(&path).ok().and_then(|t| crate::json::parse(&t)) {
+        use crate::json::Json;
+        run.done = data.get("done").int().unwrap_or(0);
+        run.until = match data.get("until") {
+            Json::Num(f) => Some(*f),
+            Json::Int(i) => Some(*i as f64),
+            _ => None,
+        };
+        let e = data.get("error");
+        if e.is_obj() {
+            let text = |k: &str| e.get(k).str().unwrap_or("").to_string();
+            run.error = Some((text("kind"), text("message"), e.get("fix").str().map(|f| f.to_string())));
+        }
+    }
+    Ok(native(Workflow { name, key, path, run: Mutex::new(run) }))
+}
+
+/// A run whose undos stopped half way goes on with them.
+pub fn workflow_resume(wf: V, span: u32) -> R<Val> {
+    let run = workflow_of(wf).run.lock().unwrap();
+    if let Some((kind, message, fix)) = &run.error {
+        let (kind, message, fix) = (kind.clone(), message.clone(), fix.clone().unwrap_or_default());
+        drop(run);
+        return Err(crate::state::raise_error_with(&kind, message, Val::none(), span, &fix));
+    }
+    Ok(Val::none())
+}
+
+pub fn workflow_step(wf: V, n: V) -> R<Val> {
+    Ok(Val::bool(workflow_of(wf).run.lock().unwrap().done < n.as_int().unwrap_or(0)))
+}
+
+pub fn workflow_done(wf: V, n: V, span: u32) -> R<Val> {
+    let w = workflow_of(wf);
+    let mut run = w.run.lock().unwrap();
+    run.done = n.as_int().unwrap_or(0);
+    run.until = None;
+    w.save(&run, span)?;
+    Ok(Val::none())
+}
+
+fn epoch() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
+/// `__workflow_wait(wf, "cond", max)`: the condition is still false.
+pub fn workflow_wait(wf: V, cond: V, limit: V, span: u32) -> R<Val> {
+    let seconds = crate::http::seconds(limit, "max", span)?;
+    let w = workflow_of(wf);
+    let mut run = w.run.lock().unwrap();
+    let now = epoch();
+    let until = match run.until {
+        Some(t) => t,
+        None => {
+            run.until = Some(now + seconds);
+            w.save(&run, span)?;
+            now + seconds
+        }
+    };
+    drop(run);
+    if now >= until {
+        let args = [
+            ("cond", cond.as_str().unwrap_or("").to_string()),
+            ("workflow", w.name.clone()),
+            ("limit", crate::fmt::show(limit)),
+        ];
+        return Err(failure_as("Timeout", "Timeout.wait", span, &args));
+    }
+    std::thread::sleep(Duration::from_secs_f64((until - now).min(1.0)));
+    Ok(Val::none())
+}
+
+pub fn workflow_failed(wf: V, e: V, span: u32) -> R<Val> {
+    let w = workflow_of(wf);
+    let mut run = w.run.lock().unwrap();
+    if run.error.is_none() {
+        if let Some(Obj::Error(err)) = e.get() {
+            run.error = Some((err.kind.clone(), err.message.clone(), err.fix.map(|f| f.to_string())));
+            w.save(&run, span)?;
+        }
+    }
+    Ok(Val::none())
+}
+
+pub fn workflow_undo(wf: V, n: V) -> R<Val> {
+    Ok(Val::bool(workflow_of(wf).run.lock().unwrap().done >= n.as_int().unwrap_or(0)))
+}
+
+pub fn workflow_undone(wf: V, n: V, span: u32) -> R<Val> {
+    let w = workflow_of(wf);
+    let mut run = w.run.lock().unwrap();
+    run.done = n.as_int().unwrap_or(0) - 1;
+    w.save(&run, span)?;
+    Ok(Val::none())
+}
+
+/// The run is over: its file goes, and the folders if they are empty.
+pub fn workflow_end(wf: V) -> R<Val> {
+    let _ = std::fs::remove_file(&workflow_of(wf).path);
+    if std::fs::remove_dir(WORKFLOW_DIR).is_ok() {
+        let _ = std::fs::remove_dir(".nexo");
     }
     Ok(Val::none())
 }
