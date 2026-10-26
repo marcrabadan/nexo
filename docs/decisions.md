@@ -2066,3 +2066,12 @@ is letters, digits, `_` and `-`, starting with a letter, so it is a
 folder of the current one and a package name of section 13; a folder that
 exists already is never written into. There is no `nexo.lock` until there
 are dependencies, and no dependencies until the registry (D133).
+
+**D149. Release builds leave out what the program does not reach.** The
+runtime is one static library with every module of the library, and a
+program uses a few of them. `nexo build --release` links with
+`--gc-sections`, so the parts no code reaches are not in the file: the
+program of one `print` goes from 19.5 MB to 15.4 MB and starts about
+0.4 ms sooner (2.8 to 2.4 ms on the machine of goals.json, a noisy run),
+and two builds are still the same byte for byte (D128). Development
+builds do not, since linking would take longer and they are run once.

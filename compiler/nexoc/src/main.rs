@@ -555,6 +555,9 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
         use std::io::Write;
         let mut f = std::io::BufWriter::new(std::fs::File::create(&ll).map_err(|e| e.to_string())?);
         f.write_all(ir.as_bytes()).and_then(|_| f.flush()).map_err(|e| e.to_string())?;
+        // a release build leaves out the parts of the runtime the program
+        // does not reach: a smaller file that starts sooner (D149)
+        let gc: &[&str] = if dev { &[] } else { &["-Wl,--gc-sections"] };
         let output = Command::new(&cc)
             .arg(opt)
             .arg("-Wno-override-module")
@@ -562,6 +565,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
             .arg(runtime_lib())
             .args(["-o"])
             .arg(out)
+            .args(gc)
             .args(libs)
             .stdin(Stdio::null())
             .output()
