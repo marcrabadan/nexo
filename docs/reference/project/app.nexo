@@ -1,0 +1,8 @@
+use shop.payments
+use shop.prices as p
+
+print(p.with_vat(1000))
+
+match payments.charge(100):
+    payments.Paid(n): print("paid {n}")
+    payments.Pending: print("nothing to pay")

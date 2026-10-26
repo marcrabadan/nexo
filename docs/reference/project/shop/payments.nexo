@@ -1,0 +1,16 @@
+use shop.prices
+
+pub type Status:
+    Paid(cents: int)
+    Pending
+
+pub fn charge(cents: int) -> Status:
+    if cents == 0:
+        return Pending
+    return Paid(prices.with_vat(cents))
+
+fn audit():
+    print("only visible inside this module")
+
+test "charge adds VAT":
+    assert charge(100) == Paid(121)

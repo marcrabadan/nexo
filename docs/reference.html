@@ -56,7 +56,7 @@
         <li><a href="#numbers">Numbers and money</a></li>
         <li><a href="#pipelines">Pipelines</a></li>
         <li><a href="#contracts">Contracts and tests</a></li>
-        <li><a href="#modules">Modules</a></li>
+        <li><a href="#modules">Modules: other files</a></li>
         <li><a href="#concurrency">Concurrency</a></li>
         <li><a href="#patterns">Patterns</a></li>
         <li><a href="#stdlib">Standard library</a>
@@ -478,24 +478,83 @@ expect amount &gt; 0.00 EUR does not hold (amount = -1.00 EUR)
 </section>
 
 <section class="ref-sec" id="modules">
-  <h2><a href="#modules">Modules</a></h2>
-  <p>A module is a file of the program: <code>use shop.payments</code> loads <code>shop/payments.nexo</code>, from the folder of <code>nexo.toml</code> or of the program. Only its <code>pub</code> functions and types are exported, and they are used through the module's last name (D124).</p>
-<div class="code"><div class="code-bar"><span>shop/payments.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">pub type Status:
-    Paid(amount: int)
+  <h2><a href="#modules">Modules: code from other files</a></h2>
+  <p>A program can be split into several <code>.nexo</code> files. Each file is a module, and another file uses it with <code>use</code> (section 13, D124). There is nothing to install or register: the file is the module.</p>
+
+  <h3 id="mod-names">The name of a module is its path</h3>
+  <ul class="ref-list">
+    <li><code>use shop.payments</code> loads the file <code>shop/payments.nexo</code>: each dot is a folder, and the last name is the file without <code>.nexo</code>.</li>
+    <li>Paths start at the root of the project: the folder of the nearest <code>nexo.toml</code> above the program (<code>nexo new</code> writes one), or the program's own folder when there is none. So a module has the same name in every file that uses it, wherever that file is.</li>
+    <li>Names that start with <code>nexo.</code> are official modules (<code>use nexo.db</code>, <code>use nexo.sync</code>), not files.</li>
+    <li><code>use</code> goes at the top level of a file, usually at its start.</li>
+  </ul>
+  <p>A project with two modules and a program that uses them:</p>
+<div class="code"><div class="code-bar"><span>the project</span></div><pre><code>project/
+  nexo.toml
+  app.nexo
+  shop/
+    prices.nexo
+    payments.nexo</code></pre></div>
+<div class="code"><div class="code-bar"><span>shop/prices.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## The price with 21% VAT, in cents.
+pub fn with_vat(cents: int) -&gt; int:
+    return cents + cents * VAT // 100
+
+VAT = 21
+
+print("prices loaded")</code></pre></div>
+<div class="code"><div class="code-bar"><span>shop/payments.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use shop.prices
+
+pub type Status:
+    Paid(cents: int)
     Pending
 
-pub fn charge(amount: int) -&gt; Status:
-    if amount == 0:
+pub fn charge(cents: int) -&gt; Status:
+    if cents == 0:
         return Pending
-    return Paid(amount)
+    return Paid(prices.with_vat(cents))
 
 fn audit():
-    print("only visible inside the module")</code></pre></div>
-<div class="code"><div class="code-bar"><span>main.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use shop.payments
+    print("only visible inside this module")
 
-match payments.charge(10):
+test "charge adds VAT":
+    assert charge(100) == Paid(121)</code></pre></div>
+
+  <h3 id="mod-use">Using what a module exports</h3>
+  <ul class="ref-list">
+    <li>Only what is marked <code>pub</code> leaves the file: <code>pub fn</code>, <code>pub type</code>, and the variants of a <code>pub</code> enum. Constants, <code>var</code>s, traits and functions without <code>pub</code> stay inside it; to share a value, export a <code>pub fn</code> that returns it.</li>
+    <li>Exported names are always written with the module's last name in front: <code>payments.charge(100)</code>, <code>payments.Status</code>, and <code>payments.Paid(n)</code> in a <code>match</code>. There is no import of bare names, so the reader always sees where a name comes from.</li>
+    <li><code>use shop.prices as p</code> gives the module another name in this file: <code>p.with_vat(1000)</code>. Use it when two modules end with the same name, or a name is long.</li>
+  </ul>
+<div class="code"><div class="code-bar"><span>app.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use shop.payments
+use shop.prices as p
+
+print(p.with_vat(1000))
+
+match payments.charge(100):
     payments.Paid(n): print("paid {n}")
-    payments.Pending: print("nothing to pay")</code></pre><div class="out"><div class="out-label">$ nexo main.nexo</div><pre><code>paid 10</code></pre></div></div>
+    payments.Pending: print("nothing to pay")</code></pre><div class="out"><div class="out-label">$ nexo app.nexo</div><pre><code>prices loaded
+1210
+paid 121</code></pre></div></div>
+  <p><code>prices loaded</code> appears once although both <code>app.nexo</code> and <code>payments.nexo</code> use <code>shop.prices</code>: a module's top-level code runs once, at its first <code>use</code>, in its own scope, which only sees the builtins and the modules it uses itself.</p>
+
+  <h3 id="mod-tests">Tests and tools</h3>
+  <ul class="ref-list">
+    <li>The <code>test</code> blocks of a module run only when it is the file given to <code>nexo test</code>: <code>nexo test shop/payments.nexo</code> runs <code>charge adds VAT</code>, and <code>nexo test app.nexo</code> does not. <code>nexo test</code> with no file runs every file of the folder, so every module's tests.</li>
+    <li><code>nexo check</code>, <code>nexo lint</code>, the editor (<code>nexo lsp</code>) and <code>nexo docs</code> read the modules too; an error inside a module shows the module's file and line.</li>
+  </ul>
+
+  <h3 id="mod-errors">Mistakes are found before the program runs</h3>
+  <p>A missing file, a name the module does not have or does not export, two modules that use each other (the cycle is shown), and using a module's name as a value are compile errors, with the fix:</p>
+<div class="code"><div class="code-bar"><span>private.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use shop.payments
+
+payments.audit()</code></pre><div class="out"><div class="out-label">$ nexo private.nexo</div><pre><code>Error in private.nexo, line 3:
+  payments.audit()
+  ^^^^^^^^^^^^^^
+"audit" is not pub in module shop.payments. Write pub before its fn or type in shop/payments.nexo; a module only exports its pub functions and types.</code></pre></div></div>
+<div class="code"><div class="code-bar"><span>typo.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use shop.payment</code></pre><div class="out"><div class="out-label">$ nexo typo.nexo</div><pre><code>Error in typo.nexo, line 1:
+  use shop.payment
+  ^^^^^^^^^^^^^^^^
+There is no module shop.payment: there is no file shop/payment.nexo. Create the file or fix the name; a module's name is its path (shop/payments.nexo is shop.payments).</code></pre></div></div>
 </section>
 
 <section class="ref-sec" id="concurrency">
