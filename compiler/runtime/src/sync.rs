@@ -445,6 +445,7 @@ fn mark_shared(v: V) {
 /// nobody can change (numbers, texts, functions, types, channels).
 pub fn isolated_read(v: V, name: &str, is_var: bool, span: u32) -> R<()> {
     let immutable = match v.tag {
+        T_SSTR => true,
         T_OBJ => matches!(
             v.get(),
             Some(

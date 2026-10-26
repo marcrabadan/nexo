@@ -11,6 +11,7 @@ pub fn type_name(v: V) -> String {
         T_BOOL => "bool".into(),
         T_INT => "int".into(),
         T_FLOAT | T_LITFLOAT => "float".into(),
+        T_SSTR => "str".into(),
         T_OBJ => match v.get().unwrap() {
             Obj::Str(_) => "str".into(),
             Obj::Decimal(_) => "decimal".into(),
@@ -185,6 +186,7 @@ pub fn repr_into(v: V, out: &mut String) {
         T_INT => out.push_str(&(v.bits as i64).to_string()),
         T_FLOAT => out.push_str(&format_float(f64::from_bits(v.bits))),
         T_LITFLOAT => out.push_str(&format_float(v.litfloat().value)),
+        T_SSTR => out.push_str(&quote(v.as_str().unwrap())),
         T_OBJ => match v.get().unwrap() {
             Obj::Str(s) => out.push_str(&quote(s)),
             Obj::Decimal(d) => out.push_str(&d.fixed()),

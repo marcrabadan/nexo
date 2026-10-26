@@ -18,6 +18,7 @@ pub fn key_of(v: V) -> Option<Key> {
         T_BOOL => Key::Bool(v.bits != 0),
         T_INT => Key::Int(v.bits as i64),
         T_FLOAT => float_key(f64::from_bits(v.bits)),
+        T_SSTR => Key::Str(v.as_str().unwrap().to_string()),
         T_OBJ => match v.get()? {
             Obj::Str(s) => Key::Str(s.to_string()),
             Obj::Decimal(d) => {
@@ -128,7 +129,8 @@ pub fn get_index(obj: V, index: V, span: u32) -> R<Val> {
             }
             Ok(Val::from(items.get(i as usize).unwrap()))
         }
-        Some(Obj::Str(s)) => {
+        _ if obj.is_str() => {
+            let s = obj.as_str().unwrap();
             let Some(i) = index.as_int() else {
                 return Err(bad_index(obj, index, span));
             };
@@ -235,8 +237,8 @@ pub fn element_slot(container: V, index: V, scratch: &mut Val, span: u32) -> R<O
 pub fn contains(container: V, item: V, span: u32) -> R<bool> {
     let item = item.plain();
     match container.get() {
-        Some(Obj::Str(s)) => match item.as_str() {
-            Some(x) => Ok(s.contains(x)),
+        _ if container.is_str() => match item.as_str() {
+            Some(x) => Ok(container.as_str().unwrap().contains(x)),
             None => Err(diag(
                 Diagnostic::new_spanless("bad_operands").arg("op", "in").arg("a", type_name(item)).arg("b", "str"),
                 span,

@@ -33,7 +33,7 @@ impl Cfg {
 
     /// The word at position i of the head, if it is a text.
     pub fn word(&self, i: usize) -> Option<&'static str> {
-        self.words().get(i).and_then(|v| v.v().as_str())
+        self.words().get(i).and_then(|v| v.v().as_static_str())
     }
 
     /// The key of a `key = value` entry, or None.

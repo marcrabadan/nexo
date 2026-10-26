@@ -321,7 +321,7 @@ fn put_bytes(path: &str, data: &[u8], span: u32) -> R<()> {
 }
 
 pub fn encrypt_file(path: V, key: V, span: u32) -> R<Val> {
-    let p = crate::stdlib::str_arg("encrypt_file", path, span)?;
+    let p = crate::stdlib::str_arg("encrypt_file", &path, span)?;
     let k = the_key("encrypt_file", key, span)?;
     let data = file_bytes(p, span)?;
     put_bytes(p, &seal(k, &data), span)?;
@@ -329,7 +329,7 @@ pub fn encrypt_file(path: V, key: V, span: u32) -> R<Val> {
 }
 
 pub fn decrypt_file(path: V, key: V, span: u32) -> R<Val> {
-    let p = crate::stdlib::str_arg("decrypt_file", path, span)?;
+    let p = crate::stdlib::str_arg("decrypt_file", &path, span)?;
     let k = the_key("decrypt_file", key, span)?;
     let data = file_bytes(p, span)?;
     let plain = unseal(k, Some(data), span)?;

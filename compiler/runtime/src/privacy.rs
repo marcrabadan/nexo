@@ -88,7 +88,7 @@ pub fn privacy_type(t: V, settings: V, marks: V, _span: u32) -> R<Val> {
                     if w.len() != 3 || w[1].v().as_str() != Some("after") {
                         return None;
                     }
-                    let field = w[2].v().as_str()?;
+                    let field = w[2].v().as_static_str()?;
                     let Some(Obj::Quantity(d, unit)) = w[0].v().get() else { return None };
                     let (dim, factor) = crate::num::unit_dimension(unit);
                     if dim != "time" {
@@ -108,7 +108,7 @@ pub fn privacy_type(t: V, settings: V, marks: V, _span: u32) -> R<Val> {
             Some("purpose") => {
                 let v = entry.value();
                 let ok = entry.values.as_ref().is_some_and(|v| v.len() == 1) && entry.options.is_empty();
-                match v.as_ref().and_then(|v| v.v().as_str()) {
+                match v.as_ref().and_then(|v| v.v().as_static_str()) {
                     Some(text) if ok => info.purpose = Some(text.to_string()),
                     _ => return Err(diag(Diagnostic::new_spanless("purpose_text"), sp)),
                 }

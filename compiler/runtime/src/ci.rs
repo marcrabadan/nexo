@@ -115,7 +115,7 @@ pub fn pipeline(name: V, entries: V, span: u32) -> R<Val> {
         };
         let plain = matches!(e.body, Body::None) && e.options.is_empty();
         if w.first().is_some_and(|x| is_word(x, "trigger")) && e.values.is_none() && plain && e.head.len() == 1 {
-            let rest: Vec<Option<&str>> = w[1..].iter().map(|x| x.v().as_str()).collect();
+            let rest: Vec<Option<&str>> = w[1..].iter().map(|x| x.v().as_static_str()).collect();
             match rest.as_slice() {
                 [Some("pull_request")] => p.triggers.push(("pull_request".into(), None)),
                 [Some("push")] => p.triggers.push(("push".into(), None)),
@@ -135,7 +135,7 @@ pub fn pipeline(name: V, entries: V, span: u32) -> R<Val> {
             let list = names.and_then(|n| match n.v().get() {
                 Some(Obj::List(items)) => {
                     let items = items.borrow();
-                    let texts: Vec<Option<&str>> = items.iter().map(|x| x.v().as_str()).collect();
+                    let texts: Vec<Option<&str>> = items.iter().map(|x| x.v().as_static_str()).collect();
                     if texts.iter().all(|t| t.is_some_and(ok_name)) {
                         Some(texts.into_iter().map(|t| t.unwrap().to_string()).collect::<Vec<_>>())
                     } else {
@@ -211,7 +211,7 @@ fn set_var(vars: &mut Vec<(String, Val)>, name: &str, value: Val) {
 /// What a step keeps travels between the jobs of a CI as JSON.
 fn json_value(name: &str, v: V, span: u32) -> R<()> {
     let ok = match v.tag {
-        T_NONE | T_BOOL | T_INT | T_FLOAT => true,
+        T_NONE | T_BOOL | T_INT | T_FLOAT | T_SSTR => true,
         _ => match v.get() {
             Some(Obj::Str(_)) => true,
             Some(Obj::List(items)) => {
@@ -368,7 +368,7 @@ pub fn approve(by: V, span: u32) -> R<Val> {
     let names: Option<Vec<String>> = match by.get() {
         Some(Obj::List(items)) => {
             let items = items.borrow();
-            let t: Vec<Option<&str>> = items.iter().map(|x| x.v().as_str()).collect();
+            let t: Vec<Option<&str>> = items.iter().map(|x| x.v().as_static_str()).collect();
             if !t.is_empty() && t.iter().all(|x| x.is_some()) {
                 Some(t.into_iter().map(|x| x.unwrap().to_string()).collect())
             } else {

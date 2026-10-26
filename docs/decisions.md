@@ -1845,3 +1845,13 @@ list at once); only a change by the list's single owner (`add`, `xs[i] =`,
 a change through an element) does. The compiled code reads the numbers of
 a list of ints in place and `xs.add(n)` pushes an int directly. What a
 program prints does not change.
+
+**D138. Short texts inside the value.** A text of up to seven bytes (a
+word, a key, a digit, one character of `split`) is kept in the value
+itself, two words with a tag of its own, with no object and no
+allocation; a longer text is an object (D136). Every text of up to seven
+bytes is kept this way, so two texts are equal exactly when both are short
+with the same bytes or both are objects with the same text. Everything
+that reads a text (methods, `len`, indexing, `in`, iteration, keys of
+maps, JSON, SQL, Python, C) takes it from the value. What a program prints
+does not change.

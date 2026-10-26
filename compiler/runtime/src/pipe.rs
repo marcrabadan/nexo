@@ -86,8 +86,8 @@ pub fn iterate(v: V, span: u32) -> R<Items> {
             let (a, b) = (*a, *b);
             Ok(Box::new((a..=b).map(|i| Ok(Val::int(i)))))
         }
-        Some(Obj::Str(s)) => {
-            let chars: Vec<Val> = s.chars().map(|c| Val::str(c.to_string())).collect();
+        _ if v.is_str() => {
+            let chars: Vec<Val> = v.as_str().unwrap().chars().map(|c| Val::str(c.to_string())).collect();
             Ok(Box::new(chars.into_iter().map(Ok)))
         }
         Some(Obj::Channel(c)) => Ok(crate::sync::iterate(c, v, span)),

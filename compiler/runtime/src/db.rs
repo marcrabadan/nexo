@@ -604,6 +604,7 @@ fn to_sql(v: V, span: u32) -> R<Sql> {
         T_BOOL => Sql::Int((v.bits != 0) as i64),
         T_INT => Sql::Int(v.bits as i64),
         T_FLOAT => Sql::Real(f64::from_bits(v.bits)),
+        T_SSTR => Sql::Text(v.as_str().unwrap().to_string()),
         _ => match v.get() {
             Some(Obj::Str(s)) => Sql::Text(s.to_string()),
             Some(Obj::Decimal(d)) => Sql::Text(d.fixed()),

@@ -815,6 +815,7 @@ fn to_json_in(v: V, level: usize, compact: bool) -> String {
         T_NONE => "null".into(),
         T_BOOL => if v.bits != 0 { "true" } else { "false" }.into(),
         T_INT | T_FLOAT | T_LITFLOAT => repr(v),
+        T_SSTR => json_string(v.as_str().unwrap()),
         _ => match v.get() {
             Some(Obj::Decimal(d)) => d.py_str(),
             Some(Obj::Str(s)) => json_string(s),

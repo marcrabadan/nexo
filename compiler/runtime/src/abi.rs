@@ -259,7 +259,11 @@ pub unsafe extern "C" fn nx_return_outside(span: u32) {
 
 #[no_mangle]
 pub unsafe extern "C" fn nx_str(ptr: *const u8, len: usize) -> V {
-    Val::immortal(Obj::Str(text(ptr, len).into())).into_raw()
+    let s = text(ptr, len);
+    if let Some(short) = V::short_str(s) {
+        return short;
+    }
+    Val::immortal(Obj::Str(s.into())).into_raw()
 }
 
 #[no_mangle]
@@ -1313,6 +1317,9 @@ pub extern "C" fn nx_pipe_count(t: u64, b: u64, span: u32) -> V {
 #[no_mangle]
 pub extern "C" fn nx_pipe_plain(t: u64, b: u64) -> u8 {
     let x = v(t, b);
+    if x.tag == T_SSTR {
+        return 1;
+    }
     match x.get() {
         Some(Obj::List(_) | Obj::Set(_) | Obj::Map(_) | Obj::Range(..) | Obj::Str(_)) => 1,
         Some(Obj::Lazy(_)) => u8::from(crate::db::query_of(x).is_none() && crate::stream::query_of(x).is_none()),

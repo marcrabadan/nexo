@@ -35,6 +35,9 @@ pub const T_MISSING: u64 = 7;
 /// A `weak` field of a record: a reference that does not keep its target
 /// alive. It never leaves the runtime (reading the field upgrades it).
 pub const T_WEAK: u64 = 8;
+/// A text of up to seven bytes kept in the value itself (D138): the low
+/// byte of `bits` is its length, the next seven its bytes.
+pub const T_SSTR: u64 = 9;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -373,7 +376,12 @@ impl Val {
         Val(V::bool(b))
     }
 
-    pub fn str(s: impl Into<NStr>) -> Val {
+    /// A text value: one of up to seven bytes is kept in the value itself
+    /// (D138), a longer one in an object.
+    pub fn str(s: impl Into<NStr> + AsRef<str>) -> Val {
+        if let Some(v) = V::short_str(s.as_ref()) {
+            return Val(v);
+        }
         Val::new(Obj::Str(s.into()))
     }
 
@@ -462,11 +470,57 @@ impl V {
         }
     }
 
-    pub fn as_str(self) -> Option<&'static str> {
+    /// The text of a text value: a short one is inside the value itself
+    /// (D138), so the text borrows from it.
+    #[inline]
+    pub fn as_str(&self) -> Option<&str> {
+        if self.tag == T_SSTR {
+            let len = (self.bits & 0xff) as usize;
+            let bytes = unsafe { std::slice::from_raw_parts((&self.bits as *const u64 as *const u8).add(1), len) };
+            return Some(unsafe { std::str::from_utf8_unchecked(bytes) });
+        }
         match self.get() {
             Some(Obj::Str(s)) => Some(s.as_str()),
             _ => None,
         }
+    }
+
+    /// The text of a text value for as long as the program runs: a short
+    /// text is kept once in a table (only configuration code needs this).
+    pub fn as_static_str(self) -> Option<&'static str> {
+        if self.tag == T_SSTR {
+            static TABLE: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+            let s = self.as_str()?;
+            let mut t = TABLE.lock().unwrap();
+            if let Some(x) = t.iter().find(|x| **x == s) {
+                return Some(x);
+            }
+            let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+            t.push(leaked);
+            return Some(leaked);
+        }
+        match self.get() {
+            Some(Obj::Str(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// A text of up to seven bytes as a value (D138); None for a longer one.
+    #[inline]
+    pub fn short_str(s: &str) -> Option<V> {
+        if s.len() > 7 {
+            return None;
+        }
+        let mut b = [0u8; 8];
+        b[0] = s.len() as u8;
+        b[1..=s.len()].copy_from_slice(s.as_bytes());
+        Some(V { tag: T_SSTR, bits: u64::from_le_bytes(b) })
+    }
+
+    /// Whether the value is a text (short or not).
+    #[inline]
+    pub fn is_str(self) -> bool {
+        self.tag == T_SSTR || matches!(self.get(), Some(Obj::Str(_)))
     }
 
     pub fn same(self, other: V) -> bool {

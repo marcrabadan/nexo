@@ -288,6 +288,10 @@ fn to_python(v: V, span: u32) -> R<P> {
         T_INT => (a.long_from)(v.bits as i64),
         T_FLOAT => (a.float_from)(f64::from_bits(v.bits)),
         T_LITFLOAT => (a.float_from)(v.litfloat().value),
+        T_SSTR => {
+            let s = v.as_str().unwrap();
+            (a.unicode_from)(s.as_ptr() as *const c_char, s.len() as isize)
+        }
         _ => match v.get() {
             Some(Obj::Str(s)) => (a.unicode_from)(s.as_ptr() as *const c_char, s.len() as isize),
             Some(Obj::Decimal(d)) => {

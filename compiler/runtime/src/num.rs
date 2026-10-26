@@ -616,6 +616,10 @@ fn natives(a: V, b: V) -> Option<(&'static dyn Native, &'static dyn Native)> {
 
 /// Structural equality used inside collections (Python `==` on values).
 pub fn py_eq(a: V, b: V) -> bool {
+    // a text of up to seven bytes is always kept in the value (D138)
+    if a.tag == T_SSTR || b.tag == T_SSTR {
+        return a.tag == b.tag && a.bits == b.bits;
+    }
     if a.tag != T_OBJ || b.tag != T_OBJ {
         if a.tag == T_BOOL || b.tag == T_BOOL {
             return a.tag == b.tag && a.bits == b.bits;

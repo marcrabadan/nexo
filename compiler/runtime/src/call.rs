@@ -333,6 +333,10 @@ pub fn call_method(obj: V, name: &str, args: &[V], names: &[Option<&str>], span:
                 unreachable!()
             }
         },
+        _ if obj.tag == crate::value::T_SSTR => {
+            let name = crate::stdlib::method_name(obj, name, name_span)?;
+            crate::stdlib::call_method(obj, name, args, names, span)
+        }
         Some(Obj::Str(_) | Obj::List(_) | Obj::Lazy(_) | Obj::Map(_) | Obj::Set(_) | Obj::Channel(_)) => {
             let name = crate::stdlib::method_name(obj, name, name_span)?;
             crate::stdlib::call_method(obj, name, args, names, span)

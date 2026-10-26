@@ -207,7 +207,7 @@ pub fn stage_block(name: V, entries: V, _span: u32) -> R<Val> {
 }
 
 fn word_of(v: &Val) -> Option<&'static str> {
-    v.v().as_str()
+    v.v().as_static_str()
 }
 
 fn show_phrase(entry: &Cfg) -> String {
@@ -975,6 +975,7 @@ pub fn native_value(v: V) -> Json {
         T_BOOL => return Json::Bool(v.bits != 0),
         T_INT => return Json::Int(v.bits as i64),
         T_FLOAT => return Json::Num(f64::from_bits(v.bits)),
+        T_SSTR => return json::s(v.as_str().unwrap().to_string()),
         _ => {}
     }
     match v.get() {
@@ -1577,7 +1578,7 @@ fn build_ctx(plan: &Plan, r: &Resource) -> R<Json> {
         for (i, line) in r.lines.iter().enumerate() {
             let w = line.words();
             let port = line.option("port").and_then(is_int);
-            let ws: Vec<Option<&str>> = w.iter().map(|x| x.v().as_str()).collect();
+            let ws: Vec<Option<&str>> = w.iter().map(|x| x.v().as_static_str()).collect();
             let ok = w.len() == 5
                 && ws[0] == Some("allow")
                 && ws[1] == Some("from")
@@ -1670,7 +1671,7 @@ fn grants(plan: &Plan, r: &Resource) -> R<Vec<Json>> {
     let roles = providers().get("roles").get(cloud);
     for (i, line) in r.lines.iter().enumerate() {
         let w = line.words();
-        let ws: Vec<Option<&str>> = w.iter().map(|x| x.v().as_str()).collect();
+        let ws: Vec<Option<&str>> = w.iter().map(|x| x.v().as_static_str()).collect();
         let ok = w.len() == 4
             && ws[0] == Some("can")
             && matches!(ws[1], Some("read") | Some("write"))
@@ -1819,7 +1820,7 @@ fn policy_errors(plan: &Plan) -> R<()> {
     let mut allowed: Vec<String> = Vec::new();
     for line in &infra.policy {
         let w = line.words();
-        let ws: Vec<Option<&str>> = w.iter().map(|x| x.v().as_str()).collect();
+        let ws: Vec<Option<&str>> = w.iter().map(|x| x.v().as_static_str()).collect();
         let ks = kinds();
         if w.len() == 3 && ws[0] == Some("deny") && ws[1] == Some("public") && ws[2].is_some_and(|k| ks.contains(&k)) && line.options.is_empty() {
             for r in &infra.resources {

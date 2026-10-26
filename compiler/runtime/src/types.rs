@@ -328,6 +328,7 @@ fn union_values(options: &[V]) -> String {
 pub fn conform(value: V, t: &'static TypeDesc, name: &str, span: u32) -> R<Val> {
     if let TypeDesc::Named { name: tn, params, .. } = t {
         let same = match value.tag {
+            T_SSTR => tn == "str",
             T_INT => tn == "int",
             T_BOOL => tn == "bool",
             T_FLOAT => tn == "float",
@@ -433,7 +434,7 @@ pub fn builtin_is(v: V, name: &str) -> bool {
         _ => match (name, v.get()) {
             ("decimal", Some(Obj::Decimal(_))) => true,
             ("money", Some(Obj::Money(..))) => true,
-            ("str", Some(Obj::Str(_))) => true,
+            ("str", _) => v.is_str(),
             ("list", Some(Obj::List(_) | Obj::Lazy(_))) => true,
             ("map", Some(Obj::Map(_))) => true,
             ("set", Some(Obj::Set(_))) => true,
