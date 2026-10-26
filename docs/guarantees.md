@@ -42,9 +42,9 @@ checks, since Nexo checks int overflow).
 
 | Goal | Value | Today | State |
 | --- | --- | --- | --- |
-| Performance on typical code | under 1.5× Rust's time | parallel 1.20×, loop 1.27×, hello 1.41×, maps 1.65×, fib 2.07×, records 2.43×, strings 2.43×, lists 3.29× | Not met |
-| Memory | under 1.3× Rust's RAM | 1.0× on six benchmarks; lists 2.01×, strings 2.66× | Not met |
-| Compilation | 100,000 lines in under 10 s in development mode | 34 s (about 10 s in the compiler, the rest in clang on four cores) | Not met |
+| Performance on typical code | under 1.5× Rust's time | strings 1.11×, parallel 1.30×, maps 1.42×, loop 1.60×, hello 1.77×, fib 2.04×, lists 2.15×, records 2.53× | Not met |
+| Memory | under 1.3× Rust's RAM | 1.0× or less on seven benchmarks (strings 0.75×); lists 1.10× | Met |
+| Compilation | 100,000 lines in under 10 s in development mode | 13.9 s (about 3 s in the compiler, the rest in clang on four cores) | Not met |
 | Program start-up | under 20 ms | 2.3 ms | Met |
 | First useful program | under 1 hour for someone with no experience | not measured | Needs people (user studies) |
 | From idea to production | one project for code, infrastructure and deployment | `examples/deploy` holds an app, its tests, its infrastructure on four clouds and its pipeline in one file (phase 5) | Met |
@@ -60,18 +60,23 @@ are one loop with their steps inlined; maps have a table of their own
 for int keys; short texts live inside their object; freed objects are
 reused from a list per thread; and reference counts change without
 atomic instructions until a second thread starts. Compiling 100,000 lines
-went from 208 s to 34 s: name resolution is linear, suggestions are only
+went from 208 s to 13.9 s: name resolution is linear, suggestions are only
 looked for where an error may show them, development mode does not
-optimise, calls the reference-count helpers instead of copying them, and
-compiles a large program in parts on every core.
+optimise, calls the reference-count helpers instead of copying them,
+compiles a large program in parts on every core, and hands clang values
+as two words so its fast instruction selector takes them (D141); the
+compiler also leaves out checks it proves are not needed (D140, D141),
+which made the IR half its size.
 
 What is left is the shape of the compiled code: every value is two words
-with a tag (a list of ints takes twice the memory of Rust's), every heap
+with a tag (a list of ints is kept as plain ints, D137), every heap
 value is an object of the same size (112 bytes), and an operation on a
-value whose type is not known calls the runtime. Meeting 1.5× and 1.3×
-on lists and strings needs values specialised by type (unboxed lists of
-ints, objects sized by their kind), and meeting 10 s for 100,000 lines
-needs much smaller IR or generating it on several threads. Both are
+value whose type is not known calls the runtime. Times are measured on
+programs of 10 to 60 ms, so a few milliseconds of start-up count. Meeting
+1.5× on records, lists and calls needs values specialised by type (records
+on the stack when they do not escape, unboxed lists of ints, calls that
+pass ints in registers everywhere), and meeting 10 s for 100,000 lines
+needs smaller code still, or generating it on several threads. Both are
 compiler work for the next releases, or the goals change.
 
 ## What is needed to finish phase 6
