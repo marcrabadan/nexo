@@ -330,7 +330,12 @@ impl Workflow {
             ("until", run.until.map(Json::Num).unwrap_or(Json::Null)),
             ("error", error),
         ]);
-        let written = std::fs::create_dir_all(WORKFLOW_DIR).and_then(|_| std::fs::write(&self.path, data.compact() + "\n"));
+        // a new file put in place of the old one, so a stop half way through
+        // a save keeps the last state saved
+        let fresh = self.path.with_extension("tmp");
+        let written = std::fs::create_dir_all(WORKFLOW_DIR)
+            .and_then(|_| std::fs::write(&fresh, data.compact() + "\n"))
+            .and_then(|_| std::fs::rename(&fresh, &self.path));
         written.map_err(|e| crate::data::os_failure(&self.path.display().to_string(), &e, span))
     }
 }
@@ -444,9 +449,15 @@ pub fn workflow_undone(wf: V, n: V, span: u32) -> R<Val> {
     Ok(Val::none())
 }
 
-/// The run is over: its file goes, and the folders if they are empty.
-pub fn workflow_end(wf: V) -> R<Val> {
-    let _ = std::fs::remove_file(&workflow_of(wf).path);
+/// The run is over: its file goes (a file left would skip every step of
+/// the next run), and the folders if they are empty.
+pub fn workflow_end(wf: V, span: u32) -> R<Val> {
+    let path = &workflow_of(wf).path;
+    if let Err(e) = std::fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            return Err(crate::data::os_failure(&path.display().to_string(), &e, span));
+        }
+    }
     if std::fs::remove_dir(WORKFLOW_DIR).is_ok() {
         let _ = std::fs::remove_dir(".nexo");
     }

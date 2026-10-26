@@ -274,7 +274,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__workflow_failed" => crate::patterns::workflow_failed(x(0), x(1), span),
         "__workflow_undo" => crate::patterns::workflow_undo(x(0), x(1)),
         "__workflow_undone" => crate::patterns::workflow_undone(x(0), x(1), span),
-        "__workflow_end" => crate::patterns::workflow_end(x(0)),
+        "__workflow_end" => crate::patterns::workflow_end(x(0), span),
         "privacy.export" => crate::db::privacy_export(x(0), span),
         "privacy.erase" => crate::db::privacy_erase(x(0), span),
         "privacy.restrict" => crate::db::privacy_restrict(x(0), span),

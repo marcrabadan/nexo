@@ -2120,6 +2120,8 @@ email.confirmed(email), max: 3 days`.
 - The state of a run is the number of steps done, the end of the wait
   under way and, while its steps are undone, the error that stopped it.
   It is saved after every change in `.nexo/workflows/<name>-<hash>.json`
+  (written to a new file put in place of the old one, so a stop during a
+  save keeps the last state)
   under the folder the program runs in (like the state of `nexo.infra`
   and `nexo.ci`), where the hash is of the name and the arguments as they
   print, so a run is one workflow called with the same arguments. It is
@@ -2131,6 +2133,7 @@ email.confirmed(email), max: 3 days`.
   again (at least once). An `undo` that fails stops the undoing with its
   own error and keeps the file, so the next call goes on undoing from it
   and then fails with the step's error. When the run ends, in success or
-  failure, its file is removed.
+  failure, its file is removed; a file that cannot be removed is an
+  error, since the next call would skip every step.
 - Step results passed to later steps, signals, parallel steps and a
   list of runs are not in the specification and are not added.

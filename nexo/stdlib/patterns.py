@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -241,7 +242,11 @@ class Workflow(Native):
         data = {"workflow": self.name, "args": self.key, "done": self.done, "until": self.until, "error": self.error}
         try:
             WORKFLOW_DIR.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+            # a new file put in place of the old one, so a stop half way
+            # through a save keeps the last state saved
+            fresh = self.path.with_suffix(".tmp")
+            fresh.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+            os.replace(fresh, self.path)
         except OSError as exc:
             from .io import os_failure
             raise os_failure(call, str(self.path), exc)
@@ -300,9 +305,14 @@ def b_workflow_undone(call, wf, n):
 
 
 def b_workflow_end(call, wf):
-    """The run is over: its file goes, and the folders if they are empty."""
+    """The run is over: its file goes (a file left would skip every step
+    of the next run), and the folders if they are empty."""
     try:
         wf.path.unlink(missing_ok=True)
+    except OSError as exc:
+        from .io import os_failure
+        raise os_failure(call, str(wf.path), exc)
+    try:
         WORKFLOW_DIR.rmdir()
         WORKFLOW_DIR.parent.rmdir()
     except OSError:
