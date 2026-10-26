@@ -1,0 +1,16 @@
+type User:
+    id: int
+    country: str
+
+flags:
+    new_checkout = 10%
+    dark_mode = users where country == "ES"
+    payments_v2 = off
+    ai_recommendations = on, expires: 2099-03-01
+
+ana = User(id: 7, country: "ES")
+luis = User(id: 8, country: "FR")
+print(flag("payments_v2"), flag("ai_recommendations"))
+print(flag("dark_mode", ana), flag("dark_mode", luis))
+print(flag("new_checkout", ana) == flag("new_checkout", ana))
+print(1..1000 |> where flag("new_checkout", User(id: it, country: "ES")) |> count)

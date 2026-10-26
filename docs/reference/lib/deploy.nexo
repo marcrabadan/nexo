@@ -1,0 +1,39 @@
+policy:
+    allow shell
+
+infra shop:
+    cloud = "gcp"
+    region = "europe-west1"
+    budget = 100 EUR per month
+    storage photos
+    database orders
+    app api:
+        image = "shop:1.0"
+        port = 8080
+        replicas = 1..4
+        env:
+            DB = orders.url
+            API_KEY = secret("API_KEY")
+    output url = api.url
+
+stage prod:
+    size = large
+    replicas = 2..8
+
+pipeline release:
+    trigger push to main
+    version = "1.4.0"
+
+    step build:
+        test()
+        image = build_image("shop-api")
+
+    step review:
+        comment(plan(stage: "prod", image: image))
+        approve(by: ["ops@shop.example"])
+
+    step prod:
+        apply(stage: "prod", image: image)
+
+    after failure:
+        run("echo the release failed")

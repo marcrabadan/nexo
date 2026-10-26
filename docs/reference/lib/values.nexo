@@ -1,0 +1,18 @@
+print(len([1, 2, 3]), len("ñandú"), len({"a": 1}), range(4), range(2, 10, 3))
+tags = set("new", "sale", "new")
+tags.add("hot")
+print(tags.count(), "sale" in tags)
+print(int(3.9), float(2), decimal(0.1) + decimal(0.2), str(42) + "!")
+print(round(2.5), round(PI, 3), round(decimal(2.345), 2, mode: half_up))
+print(split(100.00 EUR, 3), convert(10.00 EUR, to: USD, rate: 1.08))
+print(30s + 1m, 2GB + 500MB, 5 km * 3, 200 * 10%)
+print(validate("42", as: int), validate("7", as: int, range: 1..10))
+try:
+    validate("70", as: int, range: 1..10)
+else e is InvalidValue:
+    print(e.message)
+m = {"pear": 1.2, "grape": 3.0}
+m["fig"] = 2.5
+print(m.keys(), m.values().sum(), m["kiwi"] ?? 0)
+words = "  Hello, Nexo  ".trim().lower().split(", ")
+print(words, "nexo".upper(), "a-b-c".replace("-", "/"), "file.csv".ends_with(".csv"))

@@ -1375,7 +1375,7 @@ compiler/target/release/nexo build --release app.nexo -o app
     <div class="section-head">
       <p class="eyebrow">Reference</p>
       <h2>The whole language on one page</h2>
-      <p class="section-intro">Syntax, types, operators, errors, pipelines, contracts, modules, concurrency, the standard library and the commands, each with an example that runs.</p>
+      <p class="section-intro">Syntax, types, operators, errors, pipelines, contracts, modules, concurrency, the standard library, every official module and the commands, each with an example that runs.</p>
     </div>
     <div class="qref">
       <a href="reference.html#values"><strong>Values</strong><code>var n = 0</code><span>Immutable by default, <code>T?</code> and <code>??</code> for missing values.</span></a>
@@ -1385,6 +1385,10 @@ compiler/target/release/nexo build --release app.nexo -o app
       <a href="reference.html#numbers"><strong>Numbers and money</strong><code>120.00 EUR * 21%</code><span>int, float, decimal and money, and the rules that keep them apart.</span></a>
       <a href="reference.html#pipelines"><strong>Pipelines</strong><code>|&gt; group by region</code><span>Every step, from <code>where</code> to <code>save</code>.</span></a>
       <a href="reference.html#stdlib"><strong>Standard library</strong><code>read_lines("log.txt")</code><span>Files, text, data, time, security and the network.</span></a>
+      <a href="reference.html#official"><strong>Official modules</strong><code>use nexo.db</code><span>Databases, servers, AI, streams, flags, privacy, infra and CI.</span></a>
+      <a href="reference.html#mod-ai"><strong>nexo.ai</strong><code>ask("Summarise", text)</code><span>Typed answers, options, tools and agents, faked in tests.</span></a>
+      <a href="reference.html#concurrency"><strong>Concurrency</strong><code>parallel for</code><span><code>spawn</code>, channels, <code>select</code> and <code>shared</code> state.</span></a>
+      <a href="reference.html#policy"><strong>Policy</strong><code>allow read "data/"</code><span>What a program may read, write, reach and run.</span></a>
       <a href="reference.html#cli"><strong>Command line</strong><code>nexo test</code><span>Run, build, test, format, lint, deploy.</span></a>
     </div>
     <p class="qref-more"><a class="btn btn-ghost" href="reference.html">Open the reference</a></p>

@@ -1,0 +1,22 @@
+use nexo.db
+
+db = connect("crm.db")
+
+@table
+type Contact:
+    id: id
+    name: str @personal
+    phone: str @personal
+    last_call: date
+
+    keep = 2 years after last_call
+    purpose = "support calls"
+
+ana = db.Contact.add(name: "Ana", phone: "600 000 000", last_call: date(2026, 9, 1))
+luis = db.Contact.add(name: "Luis", phone: "600 111 111", last_call: date(2026, 9, 2))
+privacy.export(ana)
+print(read("contact-1.json"))
+privacy.erase(ana)      # deletes the row: its personal data is gone
+privacy.restrict(luis)  # keeps the row, but the program stops reading it
+print(db.Contact.count())
+print(len(db.sql("SELECT id FROM contact")))  # db.sql still reads it, for legal duties

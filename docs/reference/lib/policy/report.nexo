@@ -1,0 +1,9 @@
+policy:
+    allow read "sales.csv"
+    allow write "report.txt"
+    deny read "secrets/"
+
+rows = read("sales.csv")
+write("report.txt", "{len(rows)} rows")
+print(read("report.txt"))
+print(read("secrets/keys.txt"))

@@ -1,0 +1,11 @@
+d = date(2026, 10, 24)
+print(d, d.year, d.month, d.weekday, d + 7 days, date(2026, 12, 25) - d)
+t = time(2026, 3, 29, 1, 30, zone: "Europe/Madrid")
+print(t, t + 1h, t.to_zone("UTC"), t.to_zone("America/New_York").hour)
+start = time(2026, 1, 1, zone: "UTC")
+print(start + 1500ms, (start + 90s) - start, (start + 2 days).date)
+print(validate("2026-02-28", as: date), now is time, today == now.date)
+try:
+    validate("2026-02-30", as: date)
+else e:
+    print(e.message)
