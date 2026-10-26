@@ -1,0 +1,21 @@
+/* Shield uses the site's existing light/dark tokens and code controls. */
+.shield-hero .shield-note { margin-top: 24px; }
+.shield-note { color: var(--muted); font-size: 14px; max-width: 68em; }
+.shield-boundary { margin: 0 0 32px; padding: 28px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); }
+.shield-boundary-head { margin-bottom: 24px; }
+.shield-boundary-head p { margin: 0; color: var(--muted); font-size: 14px; }
+.shield-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; list-style: none; padding: 0; margin: 0; }
+.shield-flow li { background: var(--surface); padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.shield-flow h3 { font-size: 18px; }
+.shield-flow p { color: var(--muted); font-size: 14px; margin: 0; }
+.shield-number { display: block; color: var(--accent); font: 700 13px var(--mono); margin-bottom: 14px; }
+.shield-boundary figcaption { margin-top: 22px; color: var(--muted); font-size: 14px; }
+.shield-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; margin-bottom: 36px; }
+.shield-columns > div { min-width: 0; }
+.shield-columns p { color: var(--muted); }
+.ref-table caption { text-align: left; color: var(--muted); padding: 0 0 12px; }
+@media (max-width: 1040px) { .shield-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .shield-flow, .shield-columns { grid-template-columns: 1fr; }
+  .shield-boundary { padding: 18px; }
+}

@@ -21,6 +21,7 @@
       <a href="index.html#features">Features</a>
       <a href="index.html#examples">Examples</a>
       <a href="index.html#start">Get started</a>
+      <a href="shield.html">Shield</a>
       <a href="reference.html" aria-current="page">Reference</a>
       <a href="index.html#roadmap">Roadmap</a>
     </nav>
@@ -1334,6 +1335,7 @@ interop.nexo:8: libm.sqrt(...) calls C (implicit unsafe). Check its arguments an
 Unsafe uses: 4. Files with unsafe code: 1.</code></pre></div></div>
 
   <h3 id="policy">The program policy</h3>
+  <p><a href="shield.html">Nexo Shield</a> adds strict execution, synchronous dependency ceilings and hardened Docker deployment with an explicit offline Linux worker. See its <a href="shield.html#architecture">architecture</a> and <a href="shield.html#boundaries">security boundaries</a>.</p>
   <p>A <code>policy:</code> block lists, with <code>allow</code> and <code>deny</code>, what the program may <code>read</code>, <code>write</code>, reach on the <code>net</code>, take from the <code>env</code>ironment, run as a <code>shell</code> command, and load with <code>c</code> and <code>python</code>. Every access of the library asks it first, following links and <code>..</code>. A release build stops at anything not allowed; development mode warns once, except shell commands, which always need <code>allow shell</code>. <code>nexo policy show</code> prints what a program may do and <code>nexo policy suggest</code> learns the smallest policy from its tests (D142).</p>
 <div class="code"><div class="code-bar"><span>report.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
     allow read "sales.csv"
