@@ -1,4 +1,4 @@
-# The exit criterion of phase 5: one file holds an app, the four places it
+# One file holds an app, the four places it
 # runs (AWS, Azure, GCP and Kubernetes) and how it gets there.
 #     nexo shop.nexo                serves it on port 8080
 #     nexo test shop.nexo           runs its tests

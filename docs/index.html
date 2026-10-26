@@ -46,7 +46,7 @@
 <div class="hero" id="top">
   <div class="wrap">
     <div class="hero-copy">
-      <span class="badge"><span class="dot"></span>Edition 0.1 · phase 6 in progress</span>
+      <span class="badge"><span class="dot"></span>Edition 0.1 · on the way to 1.0</span>
       <h1>One way to do <em>each&nbsp;thing</em>.</h1>
       <p class="lede">Nexo is a small programming language you can understand by reading it. Errors are values, money is exact, data flows through pipelines and functions state their contracts. Databases, web servers and AI come in the standard library, and the same file can describe the cloud an app runs on and how it gets there.</p>
       <div class="actions">
@@ -279,20 +279,20 @@ A task cannot change a Counter created before it started: other tasks may be rea
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Library and cloud</p>
-      <h2>Phases 4 and 5: the modules</h2>
-      <p class="section-intro">The standard library, <code>nexo.db</code>, <code>nexo.web</code>, <code>nexo.ai</code> and the interop of phase 4, and the infrastructure, pipelines, streams, flags and privacy of phase 5. Each snippet runs with both implementations, which print the same output; the cloud APIs are those of the local emulator in <a href="https://github.com/marcrabadan/nexo/blob/main/tests/cloud_emulator.py"><code>tests/cloud_emulator.py</code></a>.</p>
+      <h2>From the database to the cloud</h2>
+      <p class="section-intro">The standard library, <code>nexo.db</code>, <code>nexo.web</code>, <code>nexo.ai</code> and the interop with C and Python, then infrastructure, pipelines, streams, flags and privacy. Each snippet runs with both implementations, which print the same output; the cloud APIs are those of the local emulator in <a href="https://github.com/marcrabadan/nexo/blob/main/tests/cloud_emulator.py"><code>tests/cloud_emulator.py</code></a>.</p>
     </div>
 
     <div class="explorer">
       <div class="explorer-list" role="tablist" aria-label="Library and cloud" aria-orientation="vertical">
-        <p class="explorer-group" role="presentation">Library · phase 4</p>
+        <p class="explorer-group" role="presentation">Library</p>
         <button class="ftab" role="tab" id="mt-db" aria-controls="mp-db" aria-selected="true"><strong>Databases</strong><span><code>@table</code>, queries, transactions</span></button>
         <button class="ftab" role="tab" id="mt-web" aria-controls="mp-web" aria-selected="false" tabindex="-1"><strong>Web servers</strong><span><code>server</code>, routes, <code>@role</code></span></button>
         <button class="ftab" role="tab" id="mt-ai" aria-controls="mp-ai" aria-selected="false" tabindex="-1"><strong>AI as a function</strong><span><code>ask</code>, typed answers, <code>fake</code></span></button>
         <button class="ftab" role="tab" id="mt-crypto" aria-controls="mp-crypto" aria-selected="false" tabindex="-1"><strong>Secrets and crypto</strong><span><code>secret</code>, <code>password</code>, <code>sign</code></span></button>
         <button class="ftab" role="tab" id="mt-text" aria-controls="mp-text" aria-selected="false" tabindex="-1"><strong>Dates, text and data</strong><span>time zones, <code>regex</code>, <code>convert</code></span></button>
         <button class="ftab" role="tab" id="mt-interop" aria-controls="mp-interop" aria-selected="false" tabindex="-1"><strong>C and Python</strong><span><code>use c</code>, <code>use python</code></span></button>
-        <p class="explorer-group" role="presentation">Operations · phase 5</p>
+        <p class="explorer-group" role="presentation">Operations</p>
         <button class="ftab" role="tab" id="mt-infra" aria-controls="mp-infra" aria-selected="false" tabindex="-1"><strong>Infrastructure</strong><span><code>infra</code>, <code>nexo plan</code></span></button>
         <button class="ftab" role="tab" id="mt-ci" aria-controls="mp-ci" aria-selected="false" tabindex="-1"><strong>CI pipelines</strong><span><code>pipeline</code>, <code>nexo ci run</code></span></button>
         <button class="ftab" role="tab" id="mt-stream" aria-controls="mp-stream" aria-selected="false" tabindex="-1"><strong>Streams</strong><span><code>when kafka(...)</code>, <code>window</code></span></button>
@@ -947,9 +947,9 @@ test &quot;int overflow is detected&quot;:
 2 tests: 2 passed, 0 failed</code></pre></div></div>
     </div>
     <div class="panel" role="tabpanel" id="panel-shop" aria-labelledby="tab-shop" hidden>
-      <p>The exit criterion of phase 4: a web API with a database and <code>ask</code>, written in Nexo alone. Its tests fake the AI, so they run without a key.</p>
-<div class="code"><div class="code-bar"><span>examples/shop_api/shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># A shop&#x27;s web API with a database and AI, written in Nexo alone (the exit
-# criterion of phase 4). Run it with
+      <p>A web API with a database and <code>ask</code>, written in Nexo alone. Its tests fake the AI, so they run without a key.</p>
+<div class="code"><div class="code-bar"><span>examples/shop_api/shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># A shop&#x27;s web API with a database and AI, written in Nexo alone.
+# Run it with
 #     SHOP_JWT_KEY=... ANTHROPIC_KEY=... nexo shop.nexo
 # and test it, with the AI faked, with `nexo test shop.nexo`.
 use nexo.db
@@ -1069,10 +1069,10 @@ test &quot;a missing product is a 404&quot;:
 3 tests: 3 passed, 0 failed</code></pre></div></div>
     </div>
     <div class="panel" role="tabpanel" id="panel-signup" aria-labelledby="tab-signup" hidden>
-      <p>The standard library of phase 4 in one program: a <code>regex</code> checks the email, only the Argon2id hash of the password is kept, the time is shown in another zone, a template is filled with <code>render</code> and signed, and <code>log</code> hides the <code>@private</code> field.</p>
+      <p>The standard library in one program: a <code>regex</code> checks the email, only the Argon2id hash of the password is kept, the time is shown in another zone, a template is filled with <code>render</code> and signed, and <code>log</code> hides the <code>@private</code> field.</p>
 <div class="code"><div class="code-bar"><span>examples/signup.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Sign-ups: checks an email with a regular expression, stores only the
 ## hash of the password, signs the welcome letter and logs the account
-## with its @private fields hidden. Shows the standard library of phase 4.
+## with its @private fields hidden. Shows the standard library.
 
 type Account:
     name: str
@@ -1140,8 +1140,8 @@ Your account ana@mail.com is ready since 2026-10-26.
 signed: true, changed: false</code></pre></div></div>
     </div>
     <div class="panel" role="tabpanel" id="panel-deploy" aria-labelledby="tab-deploy" hidden>
-      <p>The exit criterion of phase 5: one file holds an app, its tests, the four places it runs (AWS, Azure, GCP and Kubernetes) and the pipeline that builds and deploys it. The app on Kubernetes reads the database on GCP, so <code>nexo apply</code> deploys GCP first.</p>
-<div class="code"><div class="code-bar"><span>examples/deploy/shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># The exit criterion of phase 5: one file holds an app, the four places it
+      <p>One file holds an app, its tests, the four places it runs (AWS, Azure, GCP and Kubernetes) and the pipeline that builds and deploys it. The app on Kubernetes reads the database on GCP, so <code>nexo apply</code> deploys GCP first.</p>
+<div class="code"><div class="code-bar"><span>examples/deploy/shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># One file holds an app, the four places it
 # runs (AWS, Azure, GCP and Kubernetes) and how it gets there.
 #     nexo shop.nexo                serves it on port 8080
 #     nexo test shop.nexo           runs its tests
@@ -1246,11 +1246,11 @@ pipeline main:
         approve(by: [&quot;ops@shop.example&quot;])
         apply(stage: &quot;prod&quot;, image: image)</code></pre><div class="out"><div class="out-label">$ nexo ci export github shop.nexo</div><pre><code>Wrote .github/workflows/main.yml.</code></pre></div></div>
     <div class="panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" hidden>
-      <p>Phase 5 without a cloud: orders arrive on a stream and each is handled once, a bad one goes to the dead letters after its retries, clicks are counted per minute, and a flag gives a quarter of the users free shipping. The tests send the messages to the local broker.</p>
+      <p>Operations without a cloud: orders arrive on a stream and each is handled once, a bad one goes to the dead letters after its retries, clicks are counted per minute, and a flag gives a quarter of the users free shipping. The tests send the messages to the local broker.</p>
 <div class="code"><div class="code-bar"><span>examples/events/events.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Shop events: orders arrive on a stream and each one is handled once,
 ## a bad one goes to the dead letters after its retries, clicks are counted
 ## per minute, and a flag gives some users free shipping. Run the stream
-## part with `nexo test events.nexo`, on the local broker of phase 5.
+## part with `nexo test events.nexo`, on the local broker.
 use nexo.stream
 
 flags:
@@ -1415,7 +1415,7 @@ compiler/target/release/nexo build --release app.nexo -o app
         <li>Nexo and Rust check every integer operation for overflow; C, Go and Java wrap around silently, and Python's integers never overflow.</li>
         <li>In C and Go a record is a plain value on the stack, so building one costs almost nothing; in Nexo, Java, JavaScript and Python each one is an object on the heap. That is most of the gap on <code>records</code>.</li>
         <li>Each program uses its language's usual tools: <code>ArrayList&lt;Long&gt;</code> and <code>HashMap</code> in Java, a hand-written hash map in C, which has none. Python runs <code>parallel</code> on 4 processes, because its threads share one lock.</li>
-        <li>The Nexo interpreter is the phase 0 prototype, a tree-walking evaluator written in Python; it shows the language works, not how fast it runs.</li>
+        <li>The Nexo interpreter is the prototype, a tree-walking evaluator written in Python; it shows the language works, not how fast it runs.</li>
         <li>The programs and the script are in <a href="https://github.com/marcrabadan/nexo/tree/main/compiler/bench"><code>compiler/bench/</code></a>: <code>python3 compiler/bench/languages.py</code> runs them again.</li>
       </ul>
     </div>
@@ -1428,11 +1428,11 @@ compiler/target/release/nexo build --release app.nexo -o app
     <div class="section-head">
       <p class="eyebrow">Roadmap</p>
       <h2>Where Nexo is today</h2>
-      <p class="section-intro">Nexo is built in phases, and each one ends with something usable. The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> describes the whole language, including modules such as machine learning, user interfaces and notifications that are not implemented yet. Every choice made where it was ambiguous is recorded in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>.</p>
+      <p class="section-intro">Nexo is built in milestones, and each one ends with something usable. The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> describes the whole language, including modules such as machine learning, user interfaces and notifications that are not implemented yet. Every choice made where it was ambiguous is recorded in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>.</p>
     </div>
 
     <div class="progress" aria-hidden="true"><span style="width: 75%"></span></div>
-    <p class="progress-label">6 of 8 phases done</p>
+    <p class="progress-label">6 of 8 milestones done</p>
 
     <ol class="phases">
       <li class="done"><span class="pn">0</span><div><h4>Prototype</h4><p>Python tree-walking interpreter for the core</p></div><span class="status done">Done</span></li>
@@ -1441,13 +1441,13 @@ compiler/target/release/nexo build --release app.nexo -o app
       <li class="done"><span class="pn">3</span><div><h4>Tooling</h4><p><code>nexo fmt</code>, <code>lint</code>, <code>fix</code>, <code>check</code>, <code>lsp</code>, a REPL in the compiler, the VS Code extension, a fix for every error</p></div><span class="status done">Done</span></li>
       <li class="done"><span class="pn">4</span><div><h4>Library and modules</h4><p>Standard library, <code>nexo.ai</code>, <code>nexo.web</code>, <code>nexo.db</code>, C and Python interop</p></div><span class="status done">Done</span></li>
       <li class="done"><span class="pn">5</span><div><h4>Cloud and operations</h4><p><code>nexo.infra</code> for AWS, Azure, GCP and k8s, <code>nexo.ci</code>, <code>nexo.stream</code>, feature flags, privacy</p></div><span class="status done">Done</span></li>
-      <li><span class="pn">6</span><div><h4>Optimisation and 1.0</h4><p>The tools are done: faster compiled code, reproducible release builds with an SBOM, <code>nexo audit</code>, <code>docs --for-ai</code>, <code>test --suggest</code>, <code>check --intent</code>. Left: two performance goals, the program <code>policy</code>, and what needs people (<a href="#phase6">below</a>)</p></div><span class="status now">In progress</span></li>
+      <li><span class="pn">6</span><div><h4>Optimisation and 1.0</h4><p>The tools are done: faster compiled code, reproducible release builds with an SBOM, <code>nexo audit</code>, <code>docs --for-ai</code>, <code>test --suggest</code>, <code>check --intent</code>. Left: two performance goals, the program <code>policy</code>, and what needs people (<a href="#guarantees">below</a>)</p></div><span class="status now">In progress</span></li>
       <li><span class="pn">7</span><div><h4>Self-hosting</h4><p>The compiler rewritten in Nexo</p></div><span class="status next">Planned</span></li>
     </ol>
 
-    <div class="phase-status" id="phase6">
-      <h3>Phase 6: where the guarantees stand</h3>
-      <p>Phase 6 ends when every guarantee of the specification is met or removed. Each one is measured in the repository, and <a href="https://github.com/marcrabadan/nexo/blob/main/docs/guarantees.md"><code>docs/guarantees.md</code></a> has the evidence. Since the start of the phase, records went from 8.0× Rust's time to 2.53×, maps from 6.2× to 1.42×, and compiling 100,000 lines from 208 s to 13.9 s.</p>
+    <div class="phase-status" id="guarantees">
+      <h3>Toward 1.0: where the guarantees stand</h3>
+      <p>Edition 1.0 waits until every guarantee of the specification is met or removed. Each one is measured in the repository, and <a href="https://github.com/marcrabadan/nexo/blob/main/docs/guarantees.md"><code>docs/guarantees.md</code></a> has the evidence. Since this work started, records went from 8.0× Rust's time to 2.53×, maps from 6.2× to 1.42×, and compiling 100,000 lines from 208 s to 13.9 s.</p>
       <div class="table-wrap"><table class="ref-table">
         <thead><tr><th>Goal</th><th>Target</th><th>Today</th><th>State</th></tr></thead>
         <tbody>
@@ -1455,7 +1455,7 @@ compiler/target/release/nexo build --release app.nexo -o app
           <tr><td>Compilation</td><td>100,000 lines in under 10 s in development mode</td><td>13.9 s, most of it in clang, on four cores</td><td><span class="status miss">Not met</span></td></tr>
           <tr><td>Memory</td><td>under 1.3× Rust's RAM</td><td>1.10× at most (lists), 0.75× on strings</td><td><span class="status done">Met</span></td></tr>
           <tr><td>Program start-up</td><td>under 20 ms</td><td>2.3 ms</td><td><span class="status done">Met</span></td></tr>
-          <tr><td>No memory errors or data races</td><td>for every program</td><td>the leak checker on every suite; 310 random programs, identical in both phases, and 500 more every night</td><td><span class="status done">Met</span></td></tr>
+          <tr><td>No memory errors or data races</td><td>for every program</td><td>the leak checker on every suite; 310 random programs, identical in both implementations, and 500 more every night</td><td><span class="status done">Met</span></td></tr>
           <tr><td>Every error comes with its fix</td><td>every message</td><td>32 of 32 programs that do not compile say how to fix them</td><td><span class="status done">Met</span></td></tr>
           <tr><td>Hardened supply chain</td><td>reproducible, with an SBOM</td><td>two release builds are the same byte for byte, with the same CycloneDX SBOM; signing needs the registry</td><td><span class="status done">Met</span></td></tr>
           <tr><td>From idea to production</td><td>one project</td><td><code>examples/deploy</code>: app, tests, four clouds and the pipeline in one file</td><td><span class="status done">Met</span></td></tr>

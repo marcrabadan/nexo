@@ -1,7 +1,7 @@
 ## Shop events: orders arrive on a stream and each one is handled once,
 ## a bad one goes to the dead letters after its retries, clicks are counted
 ## per minute, and a flag gives some users free shipping. Run the stream
-## part with `nexo test events.nexo`, on the local broker of phase 5.
+## part with `nexo test events.nexo`, on the local broker.
 use nexo.stream
 
 flags:
