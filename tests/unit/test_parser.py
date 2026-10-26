@@ -7,7 +7,8 @@ from nexo.errors import NexoError
 from nexo.parser import parse
 
 CONFORMANCE = Path(__file__).resolve().parent.parent / "conformance"
-SYNTAX_ERRORS = {"s03_else_without_var", "s24_tab", "s24_indent", "s06_sum_without_group"}
+SYNTAX_ERRORS = {"s03_else_without_var", "s24_tab", "s24_indent", "s06_sum_without_group",
+                 "s09_policy_entry", "s09_policy_place", "s09_policy_twice"}
 
 
 def stmt(src):
