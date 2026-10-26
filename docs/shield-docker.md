@@ -68,7 +68,8 @@ NEXO_SHIELD_DOCKER_IMAGE=nexo-shield:local python -m pytest -q tests/test_shield
 The strict validation command must succeed before claiming the Linux worker is
 validated on a deployment host. This development host reports Landlock ABI 0,
 including inside Docker: positive Landlock tests remain blocked here. CI requires
-actual kernel support and fails when it is unavailable.
+actual kernel support and fails when it is unavailable. Current remote results
+are tracked in [Shield PR #18](https://github.com/marcrabadan/nexo/pull/18).
 
 For builds behind a trusted TLS proxy, `build.sh` passes standard proxy build
 arguments and optionally mounts the public CA bundle named by `SSL_CERT_FILE`

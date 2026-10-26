@@ -214,7 +214,7 @@ This development environment returns ENOSYS for the Landlock ABI query, both
 inside and outside the tool execution filter. It reports seccomp and openat2 as
 available. Full-profile filesystem/native/timeout tests therefore cannot be
 validated here; attempting a sandbox launch returns 125 without running the
-payload. Positive Landlock validation still needs a compatible non-root Linux
+payload. Positive Landlock validation requires a compatible non-root Linux
 host or CI run. No syscall-verification bypass was used to make those tests pass.
 
 Remaining work: a reviewed online profile with DNS/IP/proxy enforcement, cgroup
@@ -223,15 +223,15 @@ typed native RPC and package-registry metadata. Phase 3's information-flow label
 and agent/tool authorization remain separate from these capability controls.
 
 
-## Results from this cloud environment
+## Phase 2 snapshot before Docker integration
 
 - `cargo build --locked --workspace`: passed; compiler and worker artifacts built.
 - `cargo test --locked -j 4`: 49 tests passed; the existing optional decision
   microbenchmark remained ignored. Nested subprocess tests additionally verify
   seccomp, actual hard limits and pidfd targeting; no child services remain.
 - Full `pytest -q` snapshot: 1125 passed, 14 skipped in 757 seconds. This run
-  collected 1139 cases, before 15 final hardening cases were added. Current
-  collection contains 1154 cases; the full suite was not rerun after those additions.
+  collected 1139 cases, before 15 final hardening cases were added. At that point,
+  collection contained 1154 cases; this snapshot predates the final Docker suite.
 - Broad security/policy/HTTP/catalog regressions: 140 passed, 13 skipped.
   Final isolation/catalog run after the last hardening changes: 56 passed,
   13 skipped. The skips are positive Landlock/native/Nexo sandbox cases; the
@@ -246,6 +246,7 @@ These results validate the synchronous dependency model, irreversible syscall
 filtering, actual resource limits and safe rejection on this host. They do not
 establish positive Landlock filesystem confinement here. The added CI capability
 step requires actual support before running those kernel integration assertions;
-that remote CI job has not been executed from this chat.
+remote CI was not run for this historical snapshot. Current integration and
+remote validation are tracked in [Shield PR #18](https://github.com/marcrabadan/nexo/pull/18).
 
 For container deployment, see [Shield in Docker](shield-docker.md).

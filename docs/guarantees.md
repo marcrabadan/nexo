@@ -33,7 +33,9 @@ workers exist; ordinary explicit D142 native grants remain trusted code.
 
 Shield phase 2 adds an explicit [Linux offline worker and dependency
 ceilings](shield-isolation.md). OS enforcement requires a supported kernel;
-this cloud host lacks Landlock, so positive Landlock validation remains pending.
+this cloud host lacks Landlock, so positive validation requires a compatible
+host. [Shield PR #18](https://github.com/marcrabadan/nexo/pull/18) tracks remote CI
+validation, including mandatory kernel isolation inside Docker.
 The implementation fails closed rather than treating API checks as OS isolation.
 [Docker deployment](shield-docker.md) adds a non-root, read-only, offline container
 with capability dropping, seccomp and cgroup limits. This layer works independently
