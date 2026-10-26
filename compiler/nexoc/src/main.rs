@@ -13,11 +13,14 @@
 //!     nexo db diff|migrate file.nexo     migrations of nexo.db (D101): --db path, --allow-drop
 
 mod ai_cmd;
+mod audit;
 mod ast;
 mod cheader;
 mod checker;
 mod codegen;
+mod docs;
 mod fmt;
+mod intent;
 mod json;
 mod lexer;
 mod lint;
@@ -28,6 +31,10 @@ mod parser;
 mod phase5;
 mod prove;
 mod resolve;
+mod scalar;
+mod sbom;
+mod split;
+mod suggest;
 mod typecheck;
 
 use std::path::{Path, PathBuf};
@@ -36,7 +43,7 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check [paths...] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]"
+    "Usage: nexo [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs --for-ai [file.nexo] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo]]"
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -44,6 +51,11 @@ struct CompileError(String);
 
 /// Compile Nexo source to LLVM IR.
 fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Result<String, CompileError> {
+    to_ir_program(source, name, test_mode, trust_ensure).map(|(ir, _)| ir)
+}
+
+/// The IR and the program it was made from, with its modules linked in.
+fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Result<(String, ast::Program), CompileError> {
     let fail = |d: Diagnostic| CompileError(render(name, source, d.span, &d.text()));
     let (mut program, next_id) = parser::parse_file(source, 0, 0).map_err(fail)?;
     // `use c`: the headers are read now (D110)
@@ -64,7 +76,8 @@ fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Resul
         shown_source: None,
         db_command: false,
     };
-    codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)
+    let ir = codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)?;
+    Ok((ir, program))
 }
 
 /// `nexo db diff|migrate file.nexo [--db path] [--allow-drop]` (D101): the
@@ -485,38 +498,151 @@ fn work_dir() -> PathBuf {
     dir
 }
 
+/// The first line of `clang --version` (the compiler named in the SBOM).
+fn cc_version() -> String {
+    let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
+    Command::new(&cc)
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().next().map(str::to_string))
+        .unwrap_or(cc)
+}
+
 /// Compile IR and link it with the runtime into a native executable.
+/// Development mode does not optimise: it compiles several times faster
+/// (D127).
 fn link(ir: &str, out: &Path, release: bool) -> Result<(), String> {
-    link_at(ir, out, if release { "-O2" } else { "-O1" })
+    link_at(ir, out, if release { "-O2" } else { "-O0" })
 }
 
 /// The same with a given optimisation level (the REPL uses -O0: it
 /// compiles the session again for every input).
 fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
-    let dir = work_dir();
-    let ll = dir.join(format!("{}.ll", out.file_name().unwrap_or_default().to_string_lossy()));
-    std::fs::write(&ll, ir).map_err(|e| e.to_string())?;
+    // the same name for every program: it is written into the executable,
+    // and two builds of the same code give the same bytes (D128)
+    static BUILDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = work_dir().join(BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed).to_string());
+    let _ = std::fs::create_dir_all(&dir);
+    let ll = dir.join("program.ll");
     let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
-    let output = Command::new(&cc)
-        .arg(opt)
-        .arg("-Wno-override-module")
-        .arg(&ll)
-        .arg(runtime_lib())
-        .args(["-o"])
-        .arg(out)
-        .args(["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"])
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("{cc}: {e}"))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    let libs = ["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
+    let fail = |output: std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
+    let dev = opt != "-O2";
+    let mut parts = 1;
+    if dev {
+        // a large program is compiled in parts, at the same time (D135)
+        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        parts = (ir.len() / (2 << 20)).clamp(1, cores.min(8));
+    }
+    let single;
+    let ir = if dev && parts == 1 {
+        single = dev_ir(ir);
+        &single[..]
+    } else {
+        ir
+    };
+    if parts == 1 {
+        use std::io::Write;
+        let mut f = std::io::BufWriter::new(std::fs::File::create(&ll).map_err(|e| e.to_string())?);
+        f.write_all(ir.as_bytes()).and_then(|_| f.flush()).map_err(|e| e.to_string())?;
+        let output = Command::new(&cc)
+            .arg(opt)
+            .arg("-Wno-override-module")
+            .arg(&ll)
+            .arg(runtime_lib())
+            .args(["-o"])
+            .arg(out)
+            .args(libs)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("{cc}: {e}"))?;
+        if !output.status.success() {
+            return Err(fail(output));
+        }
+    } else {
+        // each part is made ready for clang by a thread of its own
+        let modules = split::split(ir, parts);
+        let objects: Vec<PathBuf> = (0..modules.len()).map(|k| dir.join(format!("program.{k}.o"))).collect();
+        // each part goes to its clang through a pipe, not a file
+        let results: Vec<Result<std::process::Output, String>> = std::thread::scope(|sc| {
+            let handles: Vec<_> = objects
+                .iter()
+                .zip(&modules)
+                .map(|(obj, m)| {
+                    let cc = cc.clone();
+                    sc.spawn(move || {
+                        let m = dev_ir(m);
+                        let mut child = Command::new(&cc)
+                            .arg(opt)
+                            .arg("-Wno-override-module")
+                            .args(["-c", "-x", "ir", "-", "-o"])
+                            .arg(obj)
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::piped())
+                            .spawn()
+                            .map_err(|e| format!("{cc}: {e}"))?;
+                        let mut stdin = child.stdin.take().unwrap();
+                        // written by a thread of its own, so clang's messages
+                        // are read while it reads the code
+                        std::thread::scope(|w| {
+                            w.spawn(|| {
+                                use std::io::Write;
+                                let _ = stdin.write_all(m.as_bytes());
+                                drop(stdin);
+                            });
+                            child.wait_with_output().map_err(|e| format!("{cc}: {e}"))
+                        })
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err("clang".into()))).collect()
+        });
+        for r in results {
+            let output = r?;
+            if !output.status.success() {
+                return Err(fail(output));
+            }
+        }
+        drop(modules);
+        let output = Command::new(&cc)
+            .args(&objects)
+            .arg(runtime_lib())
+            .args(["-o"])
+            .arg(out)
+            .args(libs)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("{cc}: {e}"))?;
+        if !output.status.success() {
+            return Err(fail(output));
+        }
+        if std::env::var("NEXO_KEEP_IR").is_ok() {
+            let _ = std::fs::write(&ll, ir);
+        }
     }
     // NEXO_KEEP_IR=1 keeps the IR next to the program (out.ll)
     if std::env::var("NEXO_KEEP_IR").is_ok() {
         let _ = std::fs::copy(&ll, out.with_extension("ll"));
     }
-    let _ = std::fs::remove_file(&ll);
+    let _ = std::fs::remove_dir_all(&dir);
     Ok(())
+}
+
+/// The IR of development mode: values pass as two words, which clang
+/// compiles fast (D141), and the reference-count helpers (#0) and small
+/// frames (#1) are called instead of copied into every use, so clang
+/// compiles half the code (D135).
+fn dev_ir(ir: &str) -> String {
+    let mut s = scalar::scalarize(ir);
+    for g in ["#0", "#1"] {
+        let pat = format!("attributes {g} = {{ alwaysinline }}");
+        if let Some(i) = s[..s.len().min(4096)].find(&pat) {
+            s.replace_range(i..i + pat.len(), &format!("attributes {g} = {{ noinline }}"));
+        }
+    }
+    s
 }
 
 pub fn read_source(path: &str) -> Result<String, String> {
@@ -599,8 +725,8 @@ fn build(args: &[String]) -> u8 {
             return 1;
         }
     };
-    let ir = match to_ir(&source, &file, false, trust_ensure) {
-        Ok(ir) => ir,
+    let (ir, program) = match to_ir_program(&source, &file, false, trust_ensure) {
+        Ok(x) => x,
         Err(CompileError(text)) => {
             eprint!("{text}");
             return 1;
@@ -622,6 +748,21 @@ fn build(args: &[String]) -> u8 {
         return 1;
     }
     let _ = std::fs::remove_dir_all(work_dir());
+    if release {
+        // the bill of materials, next to the program (D128)
+        let mut files = vec![(file.clone(), source.clone())];
+        for id in &program.files {
+            if let Some((n, text)) = nexo_diag::file_of(*id) {
+                files.push((n.to_string(), text.to_string()));
+            }
+        }
+        let doc = sbom::document(Path::new(&out), &files, &program.body, &cc_version());
+        let sbom_path = format!("{out}.sbom.json");
+        if let Err(e) = std::fs::write(&sbom_path, doc) {
+            eprintln!("Error: {sbom_path}: {e}");
+            return 1;
+        }
+    }
     0
 }
 
@@ -807,6 +948,168 @@ fn run_lint(paths: &[String]) -> u8 {
     status
 }
 
+/// `nexo audit [paths]`: every use of unsafe code, then a summary (D129).
+fn run_audit(paths: &[String]) -> u8 {
+    let (mut total, mut files, mut status) = (0usize, 0usize, 0u8);
+    for f in test_files(paths) {
+        let display = f.to_string_lossy().into_owned();
+        let source = match read_source(&display) {
+            Ok(s) => s,
+            Err(e) => {
+                eprint!("{e}");
+                status = 1;
+                continue;
+            }
+        };
+        let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
+        match audit::audit_source(&source) {
+            Ok(found) => {
+                for (line, _, text) in &found {
+                    println!("{name}:{line}: {text}");
+                }
+                total += found.len();
+                files += usize::from(!found.is_empty());
+            }
+            Err(d) => {
+                eprint!("{}", render(&name, &source, d.span, &d.text()));
+                status = 1;
+            }
+        }
+    }
+    if total > 0 {
+        println!("{}", msg("info.audit_summary", &[("n", total.to_string()), ("files", files.to_string())]));
+    } else if status == 0 {
+        let shown = if paths.is_empty() { ".".to_string() } else { paths.join(", ") };
+        println!("{}", msg("info.audit_none", &[("path", shown)]));
+    }
+    status
+}
+
+/// `nexo test --suggest file.nexo` (D131): the probe is compiled as a
+/// file next to the program (its modules are found from there) and run
+/// for at most a minute.
+fn run_suggest(args: &[String]) -> u8 {
+    let [path] = args else {
+        eprintln!("{}", usage());
+        return 2;
+    };
+    let source = match read_source(path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprint!("{e}");
+            return 1;
+        }
+    };
+    let program = match parser::parse(&source) {
+        Ok(p) => p,
+        Err(d) => {
+            eprint!("{}", render(path, &source, d.span, &d.text()));
+            return 1;
+        }
+    };
+    let run = |text: &str| run_probe(path, "suggest", text, 60);
+    print!("{}", suggest::suggest(&program, &source, path, &run));
+    let _ = std::fs::remove_dir_all(work_dir());
+    0
+}
+
+/// Compile a probe program as a file next to `path` (its modules are found
+/// from there) and run it for at most `secs` seconds: its standard output
+/// (D131, D132).
+fn run_probe(path: &str, what: &str, text: &str, secs: u64) -> String {
+    let folder = Path::new(path).parent().unwrap_or(Path::new(""));
+    let probe = folder.join(format!(".nexo-{what}-{}.nexo", std::process::id())).to_string_lossy().into_owned();
+    let Ok(ir) = to_ir(text, &probe, false, false) else { return String::new() };
+    let exe = work_dir().join(format!("{what}-probe"));
+    if link(&ir, &exe, false).is_err() {
+        return String::new();
+    }
+    let Ok(mut child) = Command::new(&exe).stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null()).spawn() else {
+        return String::new();
+    };
+    let mut out = child.stdout.take().unwrap();
+    let reader = std::thread::spawn(move || {
+        let mut buf = String::new();
+        let _ = std::io::Read::read_to_string(&mut out, &mut buf);
+        buf
+    });
+    let start = std::time::Instant::now();
+    while child.try_wait().ok().flatten().is_none() {
+        if start.elapsed() > std::time::Duration::from_secs(secs) {
+            let _ = child.kill();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = child.wait();
+    reader.join().unwrap_or_default()
+}
+
+/// `nexo check --intent [paths]` (D132).
+fn run_intent(paths: &[String]) -> u8 {
+    let (mut total, mut status) = (0usize, 0u8);
+    for f in test_files(paths) {
+        let display = f.to_string_lossy().into_owned();
+        let source = match read_source(&display) {
+            Ok(s) => s,
+            Err(e) => {
+                eprint!("{e}");
+                status = 1;
+                continue;
+            }
+        };
+        let name = if paths.is_empty() { display.strip_prefix("./").unwrap_or(&display).to_string() } else { display.clone() };
+        let program = match parser::parse(&source) {
+            Ok(p) => p,
+            Err(d) => {
+                eprint!("{}", render(&name, &source, d.span, &d.text()));
+                status = 1;
+                continue;
+            }
+        };
+        let run = |text: &str| run_probe(&display, "intent", text, 600);
+        let (warnings, error) = intent::check_intent(&program, &source, &name, &run);
+        for w in &warnings {
+            print!("{w}");
+        }
+        total += warnings.len();
+        if let Some(e) = error {
+            eprintln!("Error: {e}");
+            let _ = std::fs::remove_dir_all(work_dir());
+            return 1;
+        }
+    }
+    let _ = std::fs::remove_dir_all(work_dir());
+    if total > 0 {
+        println!("{}", msg("info.intent_summary", &[("n", total.to_string())]));
+        return 1;
+    }
+    if status == 0 {
+        let shown = if paths.is_empty() { ".".to_string() } else { paths.join(", ") };
+        println!("{}", msg("info.intent_ok", &[("path", shown)]));
+    }
+    status
+}
+
+/// `nexo docs --for-ai [file]` (D130).
+fn run_docs(args: &[String]) -> u8 {
+    if args.first().map(String::as_str) != Some("--for-ai") || args.len() > 2 {
+        eprintln!("{}", usage());
+        return 2;
+    }
+    match args.get(1) {
+        None => print!("{}", docs::for_ai(None)),
+        Some(path) => match read_source(path) {
+            Ok(source) => print!("{}", docs::for_ai(Some((path, &source)))),
+            Err(e) => {
+                eprint!("{e}");
+                return 1;
+            }
+        },
+    }
+    0
+}
+
 /// `nexo fix [paths]`: apply the safe fixes in place and print the files changed.
 fn run_fix(paths: &[String]) -> u8 {
     let mut status = 0;
@@ -892,12 +1195,16 @@ fn main() -> ExitCode {
         repl()
     } else {
         match rest[0].as_str() {
+            "test" if rest.get(1).map(String::as_str) == Some("--suggest") => run_suggest(&rest[2..]),
             "test" => run_tests(&rest[1..]),
             "build" => build(&rest[1..]),
             "fmt" => run_fmt(&rest[1..]),
             "lint" => run_lint(&rest[1..]),
             "fix" => run_fix(&rest[1..]),
+            "check" if rest.get(1).map(String::as_str) == Some("--intent") => run_intent(&rest[2..]),
             "check" => run_check(&rest[1..]),
+            "audit" => run_audit(&rest[1..]),
+            "docs" => run_docs(&rest[1..]),
             "db" => run_db(&rest[1..]),
             "flags" => phase5::run_flags(&rest[1..]),
             "privacy" => phase5::privacy_report(&rest[1..]),

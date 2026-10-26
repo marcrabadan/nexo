@@ -35,6 +35,9 @@ pub const T_MISSING: u64 = 7;
 /// A `weak` field of a record: a reference that does not keep its target
 /// alive. It never leaves the runtime (reading the field upgrades it).
 pub const T_WEAK: u64 = 8;
+/// A text of up to seven bytes kept in the value itself (D138): the low
+/// byte of `bits` is its length, the next seven its bytes.
+pub const T_SSTR: u64 = 9;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -101,8 +104,64 @@ fn count(delta: i64) {
     }
 }
 
+/// Freed heap objects kept for the next ones, per thread (D134): every
+/// object has the same size, so a list of free blocks serves them all
+/// without asking malloc. Returned to malloc when the thread ends.
+const POOL_MAX: usize = 4096;
+
+thread_local! {
+    /// Freed blocks of this thread, linked through their first word, and
+    /// how many there are (plain cells: reading them costs one load).
+    static POOL_HEAD: StdCell<*mut Heap> = const { StdCell::new(std::ptr::null_mut()) };
+    static POOL_LEN: StdCell<usize> = const { StdCell::new(0) };
+}
+
 fn alloc(o: Obj, rc: u64) -> *mut Heap {
-    Box::into_raw(Box::new(Heap { rc: AtomicU64::new(rc), weak: AtomicU64::new(1), obj: ManuallyDrop::new(o) }))
+    let h = take_block();
+    unsafe { std::ptr::write(h, Heap { rc: AtomicU64::new(rc), weak: AtomicU64::new(1), obj: ManuallyDrop::new(o) }) };
+    h
+}
+
+/// The memory for one object: a freed block of this thread, or malloc's.
+#[inline(always)]
+fn take_block() -> *mut Heap {
+    let h = POOL_HEAD.with(|p| p.get());
+    if !h.is_null() {
+        unsafe {
+            POOL_HEAD.with(|p| p.set(*(h as *mut *mut Heap)));
+            POOL_LEN.with(|n| n.set(n.get() - 1));
+        }
+        return h;
+    }
+    let h = unsafe { std::alloc::alloc(std::alloc::Layout::new::<Heap>()) } as *mut Heap;
+    if h.is_null() {
+        std::alloc::handle_alloc_error(std::alloc::Layout::new::<Heap>());
+    }
+    h
+}
+
+/// The memory of an object whose contents are gone.
+fn free_block(h: *mut Heap) {
+    let n = POOL_LEN.with(|n| n.get());
+    if n < POOL_MAX {
+        unsafe { *(h as *mut *mut Heap) = POOL_HEAD.with(|p| p.get()) };
+        POOL_HEAD.with(|p| p.set(h));
+        POOL_LEN.with(|c| c.set(n + 1));
+    } else {
+        unsafe { std::alloc::dealloc(h as *mut u8, std::alloc::Layout::new::<Heap>()) };
+    }
+}
+
+/// Give this thread's free blocks back to malloc: a thread that runs
+/// tasks calls it before it ends.
+pub fn flush_pool() {
+    let mut h = POOL_HEAD.with(|p| p.replace(std::ptr::null_mut()));
+    POOL_LEN.with(|n| n.set(0));
+    while !h.is_null() {
+        let next = unsafe { *(h as *mut *mut Heap) };
+        unsafe { std::alloc::dealloc(h as *mut u8, std::alloc::Layout::new::<Heap>()) };
+        h = next;
+    }
 }
 
 #[inline]
@@ -110,12 +169,34 @@ fn heap(v: V) -> &'static Heap {
     unsafe { &*(v.bits as *const Heap) }
 }
 
+/// Whether a second thread may touch values (D126). Until the program
+/// starts one (`parallel`, `spawn`, a server, a stream), counts change
+/// without atomic instructions; the flag is set before the first such
+/// thread starts and is never cleared, so every later change is atomic.
+#[no_mangle]
+pub static nx_multi: AtomicBool = AtomicBool::new(false);
+
+/// Called before starting a thread that may touch values.
+pub fn going_multi() {
+    nx_multi.store(true, Ordering::SeqCst);
+}
+
+#[inline]
+fn single() -> bool {
+    !nx_multi.load(Ordering::Relaxed)
+}
+
 /// Take one more reference.
 #[inline]
 pub fn retain(v: V) {
     match v.tag {
         T_OBJ => {
-            heap(v).rc.fetch_add(1, Ordering::Relaxed);
+            let rc = &heap(v).rc;
+            if single() {
+                rc.store(rc.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+            } else {
+                rc.fetch_add(1, Ordering::Relaxed);
+            }
         }
         T_WEAK => {
             heap(v).weak.fetch_add(1, Ordering::Relaxed);
@@ -129,7 +210,14 @@ pub fn retain(v: V) {
 pub fn release(v: V) {
     match v.tag {
         T_OBJ => {
-            if heap(v).rc.fetch_sub(1, Ordering::Release) == 1 {
+            let rc = &heap(v).rc;
+            if single() {
+                let n = rc.load(Ordering::Relaxed);
+                rc.store(n - 1, Ordering::Relaxed);
+                if n == 1 {
+                    destroy_later(v.bits as *mut Heap);
+                }
+            } else if rc.fetch_sub(1, Ordering::Release) == 1 {
                 fence(Ordering::Acquire);
                 destroy_later(v.bits as *mut Heap);
             }
@@ -145,27 +233,52 @@ fn release_weak(h: *mut Heap) {
     let weak = &unsafe { &*h }.weak;
     if weak.load(Ordering::Acquire) == 1 || weak.fetch_sub(1, Ordering::Release) == 1 {
         fence(Ordering::Acquire);
-        unsafe { drop(Box::from_raw(h)) };
+        free_block(h);
     }
 }
 
 thread_local! {
     static FREEING: StdCell<bool> = const { StdCell::new(false) };
     static PENDING: RefCell<Vec<*mut Heap>> = const { RefCell::new(Vec::new()) };
+    /// whether PENDING has anything (read before touching it)
+    static PENDING_ANY: StdCell<bool> = const { StdCell::new(false) };
 }
 
 /// Destroy an object whose count reached 0. Its contents are released
 /// with a work list rather than recursively, so a long chain of records
 /// does not exhaust the stack.
 pub fn destroy_later(h: *mut Heap) {
+    // a small record of plain values owns nothing else: its memory goes
+    // back at once (D134)
+    if let Obj::Record(r) = unsafe { &*(*h).obj } {
+        if let Fields::Inline(n, vals) = r.fields.borrow() {
+            if vals[..*n as usize].iter().all(|v| v.tag != T_OBJ && v.tag != T_WEAK) {
+                count(-1);
+                release_weak(h);
+                return;
+            }
+        }
+    }
     if FREEING.with(|f| f.get()) {
         PENDING.with(|p| p.borrow_mut().push(h));
+        PENDING_ANY.with(|a| a.set(true));
         return;
     }
     FREEING.with(|f| f.set(true));
     destroy(h);
-    while let Some(next) = PENDING.with(|p| p.borrow_mut().pop()) {
-        destroy(next);
+    while PENDING_ANY.with(|a| a.get()) {
+        let next = PENDING.with(|p| {
+            let mut p = p.borrow_mut();
+            let x = p.pop();
+            if p.is_empty() {
+                PENDING_ANY.with(|a| a.set(false));
+            }
+            x
+        });
+        match next {
+            Some(n) => destroy(n),
+            None => break,
+        }
     }
     FREEING.with(|f| f.set(false));
 }
@@ -237,6 +350,24 @@ impl Val {
         Val(V { tag: T_OBJ, bits: alloc(o, 1) as u64 })
     }
 
+    /// A record whose first `n` (at most four) fields take `vals`,
+    /// written straight into its block (D126).
+    #[inline]
+    pub fn record_inline(ty: &'static RecordType, n: usize, vals: [V; INLINE_FIELDS]) -> Val {
+        count(1);
+        let h = take_block();
+        unsafe {
+            std::ptr::addr_of_mut!((*h).rc).write(AtomicU64::new(1));
+            std::ptr::addr_of_mut!((*h).weak).write(AtomicU64::new(1));
+            std::ptr::addr_of_mut!((*h).obj).write(ManuallyDrop::new(Obj::Record(Record {
+                ty,
+                fields: Mut::new(Fields::Inline(n as u8, vals)),
+                birth: std::cell::Cell::new(crate::state::stamp()),
+            })));
+        }
+        Val(V { tag: T_OBJ, bits: h as u64 })
+    }
+
     /// An object that is never freed.
     pub fn immortal(o: Obj) -> Val {
         Val(V { tag: T_OBJ, bits: alloc(o, IMMORTAL) as u64 })
@@ -288,7 +419,12 @@ impl Val {
         Val(V::bool(b))
     }
 
-    pub fn str(s: impl Into<String>) -> Val {
+    /// A text value: one of up to seven bytes is kept in the value itself
+    /// (D138), a longer one in an object.
+    pub fn str(s: impl Into<NStr> + AsRef<str>) -> Val {
+        if let Some(v) = V::short_str(s.as_ref()) {
+            return Val(v);
+        }
         Val::new(Obj::Str(s.into()))
     }
 
@@ -377,15 +513,68 @@ impl V {
         }
     }
 
-    pub fn as_str(self) -> Option<&'static str> {
+    /// The text of a text value: a short one is inside the value itself
+    /// (D138), so the text borrows from it.
+    #[inline]
+    pub fn as_str(&self) -> Option<&str> {
+        if self.tag == T_SSTR {
+            let len = (self.bits & 0xff) as usize;
+            let bytes = unsafe { std::slice::from_raw_parts((&self.bits as *const u64 as *const u8).add(1), len) };
+            return Some(unsafe { std::str::from_utf8_unchecked(bytes) });
+        }
         match self.get() {
             Some(Obj::Str(s)) => Some(s.as_str()),
             _ => None,
         }
     }
 
+    /// The text of a text value for as long as the program runs: a short
+    /// text is kept once in a table (only configuration code needs this).
+    pub fn as_static_str(self) -> Option<&'static str> {
+        if self.tag == T_SSTR {
+            static TABLE: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+            let s = self.as_str()?;
+            let mut t = TABLE.lock().unwrap();
+            if let Some(x) = t.iter().find(|x| **x == s) {
+                return Some(x);
+            }
+            let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+            t.push(leaked);
+            return Some(leaked);
+        }
+        match self.get() {
+            Some(Obj::Str(s)) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// A text of up to seven bytes as a value (D138); None for a longer one.
+    #[inline]
+    pub fn short_str(s: &str) -> Option<V> {
+        if s.len() > 7 {
+            return None;
+        }
+        let mut b = [0u8; 8];
+        b[0] = s.len() as u8;
+        b[1..=s.len()].copy_from_slice(s.as_bytes());
+        Some(V { tag: T_SSTR, bits: u64::from_le_bytes(b) })
+    }
+
+    /// Whether the value is a text (short or not).
+    #[inline]
+    pub fn is_str(self) -> bool {
+        self.tag == T_SSTR || matches!(self.get(), Some(Obj::Str(_)))
+    }
+
     pub fn same(self, other: V) -> bool {
         self.tag == other.tag && self.bits == other.bits
+    }
+
+    /// The value itself (as `Val::v`), so code reads borrowed elements of
+    /// either kind alike.
+    #[inline]
+    pub fn v(self) -> V {
+        self
     }
 
     /// Drop the literal tag: the value is now an ordinary float.
@@ -606,7 +795,71 @@ impl std::hash::Hasher for KeyHasher {
     }
 }
 
-pub type KeyIndex = HashMap<Key, usize, std::hash::BuildHasherDefault<KeyHasher>>;
+/// Hash of an int key: one multiplication spreads it over the high bits
+/// that the table looks at first.
+#[derive(Default)]
+pub struct IntHasher(u64);
+
+impl std::hash::Hasher for IntHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0 ^ *b as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        }
+    }
+    #[inline]
+    fn write_i64(&mut self, i: i64) {
+        self.0 = (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// Where each key of a map or set is in its list of entries. Int keys,
+/// the most common, have a table of their own with a cheaper hash (D134);
+/// the hash is never visible (maps keep their insertion order).
+#[derive(Default, Clone)]
+pub struct KeyIndex {
+    ints: HashMap<i64, usize, std::hash::BuildHasherDefault<IntHasher>>,
+    other: HashMap<Key, usize, std::hash::BuildHasherDefault<KeyHasher>>,
+}
+
+impl KeyIndex {
+    #[inline]
+    pub fn get(&self, k: &Key) -> Option<&usize> {
+        match k {
+            Key::Int(i) => self.ints.get(i),
+            _ => self.other.get(k),
+        }
+    }
+
+    #[inline]
+    pub fn get_int(&self, i: i64) -> Option<&usize> {
+        self.ints.get(&i)
+    }
+
+    pub fn contains_key(&self, k: &Key) -> bool {
+        self.get(k).is_some()
+    }
+
+    pub fn insert(&mut self, k: Key, i: usize) {
+        match k {
+            Key::Int(n) => {
+                self.ints.insert(n, i);
+            }
+            _ => {
+                self.other.insert(k, i);
+            }
+        }
+    }
+
+    /// Every key and its position (in no particular order).
+    pub fn iter(&self) -> impl Iterator<Item = (Key, usize)> + '_ {
+        self.ints.iter().map(|(k, i)| (Key::Int(*k), *i)).chain(self.other.iter().map(|(k, i)| (k.clone(), *i)))
+    }
+}
 
 /// An insertion-ordered map. Keys are simple values (D35).
 #[derive(Default, Clone)]
@@ -640,9 +893,84 @@ pub enum Key {
 
 pub struct Record {
     pub ty: &'static RecordType,
-    pub fields: Mut<Vec<Val>>,
+    pub fields: Mut<Fields>,
     /// the task that created it may change it (see `cow::check_write`)
     pub birth: std::cell::Cell<u64>,
+}
+
+/// Fields kept inside a record (D126).
+const INLINE_FIELDS: usize = 4;
+
+/// The values of a record's fields. Up to four live inside the object, so
+/// building a small record is one allocation; the number of fields of a
+/// record never changes.
+pub enum Fields {
+    Inline(u8, [V; INLINE_FIELDS]),
+    Heap(Vec<Val>),
+}
+
+impl Fields {
+    pub fn with(n: usize, mut f: impl FnMut(usize) -> Val) -> Fields {
+        if n <= INLINE_FIELDS {
+            let mut vals = [NONE; INLINE_FIELDS];
+            for (i, slot) in vals.iter_mut().enumerate().take(n) {
+                *slot = f(i).into_raw();
+            }
+            Fields::Inline(n as u8, vals)
+        } else {
+            Fields::Heap((0..n).map(f).collect())
+        }
+    }
+}
+
+impl From<Vec<Val>> for Fields {
+    fn from(v: Vec<Val>) -> Fields {
+        if v.len() <= INLINE_FIELDS {
+            let n = v.len();
+            let mut it = v.into_iter();
+            Fields::with(n, |_| it.next().unwrap())
+        } else {
+            Fields::Heap(v)
+        }
+    }
+}
+
+impl FromIterator<Val> for Fields {
+    fn from_iter<I: IntoIterator<Item = Val>>(iter: I) -> Fields {
+        Fields::from(iter.into_iter().collect::<Vec<Val>>())
+    }
+}
+
+impl std::ops::Deref for Fields {
+    type Target = [Val];
+    #[inline]
+    fn deref(&self) -> &[Val] {
+        match self {
+            // Val is a transparent V that owns its reference
+            Fields::Inline(n, vals) => unsafe { std::slice::from_raw_parts(vals.as_ptr() as *const Val, *n as usize) },
+            Fields::Heap(v) => v,
+        }
+    }
+}
+
+impl std::ops::DerefMut for Fields {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [Val] {
+        match self {
+            Fields::Inline(n, vals) => unsafe { std::slice::from_raw_parts_mut(vals.as_mut_ptr() as *mut Val, *n as usize) },
+            Fields::Heap(v) => v,
+        }
+    }
+}
+
+impl Drop for Fields {
+    fn drop(&mut self) {
+        if let Fields::Inline(n, vals) = self {
+            for v in &vals[..*n as usize] {
+                release(*v);
+            }
+        }
+    }
 }
 
 pub struct VariantValue {
@@ -650,13 +978,90 @@ pub struct VariantValue {
     pub fields: Vec<Val>,
 }
 
+/// Bytes of a text kept inside its object (D136).
+const INLINE_STR: usize = 70;
+
+/// A text value. A short one (most texts) lives inside its object, so it
+/// is one allocation instead of two; a longer one is a `String`.
+pub enum NStr {
+    Inline(u8, [u8; INLINE_STR]),
+    Heap(String),
+}
+
+impl NStr {
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        match self {
+            // only valid UTF-8 is ever written into the buffer
+            NStr::Inline(n, b) => unsafe { std::str::from_utf8_unchecked(&b[..*n as usize]) },
+            NStr::Heap(s) => s,
+        }
+    }
+}
+
+impl From<&str> for NStr {
+    #[inline]
+    fn from(s: &str) -> NStr {
+        if s.len() <= INLINE_STR {
+            let mut b = [0u8; INLINE_STR];
+            b[..s.len()].copy_from_slice(s.as_bytes());
+            NStr::Inline(s.len() as u8, b)
+        } else {
+            NStr::Heap(s.to_string())
+        }
+    }
+}
+
+impl From<String> for NStr {
+    #[inline]
+    fn from(s: String) -> NStr {
+        if s.len() <= INLINE_STR {
+            NStr::from(s.as_str())
+        } else {
+            NStr::Heap(s)
+        }
+    }
+}
+
+impl From<&String> for NStr {
+    fn from(s: &String) -> NStr {
+        NStr::from(s.as_str())
+    }
+}
+
+impl std::ops::Deref for NStr {
+    type Target = str;
+    #[inline]
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Clone for NStr {
+    fn clone(&self) -> NStr {
+        NStr::from(self.as_str())
+    }
+}
+
+impl PartialEq for NStr {
+    fn eq(&self, other: &NStr) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl std::fmt::Debug for NStr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.as_str().fmt(f)
+    }
+}
+
 pub enum Obj {
-    Str(String),
+    Str(NStr),
     Decimal(Dec),
     Money(Dec, &'static str),
     /// a number with a unit: 30s, 5 km, 512 MB, 10%
     Quantity(Dec, &'static str),
-    List(Mut<Vec<Val>>),
+    List(Mut<ListItems>),
     Map(Mut<NMap>),
     Set(Mut<NSet>),
     /// inclusive range
@@ -745,7 +1150,117 @@ impl V {
 }
 
 pub fn list(items: Vec<Val>) -> Val {
-    Val::new(Obj::List(Mut::new(items)))
+    Val::new(Obj::List(Mut::new(ListItems::from_vals(items))))
+}
+
+/// The elements of a list (D137). A list of ints keeps the numbers
+/// themselves, eight bytes each, as Rust's `Vec<i64>` does; the first
+/// element that is not an int turns it into a list of values, once.
+/// Reading never changes the representation (a list may be read by several
+/// tasks at once); only a change, made by the list's single owner, does.
+pub enum ListItems {
+    Ints(Vec<i64>),
+    Vals(Vec<Val>),
+}
+
+impl Default for ListItems {
+    fn default() -> ListItems {
+        ListItems::Ints(Vec::new())
+    }
+}
+
+impl Clone for ListItems {
+    fn clone(&self) -> ListItems {
+        match self {
+            ListItems::Ints(v) => ListItems::Ints(v.clone()),
+            ListItems::Vals(v) => ListItems::Vals(v.clone()),
+        }
+    }
+}
+
+impl ListItems {
+    pub fn from_vals(items: Vec<Val>) -> ListItems {
+        if items.iter().all(|x| x.tag == T_INT) {
+            ListItems::Ints(items.iter().map(|x| x.bits as i64).collect())
+        } else {
+            ListItems::Vals(items)
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            ListItems::Ints(v) => v.len(),
+            ListItems::Vals(v) => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Element i, borrowed.
+    #[inline]
+    pub fn get(&self, i: usize) -> Option<V> {
+        match self {
+            ListItems::Ints(v) => v.get(i).map(|n| V::int(*n)),
+            ListItems::Vals(v) => v.get(i).map(|x| x.v()),
+        }
+    }
+
+    /// The elements, borrowed.
+    pub fn iter(&self) -> impl Iterator<Item = V> + '_ {
+        let (ints, vals): (&[i64], &[Val]) = match self {
+            ListItems::Ints(v) => (v, &[]),
+            ListItems::Vals(v) => (&[], v),
+        };
+        ints.iter().map(|n| V::int(*n)).chain(vals.iter().map(|x| x.v()))
+    }
+
+    /// A copy of the elements as values.
+    pub fn to_vec(&self) -> Vec<Val> {
+        match self {
+            ListItems::Ints(v) => v.iter().map(|n| Val::int(*n)).collect(),
+            ListItems::Vals(v) => v.clone(),
+        }
+    }
+
+    #[inline]
+    pub fn push(&mut self, x: Val) {
+        match self {
+            ListItems::Ints(v) if x.tag == T_INT => v.push(x.bits as i64),
+            ListItems::Ints(_) => self.vals_mut().push(x),
+            ListItems::Vals(v) => v.push(x),
+        }
+    }
+
+    /// Change element i (it exists).
+    pub fn set(&mut self, i: usize, x: Val) {
+        match self {
+            ListItems::Ints(v) if x.tag == T_INT => v[i] = x.bits as i64,
+            _ => self.vals_mut()[i] = x,
+        }
+    }
+
+    /// The elements as values, to change them in place: a list of ints
+    /// becomes a list of values. Only the list's single owner calls it.
+    pub fn vals_mut(&mut self) -> &mut Vec<Val> {
+        if let ListItems::Ints(v) = self {
+            *self = ListItems::Vals(v.iter().map(|n| Val::int(*n)).collect());
+        }
+        match self {
+            ListItems::Vals(v) => v,
+            ListItems::Ints(_) => unreachable!(),
+        }
+    }
+
+    /// The numbers of a list of ints, for the compiled code (D137).
+    pub fn ints(&self) -> Option<&[i64]> {
+        match self {
+            ListItems::Ints(v) => Some(v),
+            ListItems::Vals(_) => None,
+        }
+    }
 }
 
 pub fn decimal(d: Dec) -> Val {

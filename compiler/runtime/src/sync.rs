@@ -155,7 +155,7 @@ fn restamp(v: V) {
     match v.get() {
         Some(Obj::Record(r)) => {
             r.birth.set(state::stamp());
-            for f in r.fields.borrow() {
+            for f in r.fields.borrow().iter() {
                 if f.tag != T_WEAK {
                     restamp(f.v());
                 }
@@ -341,6 +341,7 @@ pub fn spawn(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<()> {
         id
     };
     let deadlines = state::with_task(|s| s.deadlines.clone());
+    crate::value::going_multi();
     let started = std::thread::Builder::new().stack_size(TASK_STACK).spawn(move || {
         TASK.with(|t| t.set(id));
         state::set_stamp(crate::par::new_stamp());
@@ -359,6 +360,7 @@ pub fn spawn(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<()> {
         drop(f);
         state::with_task(|s| s.deadlines.clear());
         state::set_deadline_active(false);
+        crate::value::flush_pool();
         finished();
     });
     if started.is_err() {
@@ -427,7 +429,7 @@ fn mark_shared(v: V) {
     match v.get() {
         Some(Obj::Record(r)) => {
             r.birth.set(u64::MAX);
-            for f in r.fields.borrow() {
+            for f in r.fields.borrow().iter() {
                 if f.tag != T_WEAK {
                     mark_shared(f.v());
                 }
@@ -444,6 +446,7 @@ fn mark_shared(v: V) {
 /// nobody can change (numbers, texts, functions, types, channels).
 pub fn isolated_read(v: V, name: &str, is_var: bool, span: u32) -> R<()> {
     let immutable = match v.tag {
+        T_SSTR => true,
         T_OBJ => matches!(
             v.get(),
             Some(

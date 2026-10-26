@@ -63,8 +63,11 @@ def b_read_lines(call, path):
 
     def lines():
         with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                yield line.rstrip("\r\n")
+            try:
+                for line in fh:
+                    yield line.rstrip("\r\n")
+            except UnicodeDecodeError:
+                raise failure("InvalidData", call.span, detail=errors.msg("detail.encoding", path=path))
     return Lazy(lines)
 
 

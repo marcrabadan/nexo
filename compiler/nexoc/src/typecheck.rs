@@ -833,7 +833,7 @@ impl<'a> TypeChecker<'a> {
             "read_lines" => Ty::List(Box::new(Ty::Str)),
             "set" => Ty::Set,
             "split" => Ty::List(Box::new(Ty::Money(None))),
-            "convert" => Ty::Money(None),
+            // convert gives money, a quantity or text (json, csv): known when it runs
             _ => Ty::Unknown,
         }
     }

@@ -1,0 +1,17 @@
+# Texts of up to seven bytes and longer ones behave alike (D138)
+a = "abc"
+b = "ab" + "c"
+long = "abcdefgh"
+print(a == b, a + "defgh" == long, long[0] == "a", long == "abcdefg" + "h")
+counts = {}
+for word in "to be or not to be".split(" "):
+    counts[word] = (counts[word] ?? 0) + 1
+print(counts)
+print("ñandú".upper(), len("ñandú"), "ñ" in "ñandú")
+print(["pear", "fig", "banana", "kiwi"] |> sort by it)
+print(convert({"k": "short", "longer": "a longer text"}, to: json))
+var s = ""
+for c in "héllo":
+    s = c + s
+print(s, s.find("l"), "x{s}y")
+print("trim  ".trim() == "trim", "a,b".replace(",", "+"))

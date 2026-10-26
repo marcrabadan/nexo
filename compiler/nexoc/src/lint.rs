@@ -57,7 +57,7 @@ fn edit_span(span: Span, text: String) -> Edit {
 // ----------------------------------------------------------- walking
 
 #[derive(Clone, Copy)]
-enum Node<'a> {
+pub(crate) enum Node<'a> {
     E(&'a Expr),
     S(&'a Stmt),
 }
@@ -77,7 +77,7 @@ fn walk_fn<'a>(d: &'a FnDef, f: &mut dyn FnMut(Node<'a>)) {
     walk_body(&d.body, f);
 }
 
-fn walk_body<'a>(body: &'a [Stmt], f: &mut dyn FnMut(Node<'a>)) {
+pub(crate) fn walk_body<'a>(body: &'a [Stmt], f: &mut dyn FnMut(Node<'a>)) {
     for s in body {
         walk_stmt(s, f);
     }

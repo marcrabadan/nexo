@@ -1,0 +1,9 @@
+# found by compiler/scripts/fuzz.py: two assignments to an outer var in a loop
+var v = 1
+repeat 2:
+    v = 7
+    v -= 1
+for i in [1, 2]:
+    v += i
+    v = v * 2
+print(v)

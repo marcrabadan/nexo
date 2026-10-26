@@ -500,6 +500,7 @@ version = "0.1.0"
 dependencies = [
  "nexo-diag",
  "nexo-runtime",
+ "sha2",
 ]
 
 [[package]]

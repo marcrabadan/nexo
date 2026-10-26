@@ -18,8 +18,9 @@ pub fn key_of(v: V) -> Option<Key> {
         T_BOOL => Key::Bool(v.bits != 0),
         T_INT => Key::Int(v.bits as i64),
         T_FLOAT => float_key(f64::from_bits(v.bits)),
+        T_SSTR => Key::Str(v.as_str().unwrap().to_string()),
         T_OBJ => match v.get()? {
-            Obj::Str(s) => Key::Str(s.clone()),
+            Obj::Str(s) => Key::Str(s.to_string()),
             Obj::Decimal(d) => {
                 if d.is_integral() {
                     if let Some(i) = d.to_i64() {
@@ -126,9 +127,10 @@ pub fn get_index(obj: V, index: V, span: u32) -> R<Val> {
             if i < 0 || i as usize >= items.len() {
                 return Err(out_of_range(i, items.len(), span));
             }
-            Ok(items[i as usize].clone())
+            Ok(Val::from(items.get(i as usize).unwrap()))
         }
-        Some(Obj::Str(s)) => {
+        _ if obj.is_str() => {
+            let s = obj.as_str().unwrap();
             let Some(i) = index.as_int() else {
                 return Err(bad_index(obj, index, span));
             };
@@ -184,7 +186,7 @@ pub fn set_index(obj: V, index: V, value: V, span: u32) -> R<()> {
             if i < 0 || i as usize >= items.len() {
                 return Err(out_of_range(i, items.len(), span));
             }
-            items[i as usize] = value;
+            items.set(i as usize, value);
             Ok(())
         }
         _ => Err(diag(Diagnostic::new_spanless("not_indexable").arg("vtype", type_name(obj)), span)),
@@ -220,7 +222,7 @@ pub fn element_slot(container: V, index: V, scratch: &mut Val, span: u32) -> R<O
             if i < 0 || i as usize >= items.len() {
                 return Err(out_of_range(i, items.len(), span));
             }
-            let slot = &mut items[i as usize];
+            let slot = &mut items.vals_mut()[i as usize];
             crate::cow::make_unique_val(slot);
             Ok(Some(slot as *mut Val as *mut V))
         }
@@ -235,8 +237,8 @@ pub fn element_slot(container: V, index: V, scratch: &mut Val, span: u32) -> R<O
 pub fn contains(container: V, item: V, span: u32) -> R<bool> {
     let item = item.plain();
     match container.get() {
-        Some(Obj::Str(s)) => match item.as_str() {
-            Some(x) => Ok(s.contains(x)),
+        _ if container.is_str() => match item.as_str() {
+            Some(x) => Ok(container.as_str().unwrap().contains(x)),
             None => Err(diag(
                 Diagnostic::new_spanless("bad_operands").arg("op", "in").arg("a", type_name(item)).arg("b", "str"),
                 span,

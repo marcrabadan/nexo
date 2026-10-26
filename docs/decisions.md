@@ -1644,3 +1644,263 @@ per program, nothing to choose.
 - Keywords were already in English (section 16); the editor views of
   keywords in other languages (`nexo fmt --view es`, `nexo config lang`)
   were never implemented and are not planned.
+
+## Phase 6: optimisation and 1.0 (section 25)
+
+**D126. Faster compiled code.** Section 25 asks phase 6 for the
+performance goals of "Goals and guarantees" (under 1.5× Rust's time and
+1.3× its memory). None of these changes what a program prints.
+- A value is certainly a record of a type defined once (D84) when it is a
+  call to that type, `self` in one of its methods (methods are only
+  reached through a value of their type, and `self` is never assigned),
+  or a variable whose every assignment (with `=` and no declared type) is
+  one. `x.field` on such a value reads the field by its index, without
+  looking up the name; `x.method(args)` calls the method's function
+  directly, with the receiver as `self`, when the call has one positional
+  argument per parameter after `self`. A field declared `int` (not weak)
+  read from such a record is certainly an int: storing a field checks its
+  type.
+- A record keeps up to four fields inside its object (one allocation; the
+  object does not grow, other values are larger), and the compiled code
+  reads them at an offset the runtime finds when it starts.
+- `for i in a..b` with both ends certainly ints is a counted loop: no
+  range object and no iterator.
+- Reference counts change without atomic instructions until the program
+  starts a second thread that may touch values (`parallel`, `spawn`, a
+  server, a stream that listens). The flag is set before that thread
+  starts and is never cleared, so every later change is atomic; a program
+  with no threads never pays for them.
+- mimalloc as the allocator and link-time optimisation of the runtime
+  were tried and measured slower; they are not used.
+
+**D127. Compiling large programs.** The goal is 100,000 lines in under
+10 s in development mode. Resolving names was quadratic: each name was
+looked up in a list of the names of its scope, and each read computed its
+"Did you mean...?" suggestion against every visible name. Scopes now keep
+an index of their names, and suggestions among a large scope (more than
+32 names) or the builtins use an index of the strings left after
+deleting up to two characters (two names within distance 2 always share
+one); they give exactly the suggestion the linear search gave, the first
+name in scope order among the closest. Development mode (`nexo
+file.nexo`, `nexo build` without `--release`) no longer optimises the
+generated code (`-O0` instead of `-O1`): it compiled several times
+slower than it runs faster, and `--release` is the mode for speed.
+
+**D128. Reproducible release builds and the bill of materials.** "Goals
+and guarantees" asks that two builds of the same code produce the same
+binary byte for byte and that `nexo build --release` generate an SBOM.
+The only byte that changed between two builds was the name of the
+temporary IR file, which the object file records: it is now always
+`program.ll`, in a directory of its own. Builds of the same file give the
+same bytes from any directory and at any time. Next to the program,
+`nexo build --release` writes `<program>.sbom.json`, a CycloneDX 1.5
+document: the program (with the SHA-256 of the binary), each source file
+(main file and modules, with their SHA-256), the runtime and the crates
+it is built from (from the compiler's `Cargo.lock`, as `pkg:cargo` URLs),
+the C libraries and Python modules the program uses, and the C compiler.
+It has no date and no random serial number, so it is reproducible too.
+A development build writes none. Signed packages need the registry of
+section 13, which does not exist yet.
+
+**D129. `nexo audit`.** "Goals and guarantees" says `nexo audit` lists
+every use of `unsafe`, and section 18 that calls to C count as implicit
+`unsafe`. `unsafe:` blocks belong to `nexo.perf`, outside this edition
+(D89), so they are a compile error and never reach the audit. `nexo audit
+[paths]` reads every file (like `nexo lint`) and prints, in the order of
+the file, each `use c` library and each call to a function of one, as
+`file:line: text fix`, then a summary; with none, "No unsafe code in
+...". It does not fail (exit code 0) unless a file cannot be read or
+parsed. Calls to Python are not unsafe: data is converted at the
+boundary (section 18).
+
+**D130. `nexo docs --for-ai`.** "Goals and guarantees" says it gives any
+model "the exact list of available functions". The list is written once,
+in `nexo/stdlib/api.json` (read by both phases, like
+`infra_providers.json`): each function of the core, the standard library
+and the modules of this edition with its signature and one line on what
+it does, the values (`PI`, `now`...), the types, the methods of the
+builtin types, and the names that exist but are not available in this
+edition (brokers on the network, `mcp`, `audit`...). A test checks that
+it names every builtin of both phases and nothing else. `nexo docs
+--for-ai file.nexo` adds the program's own top-level functions, types
+and traits: their first line, their `##` comments and the fields and
+methods of types. `nexo docs` without `--for-ai` is a usage error: the
+other documentation is the site.
+
+**D131. `nexo test --suggest`.** "Goals and guarantees" says it
+"generates edge cases from types, contracts and unions". It prints test
+blocks for every top-level function whose parameters all have a type it
+can make values of: for `int` 0, 1, -1 and the largest int, plus the
+values on each side of the bound of an `expect param OP literal` (either
+way round); for `float` 0.0, -1.5 and 1.5; for `str` "" and "a b"; for
+`bool` both; each literal of a union; the two bounds of a range; each
+variant of an enum of the file (variants without data); `[]` and a list
+of one value; `none` for `T?`. A first case uses, for each parameter, its
+first value that keeps the `expect`s; every other case changes one
+parameter. A function with a parameter of another type (a record, money,
+a map...) is left out. The expected values are what the function gives
+now: a probe program (the file's definitions and literal constants,
+without the rest of its top level, next to the file so its modules are
+found, run for at most a minute) calls every case and prints the result
+as JSON, and each result becomes `assert call == value`, or, when the
+call fails, a check of the error's kind. A result with no plain literal
+(a record, a list) is a comment with its JSON. The header says to check
+each value before keeping it: the suggestion records behaviour, it does
+not know what is right. Both phases run the probe with their own
+implementation and print the same text.
+
+**D132. `nexo check --intent`.** "Goals and guarantees" says it
+"compares `##` comments and contracts with what the code does"; D87 left
+it to `nexo.ai`, since reading the intent of a comment needs a language
+model. For every top-level function with `##` comments right above it or
+an `expect` or `ensure`, the text of the function (comments included) is
+sent to the model with `ask` and a typed answer (`agrees: bool`, `reason:
+str`). A probe program with the file's `ai` blocks asks the questions, so
+the configuration (D106), the providers, the retries and `fake` are those
+of `ask`. Each function the model says disagrees is a warning on its
+first comment line, "The comments of "f" and its code disagree:
+reason.", then a summary, with exit code 1; otherwise "The comments and
+the code agree in ...". When the model cannot answer (no provider, a
+network error) the error of `ask` is printed and the exit code is 1. The
+public set of cases with known mismatches that verifies this guarantee
+needs a real model and is left to the project (D133).
+
+**D133. What phase 6 covers and how its exit criterion is reported.**
+Section 25 gives phase 6 "performance goals, external audit, user
+studies" and the exit criterion "the guarantees in 'Goals and guarantees'
+are met or removed". The code side is done here: the optimisations of
+D126-D127, the tools the guarantees name (D128-D132), differential
+fuzzing (`compiler/scripts/fuzz.py`: random programs that are correct by
+construction run in both phases, with the same output, no crash and no
+leak; nightly in `.github/workflows/fuzz.yml`), the percentage of errors
+with a fix (`compiler/scripts/fix_rate.py`) and the measure of the
+performance goals (`compiler/bench/goals.py`, written to `goals.json`).
+`docs/guarantees.md` gives the state of every guarantee. Removing a
+guarantee from the specification is the owner's decision, not an
+ambiguity to settle here: the ones not met (time and memory against
+Rust, compiling 100,000 lines in 10 s, capability permissions) and the
+ones that need people (external audits, user studies, the registry,
+comparisons against models) stay in the specification and are listed as
+not met, so phase 6 stays open.
+
+**D134. More fast paths of the compiled code.** A second round on the
+performance goals; none of these changes what a program prints.
+- A pipeline of `where` and `map` steps that ends in `sum` or `count` is
+  one loop that calls the functions of its steps directly (at `--release`
+  LLVM can inline them), with no lazy values in between. A step whose
+  value is a function still calls it with the element (D51). `sum` keeps
+  an exact int total while every element is an int and nothing
+  overflows; otherwise the remaining elements are kept and added at the
+  end, after every element has been read, as `sum` always did, so an
+  error of a step still comes before an overflow. A database query, a
+  stream or a grouped value takes the usual steps, which translate them.
+- A list being iterated (by `for`, a comprehension or a fused pipeline)
+  is read in place: the iterator holds the list, so a change through a
+  variable copies it and the elements the loop reads do not move. A
+  range is counted without a boxed iterator.
+- `xs.add(x)` on a list its place alone owns, with a value that is not
+  lazy, is pushed directly; `m[k]` and `m[k] = v` with an int `k` and
+  `xs[i]` with an int `i` skip the general index code. Int keys of maps
+  and sets have a table of their own with a cheaper hash.
+- `len(x)` and `print` with positional arguments skip the general
+  binding of arguments.
+- Freed heap objects go to a list per thread and are reused by the next
+  ones (every object has the same size); a small record of plain values
+  is freed without the general work list.
+- Fixed on the way: `fits` released a value it had not taken when a heap
+  value was checked against `int` (a field of the wrong type in
+  `json.parse(..., as: T)`), which could free an object still in use.
+  The atomic counts had hidden it; the counts of D126 made it visible.
+
+**D135. Faster development builds.** Compiling 100,000 lines took 208 s,
+nearly all in clang. Development mode now (1) calls the reference-count
+helpers instead of copying them into every use (`noinline` instead of
+`alwaysinline`; release builds keep them inline), which halves the code
+clang compiles; (2) cuts a large program's IR (over 2 MB) into as many
+parts as there are cores, up to eight, compiled at the same time and
+linked together (constants and globals are defined once and declared in
+the other parts, so each keeps one address); (3) leaves out the check
+that a function or type is defined when it certainly is: it is defined
+once by a statement of the top level, and the code that uses it is a
+later statement of the top level or runs inside a function (or method)
+that a later statement defines, which can only run after its own
+definition; and (4) looks for the "Did you mean...?" of a name only when
+it writes an error that may show it, among the names that were visible
+at the lookup (the resolver keeps how many names each scope had).
+Release builds are never cut: LLVM optimises the whole program at once,
+and two of them still give the same bytes (D128).
+
+**D136. Short texts inside their object.** A text was an object (112
+bytes, like every heap value) plus a separate buffer. A text of up to 70
+bytes now lives inside the object: one allocation instead of two, and less
+memory. Longer texts keep their own buffer. Nothing a program prints
+changes.
+
+**D137. Lists of ints keep the numbers.** A list element was a value of
+two words (16 bytes): twice the memory of Rust's `Vec<i64>`. A list whose
+elements are all ints now keeps the numbers themselves, eight bytes each;
+the first element that is not an int turns it into a list of values, once.
+Reading a list never changes how it is kept (several tasks may read one
+list at once); only a change by the list's single owner (`add`, `xs[i] =`,
+a change through an element) does. The compiled code reads the numbers of
+a list of ints in place and `xs.add(n)` pushes an int directly. What a
+program prints does not change.
+
+**D138. Short texts inside the value.** A text of up to seven bytes (a
+word, a key, a digit, one character of `split`) is kept in the value
+itself, two words with a tag of its own, with no object and no
+allocation; a longer text is an object (D136). Every text of up to seven
+bytes is kept this way, so two texts are equal exactly when both are short
+with the same bytes or both are objects with the same text. Everything
+that reads a text (methods, `len`, indexing, `in`, iteration, keys of
+maps, JSON, SQL, Python, C) takes it from the value. What a program prints
+does not change.
+
+**D139. The time limit in functions on ints.** A function the compiler
+runs on ints only (D84) checks the time limit of `try within` (D58) when
+it is entered and on each pass of a loop inside it, not between each two
+of its statements: its straight-line code is short, so the limit is still
+seen after a bounded amount of work, and every call checks once instead
+of once per statement. Every other function, and phase 0, check between
+statements. What a program prints does not change.
+
+**D140. Names certainly defined, and names never defined.** D135 skips
+the check that a name is defined for a function or type the top level
+defines earlier. The compiler also skips it for a `var` declared by an
+earlier statement of an enclosing block of the same function, and for
+parameters and loop variables (bound before their block runs). A name
+that only `name = value` statements bind is never defined when every one
+of those statements has, in the same function, a `var` of that name
+declared by an earlier statement of an enclosing block: the `var` takes
+each assignment (D26). Such a name is left out when the compiler looks a
+name up, so `total += x` inside a loop over `var total` reads and writes
+`total` directly. A statement the compiler does not look into (a module,
+`select`) counts as one that may define its name. A `var` that is the
+only statement binding its name is not checked for being declared twice:
+its scope starts again each time it is entered, so the name is not
+defined yet when the `var` runs. What a program prints does not change.
+
+**D141. Compiling in development mode.** Clang without optimisation has
+a fast instruction selector that does not take a value of two words
+passed, loaded or built as one: a function with such a value fell back
+to the slow selector, which took most of the compile time. Development
+mode now rewrites the program's IR before clang reads it
+(compiler/nexoc/src/scalar.rs): values are loaded, stored and passed to
+the helpers as two words; a function with a form the rewrite does not
+know is left as it was. The parts of a large program are rewritten by
+one thread each and reach clang through pipes, not files. The compiler
+also emits less code wherever it knows more, in both modes:
+
+- a variable that only ever holds ints is not released;
+- a register known to hold an int or a bool needs no count and no check
+  of its type, and a single comparison gives the condition of an `if` or
+  `while` directly;
+- `%` and `//` by a positive constant need no check of the divisor;
+- a method declared `-> int` of a record of a known type returns an int
+  (its frame checks the value), and a function whose every `return`
+  gives an int it knows needs no check of the value it returns;
+- the statements of the top level never run inside `try within`, so the
+  time limit (D58) is not checked between them.
+
+Release builds are compiled as before otherwise. What a program prints
+does not change.

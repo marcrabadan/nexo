@@ -118,7 +118,7 @@ impl Native for Regex {
 }
 
 pub fn regex(pattern: V, span: u32) -> R<Val> {
-    let p = str_arg("regex", pattern, span)?;
+    let p = str_arg("regex", &pattern, span)?;
     let re = if shared_syntax(p) { regex::Regex::new(p).ok() } else { None };
     let full = re.as_ref().and_then(|_| regex::Regex::new(&format!(r"\A(?:{p})\z")).ok());
     match (re, full) {
@@ -162,7 +162,7 @@ pub fn render(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let Some(path) = positional.first().copied().or_else(|| args.iter().zip(names).find(|(_, n)| **n == Some("path")).map(|(v, _)| *v)) else {
         return Err(diag(Diagnostic::new_spanless("arg_missing").arg("param", "path").arg("fn", "render"), span));
     };
-    let path = str_arg("render", path, span)?;
+    let path = str_arg("render", &path, span)?;
     let template = crate::data::read_text(path, span)?;
     let escape = {
         let l = path.to_lowercase();
@@ -204,8 +204,8 @@ pub fn render(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
 /// `move_file(path, to: folder)`: into the folder (created if needed);
 /// returns the new path.
 pub fn move_file(path: V, to: V, span: u32) -> R<Val> {
-    let path = str_arg("move_file", path, span)?;
-    let folder = str_arg("move_file", to, span)?;
+    let path = str_arg("move_file", &path, span)?;
+    let folder = str_arg("move_file", &to, span)?;
     let meta = std::fs::metadata(path);
     match &meta {
         Err(e) => return Err(crate::data::os_failure(path, e, span)),

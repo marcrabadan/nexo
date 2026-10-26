@@ -10,6 +10,12 @@
 //! certainly an int (or that is declared `int`, which is checked when it is
 //! stored). The variables are found by assuming them all ints and removing
 //! those with an assignment that is not, until nothing changes.
+//!
+//! The same is done for records (D126): a value is certainly a record of a
+//! type defined once when it is a call to that type, `self` in one of its
+//! methods, or a variable whose every assignment is one. Reading an `int`
+//! field of such a record is certainly an int: storing a field checks its
+//! type.
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,6 +27,10 @@ pub struct Ints<'a> {
     int_bindings: HashSet<BindingId>,
     /// functions defined once whose declared return type is int
     int_fns: HashSet<BindingId>,
+    /// record types defined once (D84)
+    types: HashMap<BindingId, &'a TypeDef>,
+    /// variables that certainly hold a record of one of those types
+    rec_bindings: HashMap<BindingId, BindingId>,
 }
 
 /// How a binding gets its values.
@@ -34,17 +44,25 @@ enum Def<'a> {
 }
 
 pub fn is_int_type(t: &TypeExpr) -> bool {
-    matches!(t, TypeExpr::Name(tn) if tn.name == "int" && tn.params.is_empty() && !tn.optional && !tn.fallible)
+    matches!(t, TypeExpr::Name(tn) if tn.name == "int" && tn.params.is_empty() && !tn.optional && !tn.fallible && !tn.weak)
 }
 
 impl<'a> Ints<'a> {
-    pub fn new(program: &'a Program, res: &'a Resolution, known_fns: &HashMap<BindingId, &'a FnDef>) -> Ints<'a> {
+    pub fn new(
+        program: &'a Program,
+        res: &'a Resolution,
+        known_fns: &HashMap<BindingId, &'a FnDef>,
+        known_types: &HashMap<BindingId, &'a TypeDef>,
+    ) -> Ints<'a> {
         let int_fns: HashSet<BindingId> = known_fns
             .iter()
             .filter(|(_, f)| f.ret.as_ref().is_some_and(is_int_type))
             .map(|(b, _)| *b)
             .collect();
         let mut defs: Vec<Vec<Def<'a>>> = (0..res.bindings.len()).map(|_| Vec::new()).collect();
+        // what each variable is assigned with `=` and no declared type (None:
+        // any other way)
+        let mut rdefs: Vec<Vec<Option<&'a Expr>>> = (0..res.bindings.len()).map(|_| Vec::new()).collect();
         let mut stmts: Vec<&'a Stmt> = Vec::new();
         collect_stmts(&program.body, &mut stmts);
         for s in &stmts {
@@ -54,6 +72,7 @@ impl<'a> Ints<'a> {
                     let mut targets: Vec<BindingId> = a.cands.iter().map(|(b, _)| *b).collect();
                     targets.push(a.target);
                     for b in targets {
+                        rdefs[b].push(if *op == "=" && ty.is_none() { Some(value) } else { None });
                         defs[b].push(match ty {
                             Some(t) if is_int_type(t) => Def::Int,
                             Some(_) => Def::Other,
@@ -65,6 +84,7 @@ impl<'a> Ints<'a> {
                 }
                 StmtKind::VarDecl { ty, value, .. } => {
                     let Some(a) = res.assigns.get(&s.id) else { continue };
+                    rdefs[a.target].push(if ty.is_none() { Some(value) } else { None });
                     defs[a.target].push(match ty {
                         Some(t) if is_int_type(t) => Def::Int,
                         Some(_) => Def::Other,
@@ -74,10 +94,12 @@ impl<'a> Ints<'a> {
                 StmtKind::Shared { .. } => {
                     if let Some(a) = res.assigns.get(&s.id) {
                         defs[a.target].push(Def::Other);
+                        rdefs[a.target].push(None);
                     }
                 }
                 StmtKind::For { iterable, .. } => {
                     if let Some(b) = res.decl.get(&Node::Stmt(s.id)) {
+                        rdefs[*b].push(None);
                         defs[*b].push(if matches!(iterable.kind, ExprKind::Range { .. }) {
                             Def::Value(iterable)
                         } else {
@@ -88,7 +110,8 @@ impl<'a> Ints<'a> {
                 _ => {}
             }
         }
-        let mut ints = Ints { res, int_bindings: HashSet::new(), int_fns };
+        let mut ints =
+            Ints { res, int_bindings: HashSet::new(), int_fns, types: known_types.clone(), rec_bindings: HashMap::new() };
         // parameters declared int; plain variables assigned only ints
         let mut candidates: HashSet<BindingId> = HashSet::new();
         for (b, binding) in res.bindings.iter().enumerate() {
@@ -117,6 +140,43 @@ impl<'a> Ints<'a> {
                 if p.ty.as_ref().is_some_and(is_int_type) {
                     params.insert(*b);
                 }
+            }
+        }
+        // records: `self` in the methods of a type defined once (never
+        // assigned), and variables first assigned a call to such a type
+        for (tb, t) in known_types {
+            for m in &t.methods {
+                let Some(frame) = res.frame_of.get(&Node::Fn(m.id)) else { continue };
+                if m.params.first().is_some_and(|p| p.name == "self") {
+                    let b = res.frames[*frame].params[0];
+                    if rdefs[b].is_empty() && !res.bindings[b].shared {
+                        ints.rec_bindings.insert(b, *tb);
+                    }
+                }
+            }
+        }
+        let rec_params: HashSet<BindingId> = ints.rec_bindings.keys().copied().collect();
+        for b in &candidates {
+            let first = rdefs[*b].iter().find_map(|d| d.and_then(|e| ints.constructed(e)));
+            if let Some(t) = first {
+                ints.rec_bindings.insert(*b, t);
+            }
+        }
+        loop {
+            let mut removed = Vec::new();
+            for (b, t) in &ints.rec_bindings {
+                if rec_params.contains(b) {
+                    continue;
+                }
+                if !rdefs[*b].iter().all(|d| d.is_some_and(|e| ints.record_of(e) == Some(*t))) {
+                    removed.push(*b);
+                }
+            }
+            if removed.is_empty() {
+                break;
+            }
+            for b in removed {
+                ints.rec_bindings.remove(&b);
             }
         }
         ints.int_bindings = candidates.union(&params).copied().collect();
@@ -149,6 +209,11 @@ impl<'a> Ints<'a> {
     }
 
     /// Is the expression certainly an int?
+    /// A variable that only ever holds ints (or nothing yet).
+    pub fn int_binding(&self, b: BindingId) -> bool {
+        self.int_bindings.contains(&b)
+    }
+
     pub fn certain(&self, e: &Expr) -> bool {
         match &e.kind {
             ExprKind::Num { text, is_float: false } => text.parse::<i64>().is_ok(),
@@ -157,16 +222,74 @@ impl<'a> Ints<'a> {
             }
             ExprKind::Unary { op: "-", operand } => self.certain(operand),
             ExprKind::Name(_) => self.int_name(e),
+            ExprKind::Attr { obj, name, .. } => self.field_of(obj, name).is_some_and(|(_, f, _)| is_int_type(&f.ty)),
             ExprKind::Call { func, .. } => match &func.kind {
                 ExprKind::Name(_) => match self.res.names.get(&func.id) {
                     Some(NameRes::Builtin(n)) => n == "len",
                     Some(NameRes::Bindings { cands, row: None, .. }) if cands.len() == 1 => self.int_fns.contains(&cands[0]),
                     _ => false,
                 },
+                // a method declared `-> int` of a record of a known type: its
+                // frame checks what it returns
+                ExprKind::Attr { obj, name, .. } => self.int_method(obj, name),
                 _ => false,
             },
             _ => false,
         }
+    }
+
+    fn int_method(&self, obj: &Expr, name: &str) -> bool {
+        let Some(t) = self.record_of(obj) else { return false };
+        let t = self.types[&t];
+        if t.fields.iter().any(|f| f.name == name) {
+            return false;
+        }
+        let mut ms = t.methods.iter().filter(|m| m.name == name);
+        matches!((ms.next(), ms.next()), (Some(m), None) if m.annotations.is_empty() && m.ret.as_ref().is_some_and(is_int_type))
+    }
+
+    /// A call to a record type defined once: always a record of that type
+    /// (or an error).
+    fn constructed(&self, e: &Expr) -> Option<BindingId> {
+        let ExprKind::Call { func, .. } = &e.kind else { return None };
+        let ExprKind::Name(_) = &func.kind else { return None };
+        match self.res.names.get(&func.id) {
+            Some(NameRes::Bindings { cands, row: None, .. }) if cands.len() == 1 && self.types.contains_key(&cands[0]) => {
+                Some(cands[0])
+            }
+            _ => None,
+        }
+    }
+
+    /// The record type defined once that the value of `e` certainly has.
+    pub fn record_of(&self, e: &Expr) -> Option<BindingId> {
+        match &e.kind {
+            ExprKind::Call { .. } => self.constructed(e),
+            ExprKind::Name(_) => match self.res.names.get(&e.id) {
+                Some(NameRes::Bindings { cands, row: None, .. }) if !cands.is_empty() => {
+                    let t = *self.rec_bindings.get(&cands[0])?;
+                    cands.iter().all(|b| self.rec_bindings.get(b) == Some(&t)).then_some(t)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn type_def(&self, t: BindingId) -> &'a TypeDef {
+        self.types[&t]
+    }
+
+    /// `obj.name` where obj is certainly a record with a field `name` that
+    /// is not weak: its index and declaration.
+    pub fn field_of(&self, obj: &Expr, name: &str) -> Option<(usize, &'a FieldDef, usize)> {
+        let t = self.types[&self.record_of(obj)?];
+        let i = t.fields.iter().position(|f| f.name == name)?;
+        let f = &t.fields[i];
+        if matches!(&f.ty, TypeExpr::Name(tn) if tn.weak) {
+            return None;
+        }
+        Some((i, f, t.fields.len()))
     }
 
     fn int_name(&self, e: &Expr) -> bool {

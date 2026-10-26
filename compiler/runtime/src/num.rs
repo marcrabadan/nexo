@@ -240,8 +240,10 @@ pub fn arith(op: Op, a: V, b: V, span: u32) -> R<Val> {
         let fb = crate::pipe::force(b)?;
         if let (Some(Obj::List(x)), Some(Obj::List(y))) = (fa.get(), fb.get()) {
             let mut items = x.borrow().clone();
-            items.extend(y.borrow().iter().cloned());
-            return Ok(list(items));
+            for v in y.borrow().iter() {
+                items.push(Val::from(v));
+            }
+            return Ok(Val::new(Obj::List(Mut::new(items))));
         }
     }
     if matches!(a.get(), Some(Obj::Native(_))) || matches!(b.get(), Some(Obj::Native(_))) {
@@ -614,6 +616,10 @@ fn natives(a: V, b: V) -> Option<(&'static dyn Native, &'static dyn Native)> {
 
 /// Structural equality used inside collections (Python `==` on values).
 pub fn py_eq(a: V, b: V) -> bool {
+    // a text of up to seven bytes is always kept in the value (D138)
+    if a.tag == T_SSTR || b.tag == T_SSTR {
+        return a.tag == b.tag && a.bits == b.bits;
+    }
     if a.tag != T_OBJ || b.tag != T_OBJ {
         if a.tag == T_BOOL || b.tag == T_BOOL {
             return a.tag == b.tag && a.bits == b.bits;
@@ -635,14 +641,14 @@ pub fn py_eq(a: V, b: V) -> bool {
         (Obj::Map(x), Obj::Map(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
             x.entries.len() == y.entries.len()
-                && x.index.iter().all(|(k, i)| match y.index.get(k) {
-                    Some(j) => py_eq(x.entries[*i].1.v(), y.entries[*j].1.v()),
+                && x.index.iter().all(|(k, i)| match y.index.get(&k) {
+                    Some(j) => py_eq(x.entries[i].1.v(), y.entries[*j].1.v()),
                     None => false,
                 })
         }
         (Obj::Set(x), Obj::Set(y)) => {
             let (x, y) = (x.borrow(), y.borrow());
-            x.items.len() == y.items.len() && x.index.keys().all(|k| y.index.contains_key(k))
+            x.items.len() == y.items.len() && x.index.iter().all(|(k, _)| y.index.contains_key(&k))
         }
         (Obj::Range(a1, b1), Obj::Range(a2, b2)) => a1 == a2 && b1 == b2,
         (Obj::Record(x), Obj::Record(y)) => {

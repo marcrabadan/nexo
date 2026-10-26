@@ -33,7 +33,7 @@ impl Cfg {
 
     /// The word at position i of the head, if it is a text.
     pub fn word(&self, i: usize) -> Option<&'static str> {
-        self.words().get(i).and_then(|v| v.v().as_str())
+        self.words().get(i).and_then(|v| v.v().as_static_str())
     }
 
     /// The key of a `key = value` entry, or None.
@@ -150,7 +150,7 @@ pub fn phrase_text(p: &[Val]) -> String {
 
 pub fn items(v: V) -> Vec<Val> {
     match v.get() {
-        Some(Obj::List(items)) => items.borrow().clone(),
+        Some(Obj::List(items)) => items.borrow().to_vec(),
         _ => Vec::new(),
     }
 }

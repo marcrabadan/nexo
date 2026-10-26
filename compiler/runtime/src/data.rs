@@ -668,14 +668,14 @@ fn as_type(value: V, t: Target, span: u32) -> R<Val> {
                     return Err(invalid(span, "detail.missing_field", &[("field", f.name.clone()), ("type", rt.name.clone())]));
                 }
             }
-            Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(fields), birth: std::cell::Cell::new(crate::state::stamp()) })))
+            Ok(Val::new(Obj::Record(Record { ty: rt, fields: Mut::new(fields.into()), birth: std::cell::Cell::new(crate::state::stamp()) })))
         }
         Target::List(param) => {
             let Some(Obj::List(items)) = value.get() else {
                 return Err(invalid(span, "detail.expected", &[("type", "list".into()), ("vtype", type_name(value))]));
             };
             let Some(inner) = param.and_then(field_target) else { return Ok(Val::from(value)) };
-            let items: Vec<Val> = items.borrow().clone();
+            let items: Vec<Val> = items.borrow().to_vec();
             let mut out = Vec::with_capacity(items.len());
             for v in items {
                 out.push(as_type(v.v(), inner, span)?);
@@ -815,6 +815,7 @@ fn to_json_in(v: V, level: usize, compact: bool) -> String {
         T_NONE => "null".into(),
         T_BOOL => if v.bits != 0 { "true" } else { "false" }.into(),
         T_INT | T_FLOAT | T_LITFLOAT => repr(v),
+        T_SSTR => json_string(v.as_str().unwrap()),
         _ => match v.get() {
             Some(Obj::Decimal(d)) => d.py_str(),
             Some(Obj::Str(s)) => json_string(s),

@@ -158,7 +158,7 @@ impl Jwt {
         let head = crate::data::from_json(head, span)?;
         let body = crate::data::from_json(body, span)?;
         let Some(Obj::Map(h)) = head.get() else { return Ok(None) };
-        if h.borrow().get(&Key::Str("alg".into())).and_then(|v| v.as_str()) != Some("HS256") {
+        if h.borrow().get(&Key::Str("alg".into())).and_then(|v| v.as_static_str()) != Some("HS256") {
             return Ok(None);
         }
         let Some(Obj::Map(b)) = body.get() else { return Ok(None) };
@@ -656,7 +656,7 @@ fn handle(server: &Server, method: &str, target: &str, headers: &[(String, Strin
             let ok = match claims.get() {
                 Some(Obj::Map(m)) => {
                     let m = m.borrow();
-                    m.get(&Key::Str("role".into())).and_then(|r| r.as_str()) == Some(role.as_str())
+                    m.get(&Key::Str("role".into())).and_then(|r| r.as_static_str()) == Some(role.as_str())
                         || matches!(m.get(&Key::Str("roles".into())).and_then(|r| r.get()), Some(Obj::List(items))
                             if items.borrow().iter().any(|x| x.as_str() == Some(role.as_str())))
                 }
@@ -671,7 +671,7 @@ fn handle(server: &Server, method: &str, target: &str, headers: &[(String, Strin
         let mut who = ip.to_string();
         if per.as_deref() == Some("user") {
             if let Some(Obj::Map(m)) = claims.get() {
-                if let Some(sub) = m.borrow().get(&Key::Str("sub".into())).and_then(|s| s.as_str()) {
+                if let Some(sub) = m.borrow().get(&Key::Str("sub".into())).and_then(|s| s.as_static_str()) {
                     who = format!("user:{sub}");
                 }
             }
@@ -935,6 +935,7 @@ pub fn serve_in_background() -> bool {
         };
         // the thread looks its server up on every connection, so it owns
         // nothing when the program releases the library at its end
+        crate::value::going_multi();
         std::thread::spawn(move || {
             for conn in l.incoming().flatten() {
                 let Some(owner) = SERVERS.lock().unwrap().get(i).cloned() else { return };

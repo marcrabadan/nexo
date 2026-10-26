@@ -1,0 +1,123 @@
+{
+  "edition": "0.1",
+  "sections": [
+    {
+      "title": "Core (always available)",
+      "entries": [
+        ["print(values..., end: str = \"\\n\")", "Write the values separated by spaces, then end."],
+        ["input(prompt: str?) -> str", "Read one line from standard input."],
+        ["len(value) -> int", "Number of elements of a list, map, set or text."],
+        ["range(start: int, end: int?, step: int?) -> list", "The ints from start (or 0) up to end, without it."],
+        ["set(items...) -> set", "A set with the items."],
+        ["round(value, digits: int?, mode: half_up | half_even?)", "Round a number to some digits."],
+        ["split(amount: money, parts: int) -> list", "Split money into parts that add up exactly."],
+        ["convert(value, to: currency | unit | json | csv, rate: decimal?)", "Change a value's currency or unit, or turn data into json or csv text."],
+        ["fail(message: str)", "Fail with an Error carrying the message."],
+        ["validate(value, as: type, range: range?) -> T!", "Check external data against a type; fails with InvalidValue."],
+        ["int(value) -> int", "Convert to int."],
+        ["float(value) -> float", "Convert to float."],
+        ["decimal(value) -> decimal", "Convert to an exact decimal."],
+        ["str(value) -> str", "Convert to text."],
+        ["read(path: str) -> str!", "The contents of a file."],
+        ["write(path: str, content: str) -> none!", "Write a file."],
+        ["read_lines(path: str) -> list!", "The lines of a file, read as they are used."],
+        ["save(value, path: str) -> none!", "Write a list of records as JSON or CSV (by the extension)."],
+        ["json.parse(text: str, as: type?) -> T!", "Read JSON text."],
+        ["csv.parse(text: str) -> list!", "Read CSV text into a list of maps."]
+      ]
+    },
+    {
+      "title": "Standard library (always available)",
+      "entries": [
+        ["move_file(path: str, to: str) -> none!", "Move or rename a file."],
+        ["date(year: int, month: int, day: int) -> date", "A day of the calendar; date(t) is the day of a time."],
+        ["time(year, month, day, hour = 0, minute = 0, second = 0, zone: str?) -> time", "An instant in a time zone."],
+        ["regex(pattern: str) -> regex", "A regular expression: matches(t), find(t), find_all(t), replace(t, with), split(t), groups(t)."],
+        ["render(path: str, name: value...) -> str!", "Read a template file and fill in {name}."],
+        ["secret(name: str, from: str?) -> secret", "A secret from the environment; never printed or logged."],
+        ["password.hash(password: str) -> str", "Hash a password (Argon2id)."],
+        ["password.check(password: str, stored: str) -> bool", "Check a password against its hash."],
+        ["password.generate(length: int?) -> str", "A random password."],
+        ["key.new() -> key", "A new key for encrypt and decrypt (AES-256-GCM)."],
+        ["key.load(text: str) -> key!", "A key from its text."],
+        ["keypair.new() -> keypair", "A new pair of keys for sign and verify (Ed25519)."],
+        ["keypair.load(text: str) -> keypair!", "A pair of keys from its text."],
+        ["encrypt(data, key: key) -> str", "Encrypt a text or data."],
+        ["decrypt(data: str, key: key) -> str!", "Decrypt what encrypt gave."],
+        ["encrypt_file(path: str, key: key) -> none!", "Encrypt a file in place."],
+        ["decrypt_file(path: str, key: key) -> none!", "Decrypt a file in place."],
+        ["sign(document: str, private: keypair) -> str", "Sign a text."],
+        ["verify(document: str, signature: str, public) -> bool", "Check a signature."],
+        ["log(values...)", "Write a line to standard error; @private fields are hidden."],
+        ["http.get(url: str, headers: map?, timeout: duration?, retries: int?) -> response!", "GET; the response has status, text, headers and json()."],
+        ["http.post(url: str, body, headers: map?, timeout: duration?) -> response!", "POST a text or JSON body."],
+        ["http.put(url: str, body, headers: map?, timeout: duration?, retries: int?) -> response!", "PUT a text or JSON body."],
+        ["http.patch(url: str, body, headers: map?, timeout: duration?) -> response!", "PATCH a text or JSON body."],
+        ["http.delete(url: str, headers: map?, timeout: duration?, retries: int?) -> response!", "DELETE."]
+      ]
+    },
+    {
+      "title": "nexo.db",
+      "entries": [
+        ["connect(url: str, key: secret?) -> database!", "Open (or create) an SQLite database; tables are @table types."]
+      ]
+    },
+    {
+      "title": "nexo.web",
+      "entries": [
+        ["jwt(key: secret) -> auth", "JSON Web Token authentication for a server block (auth = jwt(...))."]
+      ]
+    },
+    {
+      "title": "nexo.ai",
+      "entries": [
+        ["ask(instruction: str, input?, model?, creativity?, max?, timeout?, retries?, stream: bool?, profile: str?) -> T!", "Ask a language model; with a declared type the answer is that type."]
+      ]
+    },
+    {
+      "title": "Flags and privacy",
+      "entries": [
+        ["flag(name: str, user?) -> value", "The value of a flag of the flags block."],
+        ["privacy.export(record) -> none!", "Write the personal data of a record to a JSON file."],
+        ["privacy.erase(record) -> none!", "Erase a record's personal data."],
+        ["privacy.restrict(record) -> none!", "Stop using a record's personal data."]
+      ]
+    },
+    {
+      "title": "nexo.infra and nexo.ci (inside infra and pipeline blocks)",
+      "entries": [
+        ["s3(name: str)", "Keep the infrastructure state in an S3 bucket (state = s3(...))."],
+        ["run(command: str) -> none!", "A pipeline step that runs a command."],
+        ["test() -> none!", "A pipeline step that runs the program's tests."],
+        ["build_image(name: str) -> none!", "A pipeline step that builds a container image."],
+        ["plan(stage: str?, image: str?) -> none!", "A pipeline step that shows the infrastructure plan."],
+        ["apply(stage: str?, image: str?) -> none!", "A pipeline step that applies the infrastructure."],
+        ["approve(by: list) -> none!", "A pipeline step that waits for a person's approval."],
+        ["comment(text: str) -> none", "A pipeline step that writes a comment."]
+      ]
+    }
+  ],
+  "values": [
+    ["PI", "The number pi."],
+    ["half_up, half_even", "Rounding modes for round."],
+    ["now", "The current time (read from the clock each time)."],
+    ["today", "The current date."],
+    ["json, csv", "Formats for convert(to:) and namespaces of parse."]
+  ],
+  "types": [
+    "int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "date", "time", "email",
+    "Error", "NotFound", "IOError", "InvalidData", "Overflow", "DivisionByZero", "OutOfRange",
+    "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError", "AIError", "DatabaseError"
+  ],
+  "methods": [
+    ["list", "sum() count() add(item)"],
+    ["set", "add(item) count()"],
+    ["map", "keys() values() count()"],
+    ["str", "upper() lower() trim() split(sep?) replace(old, new) starts_with(s) ends_with(s) find(s)"],
+    ["channel", "send(value) receive() close()"]
+  ],
+  "unavailable": [
+    "gcs", "blob", "kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket",
+    "mcp", "audit", "scan", "slack"
+  ]
+}

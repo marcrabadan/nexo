@@ -604,8 +604,9 @@ fn to_sql(v: V, span: u32) -> R<Sql> {
         T_BOOL => Sql::Int((v.bits != 0) as i64),
         T_INT => Sql::Int(v.bits as i64),
         T_FLOAT => Sql::Real(f64::from_bits(v.bits)),
+        T_SSTR => Sql::Text(v.as_str().unwrap().to_string()),
         _ => match v.get() {
-            Some(Obj::Str(s)) => Sql::Text(s.clone()),
+            Some(Obj::Str(s)) => Sql::Text(s.to_string()),
             Some(Obj::Decimal(d)) => Sql::Text(d.fixed()),
             Some(Obj::Money(d, c)) => Sql::Text(format!("{} {c}", d.py_str())),
             Some(Obj::Variant(var)) => Sql::Text(var.name.clone()),
@@ -755,7 +756,7 @@ fn select(db: &Database, me: V, info: &TableInfo, wheres: &[String], params: &[S
 fn record(info: &TableInfo, vals: Vec<Val>) -> Val {
     Val::new(Obj::Record(Record {
         ty: info.rtype,
-        fields: Mut::new(vals),
+        fields: Mut::new(vals.into()),
         birth: std::cell::Cell::new(crate::state::stamp()),
     }))
 }
@@ -1071,7 +1072,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
             db.sync(me, info, span)?;
             db.guard(me, info, span)?;
             let key_i = info.key_index();
-            let fields: Vec<Val> = r.fields.borrow().clone();
+            let fields: Vec<Val> = r.fields.borrow().to_vec();
             let mut cols = Vec::new();
             let mut vals = Vec::new();
             let mut shown = Vec::new();
@@ -1111,7 +1112,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
             let Some(Obj::Record(r)) = rec.get() else { unreachable!() };
             db.sync(me, info, span)?;
             let key_i = info.key_index();
-            let fields: Vec<Val> = r.fields.borrow().clone();
+            let fields: Vec<Val> = r.fields.borrow().to_vec();
             let mut sets = Vec::new();
             let mut vals = Vec::new();
             let mut shown = Vec::new();

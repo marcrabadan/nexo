@@ -328,6 +328,7 @@ fn union_values(options: &[V]) -> String {
 pub fn conform(value: V, t: &'static TypeDesc, name: &str, span: u32) -> R<Val> {
     if let TypeDesc::Named { name: tn, params, .. } = t {
         let same = match value.tag {
+            T_SSTR => tn == "str",
             T_INT => tn == "int",
             T_BOOL => tn == "bool",
             T_FLOAT => tn == "float",
@@ -433,7 +434,7 @@ pub fn builtin_is(v: V, name: &str) -> bool {
         _ => match (name, v.get()) {
             ("decimal", Some(Obj::Decimal(_))) => true,
             ("money", Some(Obj::Money(..))) => true,
-            ("str", Some(Obj::Str(_))) => true,
+            ("str", _) => v.is_str(),
             ("list", Some(Obj::List(_) | Obj::Lazy(_))) => true,
             ("map", Some(Obj::Map(_))) => true,
             ("set", Some(Obj::Set(_))) => true,
@@ -467,7 +468,7 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<Val>> {
             let name = name.as_str();
             match name {
                 "any" => Ok(Some(Val::from(v.plain()))),
-                "int" => Ok((v.tag == T_INT).then_some(Val::simple(v))),
+                "int" => Ok((v.tag == T_INT).then(|| Val::simple(v))),
                 "float" => Ok(match v.tag {
                     T_FLOAT | T_LITFLOAT => Some(Val::simple(v.plain())),
                     T_INT => Some(Val::float(v.bits as i64 as f64)),
@@ -511,7 +512,7 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<Val>> {
                         return Ok(Some(owned));
                     }
                     let p = params[0];
-                    let items: Vec<Val> = items.borrow().clone();
+                    let items: Vec<Val> = items.borrow().to_vec();
                     // a list whose elements need no conversion is kept as is
                     let mut changed = false;
                     let mut out = Vec::with_capacity(items.len());

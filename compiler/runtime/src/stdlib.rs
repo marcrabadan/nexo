@@ -215,14 +215,46 @@ pub fn expects(fname: &str, what: &str, v: V, span: u32) -> crate::state::Fail {
     bad_arg(fname, msg("detail.expects", &[("what", what.to_string()), ("vtype", type_name(v))]), span)
 }
 
-pub(crate) fn str_arg(fname: &str, v: V, span: u32) -> R<&'static str> {
-    v.as_str().ok_or_else(|| expects(fname, "str", v, span))
+pub(crate) fn str_arg<'a>(fname: &str, v: &'a V, span: u32) -> R<&'a str> {
+    v.as_str().ok_or_else(|| expects(fname, "str", *v, span))
+}
+
+fn len_of(x: V, span: u32) -> R<Val> {
+    let owned = bind(x)?;
+    let v = owned.v();
+    let n = match v.get() {
+        _ if v.is_str() => str_len(v.as_str().unwrap()),
+        Some(Obj::List(items)) => items.borrow().len(),
+        Some(Obj::Map(m)) => m.borrow().entries.len(),
+        Some(Obj::Set(s)) => s.borrow().items.len(),
+        Some(Obj::Range(x, y)) => (y - x + 1).max(0) as usize,
+        _ => return Err(expects("len", "str, list, map, set", v, span)),
+    };
+    Ok(Val::int(n as i64))
 }
 
 /// Call builtin `id` with arguments checked against its signature.
 pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     if id.0 >= crate::library::BASE {
         return crate::library::call(id, args, names, span);
+    }
+    // the common calls skip the general binding of arguments (D134)
+    if names.iter().all(|n| n.is_none()) {
+        if id == B_LEN && args.len() == 1 {
+            return len_of(args[0], span);
+        }
+        if id == B_PRINT {
+            let mut text = String::new();
+            for (i, v) in args.iter().enumerate() {
+                if i > 0 {
+                    text.push(' ');
+                }
+                text.push_str(&crate::fmt::show_checked(bind(*v)?.v(), span)?);
+            }
+            text.push('\n');
+            write_out(&text);
+            return Ok(Val::none());
+        }
     }
     let sig = &SIGS[id.0 as usize];
     let a = check_args(sig, args, names, span)?;
@@ -257,19 +289,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
             });
             Ok(Val::str(line))
         }
-        B_LEN => {
-            let owned = bind(a.get(0).unwrap())?;
-            let v = owned.v();
-            let n = match v.get() {
-                Some(Obj::Str(s)) => str_len(s),
-                Some(Obj::List(items)) => items.borrow().len(),
-                Some(Obj::Map(m)) => m.borrow().entries.len(),
-                Some(Obj::Set(s)) => s.borrow().items.len(),
-                Some(Obj::Range(x, y)) => (y - x + 1).max(0) as usize,
-                _ => return Err(expects("len", "str, list, map, set", v, span)),
-            };
-            Ok(Val::int(n as i64))
-        }
+        B_LEN => len_of(a.get(0).unwrap(), span),
         B_RANGE => {
             let start = a.get(0).unwrap();
             let end = a.get(1).filter(|v| !v.is_none());
@@ -343,7 +363,8 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         B_INT => conv_int(a.get(0).unwrap(), span),
         B_STR => Ok(Val::str(crate::fmt::show_checked(bind(a.get(0).unwrap())?.v(), span)?)),
         B_READ => {
-            let path = str_arg("read", a.get(0).unwrap(), span)?;
+            let path_v = a.get(0).unwrap();
+            let path = str_arg("read", &path_v, span)?;
             let text = data::read_text(path, span)?;
             if path.to_lowercase().ends_with(".csv") {
                 return Ok(data::parse_csv(&text));
@@ -351,18 +372,21 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
             Ok(Val::str(text))
         }
         B_WRITE => {
-            let path = str_arg("write", a.get(0).unwrap(), span)?;
+            let path_v = a.get(0).unwrap();
+            let path = str_arg("write", &path_v, span)?;
             let content = crate::fmt::show_checked(bind(a.get(1).unwrap())?.v(), span)?;
             data::write_text(path, &content, span)?;
             Ok(Val::none())
         }
         B_READ_LINES => {
-            let path = str_arg("read_lines", a.get(0).unwrap(), span)?;
+            let path_v = a.get(0).unwrap();
+            let path = str_arg("read_lines", &path_v, span)?;
             data::read_lines(path, span)
         }
         B_SAVE => {
             let value = bind(a.get(0).unwrap())?;
-            let path = str_arg("save", a.get(1).unwrap(), span)?;
+            let path_v = a.get(1).unwrap();
+            let path = str_arg("save", &path_v, span)?;
             crate::fmt::show_checked(value.v(), span)?;
             data::save(value.v(), path, span)?;
             Ok(Val::none())
@@ -630,6 +654,9 @@ pub fn validate(value: V, target: V, range: Option<V>, span: u32) -> R<Val> {
 // ------------------------------------------------------ methods of values
 
 fn table(v: V) -> Option<(&'static str, &'static [&'static str])> {
+    if v.tag == T_SSTR {
+        return Some(("str", &["upper", "lower", "trim", "split", "replace", "starts_with", "ends_with", "find"]));
+    }
     Some(match v.get()? {
         Obj::List(_) | Obj::Lazy(_) => ("list", &["sum", "count", "add"]),
         Obj::Set(_) => ("set", &["add", "count"]),
@@ -797,6 +824,9 @@ pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>
         let param = if name == "add" { "item" } else { "text" };
         return Err(diag(Diagnostic::new_spanless("arg_missing").arg("param", param).arg("fn", name), span));
     }
+    if let Some(text) = obj.as_str() {
+        return str_method(text, name, args, span);
+    }
     match (obj.get().unwrap(), name) {
         (Obj::List(_) | Obj::Lazy(_), "sum") => {
             let items = collect_vec(obj, span)?;
@@ -824,10 +854,17 @@ pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>
         }
         (Obj::Map(m), "keys") => Ok(list(m.borrow().entries.iter().map(|(k, _)| k.clone()).collect())),
         (Obj::Map(m), "values") => Ok(list(m.borrow().entries.iter().map(|(_, v)| v.clone()).collect())),
-        (Obj::Str(s), "upper") => Ok(Val::str(s.to_uppercase())),
-        (Obj::Str(s), "lower") => Ok(Val::str(s.to_lowercase())),
-        (Obj::Str(s), "trim") => Ok(Val::str(s.trim())),
-        (Obj::Str(s), "split") => {
+        _ => Err(missing(&type_name(obj), name, &[], span)),
+    }
+}
+
+/// A method of a text (short or not, D138).
+fn str_method(s: &str, name: &str, args: &[V], span: u32) -> R<Val> {
+    match name {
+        "upper" => Ok(Val::str(s.to_uppercase())),
+        "lower" => Ok(Val::str(s.to_lowercase())),
+        "trim" => Ok(Val::str(s.trim())),
+        "split" => {
             let parts: Vec<Val> = match args.first() {
                 None => s.split_whitespace().map(Val::str).collect(),
                 Some(sep) => match sep.as_str() {
@@ -837,21 +874,21 @@ pub fn call_method(obj: V, name: &'static str, args: &[V], names: &[Option<&str>
             };
             Ok(list(parts))
         }
-        (Obj::Str(s), "replace") => {
-            let a = str_arg("replace", args[0], span)?;
-            let b = str_arg("replace", args[1], span)?;
+        "replace" => {
+            let a = str_arg("replace", &args[0], span)?;
+            let b = str_arg("replace", &args[1], span)?;
             Ok(Val::str(s.replace(a, b)))
         }
-        (Obj::Str(s), "starts_with") => Ok(Val::bool(s.starts_with(str_arg("starts_with", args[0], span)?))),
-        (Obj::Str(s), "ends_with") => Ok(Val::bool(s.ends_with(str_arg("ends_with", args[0], span)?))),
-        (Obj::Str(s), "find") => {
-            let sub = str_arg("find", args[0], span)?;
+        "starts_with" => Ok(Val::bool(s.starts_with(str_arg("starts_with", &args[0], span)?))),
+        "ends_with" => Ok(Val::bool(s.ends_with(str_arg("ends_with", &args[0], span)?))),
+        "find" => {
+            let sub = str_arg("find", &args[0], span)?;
             Ok(match s.find(sub) {
                 Some(i) => Val::int(s[..i].chars().count() as i64),
                 None => Val::none(),
             })
         }
-        _ => Err(missing(&type_name(obj), name, &[], span)),
+        _ => Err(missing("str", name, &[], span)),
     }
 }
 

@@ -896,7 +896,7 @@ fn fn_key(f: V) -> Option<usize> {
 pub fn tool(f: V, description: V, types: V, span: u32) -> R<Val> {
     let Some(desc) = description.as_str() else { return Err(expects("@tool", "str", description, span)) };
     let types: Vec<Val> = match types.get() {
-        Some(Obj::List(items)) => items.borrow().clone(),
+        Some(Obj::List(items)) => items.borrow().to_vec(),
         _ => Vec::new(),
     };
     if let Some(k) = fn_key(f) {
@@ -1071,7 +1071,7 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
         match get(k) {
             None => Ok(Vec::new()),
             Some(v) => match v.get() {
-                Some(Obj::List(items)) => Ok(items.borrow().clone()),
+                Some(Obj::List(items)) => Ok(items.borrow().to_vec()),
                 _ => Err(expects(k, "list", v, span)),
             },
         }
