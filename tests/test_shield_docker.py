@@ -124,16 +124,26 @@ def hardened_options():
 
 @pytest.mark.parametrize("omitted",["--read-only","--cap-drop=ALL","--security-opt=no-new-privileges:true",
                                     "--network=none","--cpus=1","--pids-limit=64"])
-def test_incomplete_container_configuration_is_rejected(image,omitted):
+def test_container_preflight_checks_effective_configuration(image,omitted):
     options=[s for s in hardened_options() if s!=omitted]
-    # Some daemons supply a finite default PID limit even without the flag.
-    # Exercise an effectively unbounded cgroup, not just an omitted argument.
+    expected=125
     if omitted == "--pids-limit=64":
         options.append("--pids-limit=-1")
+        # A managed daemon/parent cgroup can impose a finite limit even when
+        # the CLI disables it. Check the actual kernel boundary independently.
+        limit=subprocess.run(["docker","run","--rm",*options,"--entrypoint=/bin/sh",image,
+                              "-c","cat /sys/fs/cgroup/pids.max"],capture_output=True,text=True,timeout=30)
+        assert limit.returncode==0,limit.stderr
+        value=limit.stdout.strip()
+        assert value=="max" or (value.isdecimal() and int(value)>0),value
+        expected=125 if value=="max" else 0
     p=subprocess.run(["docker","run","--rm",*options,image,"probe"],capture_output=True,text=True,timeout=30)
-    assert p.returncode==125,p.stderr
-    assert "Shield container requires" in p.stderr
-    assert p.stdout==""
+    assert p.returncode==expected,p.stderr
+    if expected==0:
+        assert json.loads(p.stdout)["profile"]=="linux-offline-v1"
+    else:
+        assert "Shield container requires" in p.stderr
+        assert p.stdout==""
 
 
 def test_root_configuration_is_rejected(image):
