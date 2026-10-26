@@ -1733,8 +1733,9 @@ blocks for every top-level function whose parameters all have a type it
 can make values of: for `int` 0, 1, -1 and the largest int, plus the
 values on each side of the bound of an `expect param OP literal` (either
 way round); for `float` 0.0, -1.5 and 1.5; for `str` "" and "a b"; for
-`bool` both; each literal of a union; the two bounds of a range; each
-variant of an enum of the file (variants without data); `[]` and a list
+`bool` both; each literal of a union; the two bounds of a range (also when the
+union or range is a named type of the file, `type Level = "low" |
+"high"`); each variant of an enum of the file (variants without data); `[]` and a list
 of one value; `none` for `T?`. A first case uses, for each parameter, its
 first value that keeps the `expect`s; every other case changes one
 parameter. A function with a parameter of another type (a record, money,

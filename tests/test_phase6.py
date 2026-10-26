@@ -377,12 +377,4 @@ def test_suggested_cases_raise_branch_coverage(phase, tmp_path):
     suggested = run(phase[1], ["test", "--suggest", "grade.nexo"], tmp_path).stdout.decode()
     (tmp_path / "grade.nexo").write_text(GRADE + "\n" + suggested)
     after = run(phase[1], ["test", "--coverage", "grade.nexo"], tmp_path).stdout.decode()
-    assert after.splitlines()[3:] == [
-        "3 tests: 3 passed, 0 failed",
-        "Branch coverage: 6 of 10 (60%).",
-        'grade.nexo:13: the function "points" never ran.',
-        "grade.nexo:16: the match arm never ran.",
-        "grade.nexo:18: the match arm never ran.",
-        "grade.nexo:20: the match arm never ran.",
-        "Add tests that run them; nexo test --suggest proposes some.",
-    ]
+    assert after.splitlines()[4:] == ["4 tests: 4 passed, 0 failed", "Branch coverage: 10 of 10 (100%)."]
