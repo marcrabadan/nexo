@@ -38,6 +38,8 @@ def install(interp) -> None:
     for module in (core, io, data, clock, text, crypto, http, db, web, ai, clib, pylib, cfg, flags, privacy, stream, infra, ci, policy, patterns):
         for name, value in module.exports().items():
             env.define(name, value)
+    from .. import cover
+    env.define("__cover", Builtin("__cover", lambda call, n: cover.hit(n)))
     env.define("json", Namespace("json", data.json_exports()))
     env.define("csv", Namespace("csv", data.csv_exports()))
 

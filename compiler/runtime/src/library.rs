@@ -103,6 +103,7 @@ static SIGS: &[Sig] = &[
     Sig { name: "__workflow_undo", params: &[p("run"), p("n")] },
     Sig { name: "__workflow_undone", params: &[p("run"), p("n")] },
     Sig { name: "__workflow_end", params: &[p("run")] },
+    Sig { name: "__cover", params: &[p("n")] },
     Sig {
         name: "__web_route",
         params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
@@ -275,6 +276,10 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__workflow_undo" => crate::patterns::workflow_undo(x(0), x(1)),
         "__workflow_undone" => crate::patterns::workflow_undone(x(0), x(1), span),
         "__workflow_end" => crate::patterns::workflow_end(x(0), span),
+        "__cover" => {
+            cover_hit(x(0).as_int().unwrap_or(0));
+            Ok(Val::none())
+        }
         "privacy.export" => crate::db::privacy_export(x(0), span),
         "privacy.erase" => crate::db::privacy_erase(x(0), span),
         "privacy.restrict" => crate::db::privacy_restrict(x(0), span),
@@ -303,4 +308,25 @@ fn log(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     crate::state::flush();
     eprintln!("{}", parts.join(" "));
     Ok(Val::none())
+}
+
+/// The branches `nexo test --coverage` saw run (D152).
+static COVERED: std::sync::Mutex<Vec<bool>> = std::sync::Mutex::new(Vec::new());
+
+fn cover_hit(n: i64) {
+    let n = n.max(0) as usize;
+    let mut ran = COVERED.lock().unwrap();
+    if ran.len() <= n {
+        ran.resize(n + 1, false);
+    }
+    ran[n] = true;
+}
+
+/// End of `nexo test --coverage` for this file: the numbers of the branches that ran.
+pub fn write_coverage() {
+    if let Ok(path) = std::env::var("NEXO_COVER_REPORT") {
+        let ran = COVERED.lock().unwrap();
+        let ids: Vec<String> = ran.iter().enumerate().filter(|(_, r)| **r).map(|(i, _)| i.to_string()).collect();
+        let _ = std::fs::write(path, ids.join(" ") + "\n");
+    }
 }

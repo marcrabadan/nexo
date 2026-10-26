@@ -1,0 +1,17 @@
+fn label(n: int) -> str:
+    if n == 0:
+        return "none"
+    elif n < 10:
+        return "few"
+    return "many"
+
+fn total(xs: list) -> int:
+    var t = 0
+    for x in xs:
+        t += x
+    return t
+
+test "labels":
+    assert label(0) == "none"
+    assert label(50) == "many"
+    assert total([]) == 0

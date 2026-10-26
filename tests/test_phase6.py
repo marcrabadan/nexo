@@ -328,3 +328,61 @@ def test_a_workflow_resumes_after_the_program_stops(phase, tmp_path):
     assert proc.stdout.decode() == "OK\nthree 1\none 2\nOK\nthree 2\n"
     assert proc.returncode == 0
     assert not (tmp_path / ".nexo").exists()
+
+
+
+GRADE = '''type Level = "low" | "mid" | "high"
+
+## the level of a score from 0 to 100
+fn level(score: int) -> Level:
+    expect score >= 0
+    if score < 50:
+        return "low"
+    elif score < 80:
+        return "mid"
+    return "high"
+
+## the points a level is worth
+fn points(l: Level) -> int:
+    match l:
+        "low":
+            return 0
+        "mid":
+            return 1
+        "high":
+            return 3
+
+## how many digits n has
+fn digits(n: int) -> int:
+    var count = 1
+    var rest = n
+    while rest >= 10:
+        rest = rest // 10
+        count += 1
+    return count
+
+test "a middle score":
+    assert level(60) == "mid"
+'''
+
+
+@pytest.mark.parametrize("phase", PHASES, ids=IDS)
+def test_suggested_cases_raise_branch_coverage(phase, tmp_path):
+    """The measure of "Tests proposed automatically" (D131, D152): branch
+    coverage with the developer's tests, and with the cases that nexo test
+    --suggest proposes added to them."""
+    (tmp_path / "grade.nexo").write_text(GRADE)
+    before = run(phase[1], ["test", "--coverage", "grade.nexo"], tmp_path).stdout.decode()
+    assert "Branch coverage: 2 of 10 (20%).\n" in before
+    suggested = run(phase[1], ["test", "--suggest", "grade.nexo"], tmp_path).stdout.decode()
+    (tmp_path / "grade.nexo").write_text(GRADE + "\n" + suggested)
+    after = run(phase[1], ["test", "--coverage", "grade.nexo"], tmp_path).stdout.decode()
+    assert after.splitlines()[3:] == [
+        "3 tests: 3 passed, 0 failed",
+        "Branch coverage: 6 of 10 (60%).",
+        'grade.nexo:13: the function "points" never ran.',
+        "grade.nexo:16: the match arm never ran.",
+        "grade.nexo:18: the match arm never ran.",
+        "grade.nexo:20: the match arm never ran.",
+        "Add tests that run them; nexo test --suggest proposes some.",
+    ]

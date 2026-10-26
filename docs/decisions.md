@@ -2137,3 +2137,35 @@ email.confirmed(email), max: 3 days`.
   error, since the next call would skip every step.
 - Step results passed to later steps, signals, parallel steps and a
   list of runs are not in the specification and are not added.
+
+**D152. `nexo test --coverage`.** "Goals and guarantees" measures "Tests
+proposed automatically" by "branch coverage before and after", and no
+section names a coverage tool, so it is an option of `nexo test`, as
+`--suggest` is (D131): `nexo test --coverage [paths]` runs the same
+tests and, after their summary, prints `Branch coverage: 6 of 10 (60%).`
+(rounded down), each branch that never ran as `file:line: what.`, by
+file and line, and a sentence on how to cover them. The exit code is
+that of `nexo test`: coverage is a measure, not a rule.
+- A branch is a block that runs on some paths only, as the developer
+  wrote it: the body of each function and method (`the function
+  "Shape.area" never ran`, on the line of its name), each branch of an
+  `if`, `elif` and `else`, the path an `if` without `else` takes when no
+  condition holds (on the line of the `if`), each arm of a `match`, each
+  loop body (`for`, `while`, `repeat`) and each `else` of a `try`; the
+  `undo` part of an action is its own branch. The others are on the line
+  of their first statement.
+- Not counted: `test` blocks (they are what runs the code), lambdas,
+  `parallel for` and `on`/`when` blocks (code inside expressions and
+  events), and the code the parser writes for module blocks and patterns
+  (functions whose names start with `__`, the `try` of `protect`,
+  transactions, actions and workflows, the steps of a workflow).
+  Function bodies count, so a function with no `if` that no test calls
+  is still found.
+- Both parsers' programs get a call `__cover(n)` first in each branch
+  (after the `expect`s and `ensure`s that open it) before they run or
+  are compiled, so both phases count the same branches; the modules a
+  file uses are counted too. A file whose tests do not run (it does not
+  load, or has no test) adds nothing. With several files, a branch
+  counts once and is covered if any file's tests ran it.
+- Statement and line coverage, reports in other formats and a minimum
+  percentage are not in the specification and are not added.

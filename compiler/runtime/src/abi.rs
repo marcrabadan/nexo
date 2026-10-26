@@ -1744,6 +1744,7 @@ pub extern "C" fn nx_test_finish() -> ! {
     if let Ok(path) = std::env::var("NEXO_TEST_REPORT") {
         let _ = std::fs::write(path, format!("{run} {passed}\n"));
     }
+    crate::library::write_coverage();
     // a mistake in a handler of a server is a broken program (D102)
     nx_exit(if crate::web::MISTAKE.load(std::sync::atomic::Ordering::SeqCst) { 1 } else { 0 })
 }

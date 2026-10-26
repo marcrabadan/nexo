@@ -18,6 +18,7 @@ mod ast;
 mod cheader;
 mod checker;
 mod codegen;
+mod cover;
 mod docs;
 mod fmt;
 mod intent;
@@ -45,7 +46,7 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]"
+    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]"
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -74,6 +75,9 @@ fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, 
     // the modules of the program's files (D124)
     let mut linker = modules::Linker::new(name, next_id);
     linker.link(&mut program).map_err(fail)?;
+    if cover::enabled() {
+        cover::instrument(&mut program, name, linker.next_id());
+    }
     program.files = linker.files;
     let res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
@@ -819,10 +823,14 @@ fn test_files(paths: &[String]) -> Vec<PathBuf> {
     found
 }
 
-/// `nexo test [paths]`: run the top level of each file, then its tests (D54).
+/// `nexo test [paths]`: run the top level of each file, then its tests
+/// (D54); with --coverage, the branches the tests ran (D152).
 fn run_tests(paths: &[String]) -> u8 {
     let files = test_files(paths);
     let (mut total, mut passed, mut broken) = (0u32, 0u32, 0u32);
+    let mut branches: Vec<cover::Branch> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut covered = std::collections::HashSet::new();
     for f in &files {
         let display = f.to_string_lossy().into_owned();
         let source = match read_source(&display) {
@@ -858,8 +866,13 @@ fn run_tests(paths: &[String]) -> u8 {
         }
         let report = dir.join("report");
         let _ = std::fs::remove_file(&report);
+        let hits = dir.join("cover");
+        let _ = std::fs::remove_file(&hits);
         let mut cmd = Command::new(&exe);
         cmd.env("NEXO_TEST_REPORT", &report);
+        if cover::enabled() {
+            cmd.env("NEXO_COVER_REPORT", &hits);
+        }
         if files.len() > 1 {
             cmd.env("NEXO_TEST_HEADER", &name);
         }
@@ -869,6 +882,21 @@ fn run_tests(paths: &[String]) -> u8 {
         if nums.len() == 2 {
             total += nums[0];
             passed += nums[1];
+            if cover::enabled() && nums[0] > 0 {
+                let ran: std::collections::HashSet<usize> = std::fs::read_to_string(&hits)
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .filter_map(|n| n.parse().ok())
+                    .collect();
+                for (i, b) in cover::TABLE.lock().unwrap().iter().enumerate() {
+                    if seen.insert(b.key()) {
+                        branches.push(b.clone());
+                    }
+                    if ran.contains(&i) {
+                        covered.insert(b.key());
+                    }
+                }
+            }
         }
         if !ok || nums.len() != 2 {
             broken += 1;
@@ -881,6 +909,9 @@ fn run_tests(paths: &[String]) -> u8 {
         return 0;
     }
     println!("{}", summary(total, passed, total - passed));
+    if cover::enabled() {
+        print!("{}", cover::report(&branches, &covered));
+    }
     if passed == total && broken == 0 {
         0
     } else {
@@ -1269,6 +1300,10 @@ fn main() -> ExitCode {
     } else {
         match rest[0].as_str() {
             "test" if rest.get(1).map(String::as_str) == Some("--suggest") => run_suggest(&rest[2..]),
+            "test" if rest.get(1).map(String::as_str) == Some("--coverage") => {
+                cover::ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+                run_tests(&rest[2..])
+            }
             "test" => run_tests(&rest[1..]),
             "build" => build(&rest[1..]),
             "fmt" => run_fmt(&rest[1..]),

@@ -475,6 +475,30 @@ expect amount &gt; 0.00 EUR does not hold (amount = -1.00 EUR)
 ✓ a deposit adds to the balance
 ✓ a negative deposit fails
 2 tests: 2 passed, 0 failed</code></pre></div></div>
+  <p><code>nexo test --coverage</code> runs the same tests and then says how many branches they ran, and which never ran: the body of each function, each branch of an <code>if</code> (and the case where no condition holds), each arm of a <code>match</code>, each loop body and each <code>else</code> of a <code>try</code>. Code inside <code>test</code> blocks and lambdas is not counted (D152).</p>
+<div class="code"><div class="code-bar"><span>coverage.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn label(n: int) -&gt; str:
+    if n == 0:
+        return "none"
+    elif n &lt; 10:
+        return "few"
+    return "many"
+
+fn total(xs: list) -&gt; int:
+    var t = 0
+    for x in xs:
+        t += x
+    return t
+
+test "labels":
+    assert label(0) == "none"
+    assert label(50) == "many"
+    assert total([]) == 0</code></pre></div>
+<div class="code"><div class="out"><div class="out-label">$ nexo test --coverage coverage.nexo</div><pre><code>✓ labels
+1 test: 1 passed, 0 failed
+Branch coverage: 4 of 6 (66%).
+coverage.nexo:5: the elif branch never ran.
+coverage.nexo:11: the loop body never ran.
+Add tests that run them; nexo test --suggest proposes some.</code></pre></div></div>
 </section>
 
 <section class="ref-sec" id="modules">
@@ -1373,7 +1397,7 @@ Anything else stops a release build; nexo report.nexo allows it with a warning, 
       <tr><td><code>nexo file.nexo</code></td><td>Runs a program</td></tr>
       <tr><td><code>nexo new name</code></td><td>Creates a project: <code>nexo.toml</code> and <code>src/main.nexo</code> with a test</td></tr>
       <tr><td><code>nexo build [--release [--trust-ensure]] [-o out] file.nexo</code></td><td>Compiles to a native program (compiler only)</td></tr>
-      <tr><td><code>nexo test [paths]</code></td><td>Runs the <code>test</code> blocks</td></tr>
+      <tr><td><code>nexo test [paths]</code></td><td>Runs the <code>test</code> blocks; <code>--coverage</code> adds the branches they ran, <code>--suggest file.nexo</code> proposes edge cases</td></tr>
       <tr><td><code>nexo fmt [paths]</code></td><td>Formats files in place; there are no options</td></tr>
       <tr><td><code>nexo lint [paths]</code>, <code>nexo fix [paths]</code></td><td>Warnings with their fixes, and applying the safe ones</td></tr>
       <tr><td><code>nexo check [paths]</code></td><td>The compile checks, without running anything</td></tr>
