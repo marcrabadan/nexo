@@ -30,6 +30,7 @@
       "title": "Standard library (always available)",
       "entries": [
         ["move_file(path: str, to: str) -> none!", "Move or rename a file."],
+        ["undo() -> bool!", "Undo the last action done (section 10); false when there is none."],
         ["date(year: int, month: int, day: int) -> date", "A day of the calendar; date(t) is the day of a time."],
         ["time(year, month, day, hour = 0, minute = 0, second = 0, zone: str?) -> time", "An instant in a time zone."],
         ["regex(pattern: str) -> regex", "A regular expression: matches(t), find(t), find_all(t), replace(t, with), split(t), groups(t)."],

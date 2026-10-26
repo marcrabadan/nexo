@@ -1,0 +1,75 @@
+# Section 10: durable workflows (D151)
+var accounts = []
+var sent = []
+
+fn create_account(email: str):
+    accounts = accounts + [email]
+    print("created", email)
+
+fn delete_account(email: str):
+    accounts = [a for a in accounts if a != email]
+    print("deleted", email)
+
+fn confirmed(email: str) -> bool:
+    return email in accounts
+
+fn send_welcome(email: str) -> int!:
+    if email == "bad@example.com":
+        fail("no mailbox for {email}")
+    sent = sent + [email]
+    return len(sent)
+
+workflow customer_signup(email: str):
+    step create_account(email)
+        undo delete_account(email)
+    step wait confirmed(email), max: 3 days
+    step send_welcome(email)
+
+customer_signup("ana@example.com")
+print(accounts, sent)
+
+try:
+    customer_signup("bad@example.com")
+else e:
+    print("failed:", e.message)
+print(accounts, sent)
+
+fn never() -> bool:
+    return false
+
+workflow slow(n: int):
+    step print("first", n)
+        undo print("undo first", n)
+    step print("second", n)
+        undo print("undo second", n)
+    step wait never(), max: 0s
+
+try:
+    slow(1)
+else e is Timeout:
+    print(e.message)
+
+var tries = 0
+
+fn flaky_undo():
+    tries += 1
+    if tries == 1:
+        fail("the undo failed")
+    print("undone after", tries, "tries")
+
+fn broken(id: int) -> int!:
+    if id > 0:
+        fail("step two failed")
+    return id
+
+workflow repair(id: int):
+    step print("step one", id)
+        undo flaky_undo()
+    step broken(id)
+
+repeat 3:
+    try:
+        repair(7)
+        print("done")
+    else e:
+        print("failed:", e.message)

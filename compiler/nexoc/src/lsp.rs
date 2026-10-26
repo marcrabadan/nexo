@@ -21,13 +21,13 @@ const BUILTINS: &[&str] = &[
     "json", "csv",
     // the library of phase 4 (D89)
     "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair", "encrypt",
-    "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "jwt", "ask", "email", "NetworkError",
+    "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "jwt", "ask", "undo", "email", "NetworkError",
     "HTTPError", "AIError", "DatabaseError",
 ];
 /// The functions of phase 4 among BUILTINS (the others are values).
 const LIBRARY_FUNCTIONS: &[&str] = &[
     "move_file", "date", "time", "regex", "render", "secret", "encrypt", "decrypt", "encrypt_file", "decrypt_file", "sign",
-    "verify", "log", "jwt", "ask",
+    "verify", "log", "jwt", "ask", "undo",
 ];
 const MEMBERS: &[&str] = &[
     "add", "cause", "close", "count", "ends_with", "keys", "kind", "line", "lower", "message", "parse", "receive", "replace",

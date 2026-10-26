@@ -1,0 +1,13 @@
+var lines = ["first"]
+
+action add(line: str):
+    do: lines = lines + [line]
+    undo: lines = [l for l in lines if l != line]
+
+add("second")
+add("third")
+print(lines)
+undo()
+print(lines)
+print(undo(), undo())
+print(lines)

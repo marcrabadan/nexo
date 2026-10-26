@@ -1,0 +1,4 @@
+Error in s10_action_return.nexo, line 5:
+  return name
+  ^^^^^^^^^^^
+return cannot leave an action. An action gives nothing back; remove the return.

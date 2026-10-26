@@ -1,0 +1,4 @@
+Error in s10_workflow_wait.nexo, line 6:
+  step wait paid(id)
+  ^^^^
+A wait step needs its condition and a "max" duration. Write it as step wait confirmed(email), max: 3 days.

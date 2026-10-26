@@ -204,7 +204,7 @@ pub fn raise_error(kind: &str, message: String, cause: Val, span_id: u32) -> Fai
     raise_error_with(kind, message, cause, span_id, &format!("fix.{kind}"))
 }
 
-fn raise_error_with(kind: &str, message: String, cause: Val, span_id: u32, fix_key: &str) -> Fail {
+pub fn raise_error_with(kind: &str, message: String, cause: Val, span_id: u32, fix_key: &str) -> Fail {
     let fix = if nexo_diag::has(fix_key) { Some(crate::num::intern(fix_key)) } else { None };
     let line = span(span_id).map(|s| s.line);
     let err = Val::new(Obj::Error(ErrorValue {
