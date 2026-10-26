@@ -1,0 +1,46 @@
+# Records that never leave their function are kept as their fields (D154);
+# nothing in the output may tell them apart
+type P:
+    x: int
+    y: int
+
+    fn norm(self) -> int:
+        return self.x * self.x + self.y * self.y
+
+    fn shifted(self, by: int) -> int:
+        var total = self.x + by
+        if total > 10:
+            total -= self.y
+        return total
+
+var acc = 0
+for i in 1..5:
+    p = P(i, i + 1)
+    acc += p.norm() % 10 + p.shifted(8)
+    q = P(p.y, p.x)
+    acc += q.x - q.y
+print(acc)
+
+fn walk(n: int) -> int:
+    var p = P(0, 0)
+    for k in 0..n:
+        p = P(p.x + k, p.y - k)
+    return p.x * 100 + p.y
+
+print(walk(4))
+
+# a record that is printed, compared or passed on stays a record
+r = P(1, 2)
+print(r, r.norm())
+s = P(1, 2)
+print(s == r)
+
+fn big(n: int) -> int:
+    p = P(n, n)
+    return p.norm()
+
+try:
+    print(big(4_000_000_000))
+else e is Overflow:
+    print(e.message)
+print(big(3))

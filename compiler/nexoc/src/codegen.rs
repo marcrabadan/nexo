@@ -136,6 +136,9 @@ struct FnState {
     sure: Vec<BindingId>,
     /// the register pointing at the call depth in the thread state
     depth_ptr: String,
+    /// the entry of an int-only function checked the clock with its depth
+    /// (D153): the first statement of its body does not
+    entry_checked: bool,
     /// every `return` so far gave a value known to be an int
     ret_ints: bool,
 }
@@ -1714,6 +1717,7 @@ impl<'a> Gen<'a> {
             ret_label: format!("RET{n}"),
             depth: None,
             int_params: false,
+            entry_checked: false,
             sure: Vec::new(),
             depth_ptr: String::new(),
             ret_ints: true,
@@ -1770,15 +1774,35 @@ impl<'a> Gen<'a> {
         if !int_params {
             self.emitf(format_args!("store i64 {d1}, ptr {dp}"));
         }
-        let deep = self.reg();
-        self.emitf(format_args!("{deep} = icmp ugt i64 {d1}, {MAX_DEPTH}"));
-        let too = self.label();
-        let fine = self.label();
-        self.cond_br(&deep, &too, &fine);
-        self.place(&too);
-        self.call_void("nx_too_deep", "");
-        self.fail_here();
-        self.place(&fine);
+        if int_params {
+            // one comparison checks the depth and, while a `try within`
+            // runs, the clock (the limit is then 0, D153)
+            let lp = self.reg();
+            self.emitf(format_args!("{lp} = getelementptr inbounds i8, ptr %tls, i64 32"));
+            let lim = self.reg();
+            self.emitf(format_args!("{lim} = load i64, ptr {lp}"));
+            let over = self.reg();
+            self.emitf(format_args!("{over} = icmp ugt i64 {d1}, {lim}"));
+            let slow = self.label();
+            let fine = self.label();
+            self.cond_br(&over, &slow, &fine);
+            self.place(&slow);
+            self.call_void("nx_enter_slow", &format!("i64 {d1}"));
+            self.check();
+            self.br(&fine);
+            self.place(&fine);
+            self.f().entry_checked = true;
+        } else {
+            let deep = self.reg();
+            self.emitf(format_args!("{deep} = icmp ugt i64 {d1}, {MAX_DEPTH}"));
+            let too = self.label();
+            let fine = self.label();
+            self.cond_br(&deep, &too, &fine);
+            self.place(&too);
+            self.call_void("nx_too_deep", "");
+            self.fail_here();
+            self.place(&fine);
+        }
         let free = self.res.frames[frame].free.clone();
         if !free.is_empty() {
             let p = self.reg();
@@ -2162,7 +2186,11 @@ impl<'a> Gen<'a> {
             self.echo_next = top && self.repl_live;
             // the statements of the top level never run inside `try within`
             if !top && (!sparse || (k == 0 && !branch)) {
-                self.deadline_tick();
+                if sparse && k == 0 && std::mem::take(&mut self.f().entry_checked) {
+                    // the entry of the function has just checked it (D153)
+                } else {
+                    self.deadline_tick();
+                }
             }
             let before = self.f().live.len();
             // a statement that uses a shared variable holds its lock
@@ -5546,6 +5574,7 @@ declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
+declare void @nx_enter_slow(i64)
 declare void @nx_too_deep()
 declare void @nx_init(ptr, i64, ptr, i64, ptr, i64, ptr)
 declare void @nx_add_file(i32, ptr, i64, ptr, i64)

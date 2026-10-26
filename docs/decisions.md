@@ -2170,3 +2170,34 @@ that of `nexo test`: coverage is a measure, not a rule.
   counts once and is covered if any file's tests ran it.
 - Statement and line coverage, reports in other formats and a minimum
   percentage are not in the specification and are not added.
+
+**D153. Programs that start sooner and calls that check less.** Two
+changes to compiled programs, neither of which shows in their output:
+- They are linked without position-independent code (`-fno-pic`,
+  `-no-pie`): the runtime's tables need no relocation when the program
+  starts (20,000 of them), and the code reads the runtime's globals
+  directly. A program that prints one line starts in about 1.7 ms instead
+  of 2.5 ms. The program still runs on a thread with a large stack (D73):
+  running it on the main thread, with a stack of its own, started 0.25 ms
+  sooner but made programs that create many objects about 15% slower.
+- An int-only function (D84) checked the depth of calls and, when some
+  thread had a `try within`, the clock, at every call. The thread state
+  now holds a limit that is the largest depth, or 0 while a `try within`
+  runs, so one comparison does both, and the slow path tells them apart.
+  fib(32) runs about 20% faster.
+
+**D154. Records that never leave their function are kept as their
+fields.** Section 7 says the compiler moves a value when it proves a
+single owner; the same proof allows more for small records. A variable
+whose type is defined once at the top level with only `int` fields,
+which is only given values by `name = T(a, b)` (arguments certainly
+ints that do not read it), only read as `name.field` and used to call
+methods that read `self` only through its fields, take ints and return
+an int, and that no other function can see, is replaced by one int per
+field; each of those methods becomes a top-level function that takes the
+fields (compiler/nexoc/src/unbox.rs). Such a record can never be
+printed, compared, stored or shared, so nothing can tell the difference,
+and every expression keeps its span, so errors read the same. Any other
+record is an object as before. The `records` benchmark builds such a
+record in a loop: it went from 2.5× Rust's time to about 0.4× (the Rust
+program boxes its value, as a record that escapes would need).

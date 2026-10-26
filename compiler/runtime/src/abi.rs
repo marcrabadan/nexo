@@ -123,7 +123,9 @@ pub extern "C" fn nx_tls() -> *mut Tls {
 }
 
 /// Run the program on a thread with a large stack, so that deep recursion
-/// reaches the call limit before the end of the stack.
+/// reaches the call limit before the end of the stack. (Running it on the
+/// main thread, on a stack of its own, starts 0.25 ms sooner but makes
+/// programs that make many objects about 15% slower.)
 #[no_mangle]
 pub extern "C" fn nx_start(entry: extern "C" fn(*mut Tls)) -> ! {
     let handle = std::thread::Builder::new().stack_size(1 << 30).spawn(move || entry(state::tls()));
@@ -140,6 +142,17 @@ pub extern "C" fn nx_start(entry: extern "C" fn(*mut Tls)) -> ! {
 #[no_mangle]
 pub extern "C" fn nx_too_deep() {
     diag(Diagnostic::new_spanless("too_deep"), 0);
+}
+
+/// An int-only function was entered with its depth over the thread's
+/// limit: too many nested calls, or a `try within` whose clock to check.
+#[no_mangle]
+pub extern "C" fn nx_enter_slow(depth: u64) {
+    if depth > state::MAX_DEPTH {
+        nx_too_deep();
+    } else {
+        nx_check_deadline();
+    }
 }
 
 #[no_mangle]

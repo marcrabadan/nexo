@@ -1,0 +1,6 @@
+60
+990
+P(x: 1, y: 2) 5
+true
+The result does not fit in a 64-bit int
+18

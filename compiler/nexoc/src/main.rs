@@ -39,6 +39,7 @@ mod sbom;
 mod split;
 mod suggest;
 mod typecheck;
+mod unbox;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -75,12 +76,18 @@ fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, 
     // the modules of the program's files (D124)
     let mut linker = modules::Linker::new(name, next_id);
     linker.link(&mut program).map_err(fail)?;
+    let mut next_id = linker.next_id();
     if cover::enabled() {
-        cover::instrument(&mut program, name, linker.next_id());
+        next_id = cover::instrument(&mut program, name, next_id);
     }
     program.files = linker.files;
-    let res = resolve::resolve(&program).map_err(fail)?;
+    let mut res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
+    // records that never leave their function become ints (D154)
+    if unbox::unbox(&mut program, &res, &mut next_id) {
+        res = resolve::resolve(&program).map_err(fail)?;
+        typecheck::check(&program, &res).map_err(fail)?;
+    }
     let opts = codegen::Options {
         file: name.to_string(),
         test_mode,
@@ -539,7 +546,9 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     let _ = std::fs::create_dir_all(&dir);
     let ll = dir.join("program.ll");
     let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
-    let libs = ["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
+    // not position-independent: the program starts without relocating the
+    // runtime's tables and reads its globals directly (D153)
+    let libs = ["-no-pie", "-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
     let fail = |output: std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
     let dev = opt != "-O2";
     let mut parts = 1;
@@ -564,7 +573,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
         let gc: &[&str] = if dev { &[] } else { &["-Wl,--gc-sections"] };
         let output = Command::new(&cc)
             .arg(opt)
-            .arg("-Wno-override-module")
+            .args(["-Wno-override-module", "-fno-pic"])
             .arg(&ll)
             .arg(runtime_lib())
             .args(["-o"])
@@ -592,7 +601,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
                         let m = dev_ir(m);
                         let mut child = Command::new(&cc)
                             .arg(opt)
-                            .arg("-Wno-override-module")
+                            .args(["-Wno-override-module", "-fno-pic"])
                             .args(["-c", "-x", "ir", "-", "-o"])
                             .arg(obj)
                             .stdin(Stdio::piped())
