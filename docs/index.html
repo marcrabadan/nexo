@@ -1244,6 +1244,7 @@ pipeline main:
     step deploy:
         approve(by: [&quot;ops@shop.example&quot;])
         apply(stage: &quot;prod&quot;, image: image)</code></pre><div class="out"><div class="out-label">$ nexo ci export github shop.nexo</div><pre><code>Wrote .github/workflows/main.yml.</code></pre></div></div>
+    </div>
     <div class="panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" hidden>
       <p>Operations without a cloud: orders arrive on a stream and each is handled once, a bad one goes to the dead letters after its retries, clicks are counted per minute, and a flag gives a quarter of the users free shipping. The tests send the messages to the local broker.</p>
 <div class="code"><div class="code-bar"><span>examples/events/events.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Shop events: orders arrive on a stream and each one is handled once,
@@ -1317,7 +1318,6 @@ clicks on /cart: 1
 clicks on /home: 1
 ✓ clicks per minute
 2 tests: 2 passed, 0 failed</code></pre></div></div>
-    </div>
     </div>
   </div>
 </section>
