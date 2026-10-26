@@ -68,7 +68,7 @@ pub fn iterate(v: V, span: u32) -> R<Items> {
             let mut i = 0;
             Ok(boxed(move || {
                 let Some(Obj::List(items)) = owner.get() else { return None };
-                let r = items.borrow().get(i).cloned();
+                let r = items.borrow().get(i).map(Val::from);
                 i += 1;
                 r.map(Ok)
             }))

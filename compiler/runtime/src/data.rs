@@ -675,7 +675,7 @@ fn as_type(value: V, t: Target, span: u32) -> R<Val> {
                 return Err(invalid(span, "detail.expected", &[("type", "list".into()), ("vtype", type_name(value))]));
             };
             let Some(inner) = param.and_then(field_target) else { return Ok(Val::from(value)) };
-            let items: Vec<Val> = items.borrow().clone();
+            let items: Vec<Val> = items.borrow().to_vec();
             let mut out = Vec::with_capacity(items.len());
             for v in items {
                 out.push(as_type(v.v(), inner, span)?);

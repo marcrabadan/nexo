@@ -472,6 +472,13 @@ pub unsafe extern "C" fn nx_list_add(slot: *mut V, t: u64, b: u64) -> u8 {
     let obj = *slot;
     let arg = v(t, b);
     if let Some(Obj::List(items)) = obj.get() {
+        // an int onto a list of ints, the most common case (D137)
+        if arg.tag == T_INT && owners(obj) <= 1 {
+            if let ListItems::Ints(v) = items.borrow_mut() {
+                v.push(arg.bits as i64);
+                return 1;
+            }
+        }
         if owners(obj) <= 1 && !matches!(arg.get(), Some(Obj::Lazy(_) | Obj::Grouped(_))) {
             let x = coll::stored_in(obj, Val::from(arg.plain()));
             items.borrow_mut().push(x);
@@ -1359,7 +1366,7 @@ pub unsafe extern "C" fn nx_sum_end(acc: *mut V, rest: *mut V, span: u32) -> V {
     let a = Val::adopt(std::mem::replace(&mut *acc, UNDEF));
     let r = Val::adopt(std::mem::replace(&mut *rest, NONE));
     if let Some(Obj::List(items)) = r.get() {
-        return ret(pipe::total(&items.borrow(), span));
+        return ret(pipe::total(&items.borrow().to_vec(), span));
     }
     if a.tag == T_UNDEF {
         return V::int(0);
@@ -1467,17 +1474,25 @@ pub extern "C" fn nx_iter(t: u64, b: u64, span: u32) -> *mut Iter {
 /// code (D134): a pointer to the first and their number; null for
 /// anything else. The iterator owns the list, so it does not change.
 #[no_mangle]
-pub unsafe extern "C" fn nx_iter_view(it: *mut Iter, len: *mut u64) -> *const V {
+pub unsafe extern "C" fn nx_iter_view(it: *mut Iter, len: *mut u64, ints: *mut u8) -> *const V {
+    *ints = 0;
     if it.is_null() {
         return std::ptr::null();
     }
     match &*it {
         Iter::List(owner, _) => match owner.get() {
-            Some(Obj::List(items)) => {
-                let items = items.borrow();
-                *len = items.len() as u64;
-                items.as_ptr() as *const V
-            }
+            Some(Obj::List(items)) => match items.borrow() {
+                ListItems::Vals(v) => {
+                    *len = v.len() as u64;
+                    v.as_ptr() as *const V
+                }
+                // the numbers of a list of ints (D137)
+                ListItems::Ints(v) => {
+                    *len = v.len() as u64;
+                    *ints = 1;
+                    v.as_ptr() as *const V
+                }
+            },
             _ => std::ptr::null(),
         },
         _ => std::ptr::null(),

@@ -21,7 +21,7 @@ use crate::value::*;
 /// owner, so changing an element copies it in turn).
 pub fn shallow_copy(v: V) -> Option<Val> {
     Some(match v.get()? {
-        Obj::List(items) => list(items.borrow().clone()),
+        Obj::List(items) => Val::new(Obj::List(Mut::new(items.borrow().clone()))),
         Obj::Map(m) => Val::new(Obj::Map(Mut::new(m.borrow().clone()))),
         Obj::Set(s) => Val::new(Obj::Set(Mut::new(s.borrow().clone()))),
         _ => return None,

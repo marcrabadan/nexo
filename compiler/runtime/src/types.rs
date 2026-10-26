@@ -511,7 +511,7 @@ pub fn fits(v: V, t: &'static TypeDesc, span: u32) -> R<Option<Val>> {
                         return Ok(Some(owned));
                     }
                     let p = params[0];
-                    let items: Vec<Val> = items.borrow().clone();
+                    let items: Vec<Val> = items.borrow().to_vec();
                     // a list whose elements need no conversion is kept as is
                     let mut changed = false;
                     let mut out = Vec::with_capacity(items.len());

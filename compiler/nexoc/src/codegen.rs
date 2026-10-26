@@ -2409,18 +2409,24 @@ impl<'a> Gen<'a> {
     /// The elements of a list being iterated stay where they are (the
     /// iterator holds the list, so a change through a variable copies it):
     /// the loop reads them in place (D134). (pointer or null, length, index)
-    fn iter_view(&mut self, it: &str) -> (String, String, String) {
+    fn iter_view(&mut self, it: &str) -> (String, String, String, String) {
         let len = self.alloca("i64");
         let idx = self.alloca("i64");
+        let kind = self.alloca("i8");
         self.emitf(format_args!("store i64 0, ptr {idx}"));
         let view = self.reg();
-        self.emitf(format_args!("{view} = call ptr @nx_iter_view(ptr {it}, ptr {len})"));
-        (view, len, idx)
+        self.emitf(format_args!("{view} = call ptr @nx_iter_view(ptr {it}, ptr {len}, ptr {kind})"));
+        // a list of ints keeps the numbers themselves (D137)
+        let k = self.reg();
+        self.emitf(format_args!("{k} = load i8, ptr {kind}"));
+        let ints = self.reg();
+        self.emitf(format_args!("{ints} = icmp ne i8 {k}, 0"));
+        (view, len, idx, ints)
     }
 
     /// The next element in `item` (owned); an i1 that is false at the end.
-    fn iter_next(&mut self, it: &str, view: &(String, String, String), item: &str) -> String {
-        let (view, len, idx) = view;
+    fn iter_next(&mut self, it: &str, view: &(String, String, String, String), item: &str) -> String {
+        let (view, len, idx, ints) = view;
         let ok = self.alloca("i8");
         let isview = self.reg();
         self.emitf(format_args!("{isview} = icmp ne ptr {view}, null"));
@@ -2439,6 +2445,20 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("{lt} = icmp ult i64 {i}, {n}"));
         self.cond_br(&lt, &more, &done);
         self.place(&more);
+        let int_l = self.label();
+        let val_l = self.label();
+        let got = self.label();
+        self.cond_br(ints, &int_l, &val_l);
+        self.place(&int_l);
+        let pi = self.reg();
+        self.emitf(format_args!("{pi} = getelementptr inbounds i64, ptr {view}, i64 {i}"));
+        let n_ = self.reg();
+        self.emitf(format_args!("{n_} = load i64, ptr {pi}"));
+        let xi = self.reg();
+        self.emitf(format_args!("{xi} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {n_}, 1"));
+        self.emitf(format_args!("store %V {xi}, ptr {item}"));
+        self.br(&got);
+        self.place(&val_l);
         let p = self.reg();
         self.emitf(format_args!("{p} = getelementptr inbounds %V, ptr {view}, i64 {i}"));
         let x = self.reg();
@@ -2447,6 +2467,8 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("{x2} = call %V @nx_plainv(%V {x})"));
         self.emitf(format_args!("call void @rc_inc(%V {x2})"));
         self.emitf(format_args!("store %V {x2}, ptr {item}"));
+        self.br(&got);
+        self.place(&got);
         let i1 = self.reg();
         self.emitf(format_args!("{i1} = add i64 {i}, 1"));
         self.emitf(format_args!("store i64 {i1}, ptr {idx}"));
@@ -5319,7 +5341,7 @@ declare %V @nx_row_get(i64, i64, ptr, i64, ptr)
 declare void @nx_row_missing(i64, i64, ptr, i64, ptr, i64, i32)
 declare ptr @nx_iter(i64, i64, i32)
 declare i8 @nx_iter_next(ptr, ptr)
-declare ptr @nx_iter_view(ptr, ptr)
+declare ptr @nx_iter_view(ptr, ptr, ptr)
 declare i64 @nx_repeat_count(i64, i64, i32)
 declare void @nx_parallel_max(i64, i64, i32)
 declare %V @nx_deep_copy(i64, i64)

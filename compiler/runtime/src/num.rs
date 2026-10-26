@@ -240,8 +240,10 @@ pub fn arith(op: Op, a: V, b: V, span: u32) -> R<Val> {
         let fb = crate::pipe::force(b)?;
         if let (Some(Obj::List(x)), Some(Obj::List(y))) = (fa.get(), fb.get()) {
             let mut items = x.borrow().clone();
-            items.extend(y.borrow().iter().cloned());
-            return Ok(list(items));
+            for v in y.borrow().iter() {
+                items.push(Val::from(v));
+            }
+            return Ok(Val::new(Obj::List(Mut::new(items))));
         }
     }
     if matches!(a.get(), Some(Obj::Native(_))) || matches!(b.get(), Some(Obj::Native(_))) {

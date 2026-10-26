@@ -473,6 +473,13 @@ impl V {
         self.tag == other.tag && self.bits == other.bits
     }
 
+    /// The value itself (as `Val::v`), so code reads borrowed elements of
+    /// either kind alike.
+    #[inline]
+    pub fn v(self) -> V {
+        self
+    }
+
     /// Drop the literal tag: the value is now an ordinary float.
     pub fn plain(self) -> V {
         if self.tag == T_LITFLOAT {
@@ -957,7 +964,7 @@ pub enum Obj {
     Money(Dec, &'static str),
     /// a number with a unit: 30s, 5 km, 512 MB, 10%
     Quantity(Dec, &'static str),
-    List(Mut<Vec<Val>>),
+    List(Mut<ListItems>),
     Map(Mut<NMap>),
     Set(Mut<NSet>),
     /// inclusive range
@@ -1046,7 +1053,117 @@ impl V {
 }
 
 pub fn list(items: Vec<Val>) -> Val {
-    Val::new(Obj::List(Mut::new(items)))
+    Val::new(Obj::List(Mut::new(ListItems::from_vals(items))))
+}
+
+/// The elements of a list (D137). A list of ints keeps the numbers
+/// themselves, eight bytes each, as Rust's `Vec<i64>` does; the first
+/// element that is not an int turns it into a list of values, once.
+/// Reading never changes the representation (a list may be read by several
+/// tasks at once); only a change, made by the list's single owner, does.
+pub enum ListItems {
+    Ints(Vec<i64>),
+    Vals(Vec<Val>),
+}
+
+impl Default for ListItems {
+    fn default() -> ListItems {
+        ListItems::Ints(Vec::new())
+    }
+}
+
+impl Clone for ListItems {
+    fn clone(&self) -> ListItems {
+        match self {
+            ListItems::Ints(v) => ListItems::Ints(v.clone()),
+            ListItems::Vals(v) => ListItems::Vals(v.clone()),
+        }
+    }
+}
+
+impl ListItems {
+    pub fn from_vals(items: Vec<Val>) -> ListItems {
+        if items.iter().all(|x| x.tag == T_INT) {
+            ListItems::Ints(items.iter().map(|x| x.bits as i64).collect())
+        } else {
+            ListItems::Vals(items)
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            ListItems::Ints(v) => v.len(),
+            ListItems::Vals(v) => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Element i, borrowed.
+    #[inline]
+    pub fn get(&self, i: usize) -> Option<V> {
+        match self {
+            ListItems::Ints(v) => v.get(i).map(|n| V::int(*n)),
+            ListItems::Vals(v) => v.get(i).map(|x| x.v()),
+        }
+    }
+
+    /// The elements, borrowed.
+    pub fn iter(&self) -> impl Iterator<Item = V> + '_ {
+        let (ints, vals): (&[i64], &[Val]) = match self {
+            ListItems::Ints(v) => (v, &[]),
+            ListItems::Vals(v) => (&[], v),
+        };
+        ints.iter().map(|n| V::int(*n)).chain(vals.iter().map(|x| x.v()))
+    }
+
+    /// A copy of the elements as values.
+    pub fn to_vec(&self) -> Vec<Val> {
+        match self {
+            ListItems::Ints(v) => v.iter().map(|n| Val::int(*n)).collect(),
+            ListItems::Vals(v) => v.clone(),
+        }
+    }
+
+    #[inline]
+    pub fn push(&mut self, x: Val) {
+        match self {
+            ListItems::Ints(v) if x.tag == T_INT => v.push(x.bits as i64),
+            ListItems::Ints(_) => self.vals_mut().push(x),
+            ListItems::Vals(v) => v.push(x),
+        }
+    }
+
+    /// Change element i (it exists).
+    pub fn set(&mut self, i: usize, x: Val) {
+        match self {
+            ListItems::Ints(v) if x.tag == T_INT => v[i] = x.bits as i64,
+            _ => self.vals_mut()[i] = x,
+        }
+    }
+
+    /// The elements as values, to change them in place: a list of ints
+    /// becomes a list of values. Only the list's single owner calls it.
+    pub fn vals_mut(&mut self) -> &mut Vec<Val> {
+        if let ListItems::Ints(v) = self {
+            *self = ListItems::Vals(v.iter().map(|n| Val::int(*n)).collect());
+        }
+        match self {
+            ListItems::Vals(v) => v,
+            ListItems::Ints(_) => unreachable!(),
+        }
+    }
+
+    /// The numbers of a list of ints, for the compiled code (D137).
+    pub fn ints(&self) -> Option<&[i64]> {
+        match self {
+            ListItems::Ints(v) => Some(v),
+            ListItems::Vals(_) => None,
+        }
+    }
 }
 
 pub fn decimal(d: Dec) -> Val {

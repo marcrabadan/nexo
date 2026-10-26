@@ -196,7 +196,7 @@ pub fn repr_into(v: V, out: &mut String) {
             Obj::Quantity(d, u) => out.push_str(&format_quantity(d, u)),
             Obj::List(items) => {
                 out.push('[');
-                join(&items.borrow(), out);
+                join(&items.borrow().to_vec(), out);
                 out.push(']');
             }
             Obj::Lazy(_) => {

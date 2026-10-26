@@ -150,7 +150,7 @@ pub fn phrase_text(p: &[Val]) -> String {
 
 pub fn items(v: V) -> Vec<Val> {
     match v.get() {
-        Some(Obj::List(items)) => items.borrow().clone(),
+        Some(Obj::List(items)) => items.borrow().to_vec(),
         _ => Vec::new(),
     }
 }

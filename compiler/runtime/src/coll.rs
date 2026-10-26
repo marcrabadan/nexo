@@ -126,7 +126,7 @@ pub fn get_index(obj: V, index: V, span: u32) -> R<Val> {
             if i < 0 || i as usize >= items.len() {
                 return Err(out_of_range(i, items.len(), span));
             }
-            Ok(items[i as usize].clone())
+            Ok(Val::from(items.get(i as usize).unwrap()))
         }
         Some(Obj::Str(s)) => {
             let Some(i) = index.as_int() else {
@@ -184,7 +184,7 @@ pub fn set_index(obj: V, index: V, value: V, span: u32) -> R<()> {
             if i < 0 || i as usize >= items.len() {
                 return Err(out_of_range(i, items.len(), span));
             }
-            items[i as usize] = value;
+            items.set(i as usize, value);
             Ok(())
         }
         _ => Err(diag(Diagnostic::new_spanless("not_indexable").arg("vtype", type_name(obj)), span)),
@@ -220,7 +220,7 @@ pub fn element_slot(container: V, index: V, scratch: &mut Val, span: u32) -> R<O
             if i < 0 || i as usize >= items.len() {
                 return Err(out_of_range(i, items.len(), span));
             }
-            let slot = &mut items[i as usize];
+            let slot = &mut items.vals_mut()[i as usize];
             crate::cow::make_unique_val(slot);
             Ok(Some(slot as *mut Val as *mut V))
         }

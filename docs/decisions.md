@@ -1835,3 +1835,13 @@ bytes, like every heap value) plus a separate buffer. A text of up to 70
 bytes now lives inside the object: one allocation instead of two, and less
 memory. Longer texts keep their own buffer. Nothing a program prints
 changes.
+
+**D137. Lists of ints keep the numbers.** A list element was a value of
+two words (16 bytes): twice the memory of Rust's `Vec<i64>`. A list whose
+elements are all ints now keeps the numbers themselves, eight bytes each;
+the first element that is not an int turns it into a list of values, once.
+Reading a list never changes how it is kept (several tasks may read one
+list at once); only a change by the list's single owner (`add`, `xs[i] =`,
+a change through an element) does. The compiled code reads the numbers of
+a list of ints in place and `xs.add(n)` pushes an int directly. What a
+program prints does not change.
