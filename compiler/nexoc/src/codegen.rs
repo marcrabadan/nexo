@@ -251,6 +251,20 @@ fn may_be_lazy(e: &Expr) -> bool {
     }
 }
 
+/// An expression whose value may be a function (a pipeline step that
+/// names one calls it with the element, D51).
+fn may_be_callable(e: &Expr) -> bool {
+    !matches!(
+        e.kind,
+        ExprKind::Num { .. }
+            | ExprKind::Str(_)
+            | ExprKind::Unit { .. }
+            | ExprKind::BinOp { .. }
+            | ExprKind::Compare { .. }
+            | ExprKind::Unary { .. }
+    )
+}
+
 fn builtin_id(name: &str) -> Option<u32> {
     Some(match name {
         "print" => 0,
@@ -1274,6 +1288,15 @@ impl<'a> Gen<'a> {
 
     /// Read lazy sequences and drop the literal tag of floats (a value
     /// that is stored somewhere).
+    /// `nx_bind` whatever the expression: a lazy value is read now.
+    fn bind_always(&mut self, v: Val) -> Val {
+        let tb = self.tb(&v);
+        let r = self.call_v("nx_bind", &tb);
+        self.check();
+        self.drop_val(&v);
+        self.owned(r)
+    }
+
     fn bind(&mut self, v: Val, e: &Expr) -> Val {
         if !may_be_lazy(e) || self.ints.as_ref().is_some_and(|x| x.record_of(e).is_some()) {
             return self.plain(v);
@@ -5108,7 +5131,10 @@ impl<'a> Gen<'a> {
                 self.br(&head);
                 self.place(&keep);
             } else {
-                let nv = self.bind(r2, x);
+                // a step that names a function returns what the function
+                // returns, which may be lazy: it is read now, as the
+                // pipeline without fusion does
+                let nv = if may_be_callable(x) { self.bind_always(r2) } else { self.bind(r2, x) };
                 self.drop_val(&v);
                 v = nv;
             }

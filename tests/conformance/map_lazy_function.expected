@@ -1,0 +1,4 @@
+Error in map_lazy_function.nexo, line 3:
+  lines = ["not_utf8.txt"] |> map read_lines |> count
+                                  ^^^^^^^^^^
+Unhandled error (InvalidData): Invalid data: the file "not_utf8.txt" is not UTF-8. Fix the input data, or handle it with try and else e is InvalidData.

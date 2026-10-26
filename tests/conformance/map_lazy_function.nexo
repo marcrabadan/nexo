@@ -1,0 +1,4 @@
+# a step that names a function reads what it returns, also when the
+# pipeline ends in count (the compiler fuses it, D134)
+lines = ["not_utf8.txt"] |> map read_lines |> count
+print(lines)
