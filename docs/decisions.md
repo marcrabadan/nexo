@@ -1863,3 +1863,44 @@ of its statements: its straight-line code is short, so the limit is still
 seen after a bounded amount of work, and every call checks once instead
 of once per statement. Every other function, and phase 0, check between
 statements. What a program prints does not change.
+
+**D140. Names certainly defined, and names never defined.** D135 skips
+the check that a name is defined for a function or type the top level
+defines earlier. The compiler also skips it for a `var` declared by an
+earlier statement of an enclosing block of the same function, and for
+parameters and loop variables (bound before their block runs). A name
+that only `name = value` statements bind is never defined when every one
+of those statements has, in the same function, a `var` of that name
+declared by an earlier statement of an enclosing block: the `var` takes
+each assignment (D26). Such a name is left out when the compiler looks a
+name up, so `total += x` inside a loop over `var total` reads and writes
+`total` directly. A statement the compiler does not look into (a module,
+`select`) counts as one that may define its name. A `var` that is the
+only statement binding its name is not checked for being declared twice:
+its scope starts again each time it is entered, so the name is not
+defined yet when the `var` runs. What a program prints does not change.
+
+**D141. Compiling in development mode.** Clang without optimisation has
+a fast instruction selector that does not take a value of two words
+passed, loaded or built as one: a function with such a value fell back
+to the slow selector, which took most of the compile time. Development
+mode now rewrites the program's IR before clang reads it
+(compiler/nexoc/src/scalar.rs): values are loaded, stored and passed to
+the helpers as two words; a function with a form the rewrite does not
+know is left as it was. The parts of a large program are rewritten by
+one thread each and reach clang through pipes, not files. The compiler
+also emits less code wherever it knows more, in both modes:
+
+- a variable that only ever holds ints is not released;
+- a register known to hold an int or a bool needs no count and no check
+  of its type, and a single comparison gives the condition of an `if` or
+  `while` directly;
+- `%` and `//` by a positive constant need no check of the divisor;
+- a method declared `-> int` of a record of a known type returns an int
+  (its frame checks the value), and a function whose every `return`
+  gives an int it knows needs no check of the value it returns;
+- the statements of the top level never run inside `try within`, so the
+  time limit (D58) is not checked between them.
+
+Release builds are compiled as before otherwise. What a program prints
+does not change.

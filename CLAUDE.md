@@ -81,7 +81,8 @@ compiler/
                   read at compile time), ai_cmd, phase5 (the commands of
                   flags, privacy, infra and ci); phase 6: narrow (ints and
                   records of known types, D126), sbom, split (parallel
-                  development builds, D135), audit, docs, suggest, intent
+                  development builds, D135), scalar (values as two words
+                  in development mode, D141), audit, docs, suggest, intent
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,

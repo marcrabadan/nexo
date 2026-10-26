@@ -209,6 +209,11 @@ impl<'a> Ints<'a> {
     }
 
     /// Is the expression certainly an int?
+    /// A variable that only ever holds ints (or nothing yet).
+    pub fn int_binding(&self, b: BindingId) -> bool {
+        self.int_bindings.contains(&b)
+    }
+
     pub fn certain(&self, e: &Expr) -> bool {
         match &e.kind {
             ExprKind::Num { text, is_float: false } => text.parse::<i64>().is_ok(),
@@ -224,10 +229,23 @@ impl<'a> Ints<'a> {
                     Some(NameRes::Bindings { cands, row: None, .. }) if cands.len() == 1 => self.int_fns.contains(&cands[0]),
                     _ => false,
                 },
+                // a method declared `-> int` of a record of a known type: its
+                // frame checks what it returns
+                ExprKind::Attr { obj, name, .. } => self.int_method(obj, name),
                 _ => false,
             },
             _ => false,
         }
+    }
+
+    fn int_method(&self, obj: &Expr, name: &str) -> bool {
+        let Some(t) = self.record_of(obj) else { return false };
+        let t = self.types[&t];
+        if t.fields.iter().any(|f| f.name == name) {
+            return false;
+        }
+        let mut ms = t.methods.iter().filter(|m| m.name == name);
+        matches!((ms.next(), ms.next()), (Some(m), None) if m.annotations.is_empty() && m.ret.as_ref().is_some_and(is_int_type))
     }
 
     /// A call to a record type defined once: always a record of that type

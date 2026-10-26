@@ -131,6 +131,13 @@ struct FnState {
     /// an int-only function's body: the caller's depth is the argument
     /// %depth, and the depth in the thread state is only written
     int_params: bool,
+    /// variables a `var` earlier in an enclosing block of this frame has
+    /// declared: certainly defined here (D140)
+    sure: Vec<BindingId>,
+    /// the register pointing at the call depth in the thread state
+    depth_ptr: String,
+    /// every `return` so far gave a value known to be an int
+    ret_ints: bool,
 }
 
 /// What a frame compiles from.
@@ -190,6 +197,18 @@ pub struct Gen<'a> {
     known_fns: HashMap<BindingId, &'a FnDef>,
     /// record types defined once (D84)
     known_types: HashMap<BindingId, &'a TypeDef>,
+    /// names bound by assignments that an outer `var` always takes, so
+    /// they are never defined (D140)
+    never: std::collections::HashSet<BindingId>,
+    /// variables a single `var` statement declares (D140)
+    single_var: std::collections::HashSet<BindingId>,
+    var_decls: std::collections::HashSet<u32>,
+    /// the bindings of each frame, in order
+    frame_bindings: HashMap<FrameId, Vec<BindingId>>,
+    /// registers that certainly hold an int: no counts, no tag checks
+    int_regs: std::collections::HashSet<String>,
+    /// registers that certainly hold a bool, and the i1 it was made from
+    bool_regs: HashMap<String, String>,
     /// what the contract prover knows, and the type each method belongs to
     prover: Option<crate::prove::Types>,
     method_of: HashMap<u32, String>,
@@ -420,6 +439,12 @@ impl<'a> Gen<'a> {
             fs: Vec::new(),
             known_fns: HashMap::new(),
             known_types: HashMap::new(),
+            never: Default::default(),
+            single_var: Default::default(),
+            var_decls: Default::default(),
+            frame_bindings: HashMap::new(),
+            int_regs: Default::default(),
+            bool_regs: HashMap::new(),
             prover: None,
             method_of: HashMap::new(),
             ints: None,
@@ -430,6 +455,51 @@ impl<'a> Gen<'a> {
             line_buf: String::new(),
             fakes: Vec::new(),
         }
+    }
+
+    /// The bindings no assignment ever defines (D140): every statement
+    /// that could define one has, among its candidates in the same frame,
+    /// a `var` declared earlier in an enclosing block, which takes it.
+    fn find_never_defined(&mut self, program: &'a Program) {
+        if self.opts.repl_line != 0 {
+            return;
+        }
+        let mut taken = std::collections::HashSet::new();
+        sure_walk(&program.body, self.res, &mut Vec::new(), &mut taken);
+        crate::checker::walk_stmts(&program.body, true, &mut |s| {
+            if let StmtKind::VarDecl { .. } = &s.kind {
+                self.var_decls.insert(s.id);
+            }
+        });
+        let mut maybe = std::collections::HashSet::new();
+        for (sid, a) in &self.res.assigns {
+            if !taken.contains(sid) {
+                maybe.insert(a.target);
+            }
+        }
+        self.never = (0..self.res.bindings.len())
+            .filter(|b| self.res.bindings[*b].assigned_only && !maybe.contains(b))
+            .collect();
+        // a variable only one `var` statement binds is not defined yet when
+        // it runs: its scope starts again each time it is entered
+        let mut defs: HashMap<BindingId, (usize, bool)> = HashMap::new();
+        for (sid, a) in &self.res.assigns {
+            let e = defs.entry(a.target).or_insert((0, true));
+            e.0 += 1;
+            e.1 &= self.var_decls.contains(sid);
+        }
+        self.single_var = defs
+            .into_iter()
+            .filter(|(b, (n, all_var))| {
+                let binding = &self.res.bindings[*b];
+                *n == 1 && *all_var && binding.origin == Origin::Plain && !binding.entry && !binding.shared
+            })
+            .map(|(b, _)| b)
+            .collect();
+    }
+
+    fn never_defined(&self, b: BindingId) -> bool {
+        self.never.contains(&b)
     }
 
     fn find_known_fns(&mut self, program: &'a Program) {
@@ -720,6 +790,12 @@ impl<'a> Gen<'a> {
         let mut acc = "false".to_string();
         for t in tags {
             let c = self.is_tag(v, *t);
+            if c == "true" {
+                return c;
+            }
+            if c == "false" {
+                continue;
+            }
             let o = self.reg();
             self.emitf(format_args!("{o} = or i1 {acc}, {c}"));
             acc = o;
@@ -739,8 +815,14 @@ impl<'a> Gen<'a> {
             self.drop_val(&v);
             return self.owned(r);
         };
-        let slot = self.alloca("%V");
         let ok = self.has_tag(&v, &tags);
+        if ok == "true" {
+            if let Val::Reg(r) = &v {
+                self.unlive(&Live::Reg(r.clone()));
+            }
+            return self.owned(v);
+        }
+        let slot = self.alloca("%V");
         let fast = self.label();
         let slow = self.label();
         let done = self.label();
@@ -789,10 +871,9 @@ impl<'a> Gen<'a> {
         // an int-only function keeps its depth in a register: the thread
         // state gets it before any call that may run other code (D84)
         if self.f().int_params && is_foreign_call(line) {
-            let n = self.next();
-            let d = self.f().depth.clone().unwrap();
             let f = self.f();
-            let _ = writeln!(f.body, "  %dp{n} = getelementptr inbounds i8, ptr %tls, i64 8\n  store i64 {d}, ptr %dp{n}");
+            let d = f.depth.as_deref().unwrap();
+            let _ = writeln!(f.body, "  store i64 {d}, ptr {}", f.depth_ptr);
         }
         let f = self.f();
         f.body.push_str("  ");
@@ -980,20 +1061,20 @@ impl<'a> Gen<'a> {
     }
 
     fn rc_inc(&mut self, v: &Val) {
-        if let Val::Lit(t, _) = v {
-            if *t != T_OBJ {
-                return;
-            }
+        match v {
+            Val::Lit(t, _) if *t != T_OBJ => return,
+            Val::Reg(r) if self.int_regs.contains(r) || self.bool_regs.contains_key(r) => return,
+            _ => {}
         }
         let x = self.agg(v);
         self.emitf(format_args!("call void @rc_inc(%V {x})"));
     }
 
     fn rc_dec(&mut self, v: &Val) {
-        if let Val::Lit(t, _) = v {
-            if *t != T_OBJ {
-                return;
-            }
+        match v {
+            Val::Lit(t, _) if *t != T_OBJ => return,
+            Val::Reg(r) if self.int_regs.contains(r) || self.bool_regs.contains_key(r) => return,
+            _ => {}
         }
         let x = self.agg(v);
         self.emitf(format_args!("call void @rc_dec(%V {x})"));
@@ -1132,6 +1213,15 @@ impl<'a> Gen<'a> {
     }
 
     fn is_tag(&mut self, v: &Val, tag: u64) -> String {
+        let known = match v {
+            Val::Lit(t, _) => Some(*t),
+            Val::Reg(r) if self.int_regs.contains(r) => Some(T_INT),
+            Val::Reg(r) if self.bool_regs.contains_key(r) => Some(T_BOOL),
+            _ => None,
+        };
+        if let Some(t) = known {
+            return if t == tag { "true".into() } else { "false".into() };
+        }
         let t = self.tag_of(v);
         let c = self.reg();
         self.emitf(format_args!("{c} = icmp eq i64 {t}, {tag}"));
@@ -1142,6 +1232,9 @@ impl<'a> Gen<'a> {
     fn truth(&mut self, v: &Val, span: Span, what: &str) -> String {
         if let Val::Lit(T_BOOL, b) = v {
             return if b == "0" { "false".into() } else { "true".into() };
+        }
+        if let Some(c) = self.known_bool(v) {
+            return c;
         }
         let ok = self.label();
         let bad = self.label();
@@ -1162,11 +1255,20 @@ impl<'a> Gen<'a> {
         c
     }
 
+    /// The i1 of a value known to be a bool.
+    fn known_bool(&self, v: &Val) -> Option<String> {
+        match v {
+            Val::Reg(r) => self.bool_regs.get(r).cloned(),
+            _ => None,
+        }
+    }
+
     fn bool_val(&mut self, cond: &str) -> Val {
         let z = self.reg();
         self.emitf(format_args!("{z} = zext i1 {cond} to i64"));
         let r = self.reg();
         self.emitf(format_args!("{r} = insertvalue %V {{ i64 1, i64 0 }}, i64 {z}, 1"));
+        self.bool_regs.insert(r.clone(), cond.to_string());
         Val::Reg(r)
     }
 
@@ -1188,6 +1290,7 @@ impl<'a> Gen<'a> {
     fn plain(&mut self, v: Val) -> Val {
         match &v {
             Val::Lit(..) => v,
+            Val::Reg(r) if self.int_regs.contains(r) => v,
             Val::Reg(r) => {
                 let x = self.reg();
                 self.emitf(format_args!("{x} = call %V @nx_plainv(%V {r})"));
@@ -1239,9 +1342,19 @@ impl<'a> Gen<'a> {
     /// Store into a binding a value that is already owned for it.
     fn store_binding_raw(&mut self, b: BindingId, v: &Val) {
         let p = self.binding_ptr(b);
+        if self.int_binding(b) {
+            self.store(&p, v);
+            return;
+        }
         let old = self.load(&p);
         self.store(&p, v);
         self.rc_dec(&old);
+    }
+
+    /// A variable that never holds an object: its old values need no
+    /// release (D141).
+    fn int_binding(&self, b: BindingId) -> bool {
+        self.ints.as_ref().is_some_and(|i| i.int_binding(b))
     }
 
     /// Store into a binding, which takes ownership of `v`; the old value
@@ -1249,6 +1362,10 @@ impl<'a> Gen<'a> {
     fn store_binding(&mut self, b: BindingId, v: &Val) {
         self.own(v);
         let p = self.binding_ptr(b);
+        if self.int_binding(b) {
+            self.store(&p, v);
+            return;
+        }
         let old = self.load(&p);
         self.store(&p, v);
         self.rc_dec(&old);
@@ -1285,7 +1402,7 @@ impl<'a> Gen<'a> {
     }
 
     fn reset_binding(&mut self, b: BindingId) {
-        if self.res.is_static(b) {
+        if self.res.is_static(b) || self.never_defined(b) {
             return;
         }
         match self.slot_of(b) {
@@ -1296,6 +1413,9 @@ impl<'a> Gen<'a> {
                 self.emitf(format_args!("{c} = call ptr @nx_cell()"));
                 self.emitf(format_args!("store ptr {c}, ptr {a}"));
                 self.emitf(format_args!("call void @nx_cell_release(ptr {old})"));
+            }
+            Some(Slot::Value(a)) if self.int_binding(b) => {
+                self.emitf(format_args!("store %V {{ i64 {T_UNDEF}, i64 0 }}, ptr {a}"));
             }
             Some(Slot::Value(a)) => {
                 let old = self.load(&a);
@@ -1311,8 +1431,9 @@ impl<'a> Gen<'a> {
         let mut slots: Vec<(BindingId, Slot)> = self.f().slots.iter().map(|(b, s)| (*b, s.clone())).collect();
         slots.sort_by_key(|(b, _)| *b);
         let mut text = String::new();
-        for (_, s) in slots {
+        for (b, s) in slots {
             match s {
+                Slot::Value(_) if self.int_binding(b) || self.never_defined(b) => {}
                 Slot::Value(a) => text.push_str(&self.release_text(&Live::Slot(a))),
                 Slot::Cell(a) => {
                     let c = self.reg();
@@ -1375,6 +1496,11 @@ impl<'a> Gen<'a> {
             }
         };
         d < at
+    }
+
+    /// A binding certainly defined at this point of the code (D135, D140).
+    fn is_sure(&mut self, b: BindingId) -> bool {
+        self.f().sure.contains(&b) || self.statically_defined(b)
     }
 
     fn defined(&mut self, b: BindingId) -> String {
@@ -1565,13 +1691,24 @@ impl<'a> Gen<'a> {
             ret_label: format!("RET{n}"),
             depth: None,
             int_params: false,
+            sure: Vec::new(),
+            depth_ptr: String::new(),
+            ret_ints: true,
         }
     }
 
     /// Allocate the slots of every non-static binding of a frame.
     fn frame_slots(&mut self, frame: FrameId) {
-        let ids: Vec<BindingId> =
-            (0..self.res.bindings.len()).filter(|b| self.res.bindings[*b].frame == frame && !self.res.is_static(*b)).collect();
+        if self.frame_bindings.is_empty() {
+            for b in 0..self.res.bindings.len() {
+                self.frame_bindings.entry(self.res.bindings[b].frame).or_default().push(b);
+            }
+        }
+        let ids: Vec<BindingId> = self
+            .frame_bindings
+            .get(&frame)
+            .map(|v| v.iter().copied().filter(|b| !self.res.is_static(*b)).collect())
+            .unwrap_or_default();
         for b in ids {
             if self.res.bindings[b].captured {
                 let a = self.alloca("ptr");
@@ -1595,6 +1732,7 @@ impl<'a> Gen<'a> {
         // count nested calls (D73)
         let dp = self.reg();
         self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+        self.f().depth_ptr = dp.clone();
         let d = if int_params {
             "%depth".to_string()
         } else {
@@ -1637,6 +1775,7 @@ impl<'a> Gen<'a> {
             if int_params {
                 let v = self.reg();
                 self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 %p{i}, 1"));
+                self.int_regs.insert(v.clone());
                 self.store_binding(*b, &Val::Reg(v));
                 continue;
             }
@@ -1705,6 +1844,8 @@ impl<'a> Gen<'a> {
             }
         }
         debug_assert!(self.f().live.is_empty(), "live temporaries at the end of a frame");
+        // the end of the body returns none when it is reached
+        let ret_ints = self.f().ret_ints && self.f().terminated && matches!(src, FrameSrc::Fn(_));
         let ret_label = self.f().ret_label.clone();
         self.br(&ret_label);
         self.place(&ret_label);
@@ -1726,7 +1867,8 @@ impl<'a> Gen<'a> {
                     self.unlock_if(locked);
                 }
             }
-            if let Some(ret) = &f.ret {
+            if let (Some(ret), false) = (&f.ret, ret_ints && f.ret.as_ref().is_some_and(crate::narrow::is_int_type)) {
+                // (a function that only returns ints needs no check)
                 // the slot keeps the value before the check; the result is
                 // owned on its own (the conversion may make a new value)
                 self.rc_inc(&result);
@@ -1751,9 +1893,10 @@ impl<'a> Gen<'a> {
         } else {
             // the step of a pipeline is small and called from one loop: it
             // goes inside it (D134)
-            // so is a short method: a record method called directly (D126)
+            // so is a short method: a record method called directly (D126);
+            // #1 is not inlined in development mode (D135)
             let short_method = matches!(src, FrameSrc::Fn(f) if self.method_of.contains_key(&f.id) && f.body.len() <= 3);
-            let inline = if matches!(src, FrameSrc::Step(_)) || short_method { " alwaysinline" } else { "" };
+            let inline = if matches!(src, FrameSrc::Step(_)) || short_method { " #1" } else { "" };
             let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span){inline} {{\nentry:");
         }
         let release = self.frame_release_text();
@@ -1856,6 +1999,7 @@ impl<'a> Gen<'a> {
     pub fn program(mut self, program: &'a Program) -> GResult<String> {
         self.program_files = program.files.clone();
         self.find_known_fns(program);
+        self.find_never_defined(program);
         self.prover = Some(crate::prove::Types::new(program));
         self.ints = Some(crate::narrow::Ints::new(program, self.res, &self.known_fns, &self.known_types));
         crate::checker::walk_stmts(&program.body, true, &mut |s| {
@@ -1985,6 +2129,7 @@ impl<'a> Gen<'a> {
         // an int-only function checks the clock when it is entered and on
         // each pass of a loop, not between its statements (D139)
         let sparse = self.f().int_params;
+        let sure_len = self.f().sure.len();
         for (k, s) in body.iter().enumerate() {
             if top && self.opts.repl_line > 0 && !self.repl_live && s.span.line >= self.opts.repl_line {
                 self.call_void("nx_repl_live", "");
@@ -1992,7 +2137,8 @@ impl<'a> Gen<'a> {
             }
             self.static_assign_check(s, &mut assigned)?;
             self.echo_next = top && self.repl_live;
-            if !sparse || (k == 0 && !branch) {
+            // the statements of the top level never run inside `try within`
+            if !top && (!sparse || (k == 0 && !branch)) {
                 self.deadline_tick();
             }
             let before = self.f().live.len();
@@ -2008,7 +2154,14 @@ impl<'a> Gen<'a> {
                 self.call_void("nx_shared_unlock", "");
             }
             debug_assert_eq!(self.f().live.len(), before, "temporaries left by a statement at line {}", s.span.line);
+            if let StmtKind::VarDecl { .. } = &s.kind {
+                if self.opts.repl_line == 0 {
+                    let b = self.res.assigns[&s.id].target;
+                    self.f().sure.push(b);
+                }
+            }
         }
+        self.f().sure.truncate(sure_len);
         Ok(())
     }
 
@@ -2097,16 +2250,19 @@ impl<'a> Gen<'a> {
                 };
                 let v = self.bind(v, value);
                 let target = self.res.assigns[&s.id].target;
-                let def = self.defined(target);
-                let bad = self.label();
-                let ok = self.label();
-                self.cond_br(&def, &bad, &ok);
-                self.place(&bad);
-                let n = self.strarg(name);
-                let sp = self.span_id(*name_span);
-                self.call_void("nx_already_declared", &format!("{n}, i32 {sp}"));
-                self.fail_here();
-                self.place(&ok);
+                let single = self.single_var.contains(&target) && self.res.bindings[target].frame == self.f().frame;
+                if !single {
+                    let def = self.defined(target);
+                    let bad = self.label();
+                    let ok = self.label();
+                    self.cond_br(&def, &bad, &ok);
+                    self.place(&bad);
+                    let n = self.strarg(name);
+                    let sp = self.span_id(*name_span);
+                    self.call_void("nx_already_declared", &format!("{n}, i32 {sp}"));
+                    self.fail_here();
+                    self.place(&ok);
+                }
                 self.store_binding(target, &v);
             }
             StmtKind::Return(value) => {
@@ -2121,6 +2277,11 @@ impl<'a> Gen<'a> {
                     RetCtx::Function => {
                         let slot = self.f().ret_slot.clone();
                         let l = self.f().ret_label.clone();
+                        let int = match &v {
+                            Val::Lit(t, _) => *t == T_INT,
+                            Val::Reg(r) => self.int_regs.contains(r),
+                        };
+                        self.f().ret_ints &= int;
                         self.own(&v);
                         self.store(&slot, &v);
                         // a return leaves every temporary of the frame
@@ -2281,6 +2442,7 @@ impl<'a> Gen<'a> {
                         self.place(&yes);
                         let v = self.reg();
                         self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {cur}, 1"));
+                        self.int_regs.insert(v.clone());
                         self.enter_scope(scope);
                         self.store_binding(var, &Val::Reg(v));
                         self.block(body)?;
@@ -2469,6 +2631,7 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("{n_} = load i64, ptr {pi}"));
         let xi = self.reg();
         self.emitf(format_args!("{xi} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {n_}, 1"));
+        self.int_regs.insert(xi.clone());
         self.emitf(format_args!("store %V {xi}, ptr {item}"));
         self.br(&got);
         self.place(&val_l);
@@ -2575,18 +2738,43 @@ impl<'a> Gen<'a> {
                     self.drop_val(&v);
                     v = self.owned(c);
                 }
+                // the first candidate that may be defined is a `var`
+                // certainly defined: it takes the value directly (D140)
+                let first = a.cands.iter().find(|(b, _)| !self.never_defined(*b)).map(|(b, _)| *b);
+                if let Some(b) = first.filter(|b| self.res.bindings[*b].kind == BKind::Var) {
+                    if self.is_sure(b) {
+                        self.task_write_check(b, name, target.span);
+                        let v = match self.res.bindings[b].ty.clone() {
+                            Some(t) => self.conform(v, &t, name, value.span)?,
+                            None => self.plain(v),
+                        };
+                        self.store_binding(b, &v);
+                        return Ok(());
+                    }
+                }
                 // the value waits in a slot; each path moves it out
                 let slot = self.spill_owned(&v);
                 let done = self.label();
                 let define = self.label();
+                // a candidate certainly defined takes the assignment; the
+                // ones after it are never reached (D140)
+                let mut taken = false;
                 for (b, crossed) in &a.cands {
+                    if self.never_defined(*b) {
+                        continue;
+                    }
                     let binding = &self.res.bindings[*b];
                     let kind = binding.kind;
                     let bty = binding.ty.clone();
-                    let def = self.defined(*b);
                     let yes = self.label();
                     let next = self.label();
-                    self.cond_br(&def, &yes, &next);
+                    if (kind == BKind::Var || !*crossed) && self.is_sure(*b) {
+                        taken = true;
+                        self.br(&yes);
+                    } else {
+                        let def = self.defined(*b);
+                        self.cond_br(&def, &yes, &next);
+                    }
                     self.place(&yes);
                     if kind == BKind::Var {
                         self.task_write_check(*b, name, target.span);
@@ -2615,19 +2803,24 @@ impl<'a> Gen<'a> {
                     } else {
                         self.immutable_error(name, target.span);
                     }
+                    if taken {
+                        break;
+                    }
                     self.place(&next);
                 }
-                self.br(&define);
-                self.place(&define);
-                let cur = self.load(&slot);
-                self.move_out(&slot, false);
-                let v = self.plain(cur);
-                self.f().live.push(Live::Reg(match &v {
-                    Val::Reg(r) => r.clone(),
-                    Val::Lit(..) => unreachable!(),
-                }));
-                self.store_binding(a.target, &v);
-                self.br(&done);
+                if !taken {
+                    self.br(&define);
+                    self.place(&define);
+                    let cur = self.load(&slot);
+                    self.move_out(&slot, false);
+                    let v = self.plain(cur);
+                    self.f().live.push(Live::Reg(match &v {
+                        Val::Reg(r) => r.clone(),
+                        Val::Lit(..) => unreachable!(),
+                    }));
+                    self.store_binding(a.target, &v);
+                    self.br(&done);
+                }
                 self.place(&done);
                 self.unlive(&Live::Slot(slot));
             }
@@ -3281,6 +3474,7 @@ impl<'a> Gen<'a> {
                 self.emitf(format_args!("{bits} = extractvalue %V {r}, 1"));
                 let n = self.reg();
                 self.emitf(format_args!("{n} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {bits}, 1"));
+                self.int_regs.insert(n.clone());
                 self.unlive(&Live::Reg(r.clone()));
                 return Ok(Val::Reg(n));
             }
@@ -3528,6 +3722,20 @@ impl<'a> Gen<'a> {
                 self.place(&end);
                 self.load(&slot)
             }
+            ExprKind::Compare { ops, operands } if ops.len() == 1 => {
+                // one comparison: a bool made from the i1, which a condition
+                // uses directly
+                let left = self.expr(&operands[0], true)?;
+                let right = self.expr(&operands[1], true)?;
+                let c = if self.certain_int(&operands[0]) && self.certain_int(&operands[1]) && ops[0] != "in" && ops[0] != "is" {
+                    self.compare_int(&ops[0], &left, &right)
+                } else {
+                    self.compare_op(&ops[0], &left, &right, e.span)?
+                };
+                self.drop_val(&left);
+                self.drop_val(&right);
+                self.bool_val(&c)
+            }
             ExprKind::Compare { ops, operands } => {
                 let slot = self.alloca("%V");
                 let end = self.label();
@@ -3691,6 +3899,7 @@ impl<'a> Gen<'a> {
         };
         let v = self.reg();
         self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
+        self.int_regs.insert(v.clone());
         self.emitf(format_args!("store %V {v}, ptr {slot}"));
         self.br(&done);
         self.place(&slow);
@@ -3710,7 +3919,31 @@ impl<'a> Gen<'a> {
         let a = self.bits_of(l);
         let b = self.bits_of(r);
         let fail = self.label();
+        // a positive constant divisor: no error is possible
+        let positive = matches!(r, Val::Lit(T_INT, n) if n.parse::<i64>().is_ok_and(|n| n > 0));
         let res = match op {
+            "//" | "%" if positive => {
+                let rem = self.reg();
+                self.emitf(format_args!("{rem} = srem i64 {a}, {b}"));
+                let neg = self.reg();
+                self.emitf(format_args!("{neg} = icmp slt i64 {rem}, 0"));
+                let v = self.reg();
+                if op == "//" {
+                    let q = self.reg();
+                    self.emitf(format_args!("{q} = sdiv i64 {a}, {b}"));
+                    let q1 = self.reg();
+                    self.emitf(format_args!("{q1} = sub i64 {q}, 1"));
+                    self.emitf(format_args!("{v} = select i1 {neg}, i64 {q1}, i64 {q}"));
+                } else {
+                    let r1 = self.reg();
+                    self.emitf(format_args!("{r1} = add i64 {rem}, {b}"));
+                    self.emitf(format_args!("{v} = select i1 {neg}, i64 {r1}, i64 {rem}"));
+                }
+                let x = self.reg();
+                self.emitf(format_args!("{x} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {v}, 1"));
+                self.int_regs.insert(x.clone());
+                return Ok(Val::Reg(x));
+            }
             "+" | "-" | "*" => {
                 let f = match op {
                     "+" => "sadd",
@@ -3787,14 +4020,13 @@ impl<'a> Gen<'a> {
         };
         let v = self.reg();
         self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
+        self.int_regs.insert(v.clone());
         let done = self.label();
         self.br(&done);
         // the runtime reports the error (it always fails here)
         self.place(&fail);
-        let tl = self.tb(l);
-        let tr = self.tb(r);
         let sp = self.span_id(span);
-        self.call_v("nx_binop", &format!("i32 {}, {tl}, {tr}, i32 {sp}", op_code(op)));
+        self.call_v("nx_binop", &format!("i32 {}, i64 {T_INT}, i64 {a}, i64 {T_INT}, i64 {b}, i32 {sp}", op_code(op)));
         self.fail_here();
         self.place(&done);
         Ok(Val::Reg(v))
@@ -4177,8 +4409,14 @@ impl<'a> Gen<'a> {
             NameRes::Builtin(n) => return Ok(self.builtin_value(n)),
             NameRes::Bindings { cands, row, builtin, suggestion } => (cands.clone(), *row, *builtin, suggestion.clone()),
         };
-        if row.is_none() && cands.len() == 1 && self.statically_defined(cands[0]) {
+        let cands: Vec<BindingId> = cands.into_iter().filter(|b| !self.never_defined(*b)).collect();
+        if row.is_none() && !cands.is_empty() && self.is_sure(cands[0]) {
             let v = self.load_binding(cands[0]);
+            if let Val::Reg(r) = &v {
+                if self.int_binding(cands[0]) {
+                    self.int_regs.insert(r.clone());
+                }
+            }
             self.rc_inc(&v);
             return Ok(self.owned(v));
         }
@@ -4211,9 +4449,17 @@ impl<'a> Gen<'a> {
             self.cond_br(&c, &done, &next);
             self.place(&next);
         }
+        let mut taken = false;
         for b in &cands {
             let v = self.load_binding(*b);
             self.store(&slot, &v);
+            if self.is_sure(*b) {
+                // the ones after it are never reached (D140)
+                self.rc_inc(&v);
+                self.br(&done);
+                taken = true;
+                break;
+            }
             let t = self.tag_of(&v);
             let c = self.reg();
             self.emitf(format_args!("{c} = icmp ne i64 {t}, {T_UNDEF}"));
@@ -4226,6 +4472,7 @@ impl<'a> Gen<'a> {
             self.place(&next);
         }
         match item_slot {
+            _ if taken => {}
             Some(_) if builtin => {
                 let v = self.builtin_value(name);
                 self.store(&slot, &v);
@@ -4569,6 +4816,10 @@ impl<'a> Gen<'a> {
         let r = self.reg();
         self.emitf(format_args!("{r} = call %V {fname}(ptr %tls, ptr null, ptr {arr}, i32 {sp})"));
         self.check();
+        if m.ret.as_ref().is_some_and(crate::narrow::is_int_type) {
+            // the frame checks what it returns
+            self.int_regs.insert(r.clone());
+        }
         for v in evaluated.iter().rev() {
             self.drop_val(v);
         }
@@ -4890,6 +5141,7 @@ impl<'a> Gen<'a> {
             self.emitf(format_args!("{c} = load i64, ptr {acc}"));
             let r = self.reg();
             self.emitf(format_args!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {c}, 1"));
+            self.int_regs.insert(r.clone());
             Val::Reg(r)
         };
         for (_, _, cs) in fns.iter().rev() {
@@ -5167,6 +5419,7 @@ impl<'a> Gen<'a> {
 }
 
 pub const RUNTIME_DECLS: &str = r#"attributes #0 = { alwaysinline }
+attributes #1 = { alwaysinline }
 
 ; reference counts (section 7): the count is the first word of a heap value;
 ; atomic only once a second thread may touch values (nx_multi, D126)
@@ -5375,9 +5628,72 @@ declare void @nx_test_register(ptr, i64, i64, i64)
 
 /// A call to code that may read the call depth from the thread state.
 fn is_foreign_call(line: &str) -> bool {
-    let Some(i) = line.find("call ") else { return false };
-    let callee = &line[i..];
-    let Some(at) = callee.find('@') else { return false };
-    let name = &callee[at..];
+    // the callee is the first global of a call line
+    let Some(at) = line.bytes().position(|c| c == b'@') else { return false };
+    if !line[..at].split_ascii_whitespace().any(|w| w == "call") {
+        return false;
+    }
+    let name = &line[at..];
     !(name.starts_with("@fw.") || name.starts_with("@llvm.") || name.starts_with("@rc_") || name.starts_with("@nx_plainv"))
+}
+
+/// Walk the statements of one frame keeping the variables a `var` has
+/// certainly declared, and note each assignment one of them takes (D140).
+/// A nested frame starts with none; statements it does not know (a module,
+/// `select`) are not looked into, so their assignments count as defining.
+fn sure_walk(body: &[Stmt], res: &Resolution, sure: &mut Vec<BindingId>, taken: &mut std::collections::HashSet<u32>) {
+    let len = sure.len();
+    for s in body {
+        match &s.kind {
+            StmtKind::Assign { target: Expr { kind: ExprKind::Name(_), .. }, ty: None, .. } => {
+                if let Some(a) = res.assigns.get(&s.id) {
+                    let var = a.cands.iter().any(|(b, crossed)| !crossed && res.bindings[*b].kind == BKind::Var && sure.contains(b));
+                    if var {
+                        taken.insert(s.id);
+                    }
+                }
+            }
+            StmtKind::If { branches, orelse } => {
+                for (_, b) in branches {
+                    sure_walk(b, res, sure, taken);
+                }
+                if let Some(b) = orelse {
+                    sure_walk(b, res, sure, taken);
+                }
+            }
+            StmtKind::For { body, .. } | StmtKind::While { body, .. } | StmtKind::Repeat { body, .. } => {
+                sure_walk(body, res, sure, taken)
+            }
+            StmtKind::Match { arms, .. } => {
+                for a in arms {
+                    sure_walk(&a.body, res, sure, taken);
+                }
+            }
+            StmtKind::Try { body, handlers, .. } => {
+                sure_walk(body, res, sure, taken);
+                for h in handlers {
+                    sure_walk(&h.body, res, sure, taken);
+                }
+            }
+            StmtKind::Fn(f) => sure_walk(&f.body, res, &mut Vec::new(), taken),
+            StmtKind::Type(t) => {
+                for m in &t.methods {
+                    sure_walk(&m.body, res, &mut Vec::new(), taken);
+                }
+            }
+            StmtKind::Test { body, .. } | StmtKind::Event { body, .. } => sure_walk(body, res, &mut Vec::new(), taken),
+            StmtKind::Parallel(body) => {
+                for st in body {
+                    sure_walk(std::slice::from_ref(st), res, &mut Vec::new(), taken);
+                }
+            }
+            _ => {}
+        }
+        if let StmtKind::VarDecl { .. } = &s.kind {
+            if let Some(a) = res.assigns.get(&s.id) {
+                sure.push(a.target);
+            }
+        }
+    }
+    sure.truncate(len);
 }

@@ -56,6 +56,8 @@ pub struct Binding {
     pub entry: bool,
     /// a `shared` variable (nexo.sync): used under a lock, read as a copy
     pub shared: bool,
+    /// only `name = value` statements bind it (D140)
+    pub assigned_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -508,6 +510,7 @@ impl Resolver {
     fn declare(&mut self, scope: ScopeId, name: &str, kind: BKind, ty: Option<TypeExpr>, origin: Origin) -> BindingId {
         if let Some(b) = self.lookup_local(scope, name) {
             let binding = &mut self.r.bindings[b];
+            binding.assigned_only = false;
             if kind == BKind::Var {
                 binding.kind = BKind::Var;
                 if binding.ty.is_none() {
@@ -531,6 +534,7 @@ impl Resolver {
             captured: false,
             entry,
             shared: false,
+            assigned_only: false,
         });
         let id = self.r.bindings.len() - 1;
         self.r.scopes[scope].names.push((name.to_string(), id));
@@ -567,7 +571,10 @@ impl Resolver {
         for s in body {
             match &s.kind {
                 StmtKind::Assign { target: Expr { kind: ExprKind::Name(n), .. }, .. } => {
-                    self.declare(scope, n, BKind::Const, None, Origin::Plain);
+                    // still only assignments if it was before (or is new)
+                    let only = self.lookup_local(scope, n).map_or(true, |b| self.r.bindings[b].assigned_only);
+                    let b = self.declare(scope, n, BKind::Const, None, Origin::Plain);
+                    self.r.bindings[b].assigned_only = only;
                 }
                 StmtKind::VarDecl { name, ty, .. } => {
                     self.declare(scope, name, BKind::Var, ty.clone(), Origin::Plain);

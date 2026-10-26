@@ -31,6 +31,7 @@ mod parser;
 mod phase5;
 mod prove;
 mod resolve;
+mod scalar;
 mod sbom;
 mod split;
 mod suggest;
@@ -527,9 +528,6 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
     let libs = ["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
     let fail = |output: std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
-    // development mode calls the reference-count helpers instead of copying
-    // them into every use: clang compiles half the code (D135)
-    let pat = "attributes #0 = { alwaysinline }";
     let dev = opt != "-O2";
     let mut parts = 1;
     if dev {
@@ -537,18 +535,17 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
         let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
         parts = (ir.len() / (2 << 20)).clamp(1, cores.min(8));
     }
+    let single;
+    let ir = if dev && parts == 1 {
+        single = dev_ir(ir);
+        &single[..]
+    } else {
+        ir
+    };
     if parts == 1 {
         use std::io::Write;
         let mut f = std::io::BufWriter::new(std::fs::File::create(&ll).map_err(|e| e.to_string())?);
-        let head = &ir[..ir.len().min(4096)];
-        let w = match head.find(pat) {
-            Some(i) if dev => f
-                .write_all(ir[..i].as_bytes())
-                .and_then(|_| f.write_all(b"attributes #0 = { noinline }"))
-                .and_then(|_| f.write_all(ir[i + pat.len()..].as_bytes())),
-            _ => f.write_all(ir.as_bytes()),
-        };
-        w.and_then(|_| f.flush()).map_err(|e| e.to_string())?;
+        f.write_all(ir.as_bytes()).and_then(|_| f.flush()).map_err(|e| e.to_string())?;
         let output = Command::new(&cc)
             .arg(opt)
             .arg("-Wno-override-module")
@@ -564,32 +561,39 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
             return Err(fail(output));
         }
     } else {
-        let text = ir.replacen(pat, "attributes #0 = { noinline }", 1);
-        let modules = split::split(&text, parts);
-        drop(text);
-        let mut objects = Vec::new();
-        for (k, m) in modules.iter().enumerate() {
-            let part = dir.join(format!("program.{k}.ll"));
-            std::fs::write(&part, m).map_err(|e| e.to_string())?;
-            objects.push((part, dir.join(format!("program.{k}.o"))));
-        }
-        drop(modules);
+        // each part is made ready for clang by a thread of its own
+        let modules = split::split(ir, parts);
+        let objects: Vec<PathBuf> = (0..modules.len()).map(|k| dir.join(format!("program.{k}.o"))).collect();
+        // each part goes to its clang through a pipe, not a file
         let results: Vec<Result<std::process::Output, String>> = std::thread::scope(|sc| {
             let handles: Vec<_> = objects
                 .iter()
-                .map(|(src, obj)| {
+                .zip(&modules)
+                .map(|(obj, m)| {
                     let cc = cc.clone();
                     sc.spawn(move || {
-                        Command::new(&cc)
+                        let m = dev_ir(m);
+                        let mut child = Command::new(&cc)
                             .arg(opt)
                             .arg("-Wno-override-module")
-                            .arg("-c")
-                            .arg(src)
-                            .arg("-o")
+                            .args(["-c", "-x", "ir", "-", "-o"])
                             .arg(obj)
-                            .stdin(Stdio::null())
-                            .output()
-                            .map_err(|e| format!("{cc}: {e}"))
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::piped())
+                            .stderr(Stdio::piped())
+                            .spawn()
+                            .map_err(|e| format!("{cc}: {e}"))?;
+                        let mut stdin = child.stdin.take().unwrap();
+                        // written by a thread of its own, so clang's messages
+                        // are read while it reads the code
+                        std::thread::scope(|w| {
+                            w.spawn(|| {
+                                use std::io::Write;
+                                let _ = stdin.write_all(m.as_bytes());
+                                drop(stdin);
+                            });
+                            child.wait_with_output().map_err(|e| format!("{cc}: {e}"))
+                        })
                     })
                 })
                 .collect();
@@ -601,8 +605,9 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
                 return Err(fail(output));
             }
         }
+        drop(modules);
         let output = Command::new(&cc)
-            .args(objects.iter().map(|(_, o)| o))
+            .args(&objects)
             .arg(runtime_lib())
             .args(["-o"])
             .arg(out)
@@ -623,6 +628,21 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     }
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
+}
+
+/// The IR of development mode: values pass as two words, which clang
+/// compiles fast (D141), and the reference-count helpers (#0) and small
+/// frames (#1) are called instead of copied into every use, so clang
+/// compiles half the code (D135).
+fn dev_ir(ir: &str) -> String {
+    let mut s = scalar::scalarize(ir);
+    for g in ["#0", "#1"] {
+        let pat = format!("attributes {g} = {{ alwaysinline }}");
+        if let Some(i) = s[..s.len().min(4096)].find(&pat) {
+            s.replace_range(i..i + pat.len(), &format!("attributes {g} = {{ noinline }}"));
+        }
+    }
+    s
 }
 
 pub fn read_source(path: &str) -> Result<String, String> {
