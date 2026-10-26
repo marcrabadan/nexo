@@ -155,27 +155,19 @@ p code, li code, td code, th code, h4 code, .ftab code {
 /* Hero */
 .hero {
   position: relative; padding: 88px 0 56px; isolation: isolate;
-  background:
-    radial-gradient(900px 420px at 78% 8%, var(--hero-glow), transparent 70%),
-    radial-gradient(600px 300px at 0% 100%, var(--hero-glow), transparent 70%);
+  /* the glow follows the content, so wide screens do not show its edges */
+  background: radial-gradient(900px 480px at calc(50% + 280px) 12%, var(--hero-glow), transparent 70%);
 }
 .hero::before {
   content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
   background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 70% 60% at 60% 30%, #000 20%, transparent 75%);
-  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 60% 30%, #000 20%, transparent 75%);
+  mask-image: radial-gradient(1100px 620px at calc(50% + 120px) 35%, #000 20%, transparent 75%);
+  -webkit-mask-image: radial-gradient(1100px 620px at calc(50% + 120px) 35%, #000 20%, transparent 75%);
   opacity: 0.6;
 }
 .hero > .wrap:first-child { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; }
 .hero-copy, .hero-code { min-width: 0; }
-.badge {
-  display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 650; letter-spacing: 0.01em;
-  color: var(--accent-strong); background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-  border-radius: 999px; padding: 4px 12px 4px 10px; margin-bottom: 22px;
-}
-.badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
 h1 { font-size: clamp(40px, 6vw, 68px); line-height: 1.02; letter-spacing: -0.035em; font-weight: 800; margin: 0 0 22px; }
 h1 em {
   font-style: normal;
@@ -247,6 +239,7 @@ h1 em {
 /* Sections */
 section { padding: 96px 0; }
 section.alt { background: var(--bg-alt); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+section.alt + section.alt { border-top: 0; }
 .section-head { margin-bottom: 48px; }
 .eyebrow {
   display: inline-flex; align-items: center; gap: 10px;
@@ -283,6 +276,11 @@ h4 { font-size: 16.5px; margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1
 .ftab[aria-selected="true"]::before {
   content: ""; position: absolute; left: 6px; top: 12px; bottom: 12px; width: 3px; border-radius: 3px; background: var(--accent);
 }
+.explorer-group {
+  margin: 18px 0 4px 18px; font-family: var(--mono); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-strong);
+}
+.explorer-group:first-child { margin-top: 0; }
 .explorer-panels { min-width: 0; }
 .fpanel { display: grid; gap: 22px; }
 .fpanel[hidden] { display: none; }
@@ -345,6 +343,12 @@ h4 { font-size: 16.5px; margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1
 .status.done { background: var(--accent-soft); color: var(--accent-strong); }
 .status.next { background: var(--bg-alt); color: var(--muted); border: 1px solid var(--border); }
 .status.now { background: var(--bg-alt); color: var(--accent-strong); border: 1px solid var(--accent-soft); }
+.status.miss { background: transparent; color: var(--muted); border: 1px dashed var(--border-strong); }
+.phase-status { margin-top: 48px; }
+.phase-status > p { color: var(--muted); max-width: 72ch; margin: 0 0 20px; }
+.phase-status .table-wrap { margin-bottom: 20px; }
+.phase-status .ref-table td:first-child { white-space: normal; }
+.phase-status .ref-table td .status { display: inline-block; }
 
 /* Performance */
 .hchart { margin: 0 0 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 24px 16px; }
@@ -452,6 +456,7 @@ footer nav a:hover { color: var(--text); }
   .explorer-list { position: static; flex-direction: row; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
   .ftab { flex: none; }
   .ftab span { display: none; }
+  .explorer-group { display: none; }
   .ftab[aria-selected="true"]::before { left: 12px; right: 12px; top: auto; bottom: 5px; width: auto; height: 3px; }
   .group { grid-template-columns: 1fr; gap: 16px; }
   .group-title { position: static; }

@@ -1,0 +1,61 @@
+## Shop events: orders arrive on a stream and each one is handled once,
+## a bad one goes to the dead letters after its retries, clicks are counted
+## per minute, and a flag gives some users free shipping. Run the stream
+## part with `nexo test events.nexo`, on the local broker.
+use nexo.stream
+
+flags:
+    free_shipping = 25%
+    new_banner = users where country == "ES"
+
+type User:
+    id: int
+    country: str
+
+type Order:
+    id: int
+    user: int
+    total: decimal
+
+fn shipping(order: Order) -> money:
+    if flag("free_shipping", order.user) or order.total >= 50:
+        return 0.00 EUR
+    return 3.90 EUR
+
+fn process(order: Order):
+    if order.total <= 0:
+        fail("order {order.id} has no total")
+    print("order {order.id}: {order.total} EUR + shipping {shipping(order)}")
+
+when kafka("orders") as msg, key: msg.json()["id"]:
+    order: Order = validate(msg.json(), as: Order)?
+    process(order)?
+
+fn show(row):
+    print("clicks on {row["page"]}: {row["count"]}")
+
+kafka("clicks")
+  |> window 1m
+  |> group by page
+  |> count
+  |> each show
+
+var free = 0
+for user in range(1, 1001):
+    if flag("free_shipping", user):
+        free += 1
+print("free shipping for {free} of 1000 users")
+print("banner in ES: {flag("new_banner", User(id: 1, country: "ES"))}, in FR: {flag("new_banner", User(id: 2, country: "FR"))}")
+
+test "every order is handled once":
+    kafka("orders").send({"id": 1, "user": 7, "total": 20.00})
+    kafka("orders").send({"id": 1, "user": 7, "total": 20.00})
+    kafka("orders").send({"id": 2, "user": 8, "total": 80.00})
+    kafka("orders").send({"id": 3, "user": 9, "total": 0})
+
+test "clicks per minute":
+    start = time(2026, 10, 26, 9, 0, zone: "UTC")
+    kafka("clicks").send({"page": "/home"}, at: start)
+    kafka("clicks").send({"page": "/cart"}, at: start + 10s)
+    kafka("clicks").send({"page": "/home"}, at: start + 20s)
+    kafka("clicks").send({"page": "/home"}, at: start + 70s)

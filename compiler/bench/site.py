@@ -129,7 +129,7 @@ def main():
         <li>Nexo and Rust check every integer operation for overflow; C, Go and Java wrap around silently, and Python's integers never overflow.</li>
         <li>In C and Go a record is a plain value on the stack, so building one costs almost nothing; in Nexo, Java, JavaScript and Python each one is an object on the heap. That is most of the gap on <code>records</code>.</li>
         <li>Each program uses its language's usual tools: <code>ArrayList&lt;Long&gt;</code> and <code>HashMap</code> in Java, a hand-written hash map in C, which has none. Python runs <code>parallel</code> on 4 processes, because its threads share one lock.</li>
-        <li>The Nexo interpreter is the phase 0 prototype, a tree-walking evaluator written in Python; it shows the language works, not how fast it runs.</li>
+        <li>The Nexo interpreter is the prototype, a tree-walking evaluator written in Python; it shows the language works, not how fast it runs.</li>
         <li>The programs and the script are in <a href="{SOURCE}"><code>compiler/bench/</code></a>: <code>python3 compiler/bench/languages.py</code> runs them again.</li>
       </ul>
     </div>

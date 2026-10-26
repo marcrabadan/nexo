@@ -1,0 +1,2 @@
+Welcome, {name}!
+Your account {email} is ready since {since}.

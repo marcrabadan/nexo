@@ -1,5 +1,5 @@
-# A shop's web API with a database and AI, written in Nexo alone (the exit
-# criterion of phase 4). Run it with
+# A shop's web API with a database and AI, written in Nexo alone.
+# Run it with
 #     SHOP_JWT_KEY=... ANTHROPIC_KEY=... nexo shop.nexo
 # and test it, with the AI faked, with `nexo test shop.nexo`.
 use nexo.db

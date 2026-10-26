@@ -1,0 +1,11 @@
+free shipping for 241 of 1000 users
+banner in ES: true, in FR: false
+order 1: 20.0 EUR + shipping 3.90 EUR
+order 2: 80.0 EUR + shipping 0.00 EUR
+orders: message 4 fails after 4 tries and goes to orders.dead: Unhandled error: order 3 has no total. Handle it with try and else e.
+✓ every order is handled once
+clicks on /home: 2
+clicks on /cart: 1
+clicks on /home: 1
+✓ clicks per minute
+2 tests: 2 passed, 0 failed

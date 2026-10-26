@@ -99,6 +99,7 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
                   tests/test_examples.py; they are formatted and lint-clean;
   shop_api/       the exit criterion of phase 4 (tests/test_exit_criterion.py)
   deploy/         the exit criterion of phase 5 (tests/test_exit_criterion_5.py)
+  events/         streams and flags, run with `nexo test` (tests/test_examples.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 docs/guarantees.md the state of each guarantee of the specification (phase 6)

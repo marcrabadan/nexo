@@ -8,6 +8,9 @@ from pathlib import Path
 
 import pytest
 
+from phases import commands
+from phases import run as run_phase
+
 ROOT = Path(__file__).resolve().parent.parent
 EXAMPLES = ROOT / "examples"
 ENV = {"PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8"}
@@ -47,3 +50,14 @@ def test_example_tests_pass(example, workdir):
     out = proc.stdout.decode("utf-8")
     assert proc.returncode == 0, out
     assert "✗" not in out
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_events_example(phase, tmp_path):
+    """examples/events handles a stream, so it runs under `nexo test` only
+    (a program with `when` keeps waiting for messages); both phases print
+    events.expected."""
+    work = tmp_path / "events"
+    shutil.copytree(EXAMPLES / "events", work)
+    proc = run_phase(phase[1], ["test", "events.nexo"], work)
+    assert proc.stdout.decode("utf-8") == (work / "events.expected").read_text(encoding="utf-8")
