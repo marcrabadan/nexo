@@ -247,6 +247,7 @@ h1 em {
 /* Sections */
 section { padding: 96px 0; }
 section.alt { background: var(--bg-alt); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+section.alt + section.alt { border-top: 0; }
 .section-head { margin-bottom: 48px; }
 .eyebrow {
   display: inline-flex; align-items: center; gap: 10px;
@@ -283,6 +284,11 @@ h4 { font-size: 16.5px; margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1
 .ftab[aria-selected="true"]::before {
   content: ""; position: absolute; left: 6px; top: 12px; bottom: 12px; width: 3px; border-radius: 3px; background: var(--accent);
 }
+.explorer-group {
+  margin: 18px 0 4px 18px; font-family: var(--mono); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent-strong);
+}
+.explorer-group:first-child { margin-top: 0; }
 .explorer-panels { min-width: 0; }
 .fpanel { display: grid; gap: 22px; }
 .fpanel[hidden] { display: none; }
@@ -345,6 +351,12 @@ h4 { font-size: 16.5px; margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1
 .status.done { background: var(--accent-soft); color: var(--accent-strong); }
 .status.next { background: var(--bg-alt); color: var(--muted); border: 1px solid var(--border); }
 .status.now { background: var(--bg-alt); color: var(--accent-strong); border: 1px solid var(--accent-soft); }
+.status.miss { background: transparent; color: var(--muted); border: 1px dashed var(--border-strong); }
+.phase-status { margin-top: 48px; }
+.phase-status > p { color: var(--muted); max-width: 72ch; margin: 0 0 20px; }
+.phase-status .table-wrap { margin-bottom: 20px; }
+.phase-status .ref-table td:first-child { white-space: normal; }
+.phase-status .ref-table td .status { display: inline-block; }
 
 /* Performance */
 .hchart { margin: 0 0 24px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 24px 16px; }
@@ -452,6 +464,7 @@ footer nav a:hover { color: var(--text); }
   .explorer-list { position: static; flex-direction: row; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
   .ftab { flex: none; }
   .ftab span { display: none; }
+  .explorer-group { display: none; }
   .ftab[aria-selected="true"]::before { left: 12px; right: 12px; top: auto; bottom: 5px; width: auto; height: 3px; }
   .group { grid-template-columns: 1fr; gap: 16px; }
   .group-title { position: static; }
