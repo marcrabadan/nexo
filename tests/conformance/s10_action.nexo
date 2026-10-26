@@ -1,0 +1,47 @@
+# Section 10: a command with undo (D150)
+var files = ["photo.jpg", "notes.txt"]
+var trash = []
+
+action remove(name: str):
+    do:
+        files = [f for f in files if f != name]
+        trash = trash + [name]
+    undo:
+        trash = [f for f in trash if f != name]
+        files = files + [name]
+
+action rename(name: str, to: str):
+    do: files = [f for f in files if f != name] + [to]
+    undo: files = [f for f in files if f != to] + [name]
+
+remove("photo.jpg")
+rename("notes.txt", to: "todo.txt")
+print(files, trash)
+print(undo())
+print(files)
+print(undo())
+print(files, trash)
+print(undo())
+
+fn missing(name: str) -> str!:
+    if not (name in files):
+        fail("{name} is not there")
+    return name
+
+action open_file(name: str):
+    do: print("open", missing(name))
+    undo: print("close", name)
+
+try:
+    open_file("nothing.txt")
+else e:
+    print(e.message)
+print(undo())
+
+fn twice() -> bool!:
+    open_file("photo.jpg")?
+    open_file("notes.txt")?
+    undo()?
+    return undo()?
+
+print(twice())

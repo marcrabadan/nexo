@@ -301,6 +301,12 @@ impl<'s> Parser<'s> {
                 return Ok(st);
             }
         }
+        if matches!(&tok.tok, Tok::Name(n) if n == "action" || n == "workflow")
+            && self.is_name_at(1)
+            && self.peek_at(2).is_op("(")
+        {
+            return if matches!(&tok.tok, Tok::Name(n) if n == "action") { self.action_def() } else { self.workflow_def() };
+        }
         if let Tok::Keyword(kw) = tok.tok {
             match kw {
                 "fn" => {
@@ -2019,6 +2025,241 @@ impl<'s> Parser<'s> {
         let tr = self.stmt_node(span, StmtKind::Try { within: None, body, handlers: vec![handler] });
         self.extra.push(tr);
         Ok(Some(begin))
+    }
+
+    /// `try: body else __e: fail(__e)`, so the calls in body need no `?`.
+    fn refail(&mut self, span: Span, body: Vec<Stmt>) -> Stmt {
+        let e = self.name_expr(span, "__e");
+        let again = self.call(span, "fail", vec![e], Vec::new());
+        let again = self.expr_stmt(again);
+        let handler = Handler { span, var: "__e".into(), kind: None, body: vec![again] };
+        self.stmt_node(span, StmtKind::Try { within: None, body, handlers: vec![handler] })
+    }
+
+    fn indented_start(&mut self) -> PResult<()> {
+        self.expect_op(":")?;
+        self.expect_newline_raw()?;
+        if self.peek().tok != Tok::Indent {
+            return Err(self.error(&word("indented")));
+        }
+        self.advance();
+        Ok(())
+    }
+
+    /// action name(params): with `do:` and `undo:` (section 10, D150), as
+    ///     fn __undo_name(params):
+    ///         try:
+    ///             undo part
+    ///         else __e:
+    ///             fail(__e)
+    ///     fn name(params):
+    ///         try:
+    ///             do part
+    ///         else __e:
+    ///             fail(__e)
+    ///         __action_done("name", __undo_name, [params])
+    fn action_def(&mut self) -> PResult<Stmt> {
+        let tok = self.advance();
+        if self.nesting > 0 {
+            return Err(Diagnostic::new("action_place", tok.span));
+        }
+        let (name, name_span) = self.expect_name()?;
+        let params = self.params()?;
+        self.indented_start()?;
+        let mut parts = Vec::new();
+        for key in ["do", "undo"] {
+            if !self.at_name(key) {
+                return Err(Diagnostic::new("action_parts", self.peek().span));
+            }
+            self.advance();
+            parts.push(self.part()?);
+        }
+        if self.peek().tok != Tok::Dedent {
+            return Err(Diagnostic::new("action_parts", self.peek().span));
+        }
+        self.advance();
+        for body in &parts {
+            let mut ret = None;
+            crate::checker::walk_stmts(body, false, &mut |s| {
+                if matches!(s.kind, StmtKind::Return(_)) && ret.is_none() {
+                    ret = Some(s.span);
+                }
+            });
+            if let Some(sp) = ret {
+                return Err(Diagnostic::new("action_return", sp));
+            }
+        }
+        let span = tok.span;
+        let undo_name = format!("__undo_{name}");
+        let first = self.text(span, &name);
+        let undo_ref = self.name_expr(span, &undo_name);
+        let items: Vec<Expr> = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().iter().map(|n| self.name_expr(span, n)).collect();
+        let list = self.expr_node(span, ExprKind::List(items));
+        let done = self.call(span, "__action_done", vec![first, undo_ref, list], Vec::new());
+        let done = self.expr_stmt(done);
+        let undo_part = parts.pop().unwrap();
+        let do_part = parts.pop().unwrap();
+        let do_body = self.refail(span, do_part);
+        let undo_body = self.refail(span, undo_part);
+        let undo_params: Vec<Param> = params.iter().map(|p| Param { default: None, ..p.clone() }).collect();
+        let id = self.id();
+        let action = FnDef { id, span, name, name_span, params, ret: None, body: vec![do_body, done], is_pub: false, annotations: Vec::new() };
+        let action = self.stmt_node(span, StmtKind::Fn(action));
+        self.extra.push(action);
+        let id = self.id();
+        let undo = FnDef {
+            id,
+            span,
+            name: undo_name,
+            name_span,
+            params: undo_params,
+            ret: None,
+            body: vec![undo_body],
+            is_pub: false,
+            annotations: Vec::new(),
+        };
+        Ok(self.stmt_node(span, StmtKind::Fn(undo)))
+    }
+
+    /// `: statement` on the same line, or `:` and an indented block.
+    fn part(&mut self) -> PResult<Vec<Stmt>> {
+        self.expect_op(":")?;
+        if self.peek().tok == Tok::Newline {
+            return self.indented_body();
+        }
+        let stmt = self.simple_stmt()?;
+        self.expect_newline()?;
+        Ok(vec![stmt])
+    }
+
+    /// workflow name(params): with `step` lines (section 10, D151), as
+    ///     fn name(params):
+    ///         __wf = __workflow("name", [params])
+    ///         try:
+    ///             __workflow_resume(__wf)
+    ///             if __workflow_step(__wf, 1):
+    ///                 step 1
+    ///                 __workflow_done(__wf, 1)
+    ///             if __workflow_step(__wf, 2):          # step wait cond, max: d
+    ///                 while not cond:
+    ///                     __workflow_wait(__wf, "cond", d)
+    ///                 __workflow_done(__wf, 2)
+    ///         else __e:
+    ///             __workflow_failed(__wf, __e)
+    ///             if __workflow_undo(__wf, 1):          # the undo of each step, last first
+    ///                 try:
+    ///                     undo 1
+    ///                 else __u:
+    ///                     fail(__u)
+    ///                 __workflow_undone(__wf, 1)
+    ///             __workflow_end(__wf)
+    ///             fail(__e)
+    ///         __workflow_end(__wf)
+    fn workflow_def(&mut self) -> PResult<Stmt> {
+        let tok = self.advance();
+        if self.nesting > 0 {
+            return Err(Diagnostic::new("workflow_place", tok.span));
+        }
+        let (name, name_span) = self.expect_name()?;
+        let params = self.params()?;
+        self.indented_start()?;
+        let span = tok.span;
+        let wf = |p: &mut Self, sp: Span| p.name_expr(sp, "__wf");
+        let w = wf(self, span);
+        let resume = self.call(span, "__workflow_resume", vec![w], Vec::new());
+        let mut steps = vec![self.expr_stmt(resume)];
+        let mut undos: Vec<Stmt> = Vec::new();
+        let mut n = 0;
+        while self.peek().tok != Tok::Dedent {
+            if !self.at_name("step") {
+                return Err(self.error("\"step\""));
+            }
+            let st = self.advance().span;
+            n += 1;
+            let index = |p: &mut Self, sp: Span| p.expr_node(sp, ExprKind::Num { text: n.to_string(), is_float: false });
+            let next = self.peek_at(1).clone();
+            let mut body: Vec<Stmt>;
+            if self.at_name("wait") && !(next.is_op("(") || next.is_op(".") || next.tok == Tok::Newline) {
+                self.advance();
+                let cond = self.expr()?;
+                if !(self.at_op(",") && matches!(&self.peek_at(1).tok, Tok::Name(m) if m == "max") && self.peek_at(2).is_op(":")) {
+                    return Err(Diagnostic::new("workflow_wait", st));
+                }
+                self.p += 3;
+                let limit = self.expr()?;
+                self.expect_newline()?;
+                let shown = self.source_text(cond.span);
+                let shown = self.text(st, &shown);
+                let w = wf(self, st);
+                let wait = self.call(st, "__workflow_wait", vec![w, shown, limit], Vec::new());
+                let wait = self.expr_stmt(wait);
+                let cspan = cond.span;
+                let not = self.expr_node(cspan, ExprKind::Unary { op: "not", operand: Box::new(cond) });
+                body = vec![self.stmt_node(st, StmtKind::While { cond: not, body: vec![wait] })];
+            } else {
+                let e = self.expr()?;
+                self.expect_newline()?;
+                body = vec![self.expr_stmt(e)];
+                if self.peek().tok == Tok::Indent {
+                    self.advance();
+                    if !self.at_name("undo") {
+                        return Err(self.error("\"undo\""));
+                    }
+                    let u = self.advance().span;
+                    let back = self.expr()?;
+                    self.expect_newline()?;
+                    if self.peek().tok != Tok::Dedent {
+                        return Err(self.error(&word("DEDENT")));
+                    }
+                    self.advance();
+                    let ue = self.name_expr(u, "__u");
+                    let again = self.call(u, "fail", vec![ue], Vec::new());
+                    let again = self.expr_stmt(again);
+                    let handler = Handler { span: u, var: "__u".into(), kind: None, body: vec![again] };
+                    let back = self.expr_stmt(back);
+                    let attempt = self.stmt_node(u, StmtKind::Try { within: None, body: vec![back], handlers: vec![handler] });
+                    let (w, i) = (wf(self, u), index(self, u));
+                    let undone = self.call(u, "__workflow_undone", vec![w, i], Vec::new());
+                    let undone = self.expr_stmt(undone);
+                    let (w, i) = (wf(self, u), index(self, u));
+                    let test = self.call(u, "__workflow_undo", vec![w, i], Vec::new());
+                    let undo = self.stmt_node(u, StmtKind::If { branches: vec![(test, vec![attempt, undone])], orelse: None });
+                    undos.insert(0, undo);
+                }
+            }
+            let (w, i) = (wf(self, st), index(self, st));
+            let done = self.call(st, "__workflow_done", vec![w, i], Vec::new());
+            body.push(self.expr_stmt(done));
+            let (w, i) = (wf(self, st), index(self, st));
+            let test = self.call(st, "__workflow_step", vec![w, i], Vec::new());
+            steps.push(self.stmt_node(st, StmtKind::If { branches: vec![(test, body)], orelse: None }));
+        }
+        self.advance();
+        let first = self.text(span, &name);
+        let items: Vec<Expr> = params.iter().map(|p| p.name.clone()).collect::<Vec<_>>().iter().map(|n| self.name_expr(span, n)).collect();
+        let list = self.expr_node(span, ExprKind::List(items));
+        let value = self.call(span, "__workflow", vec![first, list], Vec::new());
+        let target = wf(self, span);
+        let begin = self.stmt_node(span, StmtKind::Assign { target, op: "=", value, ty: None });
+        let end = |p: &mut Self| {
+            let w = wf(p, span);
+            let c = p.call(span, "__workflow_end", vec![w], Vec::new());
+            p.expr_stmt(c)
+        };
+        let (w, e) = (wf(self, span), self.name_expr(span, "__e"));
+        let failed = self.call(span, "__workflow_failed", vec![w, e], Vec::new());
+        let mut handler_body = vec![self.expr_stmt(failed)];
+        handler_body.extend(undos);
+        handler_body.push(end(self));
+        let e = self.name_expr(span, "__e");
+        let again = self.call(span, "fail", vec![e], Vec::new());
+        handler_body.push(self.expr_stmt(again));
+        let handler = Handler { span, var: "__e".into(), kind: None, body: handler_body };
+        let attempt = self.stmt_node(span, StmtKind::Try { within: None, body: steps, handlers: vec![handler] });
+        let body = vec![begin, attempt, end(self)];
+        let id = self.id();
+        let f = FnDef { id, span, name, name_span, params, ret: None, body, is_pub: false, annotations: Vec::new() };
+        Ok(self.stmt_node(span, StmtKind::Fn(f)))
     }
 
     // -- phase 5 blocks (D114) ------------------------------------------

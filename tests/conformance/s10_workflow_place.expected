@@ -1,0 +1,4 @@
+Error in s10_workflow_place.nexo, line 3:
+  workflow inner(n: int):
+  ^^^^^^^^
+A workflow goes at the top level of a file. Move it out of the block it is in.

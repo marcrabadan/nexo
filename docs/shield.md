@@ -218,3 +218,7 @@ required for named privileged capabilities; model output and retrieved content
 never grant capabilities. Existing tools inherit the application ceiling and
 existing human confirmation remains; per-agent/per-tool grants, new approval
 protocols and exported observability remain future work.
+
+Persistent workflows are rejected before loading state or running steps in
+Shield execution. Their ordinary runtime state persistence bypasses API policy
+checks (D151); support requires explicit state-operation authorization.

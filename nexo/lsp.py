@@ -28,13 +28,13 @@ BUILTINS = [
     "read", "write", "read_lines", "save", "json", "csv",
     # the library of phase 4 (D89)
     "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair",
-    "encrypt", "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "jwt", "ask", "email",
+    "encrypt", "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "jwt", "ask", "undo", "email",
     "NetworkError", "HTTPError", "AIError", "DatabaseError",
 ]
 BUILTIN_FUNCTIONS = {"print", "input", "len", "range", "set", "round", "split", "convert", "fail", "validate",
                      "decimal", "float", "int", "str", "read", "write", "read_lines", "save",
                      "move_file", "date", "time", "regex", "render", "secret", "encrypt", "decrypt", "encrypt_file",
-                     "decrypt_file", "sign", "verify", "log", "jwt", "ask"}
+                     "decrypt_file", "sign", "verify", "log", "jwt", "ask", "undo"}
 MEMBERS = ["add", "cause", "close", "count", "ends_with", "keys", "kind", "line", "lower", "message", "parse",
            "receive", "replace", "send", "split", "starts_with", "sum", "trim", "upper", "values",
            # members of the values of phase 4

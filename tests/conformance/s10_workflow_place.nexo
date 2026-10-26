@@ -1,0 +1,4 @@
+# A workflow goes at the top level
+fn main():
+    workflow inner(n: int):
+        step print(n)

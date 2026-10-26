@@ -292,3 +292,39 @@ def test_a_large_program_compiled_in_parts(tmp_path):
     b = run([str(nexo)], ["big.nexo"], tmp_path, timeout=900)
     assert a.returncode == b.returncode == 0
     assert a.stdout == b.stdout
+
+
+WORKFLOW = '''var answer = input()
+
+fn crash_unless_go():
+    var box = none
+    if answer == "go":
+        box = "ok"
+    print(box.upper())
+
+workflow job(n: int):
+    step print("one", n)
+    step crash_unless_go()
+    step print("three", n)
+
+job(1)
+job(2)
+'''
+
+
+@pytest.mark.parametrize("phase", PHASES, ids=IDS)
+def test_a_workflow_resumes_after_the_program_stops(phase, tmp_path):
+    """A workflow saves its state after every step (section 10, D151): a
+    program that stops in a step runs, the next time, from that step on."""
+    (tmp_path / "job.nexo").write_text(WORKFLOW)
+    proc = run(phase[1], ["job.nexo"], tmp_path, stdin=b"crash\n")
+    assert proc.stdout.decode().startswith("one 1\nError in job.nexo, line 7:")
+    saved = list((tmp_path / ".nexo" / "workflows").iterdir())
+    assert [json.loads(p.read_text()) for p in saved] == [
+        {"workflow": "job", "args": "[1]", "done": 1, "until": None, "error": None}]
+    # the other phase reads the same file
+    other = PHASES[-1] if phase is PHASES[0] else PHASES[0]
+    proc = run(other[1], ["job.nexo"], tmp_path, stdin=b"go\n")
+    assert proc.stdout.decode() == "OK\nthree 1\none 2\nOK\nthree 2\n"
+    assert proc.returncode == 0
+    assert not (tmp_path / ".nexo").exists()

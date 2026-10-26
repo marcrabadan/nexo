@@ -1,0 +1,13 @@
+["todo.txt"] ["photo.jpg"]
+true
+["notes.txt"]
+true
+["notes.txt", "photo.jpg"] []
+false
+nothing.txt is not there
+false
+open photo.jpg
+open notes.txt
+close notes.txt
+close photo.jpg
+true

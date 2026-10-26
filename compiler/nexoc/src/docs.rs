@@ -7,7 +7,7 @@ use crate::json::{parse, Json};
 
 const API: &str = include_str!("../../../nexo/stdlib/api.json");
 
-const DEFS: &[&str] = &["fn ", "pub fn ", "type ", "pub type ", "trait ", "pub trait "];
+const DEFS: &[&str] = &["fn ", "pub fn ", "type ", "pub type ", "trait ", "pub trait ", "action ", "workflow "];
 const BLOCKS: &[&str] = &["type ", "pub type ", "trait ", "pub trait "];
 
 fn strip_colon(t: &str) -> &str {

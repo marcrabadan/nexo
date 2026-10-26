@@ -92,6 +92,17 @@ static SIGS: &[Sig] = &[
     Sig { name: "__states", params: &[p("name"), p("pairs")] },
     Sig { name: "__protect", params: &[p("target"), p("name"), p("fails"), p("wait")] },
     Sig { name: "__protect_end", params: &[p("guard"), p("ok")] },
+    Sig { name: "__action_done", params: &[p("name"), p("undo"), p("args")] },
+    Sig { name: "undo", params: &[] },
+    Sig { name: "__workflow", params: &[p("name"), p("args")] },
+    Sig { name: "__workflow_resume", params: &[p("run")] },
+    Sig { name: "__workflow_step", params: &[p("run"), p("n")] },
+    Sig { name: "__workflow_done", params: &[p("run"), p("n")] },
+    Sig { name: "__workflow_wait", params: &[p("run"), p("cond"), p("max")] },
+    Sig { name: "__workflow_failed", params: &[p("run"), p("error")] },
+    Sig { name: "__workflow_undo", params: &[p("run"), p("n")] },
+    Sig { name: "__workflow_undone", params: &[p("run"), p("n")] },
+    Sig { name: "__workflow_end", params: &[p("run")] },
     Sig {
         name: "__web_route",
         params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
@@ -155,6 +166,7 @@ pub fn release_all() {
     crate::stream::release_all();
     crate::infra::release_all();
     crate::ci::release_all();
+    crate::patterns::release_all();
 }
 
 pub fn clear_fakes() {
@@ -164,6 +176,9 @@ pub fn clear_fakes() {
 
 pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let sig = &SIGS[(id.0 - BASE) as usize];
+    if sig.name == "__workflow" && crate::security::enforcing() {
+        return Err(crate::state::diag(nexo_diag::Diagnostic::new_spanless("security_workflow"), span));
+    }
     if sig.name == "render" {
         // render(path, name: value...): every named argument is a value
         return crate::text::render(args, names, span);
@@ -252,6 +267,17 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__states" => crate::patterns::states(x(0), x(1)),
         "__protect" => crate::patterns::protect(x(0), x(1), x(2), x(3), span),
         "__protect_end" => crate::patterns::protect_end(x(0), x(1)),
+        "__action_done" => crate::patterns::action_done(x(1), x(2)),
+        "undo" => crate::patterns::undo(span),
+        "__workflow" => crate::patterns::workflow(x(0), x(1)),
+        "__workflow_resume" => crate::patterns::workflow_resume(x(0), span),
+        "__workflow_step" => crate::patterns::workflow_step(x(0), x(1)),
+        "__workflow_done" => crate::patterns::workflow_done(x(0), x(1), span),
+        "__workflow_wait" => crate::patterns::workflow_wait(x(0), x(1), x(2), span),
+        "__workflow_failed" => crate::patterns::workflow_failed(x(0), x(1), span),
+        "__workflow_undo" => crate::patterns::workflow_undo(x(0), x(1)),
+        "__workflow_undone" => crate::patterns::workflow_undone(x(0), x(1), span),
+        "__workflow_end" => crate::patterns::workflow_end(x(0), span),
         "privacy.export" => crate::db::privacy_export(x(0), span),
         "privacy.erase" => crate::db::privacy_erase(x(0), span),
         "privacy.restrict" => crate::db::privacy_restrict(x(0), span),

@@ -170,7 +170,7 @@
           "match": "\\b(within|fails)\\b"
         },
         {
-          "match": "^\\s*(?:(ai)(?:\\s+(models|profile))?|(agent|server|infra|stage|pipeline|flags|policy|single|states|protect))\\b(?=[^\\n]*:\\s*$)",
+          "match": "^\\s*(?:(ai)(?:\\s+(models|profile))?|(agent|server|infra|stage|pipeline|flags|policy|single|states|protect|action|workflow))\\b(?=[^\\n]*:\\s*$)",
           "captures": {
             "1": { "name": "keyword.other.module.nexo" },
             "2": { "name": "keyword.other.module.nexo" },
@@ -224,7 +224,7 @@
       "patterns": [
         {
           "name": "support.function.builtin.nexo",
-          "match": "\\b(print|input|len|range|set|round|split|convert|fail|validate|old|read|write|read_lines|save|decimal|float|int|str|channel|move_file|date|time|regex|render|secret|encrypt|decrypt|encrypt_file|decrypt_file|sign|verify|log|jwt|ask|connect|flag|send|run|build_image|approve|comment)(?=\\()"
+          "match": "\\b(print|input|len|range|set|round|split|convert|fail|validate|old|read|write|read_lines|save|decimal|float|int|str|channel|move_file|date|time|regex|render|secret|encrypt|decrypt|encrypt_file|decrypt_file|sign|verify|log|jwt|ask|undo|connect|flag|send|run|build_image|approve|comment)(?=\\()"
         },
         {
           "name": "entity.name.function.call.nexo",

@@ -212,3 +212,14 @@ def test_ambiguous_url_cannot_bypass_host_policy(tmp_path, backend, network):
     assert proc.returncode == 1
     assert hits == []
     assert "ambiguous URL" in proc.stdout.decode()
+
+
+@pytest.mark.parametrize("grant", ["deny shell", 'allow write ".nexo"'])
+def test_persistent_workflow_is_rejected_before_steps_or_state(tmp_path, backend, grant):
+    proc = execute(tmp_path, backend, 'policy:\n    ' + grant + '\n'
+                   'workflow job():\n    step print("WORKFLOW_EXECUTED")\ntry:\n    job()\nelse e:\n    print("CAUGHT")\n')
+    assert proc.returncode == 1, proc.stdout.decode()
+    assert "cannot confine persistent workflow state" in proc.stdout.decode()
+    assert "\nWORKFLOW_EXECUTED\n" not in proc.stdout.decode()
+    assert "\nCAUGHT\n" not in proc.stdout.decode()
+    assert not (tmp_path / ".nexo").exists()
