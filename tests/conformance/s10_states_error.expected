@@ -1,0 +1,4 @@
+Error in s10_states_error.nexo, line 7:
+  order.go("delivered")      # error: it must be "shipped" first
+  ^^^^^^^^^^^^^^^^^^^^^
+Unhandled error (InvalidValue): "order" cannot go from "paid" to "delivered"; from "paid" it can go to "shipped", "cancelled". Go through the states in between, check with can() first, or handle it with try and else e is InvalidValue.

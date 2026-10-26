@@ -1,0 +1,4 @@
+states light:
+    red -> green -> amber -> red
+
+light.go("gren")

@@ -98,6 +98,7 @@ pub const ERROR_KINDS: &[&str] = &[
     "HTTPError",
     "AIError",
     "DatabaseError",
+    "CircuitOpen",
 ];
 
 /// A declared type, decoded from the descriptor the compiler emits.

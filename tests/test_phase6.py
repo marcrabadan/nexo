@@ -48,7 +48,7 @@ def test_docs_for_ai(phase, tmp_path):
     assert "print(values..., end: str = \"\\n\")  # Write the values separated by spaces, then end.\n" in out
     assert out.endswith("## This program (m.nexo)\nfn hyp(a: float, b: float) -> float\n"
                         "    ## the length of a vector\ntype P\n    x: int\n    fn norm(self) -> int\n")
-    assert run(phase[1], ["docs"], tmp_path).returncode == 2
+    assert run(phase[1], ["docs", "--html"], tmp_path).returncode == 2
 
 
 def test_the_api_list_is_exact():

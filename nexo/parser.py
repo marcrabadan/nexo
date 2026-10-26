@@ -201,6 +201,10 @@ class Parser:
             return self.fake_stmt()
         if tok.kind == "NAME" and self.at_transaction():
             return self.transaction()
+        if tok.kind == "NAME" and tok.value == "protect" and self.peek(1).is_op("("):
+            stmt = self.protect()
+            if stmt is not None:
+                return stmt
         if tok.kind == "KEYWORD":
             kw = tok.value
             if kw == "fn":
@@ -1222,7 +1226,7 @@ def parse(source: str, file: str = "<input>") -> A.Program:
 # builtins whose names start with "__" (D90), so every later pass (the
 # checker, the interpreter, the compiler) sees only core constructs.
 
-MODULE_BLOCKS = {"ai", "agent", "server", "infra", "stage", "pipeline", "flags", "policy"}
+MODULE_BLOCKS = {"ai", "agent", "server", "infra", "stage", "pipeline", "flags", "policy", "single", "states"}
 # blocks of phase 5 whose body is read with the rule of D114
 CFG_BLOCKS = {"infra", "stage", "pipeline", "flags"}
 # what a policy can allow or deny (D142)
@@ -1283,6 +1287,10 @@ def _module_methods():
             return self.cfg_block(tok)
         if word_ == "policy":
             return self.policy_block(tok)
+        if word_ == "states":
+            return self.states_block(tok)
+        if word_ == "single" and self.nesting:
+            raise NexoError("single_place", tok.span)
         name = None
         name_tok = None
         if word_ == "ai" and self.at_name("profile"):
@@ -1332,7 +1340,7 @@ def _module_methods():
         if kind in ("ai", "profile"):
             first = text(span, name) if name is not None else A.NoneLit(span)
             return A.ExprStmt(span, call(span, "__ai_config", [first], pairs))
-        fn = "__ai_agent" if kind == "agent" else "__web_server"
+        fn = {"agent": "__ai_agent", "single": "__single"}.get(kind, "__web_server")
         target = A.Name(name_tok.span, name)
         stmt = A.Assign(name_tok.span, target, "=", call(span, fn, [text(span, name)], pairs))
         for route_fn, method, path, annotations, mspan in routes:
@@ -1489,6 +1497,71 @@ def _module_methods():
         body = body + [A.ExprStmt(span, call(span, "__db_commit", [tx]))]
         handler = A.Handler(span, "__e", None, [
             A.ExprStmt(span, call(span, "__db_rollback", [tx])),
+            A.ExprStmt(span, call(span, "fail", [A.Name(span, "__e")])),
+        ])
+        self.extra.append(A.TryStmt(span, None, body, [handler]))
+        return begin
+
+    # -- patterns of section 10 (D143-D145) ------------------------------
+    def states_block(self, tok: Token) -> A.Stmt:
+        """states name: with lines `a -> b -> c`, as
+        name = __states("name", [["a", "b"], ["b", "c"]...]) (D144)."""
+        name_tok = self.expect_name()
+        self.expect_op(":")
+        self.expect_newline_raw()
+        if self.peek().kind != "INDENT":
+            raise self.error(word("indented"))
+        self.advance()
+        pairs = []
+        while self.peek().kind != "DEDENT":
+            first = self.expect_name()
+            if not self.at_op("->"):
+                raise self.error('"->"')
+            prev = first
+            while self.at_op("->"):
+                self.advance()
+                nxt = self.expect_name()
+                pairs.append(A.ListLit(prev.span, [text(prev.span, prev.value), text(nxt.span, nxt.value)]))
+                prev = nxt
+            self.expect_newline()
+        self.advance()
+        self.block_end = self.p
+        span = tok.span
+        target = A.Name(name_tok.span, name_tok.value)
+        value = call(span, "__states", [text(span, name_tok.value), A.ListLit(span, pairs)])
+        return A.Assign(name_tok.span, target, "=", value)
+
+    def protect(self) -> A.Stmt | None:
+        """protect(target, fails: n, wait: d): block (section 10, D145), as
+            __prL_C = __protect(target, "target", fails: n, wait: d)
+            try:
+                block
+                __protect_end(__prL_C, true)
+            else __e:
+                __protect_end(__prL_C, false)
+                fail(__e)
+        None (and nothing read) when it is an ordinary call."""
+        start = self.p
+        head = self.postfix()
+        if not (self.at_op(":") and self.peek(1).kind == "NEWLINE"):
+            self.p = start
+            return None
+        args = head.args if isinstance(head, A.Call) else []
+        positional = [a for a in args if a.name is None]
+        named = sorted(a.name for a in args if a.name is not None)
+        if len(positional) != 1 or named != ["fails", "wait"] or args[0].name is not None:
+            raise NexoError("protect_args", head.span)
+        target = positional[0].value
+        span = head.span
+        body = self.block()
+        for s in body_returns(body):
+            raise NexoError("protect_return", s.span)
+        guard = A.Name(span, f"__pr{span.line}_{span.col}")
+        named_args = [(a.name, a.value) for a in args if a.name is not None]
+        begin = A.Assign(span, guard, "=", call(span, "__protect", [target, text(span, source_text(target.span))], named_args))
+        body = body + [A.ExprStmt(span, call(span, "__protect_end", [guard, A.Bool(span, True)]))]
+        handler = A.Handler(span, "__e", None, [
+            A.ExprStmt(span, call(span, "__protect_end", [guard, A.Bool(span, False)])),
             A.ExprStmt(span, call(span, "fail", [A.Name(span, "__e")])),
         ])
         self.extra.append(A.TryStmt(span, None, body, [handler]))

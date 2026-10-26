@@ -24,6 +24,7 @@ pub mod json;
 pub mod library;
 pub mod num;
 pub mod par;
+pub mod patterns;
 pub mod pipe;
 pub mod policy;
 pub mod security;

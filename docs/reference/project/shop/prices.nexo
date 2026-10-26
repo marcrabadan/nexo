@@ -1,0 +1,7 @@
+## The price with 21% VAT, in cents.
+pub fn with_vat(cents: int) -> int:
+    return cents + cents * VAT // 100
+
+VAT = 21
+
+print("prices loaded")

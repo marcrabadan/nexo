@@ -92,3 +92,33 @@ pub fn for_ai(file: Option<(&str, &str)>) -> String {
     }
     lines.join("\n") + "\n"
 }
+
+/// The declarations of a file as Markdown, as in phase 0: a heading for
+/// each one, its `##` comments as a paragraph and its fields and methods as
+/// a list; None when the file declares nothing (D147).
+pub fn markdown(path: &str, source: &str) -> Option<String> {
+    let mut lines = vec![format!("# {path}")];
+    let last_is_item = |lines: &Vec<String>| lines.last().is_some_and(|l| l.starts_with("- "));
+    for item in outline(source) {
+        if !item.starts_with("    ") {
+            lines.extend([String::new(), format!("## `{item}`"), String::new()]);
+        } else if let Some(doc) = item.strip_prefix("    ##") {
+            if last_is_item(&lines) {
+                lines.push(String::new());
+            }
+            lines.push(doc.strip_prefix(' ').unwrap_or(doc).to_string());
+        } else {
+            if lines.last().is_some_and(|l| !l.is_empty()) && !last_is_item(&lines) {
+                lines.push(String::new());
+            }
+            lines.push(format!("- `{}`", &item[4..]));
+        }
+    }
+    if lines.len() == 1 {
+        return None;
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    Some(lines.join("\n") + "\n")
+}

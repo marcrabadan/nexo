@@ -1,0 +1,5 @@
+fn call_api() -> int:
+    return 1
+
+protect(call_api, fails: 3):
+    print(call_api())

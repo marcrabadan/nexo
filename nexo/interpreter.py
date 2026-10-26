@@ -1397,6 +1397,10 @@ class Interpreter:
             return
         if obj is None:
             raise NexoError("none_member", span, name=name)
+        if isinstance(obj, Native) and hasattr(obj, "set_member"):
+            from .types import At
+            obj.set_member(At(self, span), name, value)
+            return
         raise NexoError("readonly_member", span, name=name, vtype=type_name(obj))
 
     def get_index(self, obj: Any, index: Any, span: Span) -> Any:

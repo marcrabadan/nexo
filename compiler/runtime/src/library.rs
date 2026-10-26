@@ -88,6 +88,10 @@ static SIGS: &[Sig] = &[
     Sig { name: "audit", params: &[] },
     Sig { name: "scan", params: &[] },
     Sig { name: "slack", params: &[] },
+    Sig { name: "__single", params: &[] },
+    Sig { name: "__states", params: &[p("name"), p("pairs")] },
+    Sig { name: "__protect", params: &[p("target"), p("name"), p("fails"), p("wait")] },
+    Sig { name: "__protect_end", params: &[p("guard"), p("ok")] },
     Sig {
         name: "__web_route",
         params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
@@ -169,6 +173,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__ai_config" => return crate::ai::config(args, names, span),
         "__ai_models" => return crate::ai::models(args, names, span),
         "__ai_agent" => return crate::ai::agent(args, names, span),
+        "__single" => return crate::patterns::single(args, names, span),
         _ => {}
     }
     if sig.name == "log" {
@@ -244,6 +249,9 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "plan" => crate::ci::plan(a.get(0), a.get(1), span),
         "approve" => crate::ci::approve(x(0), span),
         "comment" => crate::ci::comment(x(0), span),
+        "__states" => crate::patterns::states(x(0), x(1)),
+        "__protect" => crate::patterns::protect(x(0), x(1), x(2), x(3), span),
+        "__protect_end" => crate::patterns::protect_end(x(0), x(1)),
         "privacy.export" => crate::db::privacy_export(x(0), span),
         "privacy.erase" => crate::db::privacy_erase(x(0), span),
         "privacy.restrict" => crate::db::privacy_restrict(x(0), span),

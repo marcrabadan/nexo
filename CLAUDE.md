@@ -22,7 +22,9 @@ The core of Nexo, a new programming language, in two implementations
   audit`, `nexo docs --for-ai`, `nexo test --suggest` and `nexo check
   --intent`; the guarantees of the specification are measured and their
   state is in docs/guarantees.md (D126-D136); the program `policy` of
-  section 9 with `nexo policy show|suggest` (D142).
+  section 9 with `nexo policy show|suggest` (D142); the patterns of
+  section 10 with their own word, `single`, `states` and `protect`
+  (D143-D145); `nexo mcp` (D146), `nexo docs` (D147) and `nexo new` (D148).
 
 ## Source of truth
 
@@ -52,7 +54,8 @@ nexo/
                   infra_cloud (the clients and commands),
                   infra_providers.json (shared by both phases), ci,
                   ci_export; phase 6: api.json (what a program can use,
-                  shared by both phases), policy (the program policy, D142)
+                  shared by both phases), policy (the program policy, D142),
+                  patterns (single, states and protect, D143-D145)
   audit.py        `nexo audit`: the uses of C (implicit unsafe, D129)
   docs.py         `nexo docs --for-ai`: stdlib/api.json + the program (D130)
   suggest.py      `nexo test --suggest`: edge cases run by a probe (D131)
@@ -60,11 +63,13 @@ nexo/
   fmt.py          `nexo fmt`: token-preserving formatter (D85)
   lint.py         `nexo lint` / `nexo fix`: warnings and safe fixes (D86)
   lsp.py          `nexo lsp`: language server (D87)
+  mcp.py          `nexo mcp`: Model Context Protocol server for assistants (D146)
   cli.py          `nexo file.nexo`, `nexo` (REPL), `nexo test|fmt|lint|fix|check|audit|lsp`,
                   `nexo test --suggest`, `nexo check --intent`, `nexo docs --for-ai`,
                   `nexo db diff|migrate`, `nexo ai setup|usage`; phase 5:
                   `nexo plan|apply|destroy|drift|cost|import`, `nexo ci run|export`,
-                  `nexo flags set`, `nexo privacy report`; `nexo policy show|suggest`
+                  `nexo flags set`, `nexo privacy report`; `nexo policy show|suggest`;
+                  `nexo new`, `nexo docs`, `nexo mcp`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text);
                   a .nexo without .expected is a module the cases use
@@ -84,13 +89,14 @@ compiler/
                   records of known types, D126), sbom, split (parallel
                   development builds, D135), scalar (values as two words
                   in development mode, D141), audit, docs, suggest, intent,
-                  policy (`nexo policy`, D142)
+                  policy (`nexo policy`, D142), mcp (`nexo mcp`, D146)
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
                   http, db, web, ai, clib, pylib; phase 5: cfg, flags,
                   privacy, stream, infra, infra_cloud, ci, ci_export;
-                  policy.rs: the checks of the program policy, D142)
+                  policy.rs: the checks of the program policy, D142;
+                  patterns.rs: single, states and protect, D143-D145)
   tests/programs/ extra programs for the differential test
   scripts/        conformance.py, differential.py, fuzz.py (random programs
                   in both phases), fix_rate.py (errors with a fix)
@@ -121,6 +127,9 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/nexo test [path]       # run `test` blocks
 .venv/bin/nexo fmt|lint|fix|check [path]
 .venv/bin/nexo lsp               # language server on stdio
+.venv/bin/nexo mcp               # MCP server on stdio, for AI assistants
+.venv/bin/nexo new shop          # a project: shop/nexo.toml, shop/src/main.nexo
+.venv/bin/nexo docs [path]       # Markdown from the ## comments
 .venv/bin/nexo plan|apply|drift|destroy [--stage prod] [file]   # nexo.infra
 .venv/bin/nexo ci run [--yes] | ci export github [file]         # nexo.ci
 python3 tests/cloud_emulator.py 8765   # the cloud APIs, locally (prints the env)
@@ -223,6 +232,14 @@ stops what is not allowed and needs a policy; development mode warns
 once, except shell commands, which always need `allow shell` (so a
 pipeline with `run` needs a policy). `nexo policy show|suggest`. The
 sandbox escape tests are in tests/test_policy.py.
+
+The patterns of section 10 (D143-D145): `single name:` and `states
+name:` are module blocks read into `__single(...)` and `__states(...)`;
+`protect(value, fails:, wait:):` is rewritten like `db.transaction`
+into `__protect` before a `try` (a new error kind, `CircuitOpen`).
+`nexo mcp` (D146) offers `check`, `run_tests`, `docs_for_ai`, `plan` and
+`format` over stdio by running the same binary's commands
+(tests/test_mcp.py); `nexo new` and `nexo docs` are in tests/test_project.py.
 
 Excluded (do not implement yet): ml, ui, notify, per-package
 permissions (the registry), every/lifecycle, canary and blue/green releases, chaos, AI budgets and
