@@ -126,6 +126,10 @@ def hardened_options():
                                     "--network=none","--cpus=1","--pids-limit=64"])
 def test_incomplete_container_configuration_is_rejected(image,omitted):
     options=[s for s in hardened_options() if s!=omitted]
+    # Some daemons supply a finite default PID limit even without the flag.
+    # Exercise an effectively unbounded cgroup, not just an omitted argument.
+    if omitted == "--pids-limit=64":
+        options.append("--pids-limit=-1")
     p=subprocess.run(["docker","run","--rm",*options,image,"probe"],capture_output=True,text=True,timeout=30)
     assert p.returncode==125,p.stderr
     assert "Shield container requires" in p.stderr
