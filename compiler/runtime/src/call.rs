@@ -364,6 +364,13 @@ pub fn set_attr(obj: V, name: &str, value: V, name_span: u32, value_span: u32) -
             Ok(())
         }
         _ if obj.is_none() => Err(diag(Diagnostic::new_spanless("none_member").arg("name", name), name_span)),
+        Some(Obj::Native(n)) => match n.set_member(name, value, name_span) {
+            Some(r) => r,
+            None => Err(diag(
+                Diagnostic::new_spanless("readonly_member").arg("name", name).arg("vtype", type_name(obj)),
+                name_span,
+            )),
+        },
         _ => Err(diag(
             Diagnostic::new_spanless("readonly_member").arg("name", name).arg("vtype", type_name(obj)),
             name_span,

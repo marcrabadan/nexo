@@ -1,0 +1,4 @@
+Error in s10_single_place.nexo, line 2:
+  single config:
+  ^^^^^^
+A single block goes at the top level of a file. Move it out of the block it is in.

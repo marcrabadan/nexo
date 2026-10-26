@@ -1,0 +1,37 @@
+single config:
+    port = 8080
+    mode = "production"
+
+config.port = 9090
+print(config)
+
+states order:
+    new -> paid -> shipped -> delivered
+    new -> cancelled
+    paid -> cancelled
+
+order.go("paid")
+print(order.state, order.can("delivered"))
+try:
+    order.go("delivered")
+else e is InvalidValue:
+    print(e.message)
+
+fn charge(amount: int) -> int!:
+    if amount < 0:
+        fail("card declined")
+    return amount
+
+fn pay(amount: int) -> int!:
+    var paid = 0
+    protect(charge, fails: 2, wait: 1m):
+        paid = charge(amount)?
+    return paid
+
+for amount in [-1, -2, 5]:
+    try:
+        print(pay(amount))
+    else e is CircuitOpen:
+        print(e.message)
+    else e:
+        print(e.message)

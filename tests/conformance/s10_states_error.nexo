@@ -1,0 +1,7 @@
+states order:
+    new -> paid -> shipped -> delivered
+    new -> cancelled
+    paid -> cancelled
+
+order.go("paid")
+order.go("delivered")      # error: it must be "shipped" first

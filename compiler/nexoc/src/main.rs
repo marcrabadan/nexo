@@ -25,6 +25,7 @@ mod json;
 mod lexer;
 mod lint;
 mod lsp;
+mod mcp;
 mod modules;
 mod narrow;
 mod parser;
@@ -44,7 +45,7 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs --for-ai [file.nexo] | lsp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]"
+    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]"
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -1099,9 +1100,69 @@ fn run_intent(paths: &[String]) -> u8 {
     status
 }
 
-/// `nexo docs --for-ai [file]` (D130).
+const NEW_TOML: &str = "[project]\nname = \"NAME\"\nversion = \"0.1.0\"\nnexo = \"0.1\"\n";
+const NEW_MAIN: &str = "## The greeting of NAME.\nfn greeting(name: str) -> str:\n    return \"Hello, {name}!\"\n\ntest \"greeting\":\n    assert greeting(\"Ana\") == \"Hello, Ana!\"\n\nprint(greeting(\"world\"))\n";
+
+/// `nexo new name`: a project with nexo.toml, src/ and a test (section 14, D148).
+fn run_new(args: &[String]) -> u8 {
+    if args.len() != 1 || args[0].starts_with('-') {
+        eprintln!("{}", usage());
+        return 2;
+    }
+    let name = &args[0];
+    let valid = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    let fail = |key: &'static str| {
+        let d = Diagnostic::new_spanless(key).arg("name", name.clone());
+        eprint!("{}", render("", "", None, &d.text()));
+        1
+    };
+    if !valid {
+        return fail("new_name");
+    }
+    let root = Path::new(name);
+    if root.exists() || root.is_symlink() {
+        return fail("new_exists");
+    }
+    let written = std::fs::create_dir_all(root.join("src"))
+        .and_then(|_| std::fs::write(root.join("nexo.toml"), NEW_TOML.replace("NAME", name)))
+        .and_then(|_| std::fs::write(root.join("src").join("main.nexo"), NEW_MAIN.replace("NAME", name)));
+    if let Err(e) = written {
+        eprintln!("Error: {e}");
+        return 1;
+    }
+    println!("{}", msg("info.new_done", &[("name", name.clone())]));
+    0
+}
+
+/// `nexo docs [paths]` (D147) and `nexo docs --for-ai [file]` (D130).
 fn run_docs(args: &[String]) -> u8 {
-    if args.first().map(String::as_str) != Some("--for-ai") || args.len() > 2 {
+    if args.first().map(String::as_str) != Some("--for-ai") {
+        if args.iter().any(|a| a.starts_with('-')) {
+            eprintln!("{}", usage());
+            return 2;
+        }
+        let mut status = 0;
+        let mut pages = Vec::new();
+        for f in test_files(args) {
+            let name = f.display().to_string();
+            match read_source(&name) {
+                Ok(source) => pages.extend(docs::markdown(&name, &source)),
+                Err(e) => {
+                    eprint!("{e}");
+                    status = 1;
+                }
+            }
+        }
+        if !pages.is_empty() {
+            print!("{}", pages.join("\n"));
+        } else if status == 0 {
+            let shown = if args.is_empty() { ".".to_string() } else { args.join(", ") };
+            println!("{}", msg("info.docs_none", &[("path", shown)]));
+        }
+        return status;
+    }
+    if args.len() > 2 {
         eprintln!("{}", usage());
         return 2;
     }
@@ -1213,6 +1274,7 @@ fn main() -> ExitCode {
             "check" => run_check(&rest[1..]),
             "audit" => run_audit(&rest[1..]),
             "docs" => run_docs(&rest[1..]),
+            "new" => run_new(&rest[1..]),
             "db" => run_db(&rest[1..]),
             "flags" => phase5::run_flags(&rest[1..]),
             "privacy" => phase5::privacy_report(&rest[1..]),
@@ -1222,6 +1284,7 @@ fn main() -> ExitCode {
             "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),
             "ai" if rest.len() == 2 && rest[1] == "usage" => ai_cmd::usage(),
             "lsp" if rest.len() == 1 => lsp::serve(),
+            "mcp" if rest.len() == 1 => mcp::serve(),
             "--emit-llvm" if rest.len() == 2 => emit_ir(&rest[1]),
             a if a.starts_with('-') || rest.len() > 1 => {
                 eprintln!("{}", usage());

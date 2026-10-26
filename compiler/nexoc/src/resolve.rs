@@ -221,6 +221,7 @@ pub const ERROR_KINDS: &[&str] = &[
     "HTTPError",
     "AIError",
     "DatabaseError",
+    "CircuitOpen",
 ];
 
 /// Builtin names in the order the phase 0 interpreter defines them (this
@@ -243,7 +244,7 @@ pub fn builtin_names() -> Vec<&'static str> {
 pub const LIBRARY_NAMES: &[&str] = &[
     "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair", "encrypt",
     "decrypt", "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "__fake", "__db_table", "__db_begin",
-    "__db_commit", "__db_rollback", "__sql_text", "jwt", "__rate", "__web_server", "__web_route", "ask", "__ai_config", "__ai_models", "__ai_tool", "__ai_agent", "mcp", "__c_library", "__python_import", "__cfg", "__ref", "__cond", "__flags", "flag", "__policy", "__privacy_type", "privacy", "kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket", "__stream_when", "__infra", "__stage", "s3", "gcs", "blob", "__pipeline", "__ci_get", "__ci_keep", "run", "test", "build_image", "apply", "plan", "approve", "comment", "audit", "scan", "slack",
+    "__db_commit", "__db_rollback", "__sql_text", "jwt", "__rate", "__web_server", "__web_route", "ask", "__ai_config", "__ai_models", "__ai_tool", "__ai_agent", "mcp", "__c_library", "__python_import", "__cfg", "__ref", "__cond", "__flags", "flag", "__policy", "__privacy_type", "privacy", "kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket", "__stream_when", "__infra", "__stage", "s3", "gcs", "blob", "__pipeline", "__ci_get", "__ci_keep", "run", "test", "build_image", "apply", "plan", "approve", "comment", "audit", "scan", "slack", "__single", "__states", "__protect", "__protect_end",
 ];
 
 /// Library names that are functions or namespaces (not types).
@@ -251,7 +252,7 @@ pub const LIBRARY_FUNCTIONS: &[&str] = &[
     "connect",
     "move_file", "now", "today", "regex", "render", "secret", "password", "key", "keypair", "encrypt", "decrypt",
     "encrypt_file", "decrypt_file", "sign", "verify", "log", "http", "email", "__fake", "__db_table",
-    "__db_begin", "__db_commit", "__db_rollback", "__sql_text", "jwt", "__rate", "__web_server", "__web_route", "ask", "__ai_config", "__ai_models", "__ai_tool", "__ai_agent", "mcp", "__c_library", "__python_import", "__cfg", "__ref", "__cond", "__flags", "flag", "__policy", "__privacy_type", "privacy", "kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket", "__stream_when", "__infra", "__stage", "s3", "gcs", "blob", "__pipeline", "__ci_get", "__ci_keep", "run", "test", "build_image", "apply", "plan", "approve", "comment", "audit", "scan", "slack",
+    "__db_begin", "__db_commit", "__db_rollback", "__sql_text", "jwt", "__rate", "__web_server", "__web_route", "ask", "__ai_config", "__ai_models", "__ai_tool", "__ai_agent", "mcp", "__c_library", "__python_import", "__cfg", "__ref", "__cond", "__flags", "flag", "__policy", "__privacy_type", "privacy", "kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket", "__stream_when", "__infra", "__stage", "s3", "gcs", "blob", "__pipeline", "__ci_get", "__ci_keep", "run", "test", "build_image", "apply", "plan", "approve", "comment", "audit", "scan", "slack", "__single", "__states", "__protect", "__protect_end",
 ];
 
 pub fn is_builtin(name: &str) -> bool {

@@ -58,6 +58,7 @@
         <li><a href="#contracts">Contracts and tests</a></li>
         <li><a href="#modules">Modules</a></li>
         <li><a href="#concurrency">Concurrency</a></li>
+        <li><a href="#patterns">Patterns</a></li>
         <li><a href="#stdlib">Standard library</a>
           <ol>
             <li><a href="#std-files">Files and data</a></li>
@@ -205,6 +206,7 @@
       <tr><td><code>Timeout</code></td><td><code>try within</code> a time limit</td></tr>
       <tr><td><code>NetworkError</code>, <code>HTTPError</code></td><td>The <code>http</code> client</td></tr>
       <tr><td><code>DatabaseError</code>, <code>AIError</code></td><td><code>nexo.db</code> and <code>nexo.ai</code></td></tr>
+      <tr><td><code>CircuitOpen</code></td><td>A <code>protect</code> block whose circuit is open</td></tr>
     </tbody>
   </table></div>
   <p>Missing values and errors never mix: <code>??</code> is only for <code>T?</code>, and <code>?</code> and <code>try</code> only for <code>T!</code>.</p>
@@ -269,6 +271,17 @@
   <h2><a href="#concurrency">Concurrency</a></h2>
   <p><code>parallel for</code> runs its body as tasks on threads, and the results and any output come back in the order of the list; a <code>parallel:</code> block runs its statements at the same time. A task may only change what it created itself (D80-D81). <code>use nexo.sync</code> adds <code>spawn</code>, typed <code>channel</code>s, <code>select</code> and <code>shared</code> variables; when every task waits, Nexo reports a deadlock instead of hanging.</p>
 {{run:parallel.nexo}}
+</section>
+
+<section class="ref-sec" id="patterns">
+  <h2><a href="#patterns">Patterns</a></h2>
+  <p>Three design patterns have their own word; the rest are written with functions, <code>match</code> and named arguments (section 10).</p>
+  <ul class="ref-list">
+    <li><code>single name:</code> holds one value with the fields written in it, at the top level of a file; <code>config.port = 9090</code> changes it everywhere (D143).</li>
+    <li><code>states name:</code> lists the transitions as chains, <code>new -&gt; paid -&gt; shipped</code>; it starts in the first state. <code>.state</code> is the current one, <code>.can("x")</code> says whether it may go there, and <code>.go("x")</code> goes or fails with <code>InvalidValue</code> (D144).</li>
+    <li><code>protect(value, fails: 5, wait: 1m):</code> is a circuit breaker: after <code>fails</code> errors in a row its block is not run for <code>wait</code>, and it fails with <code>CircuitOpen</code> instead (D145).</li>
+  </ul>
+{{run:patterns.nexo}}
 </section>
 
 <section class="ref-sec" id="stdlib">
@@ -480,12 +493,15 @@
     <tbody>
       <tr><td><code>nexo</code></td><td>The REPL</td></tr>
       <tr><td><code>nexo file.nexo</code></td><td>Runs a program</td></tr>
+      <tr><td><code>nexo new name</code></td><td>Creates a project: <code>nexo.toml</code> and <code>src/main.nexo</code> with a test</td></tr>
       <tr><td><code>nexo build [--release [--trust-ensure]] [-o out] file.nexo</code></td><td>Compiles to a native program (compiler only)</td></tr>
       <tr><td><code>nexo test [paths]</code></td><td>Runs the <code>test</code> blocks</td></tr>
       <tr><td><code>nexo fmt [paths]</code></td><td>Formats files in place; there are no options</td></tr>
       <tr><td><code>nexo lint [paths]</code>, <code>nexo fix [paths]</code></td><td>Warnings with their fixes, and applying the safe ones</td></tr>
       <tr><td><code>nexo check [paths]</code></td><td>The compile checks, without running anything</td></tr>
+      <tr><td><code>nexo docs [paths]</code></td><td>Markdown documentation from the <code>##</code> comments; <code>--for-ai file.nexo</code> lists what a program can use</td></tr>
       <tr><td><code>nexo lsp</code></td><td>The language server, on standard input and output</td></tr>
+      <tr><td><code>nexo mcp</code></td><td>A Model Context Protocol server: <code>check</code>, <code>run_tests</code>, <code>docs_for_ai</code>, <code>plan</code> and <code>format</code> for AI assistants, never <code>apply</code></td></tr>
       <tr><td><code>nexo db diff|migrate file.nexo</code></td><td>Database migrations (<code>--db path</code>, <code>--allow-drop</code>)</td></tr>
       <tr><td><code>nexo ai setup|usage</code></td><td>Configures the AI provider; shows the use of <code>ask</code></td></tr>
       <tr><td><code>nexo plan|apply|destroy|drift|cost [file.nexo]</code></td><td>Infrastructure (<code>--stage</code>, <code>--yes</code>); <code>nexo import cloud resource id</code> adopts what exists</td></tr>

@@ -296,6 +296,11 @@ impl<'s> Parser<'s> {
         if self.is_name() && self.at_transaction() {
             return self.transaction();
         }
+        if matches!(&tok.tok, Tok::Name(n) if n == "protect") && self.peek_at(1).is_op("(") {
+            if let Some(st) = self.protect()? {
+                return Ok(st);
+            }
+        }
         if let Tok::Keyword(kw) = tok.tok {
             match kw {
                 "fn" => {
@@ -1650,7 +1655,7 @@ impl<'s> Parser<'s> {
 // checker, the resolver, the code generator) sees only core constructs.
 
 const STREAM_SOURCES: &[&str] = &["kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket"];
-const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server", "infra", "stage", "pipeline", "flags", "policy"];
+const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server", "infra", "stage", "pipeline", "flags", "policy", "single", "states"];
 /// what a policy can allow or deny (D142)
 pub const POLICY_KINDS: &[&str] = &["read", "write", "net", "env", "shell", "c", "python"];
 
@@ -1781,6 +1786,12 @@ impl<'s> Parser<'s> {
         if word_ == "policy" {
             return self.policy_block(tok);
         }
+        if word_ == "states" {
+            return self.states_block(tok);
+        }
+        if word_ == "single" && self.nesting > 0 {
+            return Err(Diagnostic::new("single_place", tok.span));
+        }
         let mut name: Option<String> = None;
         let mut name_span = tok.span;
         let kind: &str = if word_ == "ai" && self.at_name("profile") {
@@ -1806,10 +1817,10 @@ impl<'s> Parser<'s> {
             let (n, sp) = self.expect_name()?;
             name = Some(n);
             name_span = sp;
-            if word_ == "agent" {
-                "agent"
-            } else {
-                "server"
+            match word_.as_str() {
+                "agent" => "agent",
+                "single" => "single",
+                _ => "server",
             }
         };
         self.expect_op(":")?;
@@ -1860,7 +1871,11 @@ impl<'s> Parser<'s> {
             return Ok(self.expr_stmt(c));
         }
         let name = name.unwrap();
-        let fname = if kind == "agent" { "__ai_agent" } else { "__web_server" };
+        let fname = match kind {
+            "agent" => "__ai_agent",
+            "single" => "__single",
+            _ => "__web_server",
+        };
         let first = self.text(span, &name);
         let value = self.call(span, fname, vec![first], pairs);
         let target = self.name_expr(name_span, &name);
@@ -1895,6 +1910,115 @@ impl<'s> Parser<'s> {
             self.extra.push(st);
         }
         Ok(stmt)
+    }
+
+    // -- patterns of section 10 (D143-D145) ------------------------------
+
+    /// states name: with lines `a -> b -> c`, as
+    /// name = __states("name", [["a", "b"], ["b", "c"]...]) (D144).
+    fn states_block(&mut self, tok: Token) -> PResult<Stmt> {
+        let (name, name_span) = self.expect_name()?;
+        self.expect_op(":")?;
+        self.expect_newline_raw()?;
+        if self.peek().tok != Tok::Indent {
+            return Err(self.error(&word("indented")));
+        }
+        self.advance();
+        let mut pairs = Vec::new();
+        while self.peek().tok != Tok::Dedent {
+            let mut prev = self.expect_name()?;
+            if !self.at_op("->") {
+                return Err(self.error("\"->\""));
+            }
+            while self.at_op("->") {
+                self.advance();
+                let next = self.expect_name()?;
+                let a = self.text(prev.1, &prev.0);
+                let b = self.text(next.1, &next.0);
+                let pair = self.expr_node(prev.1, ExprKind::List(vec![a, b]));
+                pairs.push(pair);
+                prev = next;
+            }
+            self.expect_newline()?;
+        }
+        self.advance();
+        self.block_end = self.p;
+        let span = tok.span;
+        let first = self.text(span, &name);
+        let list = self.expr_node(span, ExprKind::List(pairs));
+        let value = self.call(span, "__states", vec![first, list], Vec::new());
+        let target = self.name_expr(name_span, &name);
+        Ok(self.stmt_node(name_span, StmtKind::Assign { target, op: "=", value, ty: None }))
+    }
+
+    /// The text of a span on one line, as written.
+    fn source_text(&self, span: Span) -> String {
+        let line = self.source.lines().nth(span.line.saturating_sub(1) as usize).unwrap_or("");
+        line.chars().skip(span.col.saturating_sub(1) as usize).take(span.end_col.saturating_sub(span.col) as usize).collect()
+    }
+
+    /// protect(target, fails: n, wait: d): block (section 10, D145), as
+    ///     __prL_C = __protect(target, "target", fails: n, wait: d)
+    ///     try:
+    ///         block
+    ///         __protect_end(__prL_C, true)
+    ///     else __e:
+    ///         __protect_end(__prL_C, false)
+    ///         fail(__e)
+    /// None (and nothing read) when it is an ordinary call.
+    fn protect(&mut self) -> PResult<Option<Stmt>> {
+        let start = self.p;
+        let head = self.postfix()?;
+        if !(self.at_op(":") && self.peek_at(1).tok == Tok::Newline) {
+            self.p = start;
+            return Ok(None);
+        }
+        let span = head.span;
+        let args = match head.kind {
+            ExprKind::Call { args, .. } => args,
+            _ => Vec::new(),
+        };
+        let mut named: Vec<&str> = args.iter().filter_map(|a| a.name.as_deref()).collect();
+        named.sort();
+        let positional = args.iter().filter(|a| a.name.is_none()).count();
+        if positional != 1 || named != ["fails", "wait"] || args[0].name.is_some() {
+            return Err(Diagnostic::new("protect_args", span));
+        }
+        let mut body = self.block()?;
+        let mut ret = None;
+        crate::checker::walk_stmts(&body, false, &mut |s| {
+            if matches!(s.kind, StmtKind::Return(_)) && ret.is_none() {
+                ret = Some(s.span);
+            }
+        });
+        if let Some(sp) = ret {
+            return Err(Diagnostic::new("protect_return", sp));
+        }
+        let mut args = args.into_iter();
+        let target = args.next().unwrap().value;
+        let shown = self.source_text(target.span);
+        let shown = self.text(span, &shown);
+        let named: Vec<(String, Expr)> = args.map(|a| (a.name.unwrap(), a.value)).collect();
+        let guard = format!("__pr{}_{}", span.line, span.col);
+        let begin_call = self.call(span, "__protect", vec![target, shown], named);
+        let g = self.name_expr(span, &guard);
+        let begin = self.stmt_node(span, StmtKind::Assign { target: g, op: "=", value: begin_call, ty: None });
+        let end = |p: &mut Self, ok: bool| {
+            let g = p.name_expr(span, &guard);
+            let b = p.expr_node(span, ExprKind::Bool(ok));
+            let c = p.call(span, "__protect_end", vec![g, b], Vec::new());
+            p.expr_stmt(c)
+        };
+        let ok = end(self, true);
+        body.push(ok);
+        let bad = end(self, false);
+        let e = self.name_expr(span, "__e");
+        let refail = self.call(span, "fail", vec![e], Vec::new());
+        let refail = self.expr_stmt(refail);
+        let handler = Handler { span, var: "__e".into(), kind: None, body: vec![bad, refail] };
+        let tr = self.stmt_node(span, StmtKind::Try { within: None, body, handlers: vec![handler] });
+        self.extra.push(tr);
+        Ok(Some(begin))
     }
 
     // -- phase 5 blocks (D114) ------------------------------------------
