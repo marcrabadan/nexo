@@ -107,49 +107,60 @@ fn count(delta: i64) {
 /// Freed heap objects kept for the next ones, per thread (D134): every
 /// object has the same size, so a list of free blocks serves them all
 /// without asking malloc. Returned to malloc when the thread ends.
-struct Pool(UnsafeCell<Vec<*mut Heap>>);
-
 const POOL_MAX: usize = 4096;
 
-impl Drop for Pool {
-    fn drop(&mut self) {
-        for h in self.0.get_mut().drain(..) {
-            unsafe { std::alloc::dealloc(h as *mut u8, std::alloc::Layout::new::<Heap>()) };
-        }
-    }
-}
-
 thread_local! {
-    static POOL: Pool = const { Pool(UnsafeCell::new(Vec::new())) };
+    /// Freed blocks of this thread, linked through their first word, and
+    /// how many there are (plain cells: reading them costs one load).
+    static POOL_HEAD: StdCell<*mut Heap> = const { StdCell::new(std::ptr::null_mut()) };
+    static POOL_LEN: StdCell<usize> = const { StdCell::new(0) };
 }
 
 fn alloc(o: Obj, rc: u64) -> *mut Heap {
-    let heap = Heap { rc: AtomicU64::new(rc), weak: AtomicU64::new(1), obj: ManuallyDrop::new(o) };
-    let block = POOL.try_with(|p| unsafe { (*p.0.get()).pop() }).ok().flatten();
-    match block {
-        Some(h) => {
-            unsafe { std::ptr::write(h, heap) };
-            h
+    let h = take_block();
+    unsafe { std::ptr::write(h, Heap { rc: AtomicU64::new(rc), weak: AtomicU64::new(1), obj: ManuallyDrop::new(o) }) };
+    h
+}
+
+/// The memory for one object: a freed block of this thread, or malloc's.
+#[inline(always)]
+fn take_block() -> *mut Heap {
+    let h = POOL_HEAD.with(|p| p.get());
+    if !h.is_null() {
+        unsafe {
+            POOL_HEAD.with(|p| p.set(*(h as *mut *mut Heap)));
+            POOL_LEN.with(|n| n.set(n.get() - 1));
         }
-        None => Box::into_raw(Box::new(heap)),
+        return h;
     }
+    let h = unsafe { std::alloc::alloc(std::alloc::Layout::new::<Heap>()) } as *mut Heap;
+    if h.is_null() {
+        std::alloc::handle_alloc_error(std::alloc::Layout::new::<Heap>());
+    }
+    h
 }
 
 /// The memory of an object whose contents are gone.
 fn free_block(h: *mut Heap) {
-    let kept = POOL
-        .try_with(|p| {
-            let v = unsafe { &mut *p.0.get() };
-            if v.len() < POOL_MAX {
-                v.push(h);
-                true
-            } else {
-                false
-            }
-        })
-        .unwrap_or(false);
-    if !kept {
+    let n = POOL_LEN.with(|n| n.get());
+    if n < POOL_MAX {
+        unsafe { *(h as *mut *mut Heap) = POOL_HEAD.with(|p| p.get()) };
+        POOL_HEAD.with(|p| p.set(h));
+        POOL_LEN.with(|c| c.set(n + 1));
+    } else {
         unsafe { std::alloc::dealloc(h as *mut u8, std::alloc::Layout::new::<Heap>()) };
+    }
+}
+
+/// Give this thread's free blocks back to malloc: a thread that runs
+/// tasks calls it before it ends.
+pub fn flush_pool() {
+    let mut h = POOL_HEAD.with(|p| p.replace(std::ptr::null_mut()));
+    POOL_LEN.with(|n| n.set(0));
+    while !h.is_null() {
+        let next = unsafe { *(h as *mut *mut Heap) };
+        unsafe { std::alloc::dealloc(h as *mut u8, std::alloc::Layout::new::<Heap>()) };
+        h = next;
     }
 }
 
@@ -229,6 +240,8 @@ fn release_weak(h: *mut Heap) {
 thread_local! {
     static FREEING: StdCell<bool> = const { StdCell::new(false) };
     static PENDING: RefCell<Vec<*mut Heap>> = const { RefCell::new(Vec::new()) };
+    /// whether PENDING has anything (read before touching it)
+    static PENDING_ANY: StdCell<bool> = const { StdCell::new(false) };
 }
 
 /// Destroy an object whose count reached 0. Its contents are released
@@ -248,12 +261,24 @@ pub fn destroy_later(h: *mut Heap) {
     }
     if FREEING.with(|f| f.get()) {
         PENDING.with(|p| p.borrow_mut().push(h));
+        PENDING_ANY.with(|a| a.set(true));
         return;
     }
     FREEING.with(|f| f.set(true));
     destroy(h);
-    while let Some(next) = PENDING.with(|p| p.borrow_mut().pop()) {
-        destroy(next);
+    while PENDING_ANY.with(|a| a.get()) {
+        let next = PENDING.with(|p| {
+            let mut p = p.borrow_mut();
+            let x = p.pop();
+            if p.is_empty() {
+                PENDING_ANY.with(|a| a.set(false));
+            }
+            x
+        });
+        match next {
+            Some(n) => destroy(n),
+            None => break,
+        }
     }
     FREEING.with(|f| f.set(false));
 }
@@ -323,6 +348,24 @@ impl Val {
     pub fn new(o: Obj) -> Val {
         count(1);
         Val(V { tag: T_OBJ, bits: alloc(o, 1) as u64 })
+    }
+
+    /// A record whose first `n` (at most four) fields take `vals`,
+    /// written straight into its block (D126).
+    #[inline]
+    pub fn record_inline(ty: &'static RecordType, n: usize, vals: [V; INLINE_FIELDS]) -> Val {
+        count(1);
+        let h = take_block();
+        unsafe {
+            std::ptr::addr_of_mut!((*h).rc).write(AtomicU64::new(1));
+            std::ptr::addr_of_mut!((*h).weak).write(AtomicU64::new(1));
+            std::ptr::addr_of_mut!((*h).obj).write(ManuallyDrop::new(Obj::Record(Record {
+                ty,
+                fields: Mut::new(Fields::Inline(n as u8, vals)),
+                birth: std::cell::Cell::new(crate::state::stamp()),
+            })));
+        }
+        Val(V { tag: T_OBJ, bits: h as u64 })
     }
 
     /// An object that is never freed.

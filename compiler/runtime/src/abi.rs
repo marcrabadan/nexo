@@ -856,12 +856,7 @@ pub unsafe extern "C" fn nx_record_new(t: u64, b: u64, args: *const V, n: u64, s
             for (slot, x) in vals.iter_mut().zip(args) {
                 *slot = x.plain();
             }
-            Val::new(Obj::Record(Record {
-                ty: rt,
-                fields: Mut::new(Fields::Inline(args.len() as u8, vals)),
-                birth: std::cell::Cell::new(crate::state::stamp()),
-            }))
-            .into_raw()
+            Val::record_inline(rt, args.len(), vals).into_raw()
         }
         Some(Obj::Type(TypeRef::Record(rt))) if rt.fields.len() == args.len() => {
             let fields = Fields::with(args.len(), |i| {

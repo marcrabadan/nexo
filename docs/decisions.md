@@ -1855,3 +1855,11 @@ with the same bytes or both are objects with the same text. Everything
 that reads a text (methods, `len`, indexing, `in`, iteration, keys of
 maps, JSON, SQL, Python, C) takes it from the value. What a program prints
 does not change.
+
+**D139. The time limit in functions on ints.** A function the compiler
+runs on ints only (D84) checks the time limit of `try within` (D58) when
+it is entered and on each pass of a loop inside it, not between each two
+of its statements: its straight-line code is short, so the limit is still
+seen after a bounded amount of work, and every call checks once instead
+of once per statement. Every other function, and phase 0, check between
+statements. What a program prints does not change.

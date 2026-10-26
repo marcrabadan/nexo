@@ -182,6 +182,8 @@ pub struct Gen<'a> {
     int_workers: HashMap<FrameId, String>,
     /// set while compiling such a version
     int_params: bool,
+    /// the next block is the body of an `if` or `match` branch (D139)
+    branch_body: bool,
     fs: Vec<FnState>,
     /// functions defined exactly once (called directly, without binding
     /// their arguments at run time)
@@ -414,6 +416,7 @@ impl<'a> Gen<'a> {
             leaf_fns: HashMap::new(),
             int_workers: HashMap::new(),
             int_params: false,
+            branch_body: false,
             fs: Vec::new(),
             known_fns: HashMap::new(),
             known_types: HashMap::new(),
@@ -1748,7 +1751,9 @@ impl<'a> Gen<'a> {
         } else {
             // the step of a pipeline is small and called from one loop: it
             // goes inside it (D134)
-            let inline = if matches!(src, FrameSrc::Step(_)) { " alwaysinline" } else { "" };
+            // so is a short method: a record method called directly (D126)
+            let short_method = matches!(src, FrameSrc::Fn(f) if self.method_of.contains_key(&f.id) && f.body.len() <= 3);
+            let inline = if matches!(src, FrameSrc::Step(_)) || short_method { " alwaysinline" } else { "" };
             let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span){inline} {{\nentry:");
         }
         let release = self.frame_release_text();
@@ -1976,14 +1981,20 @@ impl<'a> Gen<'a> {
         // "immutable" check of straight-line code)
         let mut assigned: Vec<&str> = Vec::new();
         let top = body.as_ptr() == self.top_body;
-        for s in body {
+        let branch = std::mem::take(&mut self.branch_body);
+        // an int-only function checks the clock when it is entered and on
+        // each pass of a loop, not between its statements (D139)
+        let sparse = self.f().int_params;
+        for (k, s) in body.iter().enumerate() {
             if top && self.opts.repl_line > 0 && !self.repl_live && s.span.line >= self.opts.repl_line {
                 self.call_void("nx_repl_live", "");
                 self.repl_live = true;
             }
             self.static_assign_check(s, &mut assigned)?;
             self.echo_next = top && self.repl_live;
-            self.deadline_tick();
+            if !sparse || (k == 0 && !branch) {
+                self.deadline_tick();
+            }
             let before = self.f().live.len();
             // a statement that uses a shared variable holds its lock
             let locked = self.uses_shared(s);
@@ -2232,11 +2243,13 @@ impl<'a> Gen<'a> {
                     let no = self.label();
                     self.cond_br(&c, &yes, &no);
                     self.place(&yes);
+                    self.branch_body = true;
                     self.block(body)?;
                     self.br(&end);
                     self.place(&no);
                 }
                 if let Some(b) = orelse {
+                    self.branch_body = true;
                     self.block(b)?;
                 }
                 self.br(&end);
@@ -3158,6 +3171,7 @@ impl<'a> Gen<'a> {
                     self.cond_br(&c, &yes, &next);
                     self.place(&yes);
                 }
+                self.branch_body = true;
                 self.block(&arm.body)?;
                 self.br(&end);
                 self.place(&next);

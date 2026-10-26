@@ -360,6 +360,7 @@ pub fn spawn(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<()> {
         drop(f);
         state::with_task(|s| s.deadlines.clear());
         state::set_deadline_active(false);
+        crate::value::flush_pool();
         finished();
     });
     if started.is_err() {
