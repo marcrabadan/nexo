@@ -21,8 +21,8 @@ const PROVIDERS: &[(&str, &str)] = &[
     ("openai", "https://api.openai.com"),
     ("ollama", "http://localhost:11434"),
 ];
-const BLOCK_KEYS: &[&str] = &["provider", "model", "key", "url", "fallback"];
-const LATER_KEYS: &[&str] = &["budget", "when_over_budget"];
+const BLOCK_KEYS: &[&str] = &["provider", "model", "key", "url", "fallback", "budget", "when_over_budget"];
+const LATER_KEYS: &[&str] = &[];
 const CREATIVITY: &[(&str, f64)] = &[("low", 0.2), ("medium", 0.7), ("high", 1.0)];
 const MAX_TOKENS: i64 = 4096;
 const GUARD: &str =
@@ -106,6 +106,9 @@ fn check_block(pairs: &[(&str, V)], span: u32) -> R<Layer> {
                 if !is_text_list(v) {
                     return Err(expects("fallback", "list[str]", v, span));
                 }
+            }
+            "budget" => {
+                budget_of(v, span)?;
             }
             _ => {
                 if v.as_str().is_none() {
@@ -194,12 +197,20 @@ fn json_val(j: &Json) -> Val {
     }
 }
 
-/// The `[ai]` and `[ai.models]` tables of a nexo.toml (D106).
-fn read_toml(path: &Path, span: u32) -> R<(Layer, Vec<(String, String)>)> {
+/// The price of a million input and of a million output tokens, and its
+/// currency (D165).
+pub type Price = (crate::dec::Dec, crate::dec::Dec, String);
+
+/// The `[ai]`, `[ai.models]` and `[ai.prices]` tables of a nexo.toml (D106,
+/// D165).
+type Toml = (Layer, Vec<(String, String)>, Vec<(String, Price)>);
+
+fn read_toml(path: &Path) -> Result<Toml, Diagnostic> {
     let mut table = Vec::new();
     let mut models = Vec::new();
-    let Ok(text) = std::fs::read_to_string(path) else { return Ok((table, models)) };
-    let mut current = 0; // 0 none, 1 [ai], 2 [ai.models]
+    let mut prices: Vec<(String, Price)> = Vec::new();
+    let Ok(text) = std::fs::read_to_string(path) else { return Ok((table, models, prices)) };
+    let mut current = 0; // 0 none, 1 [ai], 2 [ai.models], 3 [ai.prices]
     for (n, raw) in text.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -210,6 +221,7 @@ fn read_toml(path: &Path, span: u32) -> R<(Layer, Vec<(String, String)>)> {
             current = match name {
                 "ai" => 1,
                 "ai.models" => 2,
+                "ai.prices" => 3,
                 _ => 0,
             };
             continue;
@@ -221,40 +233,69 @@ fn read_toml(path: &Path, span: u32) -> R<(Layer, Vec<(String, String)>)> {
         let parsed = if line.contains('=') { toml_value(value.trim()) } else { None };
         let key = key.trim();
         let Some(parsed) = parsed.filter(|_| !key.is_empty()) else {
-            let d = Diagnostic::new_spanless("ai_toml").arg("path", path.display().to_string()).arg("line", (n + 1).to_string());
-            return Err(diag(d, span));
+            return Err(Diagnostic::new_spanless("ai_toml").arg("path", path.display().to_string()).arg("line", (n + 1).to_string()));
         };
         if current == 1 {
             table.retain(|(k, _): &(String, Val)| k != key);
             table.push((key.to_string(), json_val(&parsed)));
+        } else if current == 3 {
+            let key = key.trim_matches('"').to_string();
+            let amounts: Vec<Option<(crate::dec::Dec, String)>> = match &parsed {
+                Json::List(items) if items.len() == 2 => {
+                    items.iter().map(|i| if let Json::Str(t) = i { money_text(t) } else { None }).collect()
+                }
+                _ => Vec::new(),
+            };
+            match amounts.as_slice() {
+                [Some((a, c)), Some((b, d))] if c == d => {
+                    prices.retain(|(k, _)| *k != key);
+                    prices.push((key, (a.clone(), b.clone(), c.clone())));
+                }
+                _ => return Err(Diagnostic::new_spanless("ai_price").arg("model", key).arg("path", path.display().to_string())),
+            }
         } else if let Json::Str(s) = parsed {
             models.retain(|(k, _): &(String, String)| k != key);
             models.push((key.to_string(), s));
         }
     }
-    Ok((table, models))
+    Ok((table, models, prices))
 }
 
-/// [(table, models)] of the project's nexo.toml and the user's ai.toml.
-fn file_layers(span: u32) -> R<Vec<(Layer, Vec<(String, String)>)>> {
-    let mut out = Vec::new();
+/// `15 EUR` (or `0.15 EUR`) as an amount and a currency.
+fn money_text(text: &str) -> Option<(crate::dec::Dec, String)> {
+    let (amount, currency) = text.trim().split_once(' ')?;
+    let (whole, frac) = amount.split_once('.').map_or((amount, None), |(a, b)| (a, Some(b)));
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(whole) || !frac.is_none_or(digits) || currency.len() != 3 || !currency.bytes().all(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
+    Some((crate::dec::Dec::parse(amount)?, currency.to_string()))
+}
+
+/// [(table, models, prices)] of the project's nexo.toml and the user's ai.toml.
+fn file_layers(span: u32) -> R<Vec<Toml>> {
     let file = crate::state::program().file;
     let start = std::fs::canonicalize(file)
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
-    let mut dir = Some(start.as_path());
+    layers_from(&start).map_err(|d| diag(d, span))
+}
+
+fn layers_from(start: &Path) -> Result<Vec<Toml>, Diagnostic> {
+    let mut out = Vec::new();
+    let mut dir = Some(start);
     while let Some(d) = dir {
         if d.join("nexo.toml").is_file() {
-            out.push(read_toml(&d.join("nexo.toml"), span)?);
+            out.push(read_toml(&d.join("nexo.toml"))?);
             break;
         }
         dir = d.parent();
     }
     let user = config_dir().join("ai.toml");
     if user.is_file() {
-        out.push(read_toml(&user, span)?);
+        out.push(read_toml(&user)?);
     }
     Ok(out)
 }
@@ -291,7 +332,13 @@ fn resolve(model: Option<V>, profile: Option<V>, span: u32) -> R<Vec<Target>> {
     }
     layers.push(CONFIG.lock().unwrap().clone());
     let mut aliases: Vec<(String, String)> = ALIASES.lock().unwrap().clone();
-    for (table, models) in file_layers(span)? {
+    let mut prices: Vec<(String, Price)> = Vec::new();
+    for (table, models, file_prices) in file_layers(span)? {
+        for (k, v) in file_prices {
+            if !prices.iter().any(|(m, _)| *m == k) {
+                prices.push((k, v));
+            }
+        }
         let mut layer = table;
         for (k, v) in layer.iter_mut() {
             if k == "key" {
@@ -320,7 +367,120 @@ fn resolve(model: Option<V>, profile: Option<V>, span: u32) -> R<Vec<Target>> {
             names.extend(items.borrow().iter().map(|i| i.as_str().map(|s| s.to_string())));
         }
     }
-    names.into_iter().map(|m| target(m, provider.clone(), &layers, &aliases, span)).collect()
+    let mut targets: Vec<Target> = names.into_iter().map(|m| target(m, provider.clone(), &layers, &aliases, span)).collect::<R<_>>()?;
+    if let Some(b) = first("budget") {
+        let (amount, currency, period) = budget_of(b.v(), span)?;
+        let over = first("when_over_budget").and_then(|v| v.as_str().map(|s| s.to_string()));
+        let cheaper = match over {
+            Some(o) => Some(target(Some(o), provider.clone(), &layers, &aliases, span)?),
+            None => None,
+        };
+        for t in targets.iter().chain(cheaper.iter()) {
+            price_of(&format!("{}:{}", t.provider, t.name), &prices, &currency, span)?;
+        }
+        let spent = spent_in(&period, &prices, &currency, span)?;
+        if spent.cmp(&amount) != std::cmp::Ordering::Less {
+            let Some(c) = cheaper else {
+                let args = [("budget", cents(&amount, &currency)), ("period", period), ("spent", cents(&spent, &currency))];
+                return Err(failure_as("AIError", "AIError.budget", span, &args));
+            };
+            targets = vec![c];
+        }
+    }
+    Ok(targets)
+}
+
+// ---------------------------------------------------------------- budget
+
+/// (amount, currency, "day" or "month") of `budget = 5 EUR per day` (D165).
+fn budget_of(v: V, span: u32) -> R<(crate::dec::Dec, String, String)> {
+    if let Some(t) = v.as_str() {
+        if let Some((m, period)) = t.trim().rsplit_once(" per ") {
+            if let (Some((a, c)), "day" | "month") = (money_text(m), period) {
+                return Ok((a, c, period.to_string()));
+            }
+        }
+    } else if let Some(r) = v.native::<crate::web::Rate>() {
+        if let (Some(Obj::Money(a, c)), "day" | "month", None) = (r.amount.v().get(), r.unit.as_str(), &r.per) {
+            return Ok((a.clone(), c.to_string(), r.unit.clone()));
+        }
+    }
+    let shown = v.as_str().map(|s| s.to_string()).unwrap_or_else(|| show(v));
+    Err(diag(Diagnostic::new_spanless("ai_budget").arg("value", shown), span))
+}
+
+/// The price of a model; None for ollama's, which cost nothing.
+fn price_of(model: &str, prices: &[(String, Price)], currency: &str, span: u32) -> R<Option<Price>> {
+    if model.starts_with("ollama:") {
+        return Ok(None);
+    }
+    let Some((_, price)) = prices.iter().find(|(m, _)| m == model) else {
+        return Err(failure_as("AIError", "AIError.price", span, &[("model", model.to_string()), ("currency", currency.to_string())]));
+    };
+    if price.2 != currency {
+        let args = [("model", model.to_string()), ("currency", price.2.clone()), ("budget_currency", currency.to_string())];
+        return Err(failure_as("AIError", "AIError.price_currency", span, &args));
+    }
+    Ok(Some(price.clone()))
+}
+
+/// What a number of tokens cost at a price.
+fn cost(input: i64, output: i64, price: &Price) -> crate::dec::Dec {
+    use crate::dec::Dec;
+    Dec::from_i64(input).mul(&price.0).add(&Dec::from_i64(output).mul(&price.1)).div(&Dec::from_i64(1_000_000))
+}
+
+/// What the calls of this day (or month) cost, from usage.csv.
+fn spent_in(period: &str, prices: &[(String, Price)], currency: &str, span: u32) -> R<crate::dec::Dec> {
+    let today = show(crate::time::clock("today").v());
+    let mut total = crate::dec::Dec::zero();
+    for (day, model, input, output) in usage_lines() {
+        let this = if period == "day" { day == today } else { day.get(..7) == today.get(..7) };
+        if !this || model.starts_with("ollama:") || !prices.iter().any(|(m, _)| *m == model) {
+            continue;
+        }
+        if let Some(p) = price_of(&model, prices, currency, span)? {
+            total = total.add(&cost(input, output, &p));
+        }
+    }
+    Ok(total)
+}
+
+fn cents(amount: &crate::dec::Dec, currency: &str) -> String {
+    let q = amount.quantize(-2, crate::dec::Rounding::HalfEven).unwrap_or_else(|| amount.clone());
+    format!("{} {currency}", q.py_str())
+}
+
+/// (day, model, input tokens, output tokens) of each line of usage.csv.
+fn usage_lines() -> Vec<(String, String, i64, i64)> {
+    let text = std::fs::read_to_string(config_dir().join("usage.csv")).unwrap_or_default();
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    text.lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() != 4 || !digits(parts[2]) || !digits(parts[3]) {
+                return None;
+            }
+            Some((parts[0].to_string(), parts[1].to_string(), parts[2].parse().ok()?, parts[3].parse().ok()?))
+        })
+        .collect()
+}
+
+/// For `nexo ai usage`: the spend of a day's calls to a model, when its
+/// price is in the nexo.toml of this folder (or above) or the user's
+/// ai.toml; Err with the message when a price cannot be read.
+pub fn usage_spent(model: &str, input: i64, output: i64) -> Result<Option<String>, String> {
+    if model.starts_with("ollama:") {
+        return Ok(None);
+    }
+    let here = std::env::current_dir().unwrap_or_default();
+    let layers = layers_from(&here).map_err(|d| d.text())?;
+    for (_, _, prices) in layers {
+        if let Some((_, p)) = prices.iter().find(|(m, _)| m == model) {
+            return Ok(Some(cents(&cost(input, output, p), &p.2)));
+        }
+    }
+    Ok(None)
 }
 
 fn target(model: Option<String>, provider: Option<String>, layers: &[Layer], aliases: &[(String, String)], span: u32) -> R<Target> {

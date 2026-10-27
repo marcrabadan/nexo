@@ -103,6 +103,14 @@ pub fn usage() -> u8 {
         return 0;
     }
     for ((day, model), [calls, input, output]) in totals {
+        // the spend, when the price of the model is known (D165)
+        let spent = match nexo_runtime::ai::usage_spent(&model, input as i64, output as i64) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return 1;
+            }
+        };
         let args = [
             ("day", day),
             ("model", model),
@@ -110,7 +118,11 @@ pub fn usage() -> u8 {
             ("input", input.to_string()),
             ("output", output.to_string()),
         ];
-        println!("{}", msg("info.ai_usage_row", &args));
+        let mut row = msg("info.ai_usage_row", &args);
+        if let Some(s) = spent {
+            row.push_str(&msg("info.ai_usage_spent", &[("spent", s)]));
+        }
+        println!("{row}");
     }
     0
 }

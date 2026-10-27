@@ -418,3 +418,51 @@ def test_a_streamed_answer_arrives_as_it_is_written(phase, tmp_path):
     # usage is written when an answer ends; the broken one has none
     usage = (tmp_path / "config" / "nexo" / "usage.csv").read_text().splitlines()
     assert [line.split(",", 1)[1] for line in usage] == ["anthropic:claude-live,7,2"] * 2
+
+
+BUDGET = """ai:
+    provider = "openai"
+    model = "openai:gpt-mini"
+    key = secret("NEXO_AI_KEY")
+    url = "{base}/openai"
+    budget = {budget}
+{over}
+for word in {words}:
+    try:
+        print(ask(word))
+    else e:
+        print(e.message)
+"""
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_budget(phase, server, tmp_path):
+    # each call of the fake openai is 3 + 2 tokens: 0.50 EUR at these prices
+    (tmp_path / "nexo.toml").write_text(
+        f'[ai]\nprovider = "ollama"\nurl = "{server}"\n\n[ai.prices]\n"openai:gpt-mini" = ["100000 EUR", "100000 EUR"]\n',
+        encoding="utf-8")
+    env = {"NEXO_AI_KEY": "k3y", "XDG_CONFIG_HOME": str(tmp_path / "config")}
+
+    def program(budget, words, over=""):
+        (tmp_path / "app.nexo").write_text(BUDGET.format(base=server, budget=budget, over=over, words=words))
+        return run(phase[1], ["app.nexo"], tmp_path, env=env).stdout.decode()
+
+    over = '    when_over_budget = "ollama:llama"\n'
+    assert program("1 EUR per day", '["one", "two", "three"]', over) == (
+        "[openai gpt-mini] one\n[openai gpt-mini] two\n[ollama llama] three\n")
+    assert program("1 EUR per day", '["four"]') == (
+        "The AI budget of 1.00 EUR per day is spent (1.00 EUR so far)\n")
+    assert program("2 EUR per month", '["five"]') == "[openai gpt-mini] five\n"
+    assert program("2 USD per day", '["six"]') == (
+        "The price of openai:gpt-mini is in EUR and the budget in USD\n")
+    (tmp_path / "nexo.toml").write_text((tmp_path / "nexo.toml").read_text().replace("gpt-mini", "gpt-big"))
+    assert program("2 EUR per day", '["seven"]') == (
+        "The price of openai:gpt-mini is not known, so its calls cannot be counted against the budget\n")
+    bad = program("5 per day", '["eight"]')
+    assert "The budget 5 per day is not an amount of money per day or per month." in bad
+    (tmp_path / "nexo.toml").write_text((tmp_path / "nexo.toml").read_text().replace("gpt-big", "gpt-mini"))
+    usage = run(phase[1], ["ai", "usage"], tmp_path, env=env).stdout.decode().splitlines()
+    assert [line.split(" ", 1)[1] for line in usage] == [
+        "ollama:llama: 1 calls, 4 input tokens, 3 output",
+        "openai:gpt-mini: 3 calls, 9 input tokens, 6 output, 1.50 EUR",
+    ]

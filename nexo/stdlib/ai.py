@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 from datetime import date as _date
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ from typing import Any
 from .. import errors
 from ..errors import NexoError, suggest
 from ..types import (
-    Builtin, BuiltinType, Lazy, Native, NexoFailure, Quantity, RecordType, failure, show, show_hidden,
+    At, Builtin, BuiltinType, Lazy, Money, Native, NexoFailure, Quantity, RecordType, failure, show, show_hidden,
 )
 
 PROVIDERS = {
@@ -27,8 +28,8 @@ PROVIDERS = {
     "openai": "https://api.openai.com",
     "ollama": "http://localhost:11434",
 }
-BLOCK_KEYS = ["provider", "model", "key", "url", "fallback"]
-LATER_KEYS = ("budget", "when_over_budget")
+BLOCK_KEYS = ["provider", "model", "key", "url", "fallback", "budget", "when_over_budget"]
+LATER_KEYS = ()
 CREATIVITY = {"low": 0.2, "medium": 0.7, "high": 1.0}
 MAX_TOKENS = 4096
 
@@ -67,6 +68,8 @@ def check_block(call, pairs: dict) -> dict:
         elif k == "fallback":
             if not isinstance(v, list) or not all(isinstance(m, str) for m in v):
                 raise expects(call, "fallback", "list[str]", v)
+        elif k == "budget":
+            budget_of(call, v)
         elif not isinstance(v, str):
             raise expects(call, k, "str", v)
         out[k] = v
@@ -118,23 +121,25 @@ def config_dir() -> Path:
     return (Path(base) if base else Path.home() / ".config") / "nexo"
 
 
-def read_toml(call, path: Path) -> tuple[dict, dict]:
-    """The `[ai]` and `[ai.models]` tables of a nexo.toml (D106): lines
-    `name = "text"` or `name = ["a", "b"]`; other tables are skipped."""
+def read_toml(call, path: Path) -> tuple[dict, dict, dict]:
+    """The `[ai]`, `[ai.models]` and `[ai.prices]` tables of a nexo.toml
+    (D106, D165): lines `name = "text"` or `name = ["a", "b"]`; other tables
+    are skipped. Prices are (input, output) money per million tokens."""
     table: dict = {}
     models: dict = {}
+    prices: dict = {}
     current = None
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return table, models
+        return table, models, prices
     for n, raw in enumerate(lines, 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         if line.startswith("["):
             name = line.strip("[]").strip()
-            current = table if name == "ai" else models if name == "ai.models" else None
+            current = {"ai": table, "ai.models": models, "ai.prices": prices}.get(name)
             continue
         if current is None:
             continue
@@ -143,8 +148,29 @@ def read_toml(call, path: Path) -> tuple[dict, dict]:
         parsed = toml_value(value)
         if not sep or not key.strip() or parsed is None:
             raise NexoError("ai_toml", call.span, path=str(path), line=n)
-        current[key.strip()] = parsed
-    return table, models
+        key = key.strip()
+        if current is prices:
+            key = key.strip('"')
+            pair = parsed if isinstance(parsed, list) and len(parsed) == 2 else []
+            amounts = [money_text(x) for x in pair]
+            if not amounts or None in amounts or amounts[0].currency != amounts[1].currency:
+                raise NexoError("ai_price", call.span, model=key, path=str(path))
+            parsed = (amounts[0], amounts[1])
+        current[key] = parsed
+    return table, models, prices
+
+
+def money_text(text: str):
+    """`15 EUR` (or `0.15 EUR`) as money, or None."""
+    from decimal import Decimal, InvalidOperation
+    import re
+    m = re.fullmatch(r"(\d+(?:\.\d+)?) ([A-Z]{3})", text.strip())
+    if not m:
+        return None
+    try:
+        return Money.of(Decimal(m.group(1)), m.group(2))
+    except InvalidOperation:
+        return None
 
 
 def toml_value(text: str):
@@ -158,8 +184,8 @@ def toml_value(text: str):
     return None
 
 
-def file_layers(call) -> list[tuple[dict, dict]]:
-    """[(table, models)] of the project's nexo.toml and the user's ai.toml."""
+def file_layers(call) -> list[tuple[dict, dict, dict]]:
+    """[(table, models, prices)] of the project's nexo.toml and the user's ai.toml."""
     out = []
     start = Path(call.span.file).resolve().parent if call.span and call.span.file else Path.cwd()
     for d in [start, *start.parents]:
@@ -192,7 +218,8 @@ def resolve(call, options: dict) -> tuple[list[Target], dict]:
         layers.append(PROFILES[profile])
     layers.append(CONFIG)
     aliases = dict(ALIASES)
-    for table, models in file_layers(call):
+    prices: dict = {}
+    for table, models, file_prices in file_layers(call):
         layer = dict(table)
         if isinstance(layer.get("key"), str):
             # in a file, key is the name of the environment variable
@@ -200,6 +227,8 @@ def resolve(call, options: dict) -> tuple[list[Target], dict]:
         layers.append(layer)
         for k, v in models.items():
             aliases.setdefault(k, v)
+        for k, v in file_prices.items():
+            prices.setdefault(k, v)
 
     def first(key):
         for layer in layers:
@@ -213,7 +242,84 @@ def resolve(call, options: dict) -> tuple[list[Target], dict]:
         raise failure("AIError", call.span, key="AIError.setup")
     names = [model] + list(first("fallback") or [])
     targets = [target(call, m, provider, layers, aliases) for m in names]
+    budget = first("budget")
+    if budget is not None:
+        amount, period = budget_of(call, budget)
+        over = first("when_over_budget")
+        cheaper = target(call, over, provider, layers, aliases) if over is not None else None
+        for t in targets + ([cheaper] if cheaper else []):
+            price_of(call, t.provider + ":" + t.name, prices, amount.currency)
+        spent = spent_in(call, period, prices, amount.currency)
+        if spent >= amount.amount:
+            if cheaper is None:
+                raise failure("AIError", call.span, key="AIError.budget", budget=cents(amount.amount, amount.currency),
+                              period=period, spent=cents(spent, amount.currency))
+            targets = [cheaper]
     return targets, aliases
+
+
+# ---------------------------------------------------------------- budget
+
+def budget_of(call, value) -> tuple:
+    """(money, "day" or "month") of `budget = 5 EUR per day` (D165)."""
+    from .web import Rate
+    if isinstance(value, str):
+        import re
+        m = re.fullmatch(r"(.+) per (day|month)", value.strip())
+        amount = money_text(m.group(1)) if m else None
+        if amount is not None:
+            return amount, m.group(2)
+    elif (isinstance(value, Rate) and isinstance(value.amount, Money) and value.unit in ("day", "month")
+          and value.per is None):
+        return value.amount, value.unit
+    raise NexoError("ai_budget", call.span, value=value if isinstance(value, str) else show(value))
+
+
+def price_of(call, model: str, prices: dict, currency: str):
+    """(input, output) price per million tokens of a model; ollama's are 0."""
+    if model.startswith("ollama:"):
+        return None
+    price = prices.get(model)
+    if price is None:
+        raise failure("AIError", call.span, key="AIError.price", model=model, currency=currency)
+    if price[0].currency != currency:
+        raise failure("AIError", call.span, key="AIError.price_currency", model=model, currency=price[0].currency,
+                      budget_currency=currency)
+    return price
+
+
+def spent_in(call, period: str, prices: dict, currency: str):
+    """What the calls of this day (or month) cost, from usage.csv."""
+    from decimal import Decimal
+    today = _date.today().isoformat()
+    total = Decimal(0)
+    for day, model, inp, out in usage_lines():
+        if (day != today) if period == "day" else (day[:7] != today[:7]):
+            continue
+        if model.startswith("ollama:") or model not in prices:
+            continue
+        price = price_of(call, model, prices, currency)
+        total += inp * price[0].amount + out * price[1].amount
+    return total / 1000000
+
+
+def cents(amount, currency: str) -> str:
+    from decimal import ROUND_HALF_EVEN, Decimal
+    return f"{amount.quantize(Decimal('0.01'), rounding=ROUND_HALF_EVEN)} {currency}"
+
+
+def usage_lines() -> list:
+    """(day, model, input tokens, output tokens) of each line of usage.csv."""
+    try:
+        lines = (config_dir() / "usage.csv").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        parts = line.split(",")
+        if len(parts) == 4 and parts[2].isdigit() and parts[3].isdigit():
+            out.append((parts[0], parts[1], int(parts[2]), int(parts[3])))
+    return out
 
 
 def target(call, model, provider, layers, aliases) -> Target:
@@ -885,23 +991,30 @@ def setup_command() -> int:
 
 
 def usage_command() -> int:
-    """`nexo ai usage`: calls and tokens per day and model (D107)."""
+    """`nexo ai usage`: calls, tokens and, with known prices, spend per day
+    and model (D107, D165)."""
     totals: dict = {}
-    try:
-        lines = (config_dir() / "usage.csv").read_text(encoding="utf-8").splitlines()
-    except OSError:
-        lines = []
-    for line in lines:
-        parts = line.split(",")
-        if len(parts) != 4 or not parts[2].isdigit() or not parts[3].isdigit():
-            continue
-        t = totals.setdefault((parts[0], parts[1]), [0, 0, 0])
+    for day, model, inp, out in usage_lines():
+        t = totals.setdefault((day, model), [0, 0, 0])
         t[0] += 1
-        t[1] += int(parts[2])
-        t[2] += int(parts[3])
+        t[1] += inp
+        t[2] += out
     if not totals:
         print(errors.msg("info.ai_usage_none"))
         return 0
+    prices: dict = {}
+    try:
+        for _, _, file_prices in file_layers(At(None, None)):
+            for k, v in file_prices.items():
+                prices.setdefault(k, v)
+    except NexoError as exc:
+        sys.stderr.write("Error: " + exc.text() + "\n")
+        return 1
     for (day, model), (calls, inp, out) in sorted(totals.items()):
-        print(errors.msg("info.ai_usage_row", day=day, model=model, calls=calls, input=inp, output=out))
+        row = errors.msg("info.ai_usage_row", day=day, model=model, calls=calls, input=inp, output=out)
+        price = None if model.startswith("ollama:") else prices.get(model)
+        if price is not None:
+            spent = (inp * price[0].amount + out * price[1].amount) / 1000000
+            row += errors.msg("info.ai_usage_spent", spent=cents(spent, price[0].currency))
+        print(row)
     return 0

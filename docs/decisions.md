@@ -2415,3 +2415,30 @@ the list of pieces once the answer was complete. Now:
   failure ends the loop with its error: NetworkError when the connection
   is lost, AIError for a line that is not valid. The line of usage.csv is
   written when the answer ends.
+
+**D165. AI budgets.** Section 8 shows `budget = 5 EUR per day` and
+`when_over_budget = local` in the `ai` block, and `nexo ai usage`
+showing "spend per model and per day"; the prices of the models are not
+written, and D107 left them out because they change.
+- Prices are configuration, never built in: an `[ai.prices]` table in
+  nexo.toml or the user's ai.toml gives each model (as `"provider:model"`)
+  the price of a million input tokens and of a million output tokens,
+  `"openai:gpt-mini" = ["0.15 EUR", "0.60 EUR"]`, both in one currency.
+  ollama's models run on this machine and cost nothing.
+- `budget` is an amount of money `per day` or `per month` (in a toml
+  file, the text `"5 EUR per day"`); it is read key by key like the other
+  keys (D106), so a profile can have its own. The spend of the period is
+  that of the lines of usage.csv (D107) of this day or calendar month, at
+  the prices now known; usage.csv is the user's, so the budget counts
+  every program of the user.
+- With a budget, every model a call may use (its model, the fallback and
+  `when_over_budget`) needs a price in the budget's currency: a model
+  without one, or with prices in another currency (section 17, rule 3:
+  currencies are not added), is an AIError that says how to add it.
+- Before each `ask` and when an agent's `handle` starts, a spend that has
+  reached the budget sends the call to `when_over_budget` (an alias or
+  `provider:model`, without fallback), or, when there is none, fails
+  with AIError "The AI budget of 5.00 EUR per day is spent (5.02 EUR so
+  far)". A call that starts under the budget is not stopped halfway.
+- `nexo ai usage` adds the spend of each day and model whose price is
+  known, in whole cents (half to even).
