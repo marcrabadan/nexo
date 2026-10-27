@@ -21,6 +21,7 @@
       <a href="index.html#features">Features</a>
       <a href="index.html#examples">Examples</a>
       <a href="index.html#start">Get started</a>
+      <a href="shield.html">Shield</a>
       <a href="reference.html" aria-current="page">Reference</a>
       <a href="index.html#roadmap">Roadmap</a>
     </nav>
@@ -258,7 +259,7 @@
   <p><code>test "name":</code> blocks live next to the code and run with <code>nexo test</code>; running the file skips them. <code>assert expr</code> checks a condition, and <code>assert expr fails</code> checks that it fails.</p>
 {{run:contracts.nexo}}
 {{test:contracts.nexo}}
-  <p><code>nexo test --coverage</code> runs the same tests and then says how many branches they ran, and which never ran: the body of each function, each branch of an <code>if</code> (and the case where no condition holds), each arm of a <code>match</code>, each loop body and each <code>else</code> of a <code>try</code>. Code inside <code>test</code> blocks and lambdas is not counted (D152).</p>
+  <p><code>nexo test --coverage</code> runs the same tests and then says how many branches they ran, and which never ran: the body of each function, each branch of an <code>if</code> (and the case where no condition holds), each arm of a <code>match</code>, each loop body and each <code>else</code> of a <code>try</code>. Code inside <code>test</code> blocks and lambdas is not counted (D155).</p>
 {{src:coverage.nexo}}
 {{out:test --coverage:coverage.nexo}}
 </section>
@@ -522,6 +523,7 @@
 {{out:audit:lib/interop.nexo}}
 
   <h3 id="policy">The program policy</h3>
+  <p><a href="shield.html">Nexo Shield</a> adds strict execution, synchronous dependency ceilings and hardened Docker deployment with an explicit offline Linux worker. See its <a href="shield.html#architecture">architecture</a> and <a href="shield.html#boundaries">security boundaries</a>.</p>
   <p>A <code>policy:</code> block lists, with <code>allow</code> and <code>deny</code>, what the program may <code>read</code>, <code>write</code>, reach on the <code>net</code>, take from the <code>env</code>ironment, run as a <code>shell</code> command, and load with <code>c</code> and <code>python</code>. Every access of the library asks it first, following links and <code>..</code>. A release build stops at anything not allowed; development mode warns once, except shell commands, which always need <code>allow shell</code>. <code>nexo policy show</code> prints what a program may do and <code>nexo policy suggest</code> learns the smallest policy from its tests (D142).</p>
 {{run:lib/policy/report.nexo}}
 {{out:policy show:lib/policy/report.nexo}}

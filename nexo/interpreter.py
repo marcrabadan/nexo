@@ -17,6 +17,7 @@ from typing import Any
 
 from . import ast as A
 from .checker import Checker
+from . import security_context
 from .modules import Linker, ModuleValue, bound_name, is_file_module
 from .errors import NexoError, Span, suggest
 from .parser import parse, source_text
@@ -211,7 +212,7 @@ class Interpreter:
         self.linker.link(program)
         from . import cover
         if cover.TABLE is not None:
-            # the modules first, in the order they were loaded (D152)
+            # the modules first, in the order they were loaded (D155)
             for info in self.linker.modules.values():
                 if not getattr(info, "covered", False):
                     info.covered = True
@@ -587,7 +588,8 @@ class Interpreter:
                 module_env = Env(self.builtins)
                 value = self.module_values[s.name] = ModuleValue(s.name, module_env)
                 body = self.module_filter(info.program) if self.module_filter else info.program.body
-                self.exec_block([x for x in body if not isinstance(x, A.TestDef)], module_env)
+                with security_context.scope(info.file):
+                    self.exec_block([x for x in body if not isinstance(x, A.TestDef)], module_env)
             env.define(bound_name(s), value)
             return
         if s.lang is None and s.name == "nexo.sync":
@@ -675,7 +677,11 @@ class Interpreter:
 
     # -------------------------------------------------------- expressions
     def eval(self, e: A.Expr, env: Env) -> Any:
-        return getattr(self, "eval_" + type(e).__name__)(e, env)
+        method = getattr(self, "eval_" + type(e).__name__)
+        if security_context.RULES is not None:
+            with security_context.scope(e.span.file):
+                return method(e, env)
+        return method(e, env)
 
     def eval_Num(self, e: A.Num, env: Env) -> Any:
         if e.is_float:
@@ -1151,6 +1157,15 @@ class Interpreter:
 
     # ----------------------------------------------------------- calling
     def call(self, func: Any, args: list, node: A.Node) -> Any:
+        if security_context.RULES is not None and isinstance(func, (Function, LambdaFn)):
+            span = func.decl.span if isinstance(func, Function) else func.node.span
+            with security_context.scope(span.file):
+                result = self._call_scoped(func, args, node)
+                security_context.check_result(result, node.span)
+                return result
+        return self._call_scoped(func, args, node)
+
+    def _call_scoped(self, func: Any, args: list, node: A.Node) -> Any:
         if isinstance(func, Function):
             return self.call_function(func, args, node)
         if isinstance(func, Builtin):
@@ -1312,7 +1327,15 @@ class Interpreter:
             if f.name in bound:
                 value = bound[f.name]
             elif f.default is not None:
-                value = self.eval(f.default, rtype.env)
+                if security_context.RULES is not None:
+                    # Defaults are implicit calls in their declaring module,
+                    # just like the compiler's guarded default-value frames.
+                    # Keep that ceiling active until the exported value is checked.
+                    with security_context.scope(f.default.span.file):
+                        value = self.eval(f.default, rtype.env)
+                        security_context.check_result(value, node.span)
+                else:
+                    value = self.eval(f.default, rtype.env)
             else:
                 value = None
             values[f.name] = self.field_store(f, self.store_value(self.conform(value, f.type, rtype.env, f.name, node.span)))

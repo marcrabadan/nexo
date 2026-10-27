@@ -105,6 +105,7 @@ enum Live {
     Iter(String),
     /// the lock of `shared` variables
     Lock,
+    Security(String),
 }
 
 struct FnState {
@@ -137,9 +138,9 @@ struct FnState {
     /// the register pointing at the call depth in the thread state
     depth_ptr: String,
     /// the entry of an int-only function checked the clock with its depth
-    /// (D153): the first statement of its body does not
+    /// (D156): the first statement of its body does not
     entry_checked: bool,
-    /// the last number of a name local to this function (D155)
+    /// the last number of a name local to this function (D158)
     local: usize,
     /// registers that certainly hold an int: no counts, no tag checks
     int_regs: std::collections::HashSet<String>,
@@ -196,7 +197,7 @@ pub struct Gen<'a> {
     leaf_fns: HashMap<u32, (String, String)>,
     /// functions on ints only: the version that takes the numbers directly
     int_workers: HashMap<FrameId, String>,
-    /// the steps of fused pipelines compiled to take an int element (D157)
+    /// the steps of fused pipelines compiled to take an int element (D160)
     step_workers: HashMap<FrameId, String>,
     /// set while compiling such a version
     int_params: bool,
@@ -597,7 +598,7 @@ impl<'a> Gen<'a> {
 
     /// A number for a name local to the function being written: registers,
     /// labels and slots start again in each function, so the names stay
-    /// short (D155).
+    /// short (D158).
     fn local(&mut self) -> usize {
         match self.fs.last_mut() {
             Some(f) => {
@@ -1048,6 +1049,7 @@ impl<'a> Gen<'a> {
             }
             Live::Iter(i) => format!("  call void @nx_iter_free(ptr {i})\n"),
             Live::Lock => "  call void @nx_shared_unlock()\n".to_string(),
+            Live::Security(token) => format!("  call void @nx_security_restore(i64 {token})\n"),
         }
     }
 
@@ -1712,7 +1714,7 @@ impl<'a> Gen<'a> {
         let x = self.reg();
         self.emitf(format_args!("{x} = call i64 {worker}(ptr %tls, ptr %clo, i64 {d}, {}, i32 %span)", payloads.join(", ")));
         self.emitf(format_args!("store i64 {d}, ptr {dp}"));
-        // the int, or nothing when it failed (D156)
+        // the int, or nothing when it failed (D159)
         let r = self.reg();
         self.emitf(format_args!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {x}, 1"));
         let fl = self.reg();
@@ -1793,6 +1795,17 @@ impl<'a> Gen<'a> {
         let ret_slot = self.alloca("%V");
         self.emitf(format_args!("store %V {{ i64 0, i64 0 }}, ptr {ret_slot}"));
         self.f().ret_slot = ret_slot.clone();
+        let security_scope = if std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() {
+            let file = match src {
+                FrameSrc::Fn(f) => f.name_span.file,
+                FrameSrc::Lambda(e) | FrameSrc::Step(e) | FrameSrc::Default(e) | FrameSrc::Leaf(e) => e.span.file,
+                FrameSrc::TaskStmt(s) => s.span.file,
+                FrameSrc::Test(b) | FrameSrc::Handler(b) | FrameSrc::Task(b) => b.first().map(|s| s.span.file).unwrap_or(0),
+            };
+            let token = self.reg();
+            self.emitf(format_args!("{token} = call i64 @nx_security_enter(i32 {file})"));
+            Some(token)
+        } else { None };
         // count nested calls (D73)
         let dp = self.reg();
         self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
@@ -1813,7 +1826,7 @@ impl<'a> Gen<'a> {
         }
         if int_params {
             // one comparison checks the depth and, while a `try within`
-            // runs, the clock (the limit is then 0, D153)
+            // runs, the clock (the limit is then 0, D156)
             let lp = self.reg();
             self.emitf(format_args!("{lp} = getelementptr inbounds i8, ptr %tls, i64 32"));
             let lim = self.reg();
@@ -1968,6 +1981,11 @@ impl<'a> Gen<'a> {
                 result = r;
             }
         }
+        if security_scope.is_some() {
+            let tb = self.tb(&result);
+            self.call_void("nx_security_result", &format!("{tb}, i32 %span"));
+            self.check();
+        }
         let r = self.agg(&result);
         // the slots are released; the result goes to the caller
         let mut text = String::new();
@@ -1975,7 +1993,7 @@ impl<'a> Gen<'a> {
             let ps: Vec<String> = (0..f.params.len()).map(|i| format!("i64 %p{i}")).collect();
             let _ = writeln!(text, "define internal i64 {name}(ptr %tls, ptr %clo, i64 %depth, {}, i32 %span) {{\nentry:", ps.join(", "));
         } else if int_params {
-            // a step of a fused pipeline whose element is an int (D157)
+            // a step of a fused pipeline whose element is an int (D160)
             let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, i64 %depth, i64 %p0, i32 %span) #1 {{\nentry:");
         } else {
             // the step of a pipeline is small and called from one loop: it
@@ -1991,9 +2009,10 @@ impl<'a> Gen<'a> {
             self.emit(line.trim());
         }
         self.leave_depth();
+        if let Some(token) = &security_scope { self.call_void("nx_security_restore", &format!("i64 {token}")); }
         let worker = int_params && matches!(src, FrameSrc::Fn(_));
         if worker {
-            // an int-only worker returns the int itself (D156)
+            // an int-only worker returns the int itself (D159)
             let x = self.reg();
             self.emitf(format_args!("{x} = extractvalue %V {r}, 1"));
             self.emitf(format_args!("ret i64 {x}"));
@@ -2012,8 +2031,9 @@ impl<'a> Gen<'a> {
             } else {
                 format!("  %ud{n}p = getelementptr inbounds i8, ptr %tls, i64 8\n  %ud{n} = load i64, ptr %ud{n}p\n  %ud{n}x = sub i64 %ud{n}, 1\n  store i64 %ud{n}x, ptr %ud{n}p\n")
             };
+            let security = security_scope.as_ref().map(|t| format!("  call void @nx_security_restore(i64 {t})\n")).unwrap_or_default();
             let failed = if worker { "ret i64 0" } else { "ret %V { i64 0, i64 0 }" };
-            let _ = writeln!(tail, "{u}:\n{release}{ret_release}{depth}  {failed}");
+            let _ = writeln!(tail, "{u}:\n{release}{ret_release}{depth}{security}  {failed}");
         }
         let st = self.fs.pop().unwrap();
         text.push_str(&st.allocas);
@@ -2129,6 +2149,7 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!(
             "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, ptr @nexo_cleanup)"
         ));
+        if std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() { self.call_void("nx_security_contexts_ready", ""); }
         // the files of the modules the program uses (D124)
         for id in self.program_files.clone() {
             if let Some((name, source)) = nexo_diag::file_of(id) {
@@ -2236,7 +2257,7 @@ impl<'a> Gen<'a> {
             // the statements of the top level never run inside `try within`
             if !top && (!sparse || (k == 0 && !branch)) {
                 if sparse && k == 0 && std::mem::take(&mut self.f().entry_checked) {
-                    // the entry of the function has just checked it (D153)
+                    // the entry of the function has just checked it (D156)
                 } else {
                     self.deadline_tick();
                 }
@@ -2338,7 +2359,18 @@ impl<'a> Gen<'a> {
             // the module's code runs at its first use (D124)
             StmtKind::Module { body, .. } => {
                 if let Some(b) = body {
+                    let scope = if std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() {
+                        let file = b.first().map(|s| s.span.file).unwrap_or(0);
+                        let token = self.reg();
+                        self.emitf(format_args!("{token} = call i64 @nx_security_enter(i32 {file})"));
+                        self.f().live.push(Live::Security(token.clone()));
+                        Some(token)
+                    } else { None };
                     self.block(b)?;
+                    if let Some(token) = scope {
+                        self.unlive(&Live::Security(token.clone()));
+                        self.call_void("nx_security_restore", &format!("i64 {token}"));
+                    }
                 }
             }
             StmtKind::Assign { target, op, value, ty } => self.assign(s, target, op, value, ty.as_ref())?,
@@ -5057,7 +5089,7 @@ impl<'a> Gen<'a> {
                     }
                 };
                 // the worker returns the int itself; the thread state says
-                // whether it failed (D156)
+                // whether it failed (D159)
                 let x = self.reg();
                 self.emitf(format_args!("{x} = call i64 {worker}(ptr %tls, ptr {clo}, i64 {d}, {}, i32 {sp})", ps.join(", ")));
                 if !self.f().int_params {
@@ -5082,7 +5114,7 @@ impl<'a> Gen<'a> {
     }
 
     /// The step compiled once more to take an int element in a register:
-    /// its type checks fold away (D157). Only for a step that captures
+    /// its type checks fold away (D160). Only for a step that captures
     /// nothing.
     fn step_worker(&mut self, frame: FrameId, e: &'a Expr) -> GResult<Option<String>> {
         if !self.res.frames[frame].free.is_empty() || self.res.frames[frame].params.len() != 1 {
@@ -5203,7 +5235,7 @@ impl<'a> Gen<'a> {
             let esp = self.span_id(x.span);
             let (fname, clo, _) = fns[i].clone();
             let r = if let Some(w) = workers[i].clone() {
-                // an int element goes to the step that takes ints (D157)
+                // an int element goes to the step that takes ints (D160)
                 let out = self.alloca("%V");
                 let tag = self.tag_of(&v);
                 let is_int = self.reg();
@@ -5750,6 +5782,10 @@ declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
 declare void @nx_enter_slow(i64)
 declare void @nx_too_deep()
+declare void @nx_security_result(i64, i64, i32)
+declare void @nx_security_contexts_ready()
+declare i64 @nx_security_enter(i32)
+declare void @nx_security_restore(i64)
 declare void @nx_init(ptr, i64, ptr, i64, ptr, i64, ptr)
 declare void @nx_add_file(i32, ptr, i64, ptr, i64)
 declare void @nx_exit(i32) noreturn

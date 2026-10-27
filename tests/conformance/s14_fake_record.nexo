@@ -1,4 +1,4 @@
-# A faked method of a record that never leaves its test keeps its fake (D154)
+# A faked method of a record that never leaves its test keeps its fake (D157)
 type P:
     x: int
 

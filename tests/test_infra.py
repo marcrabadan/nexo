@@ -237,6 +237,8 @@ def test_a_state_changed_while_confirming_is_not_overwritten(phase, cloud, tmp_p
     (tmp_path / "app.nexo").write_text('infra web:\n    cloud = "k8s"\n    namespace = "web"\n'
                                        '    app api:\n        image = "shop-api:1.0"\n')
     env = dict(os.environ, PYTHONPATH=str(ROOT), **cloud, API_KEY="sk-123")
+    # This case exercises interactive confirmation, including on CI runners.
+    env.pop("CI", None)
     waiting = subprocess.Popen([*phase[1], "apply", "app.nexo"], cwd=tmp_path, env=env, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     seen = b""

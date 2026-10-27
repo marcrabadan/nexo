@@ -2139,7 +2139,68 @@ email.confirmed(email), max: 3 days`.
 - Step results passed to later steps, signals, parallel steps and a
   list of runs are not in the specification and are not added.
 
-**D152. `nexo test --coverage`.** "Goals and guarantees" measures "Tests
+**D152. Nexo Shield phase 1: application enforcement and honest isolation.**
+Shield reuses D142 policy syntax, matching and diagnostics through a typed Rust
+engine and a matching Python adapter. `security check|run|trace|audit file.nexo`
+requires a policy; check/audit reuse the current static checks, policy display
+and unsafe inventory. Run/trace enforce production decisions in development
+builds. Native C, Python and shell integrations are rejected in Shield execution:
+there is no OS confinement and granting permission cannot provide it. Ordinary
+D142 development/release behavior remains compatible. Internal `__policy` is
+not a user-callable API, and policy initialization is one-shot. The development
+recorder cannot override release/Shield decisions (fixing two escalation paths).
+Trace emits local JSON with all targets redacted; existing diagnostics can
+contain source snippets and are not sanitized audit events. No OS sandbox,
+resource limits, IP/DNS confinement, per-package attenuation or complete taint
+tracking is claimed. `docs/shield.md` records the trust boundaries and roadmap.
+
+Shield also rejects literal backslashes and ASCII control characters in HTTP
+URLs before authorization in both backends. A verified parser differential
+allowed a Rust request to reach `127.0.0.1` via
+`http://127.0.0.1:PORT\@allowed.example/` under a grant for `allowed.example`.
+Rejecting these ambiguous URLs, including redirect destinations, fixes the
+bypass without changing hostname rule syntax; encode such data explicitly.
+
+
+**D153. Shield phase 2: explicit offline workers and synchronous ceilings.**
+`security probe` checks actual kernel facilities. `security run|trace
+--sandbox=linux` requires Linux x86_64, Landlock ABI >=3, openat2, seccomp and a
+non-root dedicated worker; unavailable guarantees stop before target execution.
+The kernel profile is offline and single-process, with pinned filesystem grants,
+capability dropping, descriptor sealing and hard CPU/address-space/file/FD limits
+plus a supervising wall deadline. Network grants and filesystem deny exceptions
+that the profile cannot faithfully represent are rejected. The native `security
+worker` interface executes an independent constrained program; in-process FFI
+remains disallowed and there is no implicit typed RPC bridge.
+`--dependencies file.json` adds immutable version-1 file-module ceilings that
+intersect lexical and dynamic caller permissions. Scope guards are emitted only
+for context-enabled compilation and restored on returns and failures; an
+uninstrumented binary refuses a requested context. Async constructs are rejected
+under this profile until contexts can follow queued execution. Dependency returns
+are limited to bounded plain data; callable, deferred and opaque handles are
+rejected rather than exported without sealed contexts. There is no new
+policy syntax or package-registry claim. `docs/shield-isolation.md` specifies the
+trust boundary, unsafe kernel ABI module, exact limits and unsupported features.
+
+**D154. Shield Docker execution and validation.** Production packages the native
+compiler, static runtime and worker in a digest-pinned Debian image. A mandatory
+entrypoint checks the actual non-root, read-only, capability, seccomp, network
+and cgroup posture before execution. The host helper mounts disjoint source and
+output directories with explicit permissions; no Docker socket is exposed.
+Docker isolation complements API authorization; the explicit Linux worker mode
+still requires Landlock and never falls back. A separate validation image runs
+release Rust harnesses and both backends' security suites with the production
+binaries. CI requires positive kernel support, not merely skipped kernel tests.
+See `docs/shield-docker.md` for commands and boundaries.
+
+Shield also rejects persistent workflows before state loading or step execution.
+D151 exempts runtime workflow state from ordinary application policy; accepting
+it under Shield would bypass API filesystem authorization. This restriction
+also applies when write grants are present, until those state effects can be
+authorized throughout the active dependency context. Ordinary workflows retain
+their existing behavior.
+
+**D155. `nexo test --coverage`.** "Goals and guarantees" measures "Tests
 proposed automatically" by "branch coverage before and after", and no
 section names a coverage tool, so it is an option of `nexo test`, as
 `--suggest` is (D131): `nexo test --coverage [paths]` runs the same
@@ -2171,7 +2232,7 @@ that of `nexo test`: coverage is a measure, not a rule.
 - Statement and line coverage, reports in other formats and a minimum
   percentage are not in the specification and are not added.
 
-**D153. Programs that start sooner and calls that check less.** Two
+**D156. Programs that start sooner and calls that check less.** Two
 changes to compiled programs, neither of which shows in their output:
 - They are linked without position-independent code (`-fno-pic`,
   `-no-pie`): the runtime's tables need no relocation when the program
@@ -2186,7 +2247,7 @@ changes to compiled programs, neither of which shows in their output:
   runs, so one comparison does both, and the slow path tells them apart.
   fib(32) runs about 20% faster.
 
-**D154. Records that never leave their function are kept as their
+**D157. Records that never leave their function are kept as their
 fields.** Section 7 says the compiler moves a value when it proves a
 single owner; the same proof allows more for small records. A variable
 whose type is defined once at the top level with only `int` fields,
@@ -2206,7 +2267,7 @@ record is an object as before. The `records` benchmark builds such a
 record in a loop: it went from 2.5× Rust's time to about 0.4× (the Rust
 program boxes its value, as a record that escapes would need).
 
-**D155. Compiling 100,000 lines in under 10 s.** Three changes to how a
+**D158. Compiling 100,000 lines in under 10 s.** Three changes to how a
 development build is made, none of which changes the program it gives:
 - Registers, labels and stack slots are numbered again from 1 in each
   function, so their names stay short: the IR of the program of
@@ -2223,7 +2284,7 @@ development build is made, none of which changes the program it gives:
 The program of goals.py now compiles in about 9.5 s on the 4 cores of
 goals.json (it took 13.9 s).
 
-**D156. An int-only function returns its int.** The body of a function
+**D159. An int-only function returns its int.** The body of a function
 whose parameters and result are all `int` (D84) returned a value of two
 words, and its caller checked the tag of the first to know whether it
 had failed. It now returns the int itself, or 0 when it fails, and the
@@ -2233,7 +2294,7 @@ were six instructions. fib(32) went from 1.9× to about 1.55× Rust's
 time. The usual entry of such a function (called through a value, with
 named arguments...) gives back the two words as before.
 
-**D157. Fused pipelines over ints.** In a fused `where`/`map`/`sum` loop
+**D160. Fused pipelines over ints.** In a fused `where`/`map`/`sum` loop
 (D134), each step was a function called with the element as a value of
 two words, whose code checked its type at every operation even when the
 list holds ints (D137). A step that captures nothing is now also

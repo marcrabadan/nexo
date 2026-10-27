@@ -24,12 +24,30 @@ come from the scripts named, on the machine in `compiler/bench/goals.json`
 | Verifiable contracts | Met | `expect`, `ensure` and `old()` in both phases; the compiler proves what it can and checks the rest (D83). |
 | Cryptography without dangerous choices | Algorithms fixed; the audit needs people | Argon2id, AES-256-GCM and Ed25519 are fixed for edition 0.1 (D97). No external audit of `crypto` has been made. |
 
+Shield phase 1 adds strict API execution and structured decisions in both
+backends; see [the threat model and limitations](shield.md). The capability
+checks above are not OS-enforced isolation: concurrent filesystem mutation,
+DNS rebinding, direct native syscalls and resource limits are outside them.
+`nexo security run` rejects C, Python and shell integrations until isolated
+workers exist; ordinary explicit D142 native grants remain trusted code.
+
+Shield phase 2 adds an explicit [Linux offline worker and dependency
+ceilings](shield-isolation.md). OS enforcement requires a supported kernel;
+this cloud host lacks Landlock, so positive validation requires a compatible
+host. [Remote Docker validation](https://github.com/marcrabadan/nexo/actions/runs/40401630179/job/121848682972)
+passed with Landlock ABI 7, including all 13 positive kernel cases.
+[Shield PR #18](https://github.com/marcrabadan/nexo/pull/18) tracks full-suite CI.
+The implementation fails closed rather than treating API checks as OS isolation.
+[Docker deployment](shield-docker.md) adds a non-root, read-only, offline container
+with capability dropping, seccomp and cgroup limits. This layer works independently
+of Landlock; requesting the Linux worker still requires its kernel facilities.
+
 ## Smarter
 
 | Guarantee | State | Evidence |
 | --- | --- | --- |
 | The compiler understands intent | Met (the tool); the public set of cases needs a model | `nexo check --intent` asks the configured model whether each function does what its `##` comments and contracts say (D132), tested against a local model. The public set of known mismatches, run against a real model, is still to be written. |
-| Tests proposed automatically | Met | `nexo test --suggest` proposes edge cases from types, contracts and unions and records what the code gives now (D131). `nexo test --coverage` measures branch coverage in both phases (D152): on the program of `tests/test_phase6.py`, the suggested cases take it from 2 of 10 branches (20%) to 10 of 10 (100%). |
+| Tests proposed automatically | Met | `nexo test --suggest` proposes edge cases from types, contracts and unions and records what the code gives now (D131). `nexo test --coverage` measures branch coverage in both phases (D155): on the program of `tests/test_phase6.py`, the suggested cases take it from 2 of 10 branches (20%) to 10 of 10 (100%). |
 | Every error comes with its fix | Met | Every message that reports a problem has its fix sentence in both catalogs (`tests/unit/test_errors.py`). Of the 32 programs in the repository that do not compile (27 kinds of error), 32 say how to fix it (100%) and 6 (19%) have an edit that `nexo fix` or the editor applies (`compiler/scripts/fix_rate.py`). |
 | Verifiable AI-generated code | Partly | One way to do each thing, types at boundaries and contracts, and `nexo check` validates code before it runs. The rate of LLM-generated programs that compile and pass their tests on the first try needs a benchmark run against models. |
 | AI does not invent APIs | Met (the tool); the comparison needs a model | `nexo docs --for-ai` prints the exact list of what a program can use, from `nexo/stdlib/api.json`, which a test keeps equal to the builtins of both phases (D130). The comparison with and without it needs models. |
@@ -44,7 +62,7 @@ checks, since Nexo checks int overflow).
 | --- | --- | --- | --- |
 | Performance on typical code | under 1.5× Rust's time | records 0.42×, strings 1.15×, hello 1.26×, loop 1.29×, parallel 1.39×, maps 1.45×, lists 1.57×, fib 1.70× | Not met (two of eight) |
 | Memory | under 1.3× Rust's RAM | 1.0× or less on seven benchmarks (strings 0.75×); lists 1.06× | Met |
-| Compilation | 100,000 lines in under 10 s in development mode | 10.6 s (9.3 to 13 s as the shared machine is loaded; 20% less than before D155, measured side by side) | Not met, by little |
+| Compilation | 100,000 lines in under 10 s in development mode | 10.6 s (9.3 to 13 s as the shared machine is loaded; 20% less than before D158, measured side by side) | Not met, by little |
 | Program start-up | under 20 ms | 1.9 ms | Met |
 | First useful program | under 1 hour for someone with no experience | not measured | Needs people (user studies) |
 | From idea to production | one project for code, infrastructure and deployment | `examples/deploy` holds an app, its tests, its infrastructure on four clouds and its pipeline in one file (phase 5) | Met |
@@ -68,7 +86,7 @@ as two words so its fast instruction selector takes them (D141); the
 compiler also leaves out checks it proves are not needed (D140, D141),
 which made the IR half its size.
 
-The second round (D153-D157): programs are linked without
+The second round (D156-D160): programs are linked without
 position-independent code, so they start without relocating the
 runtime; an int-only function checks its depth and the clock with one
 comparison and returns its int, with failures in the thread state; a

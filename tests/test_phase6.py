@@ -368,7 +368,7 @@ test "a middle score":
 
 @pytest.mark.parametrize("phase", PHASES, ids=IDS)
 def test_suggested_cases_raise_branch_coverage(phase, tmp_path):
-    """The measure of "Tests proposed automatically" (D131, D152): branch
+    """The measure of "Tests proposed automatically" (D131, D155): branch
     coverage with the developer's tests, and with the cases that nexo test
     --suggest proposes added to them."""
     (tmp_path / "grade.nexo").write_text(GRADE)

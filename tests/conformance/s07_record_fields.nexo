@@ -1,4 +1,4 @@
-# Records that never leave their function are kept as their fields (D154);
+# Records that never leave their function are kept as their fields (D157);
 # nothing in the output may tell them apart
 type P:
     x: int

@@ -13,123 +13,51 @@ use crate::state::{diag, R};
 use crate::value::*;
 
 struct Policy {
-    rules: Option<Vec<(String, String, Vec<String>)>>,
+    engine: Option<crate::security::Engine>,
     release: bool,
     reported: Vec<(String, String)>,
 }
 
-static POLICY: Mutex<Policy> = Mutex::new(Policy { rules: None, release: false, reported: Vec::new() });
+static POLICY: Mutex<Policy> = Mutex::new(Policy { engine: None, release: false, reported: Vec::new() });
 
 pub fn release_all() {
     let mut p = POLICY.lock().unwrap();
-    p.rules = None;
+    p.engine = None;
+    p.release = false;
     p.reported.clear();
 }
 
-pub fn policy(entries: V, release: Option<V>, _span: u32) -> R<Val> {
+pub fn policy(entries: V, release: Option<V>, span: u32) -> R<Val> {
     let mut rules = Vec::new();
     for e in crate::cfg::items(entries) {
         let words: Vec<String> = crate::cfg::items(e.v()).iter().map(|w| w.v().as_str().unwrap_or("").to_string()).collect();
         if words.len() >= 2 {
-            rules.push((words[0].clone(), words[1].clone(), words[2..].to_vec()));
+            let effect = match words[0].as_str() {
+                "allow" => crate::security::Effect::Allow,
+                "deny" => crate::security::Effect::Deny,
+                _ => return Err(diag(Diagnostic::new_spanless("policy_internal"), span)),
+            };
+            let Some(capability) = crate::security::Capability::from_boundary(&words[1], "") else {
+                return Err(diag(Diagnostic::new_spanless("policy_internal"), span));
+            };
+            rules.push(crate::security::Rule { effect, kind: capability.kind(), targets: words[2..].to_vec() });
         }
     }
+    if crate::security::context::initialize(crate::state::program().file).is_err() {
+        return Err(diag(Diagnostic::new_spanless("security_context_config"), span));
+    }
     let mut p = POLICY.lock().unwrap();
-    p.rules = Some(rules);
-    p.release = release.and_then(|r| r.as_bool()).unwrap_or(false);
+    if p.engine.is_some() {
+        return Err(diag(Diagnostic::new_spanless("policy_internal"), span));
+    }
+    p.engine = Some(crate::security::Engine::new(rules));
+    p.release = release.and_then(|r| r.as_bool()).unwrap_or(false) || crate::security::enforcing();
     Ok(Val::none())
 }
 
 // ------------------------------------------------------------- matching
 
-/// The components of a path with `.` and `..` taken away.
-fn parts(path: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for p in path.split('/') {
-        match p {
-            "" | "." => {}
-            ".." => {
-                if out.last().is_some_and(|l| l != "..") {
-                    out.pop();
-                } else if !path.starts_with('/') {
-                    out.push(p.to_string());
-                }
-            }
-            _ => out.push(p.to_string()),
-        }
-    }
-    out
-}
-
-/// A path as the policy writes it: `data/../x.csv` is `x.csv`.
-pub fn shown(path: &str) -> String {
-    let p = parts(path).join("/");
-    if path.starts_with('/') {
-        format!("/{p}")
-    } else if p.is_empty() {
-        ".".into()
-    } else {
-        p
-    }
-}
-
-/// The absolute path the system opens: each component in turn, a
-/// symbolic link replaced by its target before the `..` after it, so
-/// neither a link nor `link/..` can lead out of an allowed folder.
-fn resolve(path: &str) -> String {
-    let full = if path.starts_with('/') {
-        path.to_string()
-    } else {
-        format!("{}/{path}", std::env::current_dir().map(|d| d.to_string_lossy().to_string()).unwrap_or_default())
-    };
-    let split = |p: &str| -> Vec<String> { p.split('/').filter(|c| !c.is_empty() && *c != ".").map(String::from).collect() };
-    let mut todo: Vec<String> = split(&full);
-    todo.reverse();
-    let mut out: Vec<String> = Vec::new();
-    let mut links = 0;
-    while let Some(c) = todo.pop() {
-        if c == ".." {
-            out.pop();
-            continue;
-        }
-        let here = format!("/{}", out.iter().chain(std::iter::once(&c)).cloned().collect::<Vec<_>>().join("/"));
-        let is_link = std::fs::symlink_metadata(&here).is_ok_and(|m| m.file_type().is_symlink());
-        if links < 40 && is_link {
-            if let Ok(target) = std::fs::read_link(&here) {
-                links += 1;
-                let target = target.to_string_lossy().to_string();
-                if target.starts_with('/') {
-                    out.clear();
-                }
-                todo.extend(split(&target).into_iter().rev());
-                continue;
-            }
-        }
-        out.push(c);
-    }
-    format!("/{}", out.join("/"))
-}
-
-fn path_matches(path: &str, target: &str) -> bool {
-    let (p, t) = (resolve(path), resolve(target));
-    p == t || t == "/" || p.starts_with(&format!("{t}/"))
-}
-
-fn host_matches(host: &str, target: &str) -> bool {
-    let t = target.to_lowercase();
-    match t.strip_prefix('*') {
-        Some(rest) if rest.starts_with('.') => host.ends_with(rest),
-        _ => host == t,
-    }
-}
-
-fn matches(kind: &str, value: &str, target: &str) -> bool {
-    match kind {
-        "read" | "write" => path_matches(value, target),
-        "net" => host_matches(value, target),
-        _ => value == target,
-    }
-}
+pub use crate::security::matching::shown;
 
 // --------------------------------------------------------------- checks
 
@@ -143,42 +71,56 @@ fn rule_text(rule: &str, kind: &str, target: Option<&str>) -> String {
 /// Stop the program, warn or record before an access (D142).
 pub fn check(kind: &str, value: &str, span: u32) -> R<()> {
     let target = if kind == "read" || kind == "write" { shown(value) } else { value.to_string() };
-    if let Some(record) = std::env::var_os("NEXO_POLICY_RECORD").filter(|r| !r.is_empty()) {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(record) {
-            let _ = writeln!(f, "{kind}\t{}", if kind == "shell" { "" } else { &target });
-        }
-        return Ok(());
-    }
     let what = msg(&format!("detail.policy_{kind}"), &[("target", target.clone())]);
     let allow_line = rule_text("allow", kind, if kind == "shell" { None } else { Some(&target) });
     let mut p = POLICY.lock().unwrap();
-    let Some(rules) = &p.rules else {
+    let capability = crate::security::Capability::from_boundary(kind, value)
+        .expect("runtime policy boundary must have a typed capability");
+    if !p.release && !crate::security::enforcing() {
+        if let Some(record) = std::env::var_os("NEXO_POLICY_RECORD").filter(|r| !r.is_empty()) {
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(record) {
+                let _ = writeln!(f, "{kind}\t{}", if kind == "shell" { "" } else { &target });
+            }
+            return Ok(());
+        }
+    }
+    let Some(engine) = &p.engine else {
+        if crate::security::enforcing() {
+            return Err(diag(Diagnostic::new_spanless("policy_missing"), span));
+        }
         if kind == "shell" {
             return Err(diag(Diagnostic::new_spanless("policy_shell").arg("what", what), span));
         }
         return Ok(());
     };
-    let mut allowed = false;
-    for (rule, k, targets) in rules {
-        if k != kind {
-            continue;
+    let decision = engine.evaluate(capability, p.release, crate::security::enforcing());
+    if !matches!(decision, crate::security::Decision::Allow) { crate::security::audit::emit(capability, &decision); }
+    match decision {
+        crate::security::Decision::Allow => {
+            let file = crate::state::span(span).map(|s| s.file).unwrap_or(0);
+            if !crate::security::context::allows(capability, file) {
+                crate::security::audit::emit(capability, &crate::security::Decision::DenyMissing);
+                return Err(diag(Diagnostic::new_spanless("security_dependency"), span));
+            }
+            crate::security::audit::emit(capability, &decision);
+            return Ok(());
         }
-        let hit = targets.is_empty() || targets.iter().any(|t| matches(kind, value, t));
-        if hit && rule == "deny" {
-            let denied = targets.iter().find(|t| matches(kind, value, t)).map(|s| s.as_str());
-            let d = Diagnostic::new_spanless("policy_deny").arg("what", what).arg("rule", rule_text("deny", kind, denied));
+        crate::security::Decision::InvalidTarget => {
+            return Err(diag(Diagnostic::new_spanless("security_url"), span));
+        }
+        crate::security::Decision::IsolationUnavailable => {
+            return Err(diag(Diagnostic::new_spanless("security_isolation"), span));
+        }
+        crate::security::Decision::DenyRule(target) => {
+            let d = Diagnostic::new_spanless("policy_deny").arg("what", what)
+                .arg("rule", rule_text("deny", kind, target));
             return Err(diag(d, span));
         }
-        if hit {
-            allowed = true;
+        crate::security::Decision::DenyMissing => {
+            return Err(diag(Diagnostic::new_spanless("policy_denied").arg("what", what).arg("line", allow_line), span));
         }
-    }
-    if allowed {
-        return Ok(());
-    }
-    if p.release || kind == "shell" {
-        return Err(diag(Diagnostic::new_spanless("policy_denied").arg("what", what).arg("line", allow_line), span));
+        crate::security::Decision::Warn => {}
     }
     let key = (kind.to_string(), target);
     if p.reported.contains(&key) {
@@ -198,5 +140,11 @@ pub fn check(kind: &str, value: &str, span: u32) -> R<()> {
 }
 
 pub fn check_url(url: &str, span: u32) -> R<()> {
+    // The transport's WHATWG parser and lexical hostname extraction disagree
+    // on backslashes and controls. Reject before authorization or any request.
+    if url.chars().any(|c| c == '\\' || c.is_ascii_control()) {
+        crate::security::audit::emit(crate::security::Capability::NetworkConnect(""), &crate::security::Decision::InvalidTarget);
+        return Err(diag(Diagnostic::new_spanless("security_url"), span));
+    }
     check("net", &crate::http::url_host(url), span)
 }

@@ -32,6 +32,7 @@ mod narrow;
 mod parser;
 mod phase5;
 mod policy;
+mod security;
 mod prove;
 mod resolve;
 mod scalar;
@@ -47,7 +48,7 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]"
+    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]"
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -83,7 +84,7 @@ fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, 
     program.files = linker.files;
     let mut res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
-    // records that never leave their function become ints (D154)
+    // records that never leave their function become ints (D157)
     if unbox::unbox(&mut program, &res, &mut next_id) {
         res = resolve::resolve(&program).map_err(fail)?;
         typecheck::check(&program, &res).map_err(fail)?;
@@ -530,7 +531,7 @@ fn cc_version() -> String {
 }
 
 /// lld, when it is installed: it links the parts of a large development
-/// build in a fraction of the time (D155).
+/// build in a fraction of the time (D158).
 fn fast_linker() -> &'static [&'static str] {
     static LLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let found = *LLD.get_or_init(|| {
@@ -561,7 +562,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     let ll = dir.join("program.ll");
     let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
     // not position-independent: the program starts without relocating the
-    // runtime's tables and reads its globals directly (D153)
+    // runtime's tables and reads its globals directly (D156)
     let libs = ["-no-pie", "-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
     let fail = |output: std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
     let dev = opt != "-O2";
@@ -848,7 +849,7 @@ fn test_files(paths: &[String]) -> Vec<PathBuf> {
 }
 
 /// `nexo test [paths]`: run the top level of each file, then its tests
-/// (D54); with --coverage, the branches the tests ran (D152).
+/// (D54); with --coverage, the branches the tests ran (D155).
 fn run_tests(paths: &[String]) -> u8 {
     let files = test_files(paths);
     let (mut total, mut passed, mut broken) = (0u32, 0u32, 0u32);
@@ -1342,6 +1343,7 @@ fn main() -> ExitCode {
             "flags" => phase5::run_flags(&rest[1..]),
             "privacy" => phase5::privacy_report(&rest[1..]),
             "policy" => policy::run(&rest[1..]),
+            "security" => security::run(&rest[1..]),
             "plan" | "apply" | "destroy" | "drift" | "cost" | "import" => phase5::run_infra(&rest[0], &rest[1..]),
             "ci" => phase5::run_ci(&rest[1..]),
             "ai" if rest.len() == 2 && rest[1] == "setup" => ai_cmd::setup(),

@@ -1,4 +1,4 @@
-//! Records that never leave their function become plain ints (D154).
+//! Records that never leave their function become plain ints (D157).
 //!
 //! A variable qualifies when:
 //! - it holds a record of a type defined once at the top level of the

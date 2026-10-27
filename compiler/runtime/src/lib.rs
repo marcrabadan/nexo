@@ -27,6 +27,7 @@ pub mod par;
 pub mod patterns;
 pub mod pipe;
 pub mod policy;
+pub mod security;
 pub mod privacy;
 pub mod pylib;
 pub mod repl;

@@ -1,4 +1,4 @@
-//! `nexo test --coverage`: branch coverage of the code the tests run (D152).
+//! `nexo test --coverage`: branch coverage of the code the tests run (D155).
 //!
 //! Before the program is compiled, every branch the developer wrote gets a
 //! call to `__cover(n)` as its first statement: the body of each function

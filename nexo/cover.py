@@ -1,5 +1,5 @@
 """`nexo test --coverage`: branch coverage of the code the tests run
-(section "Goals and guarantees", D152).
+(section "Goals and guarantees", D155).
 
 Before the program runs, every branch the developer wrote gets a call to
 `__cover(n)` as its first statement: the body of each function and method,

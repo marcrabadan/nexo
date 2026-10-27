@@ -1,0 +1,17 @@
+.git
+.venv
+.pytest_cache
+**/__pycache__
+**/*.pyc
+**/target
+**/node_modules
+**/.nexo
+**/.env
+**/.env.*
+**/.aws
+**/.codex
+**/.agents
+**/*.pem
+**/*.key
+**/*.egg-info
+build

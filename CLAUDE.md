@@ -60,7 +60,7 @@ nexo/
   audit.py        `nexo audit`: the uses of C (implicit unsafe, D129)
   docs.py         `nexo docs --for-ai`: stdlib/api.json + the program (D130)
   suggest.py      `nexo test --suggest`: edge cases run by a probe (D131)
-  cover.py        `nexo test --coverage`: the branches the tests ran (D152)
+  cover.py        `nexo test --coverage`: the branches the tests ran (D155)
   intent.py       `nexo check --intent`: comments against code with ask (D132)
   fmt.py          `nexo fmt`: token-preserving formatter (D85)
   lint.py         `nexo lint` / `nexo fix`: warnings and safe fixes (D86)
@@ -91,7 +91,7 @@ compiler/
                   records of known types, D126), sbom, split (parallel
                   development builds, D135), scalar (values as two words
                   in development mode, D141), audit, docs, suggest, intent,
-                  cover (`nexo test --coverage`, D152), policy (`nexo policy`, D142), mcp (`nexo mcp`, D146)
+                  cover (`nexo test --coverage`, D155), policy (`nexo policy`, D142), mcp (`nexo mcp`, D146)
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
@@ -222,7 +222,7 @@ compile large programs in parallel parts (compiler/nexoc/src/split.rs)
 and skip checks for names certainly defined (D135); release builds that are the same byte for byte, with
 `<program>.sbom.json` (D128); `nexo audit` (D129), `nexo docs --for-ai`
 from nexo/stdlib/api.json (D130), `nexo test --suggest` (D131), `nexo test
---coverage` (branch coverage, D152: nexo/cover.py and
+--coverage` (branch coverage, D155: nexo/cover.py and
 compiler/nexoc/src/cover.rs add a `__cover(n)` call to each branch) and
 `nexo check --intent` through `ask` (D132), in both phases with the same
 output (tests/test_phase6.py). External audits, user studies, the package

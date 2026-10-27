@@ -1,4 +1,4 @@
-# nexo test --coverage: the branches the tests ran (D152)
+# nexo test --coverage: the branches the tests ran (D155)
 type Shape:
     Circle(r: int)
     Square(side: int)

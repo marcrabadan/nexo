@@ -14,6 +14,12 @@ _built = []
 
 def compiler():
     """The compiled `nexo`, built once, or None without cargo and clang."""
+    prebuilt = os.environ.get("NEXO_TEST_COMPILER")
+    if prebuilt:
+        path = Path(prebuilt).resolve(strict=True)
+        if not path.is_file() or not os.access(path, os.X_OK):
+            raise RuntimeError("NEXO_TEST_COMPILER must name an executable Nexo compiler")
+        return path
     if shutil.which("cargo") is None or shutil.which("clang") is None:
         return None
     if not _built:

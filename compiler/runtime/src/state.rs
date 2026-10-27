@@ -41,7 +41,7 @@ pub struct Tls {
     pub isolated: u64,
     /// the depth an int-only function compares its own with when it is
     /// entered: MAX_DEPTH, or 0 while a `try within` runs, so that one
-    /// comparison checks both (D153)
+    /// comparison checks both (D156)
     pub limit: u64,
 }
 
