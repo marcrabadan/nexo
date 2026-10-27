@@ -110,11 +110,13 @@ pub fn proxy_for(url: &str) -> Option<ureq::Proxy> {
 
 enum Outcome {
     Done(Response),
+    /// an answer read as it arrives, and the address it came from (D164)
+    Open(Box<dyn std::io::Read + Send + Sync>, String),
     /// a failure worth another attempt
     Retry(crate::state::Fail),
 }
 
-fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(String, String)], limit: f64, span: u32) -> R<Outcome> {
+fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(String, String)], limit: f64, stream: bool, span: u32) -> R<Outcome> {
     let mut current = url.to_string();
     let mut headers: Vec<(String, String)> = headers.to_vec();
     for _ in 0..=MAX_REDIRECTS {
@@ -179,6 +181,9 @@ fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(Str
             hs.push((key, all.join(", ")));
         }
         let location = resp.header("location").map(|s| s.to_string());
+        if stream && status < 300 {
+            return Ok(Outcome::Open(resp.into_reader(), current));
+        }
         let mut data = Vec::new();
         use std::io::Read;
         if resp.into_reader().read_to_end(&mut data).is_err() {
@@ -321,6 +326,39 @@ pub fn request(method: &str, args: &[V], names: &[Option<&str>], span: u32) -> R
     Ok(native(send(method, &url, &body, &headers, limit, retries, span)?))
 }
 
+/// `send` for an answer read as it arrives (`ask(..., stream: true)`,
+/// D164): its body unread, and the address it came from.
+pub fn open(
+    method: &str,
+    url: &str,
+    body: &Option<(Vec<u8>, &str)>,
+    headers: &[(String, String)],
+    limit: f64,
+    retries: u32,
+    span: u32,
+) -> R<(Box<dyn std::io::Read + Send + Sync>, String)> {
+    let mut attempt = 0;
+    loop {
+        match once(method, url, body, headers, limit, true, span)? {
+            Outcome::Open(r, at) => return Ok((r, at)),
+            Outcome::Done(_) => return Err(network(url, "detail.no_connection", span)),
+            Outcome::Retry(f) => {
+                if attempt >= retries {
+                    return Err(f);
+                }
+                crate::state::clear();
+                std::thread::sleep(std::time::Duration::from_secs_f64(0.25 * 2f64.powi(attempt as i32)));
+                attempt += 1;
+            }
+        }
+    }
+}
+
+/// The error of a read that failed while the answer arrived.
+pub fn lost(url: &str, timed_out: bool, span: u32) -> crate::state::Fail {
+    network(url, if timed_out { "detail.timeout" } else { "detail.no_connection" }, span)
+}
+
 /// The request, retried `retries` times after a network error or a 502,
 /// 503 or 504 (also used by `ask`).
 pub fn send(
@@ -334,8 +372,9 @@ pub fn send(
 ) -> R<Response> {
     let mut attempt = 0;
     loop {
-        match once(method, url, body, headers, limit, span)? {
+        match once(method, url, body, headers, limit, false, span)? {
             Outcome::Done(r) => return Ok(r),
+            Outcome::Open(..) => unreachable!(),
             Outcome::Retry(f) => {
                 if attempt >= retries {
                     return Err(f);

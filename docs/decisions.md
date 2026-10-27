@@ -2399,3 +2399,19 @@ compiler/runtime/src/pg.rs):
   authority of their own (tests/test_postgres.py, skipped when PostgreSQL
   is not installed), run the db conformance programs on it with the
   output of SQLite, and compare the SQL both phases send.
+
+**D164. `ask(..., stream: true)` as the answer arrives.** D107 returned
+the list of pieces once the answer was complete. Now:
+- `ask` reads until the first piece of text has arrived and returns a
+  lazy list of the pieces, read from the open connection as the program
+  asks for them: `for chunk in ask(..., stream: true):` runs its block for
+  each piece when it arrives. Before waiting for the next piece, what the
+  program has written is flushed, so `print(chunk, end: "")` shows at
+  once. Like any lazy value (section 6, rule 4), an assignment reads the
+  whole answer first; looping over the same answer again gives the
+  pieces already read, without asking again.
+- What happens before the first piece is as before: retries, the next
+  model of `fallback`, an answer with no text (AIError). After it, a
+  failure ends the loop with its error: NetworkError when the connection
+  is lost, AIError for a line that is not valid. The line of usage.csv is
+  written when the answer ends.

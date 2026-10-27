@@ -18,7 +18,9 @@ from typing import Any
 
 from .. import errors
 from ..errors import NexoError, suggest
-from ..types import Builtin, BuiltinType, Native, NexoFailure, Quantity, RecordType, failure, show, show_hidden
+from ..types import (
+    Builtin, BuiltinType, Lazy, Native, NexoFailure, Quantity, RecordType, failure, show, show_hidden,
+)
 
 PROVIDERS = {
     "anthropic": "https://api.anthropic.com",
@@ -300,37 +302,7 @@ def answer_of(call, t: Target, text: str, stream: bool):
                 tokens = [data.get("prompt_eval_count", 0), data.get("eval_count", 0)]
         else:
             for line in text.splitlines():
-                line = line.strip()
-                if t.provider != "ollama":
-                    if not line.startswith("data:"):
-                        continue
-                    line = line[5:].strip()
-                    if line == "[DONE]" or not line:
-                        continue
-                elif not line:
-                    continue
-                ev = json.loads(line)
-                if t.provider == "anthropic":
-                    kind = ev.get("type")
-                    if kind == "content_block_delta" and ev["delta"].get("type") == "text_delta":
-                        pieces.append(ev["delta"]["text"])
-                    elif kind == "message_start":
-                        tokens[0] = ev["message"].get("usage", {}).get("input_tokens", 0)
-                    elif kind == "message_delta":
-                        tokens[1] = ev.get("usage", {}).get("output_tokens", 0)
-                elif t.provider == "openai":
-                    for c in ev.get("choices") or []:
-                        piece = (c.get("delta") or {}).get("content")
-                        if piece:
-                            pieces.append(piece)
-                    if ev.get("usage"):
-                        tokens = [ev["usage"].get("prompt_tokens", 0), ev["usage"].get("completion_tokens", 0)]
-                else:
-                    piece = (ev.get("message") or {}).get("content")
-                    if piece:
-                        pieces.append(piece)
-                    if ev.get("done"):
-                        tokens = [ev.get("prompt_eval_count", 0), ev.get("eval_count", 0)]
+                pieces += event(t, line, tokens)
     except (ValueError, KeyError, IndexError, TypeError, AttributeError):
         raise bad()
     if not all(isinstance(p, str) for p in pieces) or not pieces:
@@ -338,15 +310,111 @@ def answer_of(call, t: Target, text: str, stream: bool):
     return pieces, tokens
 
 
+def event(t: Target, line: str, tokens: list) -> list[str]:
+    """The pieces of text of one line of a streamed answer (server-sent
+    events, or JSON lines for ollama); `tokens` gets the counts."""
+    line = line.strip()
+    if t.provider != "ollama":
+        if not line.startswith("data:"):
+            return []
+        line = line[5:].strip()
+        if line == "[DONE]" or not line:
+            return []
+    elif not line:
+        return []
+    ev = json.loads(line)
+    pieces = []
+    if t.provider == "anthropic":
+        kind = ev.get("type")
+        if kind == "content_block_delta" and ev["delta"].get("type") == "text_delta":
+            pieces.append(ev["delta"]["text"])
+        elif kind == "message_start":
+            tokens[0] = ev["message"].get("usage", {}).get("input_tokens", 0)
+        elif kind == "message_delta":
+            tokens[1] = ev.get("usage", {}).get("output_tokens", 0)
+    elif t.provider == "openai":
+        for c in ev.get("choices") or []:
+            piece = (c.get("delta") or {}).get("content")
+            if piece:
+                pieces.append(piece)
+        if ev.get("usage"):
+            tokens[:] = [ev["usage"].get("prompt_tokens", 0), ev["usage"].get("completion_tokens", 0)]
+    else:
+        piece = (ev.get("message") or {}).get("content")
+        if piece:
+            pieces.append(piece)
+        if ev.get("done"):
+            tokens[:] = [ev.get("prompt_eval_count", 0), ev.get("eval_count", 0)]
+    if not all(isinstance(p, str) for p in pieces):
+        raise ValueError("not a text")
+    return pieces
+
+
 def send(call, t: Target, system, messages, temperature, max_tokens, stream, limit, retries):
     from .http import send as http_send
     key = reveal(call, t)
     url, body, headers = request_of(t, key, system, messages, temperature, max_tokens, stream)
     data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if stream:
+        r = http_send(call, "POST", url, data, "application/json", headers, limit, retries, stream=True)
+        answer = Live(call, t, r.lines())
+        # the first piece is read here, so that a model that cannot answer
+        # still goes to the next one of the fallback (D164)
+        answer.pull()
+        return answer
     r = http_send(call, "POST", url, data, "application/json", headers, limit, retries)
     pieces, tokens = answer_of(call, t, r.text(), stream)
     record_usage(f"{t.provider}:{t.name}", tokens)
     return pieces
+
+
+class Live(Lazy):
+    """The answer of `ask(..., stream: true)`: its pieces as they arrive
+    (D164). Read once; a second loop over it gets the same pieces."""
+
+    def __init__(self, call, t: Target, lines):
+        self.call, self.t, self.lines = call, t, lines
+        self.pieces: list[str] = []
+        self.tokens = [0, 0]
+        self.done = False
+        super().__init__(self.each)
+
+    def pull(self) -> bool:
+        """Read until one more piece (True) or the end (False)."""
+        if self.done:
+            return False
+        before = len(self.pieces)
+        try:
+            for line in self.lines:
+                self.pieces += event(self.t, line, self.tokens)
+                if len(self.pieces) > before:
+                    return True
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+            self.done = True
+            raise failure("AIError", self.call.span, model=self.t.shown, detail=errors.msg("detail.ai_no_text"))
+        except NexoFailure:
+            self.done = True
+            raise
+        self.done = True
+        if not self.pieces:
+            raise failure("AIError", self.call.span, model=self.t.shown, detail=errors.msg("detail.ai_no_text"))
+        record_usage(f"{self.t.provider}:{self.t.name}", self.tokens)
+        return False
+
+    def each(self):
+        i = 0
+        while True:
+            if i < len(self.pieces):
+                yield self.pieces[i]
+                i += 1
+                continue
+            # what the program wrote so far shows while it waits
+            try:
+                self.call.interp.out.flush()
+            except Exception:
+                pass
+            if not self.pull():
+                return
 
 
 def record_usage(model: str, tokens) -> None:

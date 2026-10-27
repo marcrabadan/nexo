@@ -262,6 +262,7 @@ fn file_layers(span: u32) -> R<Vec<(Layer, Vec<(String, String)>)>> {
 // --------------------------------------------------------------- resolve
 
 /// A model to call: provider, its name there, address and key.
+#[derive(Clone)]
 struct Target {
     shown: String,
     provider: String,
@@ -531,58 +532,161 @@ fn answer_of(t: &Target, body: &str, stream: bool) -> Option<(Vec<String>, [i64;
         }
     } else {
         for line in body.lines() {
-            let mut line = line.trim();
-            if t.provider != "ollama" {
-                let Some(rest) = line.strip_prefix("data:") else { continue };
-                line = rest.trim();
-                if line == "[DONE]" || line.is_empty() {
-                    continue;
-                }
-            } else if line.is_empty() {
-                continue;
-            }
-            let ev = crate::data::parse_json(line).ok()?;
-            match t.provider.as_str() {
-                "anthropic" => match text(at(&ev, "type")).as_deref() {
-                    Some("content_block_delta") => {
-                        let d = at(&ev, "delta")?;
-                        if text(at(d, "type")).as_deref() == Some("text_delta") {
-                            pieces.push(text(at(d, "text"))?);
-                        }
-                    }
-                    Some("message_start") => {
-                        tokens[0] = int(at(&ev, "message").and_then(|m| at(m, "usage")).and_then(|u| at(u, "input_tokens")))
-                    }
-                    Some("message_delta") => tokens[1] = int(at(&ev, "usage").and_then(|u| at(u, "output_tokens"))),
-                    _ => {}
-                },
-                "openai" => {
-                    if let Some(Json::List(choices)) = at(&ev, "choices") {
-                        for c in choices {
-                            if let Some(piece) = text(at(c, "delta").and_then(|d| at(d, "content"))).filter(|p| !p.is_empty()) {
-                                pieces.push(piece);
-                            }
-                        }
-                    }
-                    if let Some(u) = at(&ev, "usage").filter(|u| !matches!(u, Json::Null)) {
-                        tokens = [int(at(u, "prompt_tokens")), int(at(u, "completion_tokens"))];
-                    }
-                }
-                _ => {
-                    if let Some(piece) = text(at(&ev, "message").and_then(|m| at(m, "content"))).filter(|p| !p.is_empty()) {
-                        pieces.push(piece);
-                    }
-                    if matches!(at(&ev, "done"), Some(Json::Bool(true))) {
-                        tokens = [int(at(&ev, "prompt_eval_count")), int(at(&ev, "eval_count"))];
-                    }
-                }
-            }
+            pieces.extend(event(t, line, &mut tokens)?);
         }
     }
     if pieces.is_empty() {
         return None;
     }
     Some((pieces, tokens))
+}
+
+/// The pieces of text of one line of a streamed answer (server-sent
+/// events, or JSON lines for ollama); `tokens` gets the counts. None when
+/// the line is not valid.
+fn event(t: &Target, line: &str, tokens: &mut [i64; 2]) -> Option<Vec<String>> {
+    let mut pieces = Vec::new();
+    let mut line = line.trim();
+    if t.provider != "ollama" {
+        let Some(rest) = line.strip_prefix("data:") else { return Some(pieces) };
+        line = rest.trim();
+        if line == "[DONE]" || line.is_empty() {
+            return Some(pieces);
+        }
+    } else if line.is_empty() {
+        return Some(pieces);
+    }
+    let ev = crate::data::parse_json(line).ok()?;
+    match t.provider.as_str() {
+        "anthropic" => match text(at(&ev, "type")).as_deref() {
+            Some("content_block_delta") => {
+                let d = at(&ev, "delta")?;
+                if text(at(d, "type")).as_deref() == Some("text_delta") {
+                    pieces.push(text(at(d, "text"))?);
+                }
+            }
+            Some("message_start") => tokens[0] = int(at(&ev, "message").and_then(|m| at(m, "usage")).and_then(|u| at(u, "input_tokens"))),
+            Some("message_delta") => tokens[1] = int(at(&ev, "usage").and_then(|u| at(u, "output_tokens"))),
+            _ => {}
+        },
+        "openai" => {
+            if let Some(Json::List(choices)) = at(&ev, "choices") {
+                for c in choices {
+                    if let Some(piece) = text(at(c, "delta").and_then(|d| at(d, "content"))).filter(|p| !p.is_empty()) {
+                        pieces.push(piece);
+                    }
+                }
+            }
+            if let Some(u) = at(&ev, "usage").filter(|u| !matches!(u, Json::Null)) {
+                *tokens = [int(at(u, "prompt_tokens")), int(at(u, "completion_tokens"))];
+            }
+        }
+        _ => {
+            if let Some(piece) = text(at(&ev, "message").and_then(|m| at(m, "content"))).filter(|p| !p.is_empty()) {
+                pieces.push(piece);
+            }
+            if matches!(at(&ev, "done"), Some(Json::Bool(true))) {
+                *tokens = [int(at(&ev, "prompt_eval_count")), int(at(&ev, "eval_count"))];
+            }
+        }
+    }
+    Some(pieces)
+}
+
+/// The answer of `ask(..., stream: true)`: its pieces as they arrive
+/// (D164). Read once; a second loop over it gets the same pieces.
+struct Live {
+    t: Target,
+    url: String,
+    lines: std::io::BufReader<Box<dyn std::io::Read + Send + Sync>>,
+    pieces: Vec<String>,
+    tokens: [i64; 2],
+    done: bool,
+    span: u32,
+}
+
+impl Live {
+    fn no_text(&self) -> crate::state::Fail {
+        failure("AIError", self.span, &[("model", self.t.shown.clone()), ("detail", msg("detail.ai_no_text", &[]))])
+    }
+
+    /// Read until one more piece (true) or the end (false).
+    fn pull(&mut self) -> R<bool> {
+        if self.done {
+            return Ok(false);
+        }
+        let before = self.pieces.len();
+        loop {
+            let mut raw = Vec::new();
+            use std::io::BufRead;
+            match self.lines.read_until(b'\n', &mut raw) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) => {
+                    self.done = true;
+                    let timed_out = matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock);
+                    return Err(crate::http::lost(&self.url, timed_out, self.span));
+                }
+            }
+            let line = String::from_utf8_lossy(&raw).into_owned();
+            let mut tokens = self.tokens;
+            let Some(found) = event(&self.t, &line, &mut tokens) else {
+                self.done = true;
+                return Err(self.no_text());
+            };
+            self.tokens = tokens;
+            self.pieces.extend(found);
+            if self.pieces.len() > before {
+                return Ok(true);
+            }
+        }
+        self.done = true;
+        if self.pieces.is_empty() {
+            return Err(self.no_text());
+        }
+        record_usage(&format!("{}:{}", self.t.provider, self.t.name), self.tokens);
+        Ok(false)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_stream(
+    t: &Target,
+    system: &str,
+    messages: &[Message],
+    temperature: f64,
+    max_tokens: Option<i64>,
+    limit: f64,
+    retries: u32,
+    span: u32,
+) -> R<Val> {
+    let key = reveal(t, span)?;
+    let (url, body, headers) = request_of(t, key, system, messages, temperature, max_tokens, true);
+    let (reader, at) = crate::http::open("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, retries, span)?;
+    let mut live = Live { t: t.clone(), url: at, lines: std::io::BufReader::new(reader), pieces: Vec::new(), tokens: [0, 0], done: false, span };
+    // the first piece is read here, so that a model that cannot answer
+    // still goes to the next one of the fallback (D164)
+    live.pull()?;
+    let live = std::sync::Arc::new(Mutex::new(live));
+    Ok(crate::pipe::lazy(move || {
+        let live = live.clone();
+        let mut i = 0;
+        let items: crate::pipe::Items = Box::new(std::iter::from_fn(move || {
+            let mut l = live.lock().unwrap();
+            if i >= l.pieces.len() {
+                // what the program wrote so far shows while it waits
+                crate::state::flush();
+                match l.pull() {
+                    Ok(true) => {}
+                    Ok(false) => return None,
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+            i += 1;
+            Some(Ok(Val::str(l.pieces[i - 1].clone())))
+        }));
+        Ok(items)
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -819,10 +923,10 @@ pub fn ask(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
         let result = (|| -> R<Val> {
             let mut attempt = 0;
             loop {
-                let pieces = send(t, &system, &messages, temperature, max_tokens, stream, limit, retries, span)?;
                 if stream {
-                    return Ok(list(pieces.into_iter().map(Val::str).collect()));
+                    return send_stream(t, &system, &messages, temperature, max_tokens, limit, retries, span);
                 }
+                let pieces = send(t, &system, &messages, temperature, max_tokens, stream, limit, retries, span)?;
                 let answer = pieces.concat();
                 if !typed {
                     return Ok(Val::str(answer));

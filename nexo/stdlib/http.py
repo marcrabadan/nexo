@@ -107,13 +107,14 @@ def request(call, method: str, url, body=None, headers=None, timeout=None, retri
     return send(call, method, url, data, content_type, extra, limit, retries)
 
 
-def send(call, method, url, data, content_type, extra, limit, retries) -> Response:
+def send(call, method, url, data, content_type, extra, limit, retries, stream=False) -> Response:
     """The request, retried `retries` times after a network error or a 502,
-    503 or 504 (also used by `ask`)."""
+    503 or 504 (also used by `ask`). With `stream`, an answer that is not
+    an error comes back unread, as a Streaming (D164)."""
     attempt = 0
     while True:
         try:
-            return once(call, method, url, data, content_type, extra, limit)
+            return once(call, method, url, data, content_type, extra, limit, stream)
         except _Retry as r:
             if attempt >= retries:
                 raise r.failure
@@ -126,7 +127,23 @@ class _Retry(Exception):
         self.failure = failure
 
 
-def once(call, method, url, data, content_type, extra, limit) -> Response:
+class Streaming:
+    """An answer read line by line as it arrives (`ask(..., stream: true)`)."""
+
+    def __init__(self, call, resp, url: str):
+        self.call, self.resp, self.url = call, resp, url
+
+    def lines(self):
+        try:
+            for raw in self.resp:
+                yield raw.decode("utf-8", "replace")
+        except (socket.timeout, TimeoutError, ConnectionError, OSError) as exc:
+            raise failure("NetworkError", self.call.span, url=self.url, reason=network_reason(exc))
+        finally:
+            self.resp.close()
+
+
+def once(call, method, url, data, content_type, extra, limit, stream=False) -> Response:
     current = url
     for _ in range(MAX_REDIRECTS + 1):
         # every hop, so a redirect cannot lead outside the policy (D142)
@@ -139,7 +156,10 @@ def once(call, method, url, data, content_type, extra, limit) -> Response:
         for k, v in extra.items():
             req.add_header(k, v)
         try:
-            with _OPENER.open(req, timeout=limit) as resp:
+            resp = _OPENER.open(req, timeout=limit)
+            if stream:
+                return Streaming(call, resp, current)
+            with resp:
                 return Response(resp.status, resp.read(), lower(resp.headers), current)
         except urllib.error.HTTPError as exc:
             status = exc.code
