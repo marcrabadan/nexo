@@ -250,3 +250,10 @@ remote CI was not run for this historical snapshot. Current integration and
 remote validation are tracked in [Shield PR #18](https://github.com/marcrabadan/nexo/pull/18).
 
 For container deployment, see [Shield in Docker](shield-docker.md).
+
+Record field defaults follow the same dependency boundary as implicit functions:
+the declaring module and active caller ceilings remain in force until the
+default result is checked. Defaults cannot export unsealed callables, nested
+callables or constructor handles. Plain-data defaults remain supported; a root
+constructor does not acquire a dependency ceiling merely because it refers to
+a dependency. Both backends enforce this rule.

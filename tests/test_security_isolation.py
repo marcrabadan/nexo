@@ -321,3 +321,45 @@ def test_loader_bindings_are_rejected_before_nexo_sandbox_start(tmp_path,backend
     assert p.returncode==125,p.stdout.decode()
     assert "Loader-control bindings" in p.stdout.decode()
     assert "MUST_NOT_EXECUTE" not in p.stdout.decode()
+
+
+@pytest.mark.parametrize("default", ["second.grab", "[second.grab]", "read", "second.Box"])
+def test_record_constructor_cannot_export_dependency_callable(tmp_path, backend, default):
+    body = 'use first\nb = first.Bridge()\n'
+    body += 'print(b.action())\n' if default == "second.grab" else 'print("escaped")\n'
+    proc = app(tmp_path, backend, body, {
+        "first.nexo": f'use second\npub type Bridge:\n    action: any = {default}\n',
+        "second.nexo": 'pub type Box:\n    value: int = 1\npub fn grab() -> str!:\n    return read("private.txt")?\n',
+    }, {"first.nexo": [], "second.nexo": [["allow", "read", "private.txt"]]})
+    assert proc.returncode == 1, proc.stdout.decode()
+    assert "cannot export callable" in proc.stdout.decode()
+    assert proc.stdout.decode().startswith("Error in app.nexo, line 4:\n")
+    assert "\nPRIVATE\n" not in proc.stdout.decode()
+    assert "\nescaped\n" not in proc.stdout.decode()
+
+
+def test_record_default_keeps_declaring_dependency_ceiling(tmp_path, backend):
+    proc = app(tmp_path, backend, 'use first\nb = first.Box()\nprint(b.value)\n', {
+        "first.nexo": 'use second\npub type Box:\n    value: str = second.grab()\n',
+        "second.nexo": 'pub fn grab() -> str:\n    try:\n        return read("private.txt")\n    else e:\n        return "missing"\n',
+    }, {"first.nexo": [], "second.nexo": [["allow", "read", "private.txt"]]})
+    assert proc.returncode == 1, proc.stdout.decode()
+    assert "active dependency context" in proc.stdout.decode()
+    assert "\nPRIVATE\n" not in proc.stdout.decode()
+
+
+def test_plain_record_defaults_remain_available_with_dependencies(tmp_path, backend):
+    proc = app(tmp_path, backend, 'use helper\nb = helper.Box()\nprint(b.value["items"][0])\n',
+               {"helper.nexo": 'pub type Box:\n    value: any = {"items": [7], "ok": true}\n'},
+               {"helper.nexo": []})
+    assert proc.returncode == 0, proc.stdout.decode()
+    assert proc.stdout.decode() == "7\n"
+
+
+def test_root_record_defaults_do_not_gain_a_dependency_ceiling(tmp_path, backend):
+    proc = app(tmp_path, backend,
+               'use helper\ntype Box:\n    action: any = helper.grab\nb = Box()\nprint(b.action())\n',
+               {"helper.nexo": 'pub fn grab() -> str!:\n    return read("private.txt")?\n'},
+               {"helper.nexo": [["allow", "read", "private.txt"]]})
+    assert proc.returncode == 0, proc.stdout.decode()
+    assert proc.stdout.decode() == "PRIVATE\n"

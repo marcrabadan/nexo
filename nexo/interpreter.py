@@ -1319,7 +1319,15 @@ class Interpreter:
             if f.name in bound:
                 value = bound[f.name]
             elif f.default is not None:
-                value = self.eval(f.default, rtype.env)
+                if security_context.RULES is not None:
+                    # Defaults are implicit calls in their declaring module,
+                    # just like the compiler's guarded default-value frames.
+                    # Keep that ceiling active until the exported value is checked.
+                    with security_context.scope(f.default.span.file):
+                        value = self.eval(f.default, rtype.env)
+                        security_context.check_result(value, node.span)
+                else:
+                    value = self.eval(f.default, rtype.env)
             else:
                 value = None
             values[f.name] = self.field_store(f, self.store_value(self.conform(value, f.type, rtype.env, f.name, node.span)))
