@@ -121,14 +121,19 @@ def unseal(call, key: bytes, text: str, table: str) -> str:
 # ------------------------------------------------ the database's side
 
 def ensure_table(db, call) -> None:
-    whole = "BIGINT" if db.pg else "INTEGER"
-    db.execute(call, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ("tbl" TEXT NOT NULL, "row" {whole} NOT NULL, '
-               '"state" TEXT NOT NULL, PRIMARY KEY ("tbl", "row"))', [])
+    whole = "BIGINT" if db.pg or db.mysql else "INTEGER"
+    # MySQL keys a text of a known length (D170)
+    text = "VARCHAR(255)" if db.mysql else "TEXT"
+    db.execute(call, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ("tbl" {text} NOT NULL, "row" {whole} NOT NULL, '
+               f'"state" {text} NOT NULL, PRIMARY KEY ("tbl", "row"))', [])
 
 
 def set_state(db, call, table: str, key, state: str) -> None:
     """Mark a row restricted or erased (INSERT OR REPLACE in SQLite)."""
-    if db.pg:
+    if db.mysql:
+        db.execute(call, f'INSERT INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?) '
+                         'ON DUPLICATE KEY UPDATE "state" = VALUES("state")', [table, key, state])
+    elif db.pg:
         db.execute(call, f'INSERT INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?) '
                          'ON CONFLICT ("tbl", "row") DO UPDATE SET "state" = EXCLUDED."state"', [table, key, state])
     else:

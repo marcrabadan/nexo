@@ -214,10 +214,12 @@ pub enum Sql {
     Text(String),
 }
 
-/// The connection: an SQLite file or a PostgreSQL server (D163).
+/// The connection: an SQLite file, a PostgreSQL server (D163) or a MySQL
+/// server (D170).
 enum Backend {
     Sqlite(Conn),
     Pg(crate::pg::Connection),
+    Mysql(crate::mysql::Connection),
 }
 
 pub struct Database {
@@ -225,6 +227,8 @@ pub struct Database {
     conn: Mutex<Backend>,
     /// a PostgreSQL server: its own words in a few statements (D163)
     pg: bool,
+    /// a MySQL server (D170)
+    mysql: bool,
     synced: Mutex<Vec<String>>,
     depth: Mutex<usize>,
     /// encrypts @private columns (D116)
@@ -306,13 +310,30 @@ impl Database {
                 };
                 Ok(Rows { names: a.names, rows: a.rows, last_id })
             }
+            Backend::Mysql(c) => {
+                let a = c.execute(sql, params)?;
+                Ok(Rows { names: a.names, rows: a.rows, last_id: a.last_id })
+            }
             Backend::Sqlite(c) => run_sqlite(c.0, sql, params).map_err(|message| PgError { message, ..Default::default() }),
+        }
+    }
+
+    /// "sqlite", "pg" or "mysql": each server has its own words in a few
+    /// statements.
+    fn dialect(&self) -> &'static str {
+        if self.mysql {
+            "mysql"
+        } else if self.pg {
+            "pg"
+        } else {
+            "sqlite"
         }
     }
 
     /// A statement of nexo.db: on PostgreSQL with $n parameters, and inside
     /// a transaction in a savepoint of its own, so that a failed one leaves
-    /// the transaction as it was, as in SQLite (D163).
+    /// the transaction as it was, as in SQLite (D163). (A failed statement
+    /// leaves MySQL's transaction as it was too.)
     fn statement(&self, sql: &str, params: &[Sql]) -> Result<Rows, PgError> {
         if !self.pg {
             return self.run(sql, params);
@@ -420,7 +441,12 @@ fn run_sqlite(db: *mut ffi::sqlite3, sql: &str, params: &[Sql]) -> Result<Rows, 
 
 impl Database {
     fn fail(&self, e: PgError, info: Option<&TableInfo>, values: Option<&[(String, Val)]>, span: u32) -> crate::state::Fail {
-        let column = if self.pg {
+        let column = if self.mysql {
+            // ER_DUP_ENTRY: `Duplicate entry 'a' for key 'item.name'`, the key
+            // of a UNIQUE column being named after it
+            let key = e.message.strip_suffix('\'').and_then(|m| m.rsplit_once(" for key '")).map(|x| x.1);
+            key.map(|k| k.rsplit('.').next().unwrap_or(k).to_string()).filter(|_| e.code == "1062")
+        } else if self.pg {
             // unique_violation, with the detail `Key (email)=(...) already exists.`
             let found = e.detail.strip_prefix("Key (").and_then(|r| r.split_once(")=")).map(|x| x.0.to_string());
             found.filter(|_| e.code == "23505")
@@ -447,7 +473,12 @@ impl Database {
 
     /// Mark a row restricted or erased (INSERT OR REPLACE in SQLite).
     fn set_state(&self, table: &str, key: i64, state: &str, span: u32) -> R<()> {
-        let sql = if self.pg {
+        let sql = if self.mysql {
+            format!(
+                "INSERT INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE \"state\" = VALUES(\"state\")",
+                crate::privacy::TABLE
+            )
+        } else if self.pg {
             format!(
                 "INSERT INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?) ON CONFLICT (\"tbl\", \"row\") DO UPDATE SET \"state\" = EXCLUDED.\"state\"",
                 crate::privacy::TABLE
@@ -605,13 +636,33 @@ impl Database {
                 span,
             ));
         }
+        if self.mysql {
+            // a server checks that a foreign key's table exists: those this
+            // one points to are made first (D170)
+            self.synced.lock().unwrap().push(info.name.clone());
+            let tables: Vec<Arc<TableInfo>> = registry().lock().unwrap().tables.iter().map(|(_, t)| t.clone()).collect();
+            let mut out = Ok(());
+            for c in info.columns.iter().filter(|c| c.kind == "ref") {
+                let target = tables.iter().find(|t| Some(&t.rtype.name) == c.target.as_ref());
+                if let Some(target) = target.filter(|t| !self.synced.lock().unwrap().contains(&t.name)) {
+                    out = self.sync(me, target, span);
+                    if out.is_err() {
+                        break;
+                    }
+                }
+            }
+            self.synced.lock().unwrap().retain(|n| *n != info.name);
+            out?;
+        }
         let text = |r: &Vec<Sql>, i: usize| match &r[i] {
             Sql::Text(s) => Some(s.clone()),
             _ => None,
         };
-        let have: Vec<String> = if self.pg {
+        let keys = table_keys();
+        let have: Vec<String> = if self.pg || self.mysql {
+            let schema = if self.mysql { "DATABASE()" } else { "current_schema()" };
             self.exec(
-                "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?",
+                &format!("SELECT column_name FROM information_schema.columns WHERE table_schema = {schema} AND table_name = ?"),
                 &[Sql::Text(info.name.clone())],
                 span,
             )?
@@ -628,11 +679,11 @@ impl Database {
             }
         };
         if have.is_empty() {
-            self.exec(&create_sql(info, self.pg), &[], span)?;
+            self.exec(&create_sql(info, self.dialect(), &keys), &[], span)?;
         } else {
             for c in &info.columns {
                 if !have.contains(&c.name) {
-                    self.exec(&format!("ALTER TABLE {} ADD COLUMN {}", quote(&info.name), column_sql(info, c, true, self.pg)), &[], span)?;
+                    self.exec(&add_column_sql(info, c, self.dialect(), &keys), &[], span)?;
                 }
             }
         }
@@ -640,9 +691,11 @@ impl Database {
         if personal_table(info).is_some() {
             self.exec(
                 &format!(
-                    "CREATE TABLE IF NOT EXISTS \"{}\" (\"tbl\" TEXT NOT NULL, \"row\" {} NOT NULL, \"state\" TEXT NOT NULL, PRIMARY KEY (\"tbl\", \"row\"))",
+                    "CREATE TABLE IF NOT EXISTS \"{}\" (\"tbl\" {text} NOT NULL, \"row\" {} NOT NULL, \"state\" {text} NOT NULL, PRIMARY KEY (\"tbl\", \"row\"))",
                     crate::privacy::TABLE,
-                    if self.pg { "BIGINT" } else { "INTEGER" }
+                    if self.pg || self.mysql { "BIGINT" } else { "INTEGER" },
+                    // MySQL keys a text of a known length (D170)
+                    text = if self.mysql { "VARCHAR(255)" } else { "TEXT" }
                 ),
                 &[],
                 span,
@@ -702,39 +755,96 @@ fn pg_type(kind: &str) -> &'static str {
     }
 }
 
-/// The type `nexo db diff` shows.
-fn type_shown(kind: &str, pg: bool) -> String {
-    if pg {
-        pg_type(kind).replace(" COLLATE \"C\"", "")
-    } else {
-        sql_type(kind).to_string()
+/// The type of a column on MySQL (D170): texts compare byte by byte too; a
+/// unique text is a VARCHAR, since InnoDB indexes 3072 bytes of a column
+/// at most.
+fn mysql_type(kind: &str, unique: bool) -> &'static str {
+    match kind {
+        "int" | "ref" => "BIGINT",
+        "float" => "DOUBLE",
+        "bool" => "BOOLEAN",
+        "str" if unique => "VARCHAR(768) COLLATE utf8mb4_0900_bin",
+        _ => "LONGTEXT COLLATE utf8mb4_0900_bin",
     }
 }
 
-fn column_sql(info: &TableInfo, c: &Column, adding: bool, pg: bool) -> String {
-    if info.key.as_deref() == Some(&c.field) {
-        if pg {
-            return format!("{} BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY", quote(&c.name));
-        }
-        return format!("{} INTEGER PRIMARY KEY AUTOINCREMENT", quote(&c.name));
-    }
+fn column_type(c: &Column, dialect: &str) -> &'static str {
     let kind = if c.private { "str" } else { c.kind };
-    let mut s = format!("{} {}", quote(&c.name), if pg { pg_type(kind) } else { sql_type(kind) });
+    match dialect {
+        "mysql" => mysql_type(kind, c.unique),
+        "pg" => pg_type(kind),
+        _ => sql_type(kind),
+    }
+}
+
+/// The type `nexo db diff` shows.
+fn type_shown(c: &Column, dialect: &str) -> String {
+    match dialect {
+        "mysql" => {
+            // information_schema names the type alone: BOOLEAN is a TINYINT
+            let shown = column_type(c, dialect).split([' ', '(']).next().unwrap_or("");
+            if shown == "BOOLEAN" { "TINYINT".into() } else { shown.into() }
+        }
+        "pg" => pg_type(c.kind).replace(" COLLATE \"C\"", ""),
+        _ => sql_type(c.kind).to_string(),
+    }
+}
+
+fn column_sql(info: &TableInfo, c: &Column, adding: bool, dialect: &str) -> String {
+    if info.key.as_deref() == Some(&c.field) {
+        return match dialect {
+            "pg" => format!("{} BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY", quote(&c.name)),
+            "mysql" => format!("{} BIGINT AUTO_INCREMENT PRIMARY KEY", quote(&c.name)),
+            _ => format!("{} INTEGER PRIMARY KEY AUTOINCREMENT", quote(&c.name)),
+        };
+    }
+    let mut s = format!("{} {}", quote(&c.name), column_type(c, dialect));
     if !c.optional && !adding {
         s.push_str(" NOT NULL");
     }
     if c.unique && !adding {
         s.push_str(" UNIQUE");
     }
-    if let Some(t) = &c.target {
+    if let (Some(t), false) = (&c.target, dialect == "mysql") {
         s.push_str(&format!(" REFERENCES {}", quote(&t.to_lowercase())));
     }
     s
 }
 
-pub fn create_sql(info: &TableInfo, pg: bool) -> String {
-    let cols: Vec<String> = info.columns.iter().map(|c| column_sql(info, c, false, pg)).collect();
+/// MySQL reads a REFERENCES written on a column and ignores it: its foreign
+/// keys are constraints of the table, named fk_<table>_<column> so that a
+/// migration can drop them (D170).
+fn foreign_key(info: &TableInfo, c: &Column, keys: &[(String, String)]) -> String {
+    let target = c.target.clone().unwrap_or_default();
+    let key = keys.iter().find(|(n, _)| *n == target).map(|(_, k)| k.as_str()).unwrap_or("id");
+    format!(
+        "CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {} ({})",
+        quote(&format!("fk_{}_{}", info.name, c.name)),
+        quote(&c.name),
+        quote(&target.to_lowercase()),
+        quote(key)
+    )
+}
+
+/// The key column of each table type, for MySQL's foreign keys.
+fn table_keys() -> Vec<(String, String)> {
+    registry().lock().unwrap().tables.iter().filter_map(|(n, t)| t.key.clone().map(|k| (n.clone(), k))).collect()
+}
+
+pub fn create_sql(info: &TableInfo, dialect: &str, keys: &[(String, String)]) -> String {
+    let mut cols: Vec<String> = info.columns.iter().map(|c| column_sql(info, c, false, dialect)).collect();
+    if dialect == "mysql" {
+        cols.extend(info.columns.iter().filter(|c| c.kind == "ref").map(|c| foreign_key(info, c, keys)));
+    }
     format!("CREATE TABLE {} ({})", quote(&info.name), cols.join(", "))
+}
+
+fn add_column_sql(info: &TableInfo, c: &Column, dialect: &str, keys: &[(String, String)]) -> String {
+    let mut s = format!("ALTER TABLE {} ADD COLUMN {}", quote(&info.name), column_sql(info, c, true, dialect));
+    if dialect == "mysql" && c.kind == "ref" {
+        s.push_str(&format!(", ADD {}", foreign_key(info, c, keys)));
+    }
+    s
 }
 
 // ---------------------------------------------------------- conversions
@@ -1795,10 +1905,10 @@ pub fn group_aggregate(q: &Query, key: &Column, key_name: &str, kind: &str, tota
         sql.push_str(&format!(" WHERE {}", w.join(" AND ")));
     }
     sql.push_str(&format!(" GROUP BY {} ORDER BY MIN({})", quote(&key.name), quote(info.key.as_deref().unwrap_or("id"))));
-    // PostgreSQL adds bigints as numeric, which does not overflow
+    // PostgreSQL and MySQL add bigints as decimals, which do not overflow
     let rows = match db.statement(&sql, &q.params) {
         Ok(r) => r,
-        Err(e) if !db.pg && e.message.contains("integer overflow") => return Ok(None),
+        Err(e) if !db.pg && !db.mysql && e.message.contains("integer overflow") => return Ok(None),
         Err(e) => return Err(db.fail(e, None, None, span)),
     };
     let int = |s: &Sql| match s {
@@ -1826,7 +1936,7 @@ pub fn group_aggregate(q: &Query, key: &Column, key_name: &str, kind: &str, tota
 
 pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
     let path = url.as_str().ok_or_else(|| expects("connect", "str", url, span))?.to_string();
-    if path.starts_with("postgres://") || path.starts_with("postgresql://") {
+    if path.starts_with("postgres://") || path.starts_with("postgresql://") || path.starts_with("mysql://") {
         return connect_server(path, key, span);
     }
     if let Some(scheme) = path.split_once("://").map(|x| x.0) {
@@ -1854,6 +1964,7 @@ pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
         path,
         conn: Mutex::new(Backend::Sqlite(Conn(db))),
         pg: false,
+        mysql: false,
         synced: Mutex::new(Vec::new()),
         depth: Mutex::new(0),
         key: data_key,
@@ -1863,20 +1974,32 @@ pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
     Ok(native(d))
 }
 
-/// connect("postgres://user@host:port/database", key: password) (D163).
+/// A server's connection: PostgreSQL (D163) or MySQL (D170).
+fn open_server(path: &str, password: Option<&str>) -> Result<Backend, PgError> {
+    if path.starts_with("mysql://") {
+        return crate::mysql::Connection::open(path, password).map(Backend::Mysql);
+    }
+    crate::pg::Connection::open(path, password).map(Backend::Pg)
+}
+
+/// connect("postgres://user@host:port/database", key: password) (D163), or
+/// "mysql://..." (D170).
 fn connect_server(path: String, key: Option<V>, span: u32) -> R<Val> {
     let fail = |e: PgError, path: &str| failure("DatabaseError", span, &[("db", path.to_string()), ("reason", e.message)]);
-    let target = crate::pg::parse_url(&path).map_err(|e| fail(e, &path))?;
-    crate::policy::check("net", &target.host, span)?;
+    let mysql = path.starts_with("mysql://");
+    let host = if mysql { crate::mysql::parse_url(&path).map(|t| t.host) } else { crate::pg::parse_url(&path).map(|t| t.host) };
+    let host = host.map_err(|e| fail(e, &path))?;
+    crate::policy::check("net", &host, span)?;
     let mut password = None;
     if let Some(k) = key.filter(|k| !k.is_none()) {
         password = Some(crate::crypto::text_or_secret("connect", k, span)?);
     }
-    let conn = crate::pg::Connection::open(&path, password.as_deref()).map_err(|e| fail(e, &path))?;
+    let conn = open_server(&path, password.as_deref()).map_err(|e| fail(e, &path))?;
     let d = Database {
         path,
-        conn: Mutex::new(Backend::Pg(conn)),
-        pg: true,
+        conn: Mutex::new(conn),
+        pg: !mysql,
+        mysql,
         synced: Mutex::new(Vec::new()),
         depth: Mutex::new(0),
         key: password.as_deref().map(crate::privacy::data_key),
@@ -1886,6 +2009,16 @@ fn connect_server(path: String, key: Option<V>, span: u32) -> R<Val> {
 }
 
 // --------------------------------------------------------- transactions
+
+impl Database {
+    fn release(&self) -> &'static str {
+        if self.mysql {
+            "RELEASE SAVEPOINT"
+        } else {
+            "RELEASE"
+        }
+    }
+}
 
 pub struct Transaction {
     db: Val,
@@ -1910,6 +2043,20 @@ impl Native for Transaction {
 pub fn begin(db: V, span: u32) -> R<Val> {
     let Some(d) = db.native::<Database>() else { return Err(expects("transaction", "database", db, span)) };
     let level = *d.depth.lock().unwrap();
+    if d.mysql && level == 0 {
+        // MySQL commits what a transaction did when a table is created or
+        // changed: the tables are made before it begins (D170)
+        let (tables, owners): (Vec<Arc<TableInfo>>, Vec<(String, Val)>) = {
+            let r = registry().lock().unwrap();
+            (r.tables.iter().map(|(_, t)| t.clone()).collect(), r.db_of_type.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        };
+        for info in &tables {
+            let owner = owners.iter().find(|(k, _)| *k == info.rtype.name).map(|(_, v)| v);
+            if owner.is_none_or(|o| o.v().native::<Database>().is_some_and(|x| std::ptr::eq(x, d))) {
+                d.sync(db, info, span)?;
+            }
+        }
+    }
     let sql = if level == 0 { "BEGIN".to_string() } else { format!("SAVEPOINT nexo_{level}") };
     d.exec(&sql, &[], span)?;
     *d.depth.lock().unwrap() = level + 1;
@@ -1932,10 +2079,10 @@ pub fn end(tx: V, commit: bool, span: u32) -> R<Val> {
     if level == 0 {
         d.exec(if commit { "COMMIT" } else { "ROLLBACK" }, &[], span)?;
     } else if commit {
-        d.exec(&format!("RELEASE nexo_{level}"), &[], span)?;
+        d.exec(&format!("{} nexo_{level}", d.release()), &[], span)?;
     } else {
         d.exec(&format!("ROLLBACK TO nexo_{level}"), &[], span)?;
-        d.exec(&format!("RELEASE nexo_{level}"), &[], span)?;
+        d.exec(&format!("{} nexo_{level}", d.release()), &[], span)?;
     }
     Ok(Val::none())
 }
@@ -1949,7 +2096,12 @@ fn diff(db: &Database, infos: &[Arc<TableInfo>]) -> Result<(Vec<String>, Vec<Str
         _ => String::new(),
     };
     let pg = db.pg;
-    let tables = if pg {
+    let dialect = db.dialect();
+    let server = dialect != "sqlite";
+    let keys = table_keys();
+    let tables = if db.mysql {
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name <> 'nexo_migrations' ORDER BY table_name"
+    } else if pg {
         "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name <> 'nexo_migrations' ORDER BY table_name"
     } else {
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'nexo_migrations' ORDER BY name"
@@ -1958,10 +2110,19 @@ fn diff(db: &Database, infos: &[Arc<TableInfo>]) -> Result<(Vec<String>, Vec<Str
     let (mut changes, mut notes, mut drops) = (Vec::new(), Vec::new(), Vec::new());
     for info in infos {
         if !existing.contains(&info.name) {
-            changes.push(format!("{};", create_sql(info, pg)));
+            changes.push(format!("{};", create_sql(info, dialect, &keys)));
             continue;
         }
-        let have: Vec<(String, String)> = if pg {
+        let have: Vec<(String, String)> = if db.mysql {
+            db.run(
+                "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? ORDER BY ordinal_position",
+                &[Sql::Text(info.name.clone())],
+            )?
+            .rows
+            .iter()
+            .map(|r| (text(&r[0]), text(&r[1]).to_uppercase()))
+            .collect()
+        } else if pg {
             db.run(
                 "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 ORDER BY ordinal_position",
                 &[Sql::Text(info.name.clone())],
@@ -1979,33 +2140,49 @@ fn diff(db: &Database, infos: &[Arc<TableInfo>]) -> Result<(Vec<String>, Vec<Str
         };
         let names: Vec<&str> = info.columns.iter().map(|c| c.name.as_str()).collect();
         let old: Vec<&str> = have.iter().map(|(n, _)| n.as_str()).collect();
-        let key_type = if pg { "BIGINT" } else { "INTEGER" };
+        let key_type = if server { "BIGINT" } else { "INTEGER" };
         for c in &info.columns {
             if let Some((_, t)) = have.iter().find(|(n, _)| *n == c.name) {
                 let is_key = info.key.as_deref() == Some(&c.field) && t == key_type;
-                if *t != type_shown(c.kind, pg) && !is_key {
+                if *t != type_shown(c, dialect) && !is_key {
                     notes.push(msg(
                         "info.db_type_changed",
                         &[
                             ("table", info.name.clone()),
                             ("column", c.name.clone()),
                             ("was", t.clone()),
-                            ("now", type_shown(c.kind, pg)),
+                            ("now", type_shown(c, dialect)),
                         ],
                     ));
                 }
             }
         }
-        if pg && old.iter().any(|n| !names.contains(n)) {
+        if server && old.iter().any(|n| !names.contains(n)) {
+            // MySQL: the foreign key constraint of each column that has one
+            let fks: Vec<(String, String)> = if db.mysql {
+                db.run(
+                    "SELECT column_name, constraint_name FROM information_schema.key_column_usage WHERE table_schema = DATABASE() AND table_name = ? AND referenced_table_name IS NOT NULL",
+                    &[Sql::Text(info.name.clone())],
+                )?
+                .rows
+                .iter()
+                .map(|r| (text(&r[0]), text(&r[1])))
+                .collect()
+            } else {
+                Vec::new()
+            };
             for n in &old {
                 if !names.contains(n) {
+                    if let Some((_, fk)) = fks.iter().find(|(c, _)| c == n) {
+                        drops.push(format!("ALTER TABLE {} DROP FOREIGN KEY {};", quote(&info.name), quote(fk)));
+                    }
                     drops.push(format!("ALTER TABLE {} DROP COLUMN {};", quote(&info.name), quote(n)));
                 }
             }
         } else if old.iter().any(|n| !names.contains(n)) {
             // SQLite drops columns by building the table again
             let new = quote(&format!("{}_new", info.name));
-            let cols: Vec<String> = info.columns.iter().map(|c| column_sql(info, c, !old.contains(&c.name.as_str()), false)).collect();
+            let cols: Vec<String> = info.columns.iter().map(|c| column_sql(info, c, !old.contains(&c.name.as_str()), "sqlite")).collect();
             let kept: Vec<String> = names.iter().filter(|n| old.contains(n)).map(|n| quote(n)).collect();
             let kept = kept.join(", ");
             drops.push(format!("CREATE TABLE {new} ({});", cols.join(", ")));
@@ -2016,7 +2193,7 @@ fn diff(db: &Database, infos: &[Arc<TableInfo>]) -> Result<(Vec<String>, Vec<Str
         }
         for c in &info.columns {
             if !old.contains(&c.name.as_str()) {
-                changes.push(format!("ALTER TABLE {} ADD COLUMN {};", quote(&info.name), column_sql(info, c, true, pg)));
+                changes.push(format!("{};", add_column_sql(info, c, dialect, &keys)));
             }
         }
     }
@@ -2061,12 +2238,13 @@ pub fn run_command() -> i32 {
         );
         1
     };
+    let mysql = db_path.starts_with("mysql://");
     let pg = db_path.starts_with("postgres://") || db_path.starts_with("postgresql://");
-    let backend = if pg {
+    let backend = if pg || mysql {
         // the password: the variable of the program's key: secret("NAME")
         let password = std::env::var("NEXO_DB_KEY_NAME").ok().and_then(|n| std::env::var(n).ok());
-        match crate::pg::Connection::open(&db_path, password.as_deref()) {
-            Ok(c) => Backend::Pg(c),
+        match open_server(&db_path, password.as_deref()) {
+            Ok(c) => c,
             Err(e) => return fail(e),
         }
     } else {
@@ -2083,6 +2261,7 @@ pub fn run_command() -> i32 {
         path: db_path.clone(),
         conn: Mutex::new(backend),
         pg,
+        mysql,
         synced: Mutex::new(Vec::new()),
         depth: Mutex::new(0),
         key: None,
@@ -2120,7 +2299,10 @@ pub fn run_command() -> i32 {
         print!("{text}");
         return 0;
     }
-    if let Err(e) = db.run("CREATE TABLE IF NOT EXISTS nexo_migrations (name TEXT PRIMARY KEY)", &[]) {
+    // (MySQL keys a text of a known length; its DDL commits at once, so a
+    // migration that fails halfway keeps what ran, D170)
+    let name_type = if mysql { "VARCHAR(255)" } else { "TEXT" };
+    if let Err(e) = db.run(&format!("CREATE TABLE IF NOT EXISTS nexo_migrations (name {name_type} PRIMARY KEY)"), &[]) {
         return fail(e);
     }
     let done: Vec<String> = match db.run("SELECT name FROM nexo_migrations", &[]) {

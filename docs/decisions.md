@@ -2599,3 +2599,49 @@ url: "amqp://user@host/")`, `eventhub("clicks", namespace: "shop")`, and
   written from each protocol's specification, sharing no code with the
   clients; tests/test_stream_net.py runs producers and consumers on them
   in both phases. A check against a real Kafka is not part of the suite.
+
+**D170. MySQL.** Section 6 has "one way to connect, whether to a local
+file or a server"; D163 added PostgreSQL. `connect("mysql://user@host/
+shop", key: secret("DB_PASS"))` now opens a MySQL server, with the same
+tables, queries, transactions, privacy and migrations. Both phases speak
+MySQL's client/server protocol themselves (nexo/stdlib/mysql.py,
+compiler/runtime/src/mysql.rs):
+- The address is `mysql://user@host:port/database`; the user is `root`
+  when there is none, the port 3306, and the database must be named.
+  A password in the address is refused, as in D163: it goes in `key:`.
+- TLS is asked for whenever the server offers it, and its certificate is
+  checked against the host name; a server that does not offer it is
+  accepted only on this machine. Logins are caching_sha2_password (MySQL
+  8's own; its full login sends the password, so it needs TLS) and
+  mysql_native_password.
+- Every statement with values is a prepared statement with binary
+  parameters, so values never become SQL text. Rows come back as SQLite
+  gives them: whole DECIMALs (the sums of `group by`) as ints, which do
+  not overflow, as on PostgreSQL.
+- Each connection sets `sql_mode` with ANSI_QUOTES, so `"name"` quotes a
+  name in the SQL of nexo.db and in `db.sql`, as in SQLite and
+  PostgreSQL; PIPES_AS_CONCAT makes `||` join texts; strict mode makes a
+  value that does not fit an error; the time zone is UTC.
+- Types: int and ref BIGINT, float DOUBLE, bool BOOLEAN, texts LONGTEXT
+  with the collation utf8mb4_0900_bin, so that they compare and sort byte
+  by byte as in SQLite (MySQL 8.0 or later; MariaDB has no such
+  collation). InnoDB indexes 3072 bytes of a column at most, so a
+  `@unique` text is a VARCHAR(768): a longer one is a DatabaseError.
+  MySQL sorts a text by its first 1024 bytes (max_sort_length). The id
+  is `BIGINT AUTO_INCREMENT`.
+- MySQL ignores a REFERENCES written on a column: a `ref` is a table
+  constraint `fk_<table>_<column>`, and the tables it points to are
+  created first. `nexo db diff` drops that constraint before its column.
+- MySQL commits a transaction when a table is created or changed, so
+  `db.transaction` creates the program's tables before it begins; a
+  table so created stays after a rollback (empty). A migration's
+  statements are not undone when one fails halfway, for the same reason.
+  A failed statement leaves a transaction as it was, as in SQLite, so no
+  savepoint per statement is needed (D163 needs one on PostgreSQL).
+  Savepoints are released with `RELEASE SAVEPOINT`.
+- `null`s sort first ascending and last descending, as in SQLite; `in`
+  on a text is `INSTR`, as in SQLite.
+- tests/test_mysql.py starts a MySQL server with TLS (skipped when it is
+  not installed) and runs the db conformance cases, privacy,
+  transactions, migrations and the TLS checks in both phases, which send
+  the same SQL.
