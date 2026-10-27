@@ -72,7 +72,8 @@
     {
       "title": "nexo.ai",
       "entries": [
-        ["ask(instruction: str, input?, model?, creativity?, max?, timeout?, retries?, stream: bool?, profile: str?) -> T!", "Ask a language model; with a declared type the answer is that type."]
+        ["ask(instruction: str, input?, model?, creativity?, max?, timeout?, retries?, stream: bool?, profile: str?) -> T!", "Ask a language model; with a declared type the answer is that type."],
+        ["mcp(name: str) -> mcp", "The MCP server of [mcp.name] in nexo.toml; give it in an agent's tools to add its tools."]
       ]
     },
     {
@@ -119,6 +120,6 @@
   ],
   "unavailable": [
     "gcs", "blob", "kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket",
-    "mcp", "audit", "scan", "slack"
+    "audit", "scan", "slack"
   ]
 }

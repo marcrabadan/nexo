@@ -44,6 +44,7 @@ def reset() -> None:
     CONFIG.clear()
     PROFILES.clear()
     ALIASES.clear()
+    SERVERS.clear()
 
 
 # ---------------------------------------------------------------- blocks
@@ -121,18 +122,20 @@ def config_dir() -> Path:
     return (Path(base) if base else Path.home() / ".config") / "nexo"
 
 
-def read_toml(call, path: Path) -> tuple[dict, dict, dict]:
-    """The `[ai]`, `[ai.models]` and `[ai.prices]` tables of a nexo.toml
-    (D106, D165): lines `name = "text"` or `name = ["a", "b"]`; other tables
-    are skipped. Prices are (input, output) money per million tokens."""
+def read_toml(call, path: Path) -> tuple[dict, dict, dict, dict]:
+    """The `[ai]`, `[ai.models]`, `[ai.prices]` and `[mcp.NAME]` tables of a
+    nexo.toml (D106, D165, D166): lines `name = "text"` or `name = ["a",
+    "b"]`; other tables are skipped. Prices are (input, output) money per
+    million tokens; servers are {name: {"command": [...]}}."""
     table: dict = {}
     models: dict = {}
     prices: dict = {}
+    servers: dict = {}
     current = None
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return table, models, prices
+        return table, models, prices, servers
     for n, raw in enumerate(lines, 1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -140,6 +143,8 @@ def read_toml(call, path: Path) -> tuple[dict, dict, dict]:
         if line.startswith("["):
             name = line.strip("[]").strip()
             current = {"ai": table, "ai.models": models, "ai.prices": prices}.get(name)
+            if name.startswith("mcp.") and len(name) > 4:
+                current = servers.setdefault(name[4:], {})
             continue
         if current is None:
             continue
@@ -157,7 +162,7 @@ def read_toml(call, path: Path) -> tuple[dict, dict, dict]:
                 raise NexoError("ai_price", call.span, model=key, path=str(path))
             parsed = (amounts[0], amounts[1])
         current[key] = parsed
-    return table, models, prices
+    return table, models, prices, servers
 
 
 def money_text(text: str):
@@ -184,8 +189,8 @@ def toml_value(text: str):
     return None
 
 
-def file_layers(call) -> list[tuple[dict, dict, dict]]:
-    """[(table, models, prices)] of the project's nexo.toml and the user's ai.toml."""
+def file_layers(call) -> list[tuple[dict, dict, dict, dict]]:
+    """[(table, models, prices, servers)] of the project's nexo.toml and the user's ai.toml."""
     out = []
     start = Path(call.span.file).resolve().parent if call.span and call.span.file else Path.cwd()
     for d in [start, *start.parents]:
@@ -219,7 +224,7 @@ def resolve(call, options: dict) -> tuple[list[Target], dict]:
     layers.append(CONFIG)
     aliases = dict(ALIASES)
     prices: dict = {}
-    for table, models, file_prices in file_layers(call):
+    for table, models, file_prices, _ in file_layers(call):
         layer = dict(table)
         if isinstance(layer.get("key"), str):
             # in a file, key is the name of the environment variable
@@ -755,9 +760,12 @@ class Tool:
 class Agent(Native):
     type_name = "agent"
 
-    def __init__(self, name, model, tools, goal, max_steps, confirm):
+    def __init__(self, name, model, tools, goal, max_steps, confirm, servers=(), confirm_servers=()):
         self.name, self.model, self.tools, self.goal = name, model, tools, goal
         self.max_steps, self.confirm = max_steps, confirm
+        # MCP servers whose tools the agent also has, and those whose tools
+        # need approval (D166)
+        self.servers, self.confirm_servers = list(servers), list(confirm_servers)
 
     def repr(self) -> str:
         return f"agent({self.name})"
@@ -796,18 +804,27 @@ def b_ai_agent(call, name, **pairs):
         value = pairs.get(key, [])
         if not isinstance(value, list):
             raise expects(call, key, "list", value)
+    servers = []
     for fn in pairs.get("tools", []):
+        if isinstance(fn, McpServer):
+            servers.append(fn)
+            continue
         decl = getattr(fn, "decl", None)
         if id(decl) not in TOOLS or TOOLS[id(decl)][0] is not decl:
             raise NexoError("ai_not_tool", call.span, name=getattr(fn, "name", show(fn)))
         tools.append(Tool(fn, *TOOLS[id(decl)][1:]))
-    confirm = []
+    confirm, confirm_servers = [], []
     for fn in pairs.get("confirm", []):
+        if isinstance(fn, McpServer):
+            if fn not in servers:
+                raise NexoError("agent_confirm", call.span, name=fn.repr())
+            confirm_servers.append(fn.name)
+            continue
         n = getattr(fn, "name", show(fn))
         if not any(t.name == n for t in tools):
             raise NexoError("agent_confirm", call.span, name=n)
         confirm.append(n)
-    return Agent(name, model, tools, goal, steps, confirm)
+    return Agent(name, model, tools, goal, steps, confirm, servers, confirm_servers)
 
 
 def tools_json(t: Target, tools: list) -> list:
@@ -863,15 +880,20 @@ def agent_step(call, t: Target, system, messages, tools) -> tuple[str, list, Any
     return text, calls, message
 
 
-def use_tool(call, agent: Agent, name: str, args: dict) -> tuple[str, bool]:
+def use_tool(call, agent: Agent, tools: list, name: str, args: dict) -> tuple[str, bool]:
     """(the result for the model, whether it is an error)."""
-    import sys
     from .data import b_json_parse
     from ..types import repr_value
-    tool = next((x for x in agent.tools if x.name == name), None)
+    tool = next((x for x in tools if x.name == name), None)
     if tool is None:
         return f"There is no tool {name}.", True
     interp = call.interp
+    if isinstance(tool, McpTool):
+        if tool.server.name in agent.confirm_servers:
+            values = [(k, b_json_parse(call, json.dumps(v))) for k, v in args.items()]
+            if not confirmed(call, name, values):
+                return DENIED, False
+        return tool.server.call_tool(call, name, args)
     values = []
     try:
         for p, t in zip(tool.fn.decl.params, tool.types + [None] * len(tool.fn.decl.params)):
@@ -881,16 +903,8 @@ def use_tool(call, agent: Agent, name: str, args: dict) -> tuple[str, bool]:
                 return f"Error: {errors.msg('detail.need_param', name=p.name)}", True
     except NexoFailure as f:
         return f"Error: {f.error.message}", True
-    if name in agent.confirm:
-        shown = f"{name}(" + ", ".join(f"{n}: {repr_value(v)}" for n, v in values) + ")"
-        interp.write(errors.msg("info.ai_confirm", call=shown))
-        try:
-            interp.out.flush()
-        except Exception:
-            pass
-        answer = sys.stdin.readline().strip().lower()
-        if answer not in ("y", "yes"):
-            return DENIED, False
+    if name in agent.confirm and not confirmed(call, name, values):
+        return DENIED, False
     try:
         result = interp.bind_value(interp.call(tool.fn, values, tool.fn.decl))
     except NexoFailure as f:
@@ -898,22 +912,49 @@ def use_tool(call, agent: Agent, name: str, args: dict) -> tuple[str, bool]:
     return (result if isinstance(result, str) else show_hidden(result)), False
 
 
+def confirmed(call, name: str, values: list) -> bool:
+    """Whether the user allows a call of a tool in `confirm` (D109)."""
+    from ..types import repr_value
+    interp = call.interp
+    shown = f"{name}(" + ", ".join(f"{n}: {repr_value(v)}" for n, v in values) + ")"
+    interp.write(errors.msg("info.ai_confirm", call=shown))
+    try:
+        interp.out.flush()
+    except Exception:
+        pass
+    return sys.stdin.readline().strip().lower() in ("y", "yes")
+
+
+def agent_tools(call, agent: Agent) -> list:
+    """The agent's @tool functions and the tools of its MCP servers."""
+    tools = list(agent.tools)
+    for server in agent.servers:
+        tools += server.ensure(call)
+    seen = set()
+    for x in tools:
+        if x.name in seen:
+            raise failure("AIError", call.span, key="AIError.tool_twice", agent=agent.name, name=x.name)
+        seen.add(x.name)
+    return tools
+
+
 def run_agent(call, agent: Agent, input):
     """`agent.handle(input)` (D109): the conversation with the model, using
     its tools, until it answers without asking for one."""
     targets, _ = resolve(call, {"model": agent.model})
     t = targets[0]
+    tools = agent_tools(call, agent)
     system = "\n\n".join(x for x in (agent.goal, GUARD if input is not None else "") if x)
     content = "" if input is None else f"<input>\n{show_hidden(call.interp.bind_value(input))}\n</input>"
     messages: list = [{"role": "user", "content": content}]
     for _ in range(agent.max_steps):
-        text, calls, message = agent_step(call, t, system, messages, agent.tools)
+        text, calls, message = agent_step(call, t, system, messages, tools)
         if not calls:
             return text
         messages.append(message)
         results = []
         for cid, name, args in calls:
-            out, is_error = use_tool(call, agent, name, args)
+            out, is_error = use_tool(call, agent, tools, name, args)
             if t.provider == "anthropic":
                 r = {"type": "tool_result", "tool_use_id": cid, "content": out}
                 if is_error:
@@ -929,7 +970,141 @@ def run_agent(call, agent: Agent, input):
 
 
 def b_mcp(call, name):
-    raise NexoError("not_supported", call.span, what='"mcp(...)"')
+    """`mcp("name")`: the MCP server of [mcp.name] in nexo.toml (D166)."""
+    from .core import expects
+    if not isinstance(name, str):
+        raise expects(call, "mcp", "str", name)
+    if name not in SERVERS:
+        SERVERS[name] = McpServer(name)
+    return SERVERS[name]
+
+
+# ------------------------------------------------------------ MCP (D166)
+
+SERVERS: dict = {}
+MCP_VERSION = "2025-06-18"
+MCP_WAIT = 60.0
+
+
+class McpTool:
+    """A tool an MCP server offers to an agent."""
+
+    def __init__(self, server, name: str, description: str, schema: dict):
+        self.server, self.name, self.description, self.schema = server, name, description, schema
+
+    def params(self) -> dict:
+        return self.schema
+
+
+class McpServer(Native):
+    """A Model Context Protocol server, started the first time an agent
+    needs its tools and kept until the program ends."""
+    type_name = "mcp"
+
+    def __init__(self, name: str):
+        self.name = name
+        self.proc = None
+        self.tools: list | None = None
+        self.buf = b""
+        self.last = 0
+
+    def repr(self) -> str:
+        return f'mcp("{self.name}")'
+
+    def fail(self, call, detail_key: str, **args):
+        return failure("AIError", call.span, key="AIError.mcp", name=self.name,
+                       detail=errors.msg(detail_key, **args))
+
+    def ensure(self, call) -> list:
+        if self.tools is not None:
+            return self.tools
+        import subprocess
+        command = None
+        for _, _, _, servers in file_layers(call):
+            if self.name in servers:
+                command = servers[self.name].get("command")
+                break
+        if not isinstance(command, list) or not command:
+            raise failure("AIError", call.span, key="AIError.mcp_unknown", name=self.name)
+        from .policy import check
+        check(call, "shell", " ".join(command))
+        folder = Path(call.span.file).resolve().parent if call.span and call.span.file else Path.cwd()
+        try:
+            self.proc = subprocess.Popen(command, cwd=folder, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL)
+        except OSError:
+            raise self.fail(call, "detail.mcp_start")
+        self.request(call, "initialize", {"protocolVersion": MCP_VERSION, "capabilities": {},
+                                          "clientInfo": {"name": "nexo", "version": "0.1"}})
+        self.send(call, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        tools, cursor = [], None
+        while True:
+            result = self.request(call, "tools/list", {} if cursor is None else {"cursor": cursor})
+            for t in result.get("tools") or []:
+                if not isinstance(t, dict) or not isinstance(t.get("name"), str):
+                    raise self.fail(call, "detail.mcp_answer")
+                schema = t.get("inputSchema") if isinstance(t.get("inputSchema"), dict) else {"type": "object"}
+                tools.append(McpTool(self, t["name"], t.get("description") or "", schema))
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
+        self.tools = tools
+        return tools
+
+    def send(self, call, message: dict) -> None:
+        try:
+            self.proc.stdin.write(json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode() + b"\n")
+            self.proc.stdin.flush()
+        except OSError:
+            raise self.fail(call, "detail.mcp_closed")
+
+    def line(self, call, deadline: float) -> bytes:
+        import selectors
+        import time
+        fd = self.proc.stdout.fileno()
+        with selectors.DefaultSelector() as sel:
+            sel.register(fd, selectors.EVENT_READ)
+            while b"\n" not in self.buf:
+                left = deadline - time.monotonic()
+                if left <= 0 or not sel.select(left):
+                    raise self.fail(call, "detail.mcp_wait", seconds=int(MCP_WAIT))
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    raise self.fail(call, "detail.mcp_closed")
+                self.buf += chunk
+        line, _, self.buf = self.buf.partition(b"\n")
+        return line
+
+    def request(self, call, method: str, params: dict) -> dict:
+        import time
+        self.last += 1
+        rid = self.last
+        self.send(call, {"jsonrpc": "2.0", "id": rid, "method": method, "params": params})
+        deadline = time.monotonic() + MCP_WAIT
+        while True:
+            raw = self.line(call, deadline)
+            if not raw.strip():
+                continue
+            try:
+                message = json.loads(raw)
+            except ValueError:
+                raise self.fail(call, "detail.mcp_answer")
+            if not isinstance(message, dict) or message.get("id") != rid or "method" in message:
+                # notifications and requests of the server are not answers
+                continue
+            if isinstance(message.get("error"), dict):
+                raise self.fail(call, "detail.mcp_error", message=str(message["error"].get("message", "")))
+            result = message.get("result")
+            if not isinstance(result, dict):
+                raise self.fail(call, "detail.mcp_answer")
+            return result
+
+    def call_tool(self, call, name: str, args: dict) -> tuple[str, bool]:
+        result = self.request(call, "tools/call", {"name": name, "arguments": args})
+        content = result.get("content") or []
+        text = "\n".join(c["text"] for c in content if isinstance(c, dict) and c.get("type") == "text"
+                         and isinstance(c.get("text"), str))
+        return text, bool(result.get("isError"))
 
 
 def exports() -> dict:
@@ -1004,7 +1179,7 @@ def usage_command() -> int:
         return 0
     prices: dict = {}
     try:
-        for _, _, file_prices in file_layers(At(None, None)):
+        for _, _, file_prices, _ in file_layers(At(None, None)):
             for k, v in file_prices.items():
                 prices.setdefault(k, v)
     except NexoError as exc:

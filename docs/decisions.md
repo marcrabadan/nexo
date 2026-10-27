@@ -2442,3 +2442,29 @@ written, and D107 left them out because they change.
   far)". A call that starts under the budget is not stopped halfway.
 - `nexo ai usage` adds the spend of each day and model whose price is
   known, in whole cents (half to even).
+
+**D166. MCP servers as tools of an agent.** Section 8 says "any MCP
+server is connected with `tools = [mcp("name")]`"; where the server is
+and how it is reached is not written.
+- A server is declared in nexo.toml (or the user's ai.toml, D106) as a
+  table `[mcp.NAME]` with `command = ["program", "argument", ...]`; it
+  speaks the Model Context Protocol on its standard input and output
+  (one JSON-RPC message per line, as `nexo mcp` does, D146). Servers over
+  the network are not part of this edition. `mcp("NAME")` is a value
+  that names it; the same name is the same server in the whole program.
+- The server starts the first time an agent's `handle` needs it, in the
+  program's folder, with its errors discarded: `initialize`, then
+  `tools/list` (every page). It stays for the rest of the program.
+  Starting it is running a command, so the program policy checks `shell`
+  with the command (D142): a program that uses one needs `allow shell`.
+- Its tools join the agent's @tool functions, described to the model
+  with the server's own name, description and input schema. A call goes
+  to the server as `tools/call`; the model gets the text of the answer,
+  marked as an error when the server says so. Two tools with one name
+  are an AIError. `confirm = [mcp("NAME")]` asks before each call of a
+  tool of that server, showing its arguments.
+- A server that cannot be started, closes its output, answers with an
+  error or with something that is not an answer, or does not answer in
+  60 seconds is an AIError that names it; a name without a table is an
+  AIError that says how to add it. An agent's tools inherit the program's
+  policy inside the program; a server is another program, with its own.

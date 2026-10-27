@@ -5,7 +5,7 @@
 //! by `nexo ai setup`. Phase 0's ai.py, line by line.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use nexo_diag::{msg, suggest, Diagnostic};
 
@@ -43,6 +43,7 @@ pub fn release_all() {
     let old = std::mem::take(&mut *PROFILES.lock().unwrap());
     drop(old);
     ALIASES.lock().unwrap().clear();
+    release_servers();
 }
 
 fn get<'a>(layer: &'a Layer, key: &str) -> Option<&'a Val> {
@@ -201,16 +202,18 @@ fn json_val(j: &Json) -> Val {
 /// currency (D165).
 pub type Price = (crate::dec::Dec, crate::dec::Dec, String);
 
-/// The `[ai]`, `[ai.models]` and `[ai.prices]` tables of a nexo.toml (D106,
-/// D165).
-type Toml = (Layer, Vec<(String, String)>, Vec<(String, Price)>);
+/// The `[ai]`, `[ai.models]`, `[ai.prices]` and `[mcp.NAME]` tables of a
+/// nexo.toml (D106, D165, D166); a server is its command.
+type Toml = (Layer, Vec<(String, String)>, Vec<(String, Price)>, Vec<(String, Vec<String>)>);
 
 fn read_toml(path: &Path) -> Result<Toml, Diagnostic> {
     let mut table = Vec::new();
     let mut models = Vec::new();
     let mut prices: Vec<(String, Price)> = Vec::new();
-    let Ok(text) = std::fs::read_to_string(path) else { return Ok((table, models, prices)) };
-    let mut current = 0; // 0 none, 1 [ai], 2 [ai.models], 3 [ai.prices]
+    let mut servers: Vec<(String, Vec<String>)> = Vec::new();
+    let Ok(text) = std::fs::read_to_string(path) else { return Ok((table, models, prices, servers)) };
+    let mut current = 0; // 0 none, 1 [ai], 2 [ai.models], 3 [ai.prices], 4 [mcp.NAME]
+    let mut server = String::new();
     for (n, raw) in text.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -222,6 +225,10 @@ fn read_toml(path: &Path) -> Result<Toml, Diagnostic> {
                 "ai" => 1,
                 "ai.models" => 2,
                 "ai.prices" => 3,
+                n if n.len() > 4 && n.starts_with("mcp.") => {
+                    server = n[4..].to_string();
+                    4
+                }
                 _ => 0,
             };
             continue;
@@ -238,6 +245,15 @@ fn read_toml(path: &Path) -> Result<Toml, Diagnostic> {
         if current == 1 {
             table.retain(|(k, _): &(String, Val)| k != key);
             table.push((key.to_string(), json_val(&parsed)));
+        } else if current == 4 {
+            if key == "command" {
+                let words: Vec<String> = match &parsed {
+                    Json::List(items) => items.iter().filter_map(|i| if let Json::Str(t) = i { Some(t.clone()) } else { None }).collect(),
+                    _ => Vec::new(),
+                };
+                servers.retain(|(n, _)| *n != server);
+                servers.push((server.clone(), words));
+            }
         } else if current == 3 {
             let key = key.trim_matches('"').to_string();
             let amounts: Vec<Option<(crate::dec::Dec, String)>> = match &parsed {
@@ -258,7 +274,7 @@ fn read_toml(path: &Path) -> Result<Toml, Diagnostic> {
             models.push((key.to_string(), s));
         }
     }
-    Ok((table, models, prices))
+    Ok((table, models, prices, servers))
 }
 
 /// `15 EUR` (or `0.15 EUR`) as an amount and a currency.
@@ -333,7 +349,7 @@ fn resolve(model: Option<V>, profile: Option<V>, span: u32) -> R<Vec<Target>> {
     layers.push(CONFIG.lock().unwrap().clone());
     let mut aliases: Vec<(String, String)> = ALIASES.lock().unwrap().clone();
     let mut prices: Vec<(String, Price)> = Vec::new();
-    for (table, models, file_prices) in file_layers(span)? {
+    for (table, models, file_prices, _) in file_layers(span)? {
         for (k, v) in file_prices {
             if !prices.iter().any(|(m, _)| *m == k) {
                 prices.push((k, v));
@@ -475,7 +491,7 @@ pub fn usage_spent(model: &str, input: i64, output: i64) -> Result<Option<String
     }
     let here = std::env::current_dir().unwrap_or_default();
     let layers = layers_from(&here).map_err(|d| d.text())?;
-    for (_, _, prices) in layers {
+    for (_, _, prices, _) in layers {
         if let Some((_, p)) = prices.iter().find(|(m, _)| m == model) {
             return Ok(Some(cents(&cost(input, output, p), &p.2)));
         }
@@ -1227,11 +1243,14 @@ fn field_schema(d: &TypeDesc, depth: usize) -> String {
     }
 }
 
+#[derive(Clone)]
 struct Tool {
     func: Val,
     name: String,
     description: String,
     types: Vec<Val>,
+    /// a tool of an MCP server: the server and its JSON schema (D166)
+    mcp: Option<(Arc<Mutex<Server>>, String)>,
 }
 
 impl Tool {
@@ -1247,6 +1266,9 @@ impl Tool {
     }
 
     fn params_schema(&self) -> String {
+        if let Some((_, schema)) = &self.mcp {
+            return schema.clone();
+        }
         let mut props = Vec::new();
         let mut required = Vec::new();
         for (i, p) in self.params().iter().enumerate() {
@@ -1271,6 +1293,10 @@ pub struct Agent {
     goal: String,
     max_steps: i64,
     confirm: Vec<String>,
+    /// MCP servers whose tools the agent also has, and the names of those
+    /// whose tools need approval (D166)
+    servers: Vec<Arc<Mutex<Server>>>,
+    confirm_servers: Vec<String>,
 }
 
 impl Native for Agent {
@@ -1343,18 +1369,31 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let tool_values = list_of("tools")?;
     let confirm_values = list_of("confirm")?;
     let mut tools = Vec::new();
+    let mut servers = Vec::new();
     {
         let registry = TOOLS.lock().unwrap();
         for f in &tool_values {
+            if let Some(m) = f.v().native::<McpServer>() {
+                servers.push(m.server.clone());
+                continue;
+            }
             let found = fn_key(f.v()).and_then(|k| registry.iter().find(|(key, _, _)| *key == k));
             let Some((_, desc, types)) = found else {
                 return Err(diag(Diagnostic::new_spanless("ai_not_tool").arg("name", func_name(f.v())), span));
             };
-            tools.push(Tool { func: f.clone(), name: func_name(f.v()), description: desc.clone(), types: types.clone() });
+            tools.push(Tool { func: f.clone(), name: func_name(f.v()), description: desc.clone(), types: types.clone(), mcp: None });
         }
     }
     let mut confirm = Vec::new();
+    let mut confirm_servers = Vec::new();
     for f in &confirm_values {
+        if let Some(m) = f.v().native::<McpServer>() {
+            if !servers.iter().any(|s| Arc::ptr_eq(s, &m.server)) {
+                return Err(diag(Diagnostic::new_spanless("agent_confirm").arg("name", m.repr()), span));
+            }
+            confirm_servers.push(m.name.clone());
+            continue;
+        }
         let n = func_name(f.v());
         if !tools.iter().any(|t| t.name == n) {
             return Err(diag(Diagnostic::new_spanless("agent_confirm").arg("name", n), span));
@@ -1362,7 +1401,7 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
         confirm.push(n);
     }
     let name = args.first().and_then(|n| n.as_str()).unwrap_or("").to_string();
-    Ok(native(Agent { name, model, tools, goal, max_steps, confirm }))
+    Ok(native(Agent { name, model, tools, goal, max_steps, confirm, servers, confirm_servers }))
 }
 
 /// JSON text of a parsed value (to send back what the model sent).
@@ -1534,10 +1573,25 @@ fn clone_json(j: &Json) -> Json {
 }
 
 /// (the result for the model, whether it is an error).
-fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, bool)> {
-    let Some(tool) = agent.tools.iter().find(|x| x.name == name) else {
+fn use_tool(agent: &Agent, tools: &[Tool], name: &str, args: &Json, span: u32) -> R<(String, bool)> {
+    let Some(tool) = tools.iter().find(|x| x.name == name) else {
         return Ok((format!("There is no tool {name}."), true));
     };
+    if let Some((server, _)) = &tool.mcp {
+        let server_name = server.lock().unwrap().name.clone();
+        if agent.confirm_servers.contains(&server_name) {
+            let mut values = Vec::new();
+            if let Json::Obj(pairs) = args {
+                for (k, v) in pairs {
+                    values.push((k.clone(), crate::data::json_parse(&dump(v), None, span)?));
+                }
+            }
+            if !confirmed(name, &values) {
+                return Ok((DENIED.to_string(), false));
+            }
+        }
+        return server.lock().unwrap().call_tool(name, args, span);
+    }
     let message_of_failure = |f: crate::state::Fail| -> R<(String, bool)> {
         let Some(err) = crate::state::pending_error() else { return Err(f) };
         let text = match err.get() {
@@ -1566,18 +1620,8 @@ fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, boo
         }
     }
     if agent.confirm.iter().any(|c| c == name) {
-        let shown: Vec<String> =
-            values.iter().zip(&names).map(|(v, n)| format!("{}: {}", n.unwrap_or(""), repr(v.v()))).collect();
-        let call = format!("{name}({})", shown.join(", "));
-        crate::state::write_out(&msg("info.ai_confirm", &[("call", call)]));
-        crate::state::flush();
-        let line = crate::repl::input_line(|| {
-            let mut line = String::new();
-            let _ = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line);
-            line.trim().to_string()
-        });
-        let answer = line.trim().to_lowercase();
-        if !matches!(answer.as_str(), "y" | "yes") {
+        let shown: Vec<(String, Val)> = values.iter().zip(&names).map(|(v, n)| (n.unwrap_or("").to_string(), v.clone())).collect();
+        if !confirmed(name, &shown) {
             return Ok((DENIED.to_string(), false));
         }
     }
@@ -1593,12 +1637,46 @@ fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, boo
     })
 }
 
+/// Whether the user allows a call of a tool in `confirm` (D109).
+fn confirmed(name: &str, values: &[(String, Val)]) -> bool {
+    let shown: Vec<String> = values.iter().map(|(n, v)| format!("{n}: {}", repr(v.v()))).collect();
+    let call = format!("{name}({})", shown.join(", "));
+    crate::state::write_out(&msg("info.ai_confirm", &[("call", call)]));
+    crate::state::flush();
+    let line = crate::repl::input_line(|| {
+        let mut line = String::new();
+        let _ = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line);
+        line.trim().to_string()
+    });
+    matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+/// The agent's @tool functions and the tools of its MCP servers.
+fn agent_tools(agent: &Agent, span: u32) -> R<Vec<Tool>> {
+    let mut tools = agent.tools.clone();
+    for s in &agent.servers {
+        let found = s.lock().unwrap().ensure(span)?;
+        for (name, description, schema) in found {
+            tools.push(Tool { func: Val::none(), name, description, types: Vec::new(), mcp: Some((s.clone(), schema)) });
+        }
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for t in &tools {
+        if seen.contains(&t.name.as_str()) {
+            return Err(failure_as("AIError", "AIError.tool_twice", span, &[("agent", agent.name.clone()), ("name", t.name.clone())]));
+        }
+        seen.push(&t.name);
+    }
+    Ok(tools)
+}
+
 /// `agent.handle(input)` (D109): the conversation with the model, using
 /// its tools, until it answers without asking for one.
 fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
     let model = agent.model.as_ref().map(|m| Val::str(m.clone()));
     let targets = resolve(model.as_ref().map(|m| m.v()), None, span)?;
     let t = &targets[0];
+    let tools = agent_tools(agent, span)?;
     let has_input = !input.is_none();
     let system: Vec<&str> = [agent.goal.as_str(), if has_input { GUARD } else { "" }].into_iter().filter(|x| !x.is_empty()).collect();
     let system = system.join("\n\n");
@@ -1610,14 +1688,14 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
     };
     let mut messages = vec![obj(&[("role", js("user")), ("content", js(&content))])];
     for _ in 0..agent.max_steps {
-        let (text, calls, message) = agent_step(t, &system, &messages, &agent.tools, span)?;
+        let (text, calls, message) = agent_step(t, &system, &messages, &tools, span)?;
         if calls.is_empty() {
             return Ok(Val::str(text));
         }
         messages.push(message);
         let mut results = Vec::new();
         for (id, name, args) in &calls {
-            let (out, is_error) = use_tool(agent, name, args, span)?;
+            let (out, is_error) = use_tool(agent, &tools, name, args, span)?;
             match t.provider.as_str() {
                 "anthropic" => {
                     let mut r = vec![("type", js("tool_result")), ("tool_use_id", js(id)), ("content", js(&out))];
@@ -1637,6 +1715,222 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
     Err(failure_as("AIError", "AIError.steps", span, &[("agent", agent.name.clone()), ("n", agent.max_steps.to_string())]))
 }
 
-pub fn mcp(span: u32) -> R<Val> {
-    Err(diag(Diagnostic::new_spanless("not_supported").arg("what", "\"mcp(...)\""), span))
+// ------------------------------------------------------------ MCP (D166)
+
+const MCP_VERSION: &str = "2025-06-18";
+const MCP_WAIT: u64 = 60;
+
+/// The MCP servers of the program, by name: started the first time an
+/// agent needs their tools and kept until the program ends.
+static SERVERS: Mutex<Vec<(String, Arc<Mutex<Server>>)>> = Mutex::new(Vec::new());
+
+/// `mcp("name")`: the MCP server of [mcp.name] in nexo.toml (D166).
+pub fn mcp(name: V, span: u32) -> R<Val> {
+    let Some(n) = name.as_str() else { return Err(expects("mcp", "str", name, span)) };
+    let mut servers = SERVERS.lock().unwrap();
+    let server = match servers.iter().find(|(k, _)| k == n) {
+        Some((_, s)) => s.clone(),
+        None => {
+            let s = Arc::new(Mutex::new(Server { name: n.to_string(), child: None, stdin: None, lines: None, tools: None, last: 0 }));
+            servers.push((n.to_string(), s.clone()));
+            s
+        }
+    };
+    Ok(native(McpServer { name: n.to_string(), server }))
+}
+
+pub struct McpServer {
+    name: String,
+    server: Arc<Mutex<Server>>,
+}
+
+impl Native for McpServer {
+    fn type_name(&self) -> &str {
+        "mcp"
+    }
+    fn repr(&self) -> String {
+        format!("mcp(\"{}\")", self.name)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// (name, description, JSON schema) of a tool of a server.
+type McpTool = (String, String, String);
+
+pub struct Server {
+    name: String,
+    child: Option<std::process::Child>,
+    stdin: Option<std::process::ChildStdin>,
+    /// the lines the server writes; None once it closes its output
+    lines: Option<std::sync::mpsc::Receiver<Option<Vec<u8>>>>,
+    tools: Option<Vec<McpTool>>,
+    last: i64,
+}
+
+impl Server {
+    fn fail(&self, detail: String, span: u32) -> crate::state::Fail {
+        failure_as("AIError", "AIError.mcp", span, &[("name", self.name.clone()), ("detail", detail)])
+    }
+
+    fn ensure(&mut self, span: u32) -> R<Vec<McpTool>> {
+        if let Some(t) = &self.tools {
+            return Ok(t.clone());
+        }
+        let file = crate::state::program().file;
+        let folder = std::fs::canonicalize(file)
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        let mut command = None;
+        for (_, _, _, servers) in layers_from(&folder).map_err(|d| diag(d, span))? {
+            if let Some((_, c)) = servers.into_iter().find(|(n, _)| *n == self.name) {
+                command = Some(c);
+                break;
+            }
+        }
+        let Some(command) = command.filter(|c| !c.is_empty()) else {
+            return Err(failure_as("AIError", "AIError.mcp_unknown", span, &[("name", self.name.clone())]));
+        };
+        crate::policy::check("shell", &command.join(" "), span)?;
+        let child = std::process::Command::new(&command[0])
+            .args(&command[1..])
+            .current_dir(&folder)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(_) => return Err(self.fail(msg("detail.mcp_start", &[]), span)),
+        };
+        self.stdin = child.stdin.take();
+        let out = child.stdout.take();
+        let (tx, rx) = std::sync::mpsc::channel();
+        if let Some(out) = out {
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(out);
+                loop {
+                    let mut line = Vec::new();
+                    match std::io::BufRead::read_until(&mut reader, b'\n', &mut line) {
+                        Ok(0) | Err(_) => {
+                            let _ = tx.send(None);
+                            return;
+                        }
+                        Ok(_) => {
+                            if tx.send(Some(line)).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        self.lines = Some(rx);
+        self.child = Some(child);
+        let client = obj(&[("name", js("nexo")), ("version", js("0.1"))]);
+        self.request("initialize", &obj(&[("protocolVersion", js(MCP_VERSION)), ("capabilities", "{}".into()), ("clientInfo", client)]), span)?;
+        self.send(&obj(&[("jsonrpc", js("2.0")), ("method", js("notifications/initialized"))]), span)?;
+        let mut tools = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let params = match &cursor {
+                Some(c) => obj(&[("cursor", js(c))]),
+                None => "{}".into(),
+            };
+            let result = self.request("tools/list", &params, span)?;
+            if let Some(Json::List(items)) = at(&result, "tools") {
+                for t in items {
+                    let Some(name) = text(at(t, "name")) else { return Err(self.fail(msg("detail.mcp_answer", &[]), span)) };
+                    let description = text(at(t, "description")).unwrap_or_default();
+                    let schema = match at(t, "inputSchema") {
+                        Some(j @ Json::Obj(_)) => dump(j),
+                        _ => r#"{"type":"object"}"#.to_string(),
+                    };
+                    tools.push((name, description, schema));
+                }
+            }
+            cursor = text(at(&result, "nextCursor")).filter(|c| !c.is_empty());
+            if cursor.is_none() {
+                break;
+            }
+        }
+        self.tools = Some(tools.clone());
+        Ok(tools)
+    }
+
+    fn send(&mut self, message: &str, span: u32) -> R<()> {
+        use std::io::Write;
+        let ok = match self.stdin.as_mut() {
+            Some(w) => w.write_all(format!("{message}\n").as_bytes()).and_then(|_| w.flush()).is_ok(),
+            None => false,
+        };
+        if !ok {
+            return Err(self.fail(msg("detail.mcp_closed", &[]), span));
+        }
+        Ok(())
+    }
+
+    fn request(&mut self, method: &str, params: &str, span: u32) -> R<Json> {
+        self.last += 1;
+        let id = self.last;
+        self.send(&obj(&[("jsonrpc", js("2.0")), ("id", id.to_string()), ("method", js(method)), ("params", params.to_string())]), span)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(MCP_WAIT);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let got = match &self.lines {
+                Some(rx) => rx.recv_timeout(left),
+                None => Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+            };
+            let raw = match got {
+                Ok(Some(line)) => line,
+                Ok(None) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(self.fail(msg("detail.mcp_closed", &[]), span));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(self.fail(msg("detail.mcp_wait", &[("seconds", MCP_WAIT.to_string())]), span));
+                }
+            };
+            let line = String::from_utf8_lossy(&raw);
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(message) = crate::data::parse_json(line.trim()) else {
+                return Err(self.fail(msg("detail.mcp_answer", &[]), span));
+            };
+            // notifications and requests of the server are not answers
+            if !matches!(message, Json::Obj(_)) || at(&message, "method").is_some() || !matches!(at(&message, "id"), Some(Json::Int(_))) || int(at(&message, "id")) != id {
+                continue;
+            }
+            if let Some(e @ Json::Obj(_)) = at(&message, "error") {
+                let text = text(at(e, "message")).unwrap_or_default();
+                return Err(self.fail(msg("detail.mcp_error", &[("message", text)]), span));
+            }
+            return match at(&message, "result") {
+                Some(r @ Json::Obj(_)) => Ok(clone_json(r)),
+                _ => Err(self.fail(msg("detail.mcp_answer", &[]), span)),
+            };
+        }
+    }
+
+    fn call_tool(&mut self, name: &str, args: &Json, span: u32) -> R<(String, bool)> {
+        let result = self.request("tools/call", &obj(&[("name", js(name)), ("arguments", dump(args))]), span)?;
+        let mut parts = Vec::new();
+        if let Some(Json::List(items)) = at(&result, "content") {
+            for c in items {
+                if text(at(c, "type")).as_deref() == Some("text") {
+                    if let Some(t) = text(at(c, "text")) {
+                        parts.push(t);
+                    }
+                }
+            }
+        }
+        Ok((parts.join("\n"), matches!(at(&result, "isError"), Some(Json::Bool(true)))))
+    }
+}
+
+pub fn release_servers() {
+    SERVERS.lock().unwrap().clear();
 }

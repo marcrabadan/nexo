@@ -241,7 +241,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__sql_text" => crate::db::sql_text(x(0), x(1), span),
         "jwt" => crate::web::jwt(x(0), span),
         "__ai_tool" => crate::ai::tool(x(0), x(1), x(2), span),
-        "mcp" => crate::ai::mcp(span),
+        "mcp" => crate::ai::mcp(x(0), span),
         "__c_library" => crate::clib::library(x(0), x(1), a.get(2).unwrap_or(NONE), span),
         "__python_import" => crate::pylib::import(x(0), a.get(1).unwrap_or(NONE), span),
         "__web_server" => crate::web::server(x(0), a.get(1), a.get(2), span),

@@ -466,3 +466,90 @@ def test_budget(phase, server, tmp_path):
         "ollama:llama: 1 calls, 4 input tokens, 3 output",
         "openai:gpt-mini: 3 calls, 9 input tokens, 6 output, 1.50 EUR",
     ]
+
+
+MCP_PROGRAM = """policy:
+    allow net "127.0.0.1"
+    allow env "NEXO_AI_KEY"
+    allow shell
+
+ai:
+    provider = "anthropic"
+    model = "claude-mcp"
+    key = secret("NEXO_AI_KEY")
+    url = "{base}"
+
+agent helper:
+    tools = [mcp("nexo")]
+    goal = "Check the code"
+
+print(helper.handle("Is bad.nexo right?"))
+
+agent careful:
+    tools = [mcp("nexo")]
+    confirm = [mcp("nexo")]
+
+print(careful.handle("Check it"))
+
+@tool "A tool named like one of the server's"
+fn check(path: str) -> str:
+    return "mine"
+
+agent twice:
+    tools = [check, mcp("nexo")]
+
+agent missing:
+    tools = [mcp("nothing")]
+
+for a in [twice, missing]:
+    try:
+        a.handle("x")
+    else e:
+        print(e.message)
+"""
+
+
+class McpProvider(BaseHTTPRequestHandler):
+    tools: list = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        McpProvider.tools.append([t["name"] for t in body.get("tools", [])])
+        last = body["messages"][-1]["content"]
+        if isinstance(last, list):
+            r = last[0]
+            content = [{"type": "text", "text": f"error={r.get('is_error', False)} {r['content']}"}]
+        else:
+            content = [{"type": "tool_use", "id": "t1", "name": "check", "input": {"path": "bad.nexo"}}]
+        data = json.dumps({"content": content, "usage": {"input_tokens": 1, "output_tokens": 1}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_agents_use_the_tools_of_an_mcp_server(phase, tmp_path):
+    McpProvider.tools.clear()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), McpProvider)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        (tmp_path / "app.nexo").write_text(MCP_PROGRAM.format(base=f"http://127.0.0.1:{srv.server_address[1]}"))
+        (tmp_path / "bad.nexo").write_text("x = (1 +\n")
+        # the server is this same nexo's `nexo mcp`, started in the folder
+        (tmp_path / "nexo.toml").write_text(f"[mcp.nexo]\ncommand = {json.dumps([*phase[1], 'mcp'])}\n")
+        proc = run(phase[1], ["app.nexo"], tmp_path, stdin=b"n\n",
+                   env={"NEXO_AI_KEY": "k3y", "XDG_CONFIG_HOME": str(tmp_path / "config")})
+    finally:
+        srv.shutdown()
+    out = proc.stdout.decode()
+    checked = run(phase[1], ["check", "bad.nexo"], tmp_path).stdout.decode()
+    assert out == (f"error=True {checked}\n"
+                   "Use check(path: \"bad.nexo\")? (y/n): error=False The user did not allow this call.\n"
+                   "Two tools of twice are named check\n"
+                   "There is no MCP server nothing\n")
+    # the model is offered the tools of the server
+    assert McpProvider.tools[0] == ["check", "run_tests", "docs_for_ai", "plan", "format"]
