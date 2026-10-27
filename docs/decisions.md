@@ -2715,3 +2715,39 @@ compiler/runtime/src/elastic.rs):
 - Transactions, `db.sql`, `nexo db` and the logs (`elastic: METHOD path
   body`) are those of D171; tests/es_server.py is an Elasticsearch
   written from its documentation for the tests.
+
+**D173. More AI providers.** Section 8 names anthropic, openai and ollama
+in its examples ("provider:model"); D106 took those three. Four more are
+providers now, in both phases (nexo/stdlib/ai.py, compiler/runtime/src/
+ai.rs), each through its own API, with `ask`, `stream: true`, typed
+answers, agents and their tools, usage and budgets as the others:
+- `mistral`: Mistral's chat completions, which are OpenAI's
+  (https://api.mistral.ai, a bearer key); it sends the usage of a
+  streamed answer in its last event, so no `stream_options` is sent.
+- `azure`: Azure OpenAI, `"azure:<deployment>"`. Its address is the
+  resource's, so `url = "https://NAME.openai.azure.com"` is needed
+  (AIError.url without it); the API version is 2024-10-21. `key:` is the
+  resource's api-key; without one, a token of Azure AD from the
+  credentials of D120 (AZURE_TENANT_ID, AZURE_CLIENT_ID,
+  AZURE_CLIENT_SECRET, AZURE_AUTHORITY_HOST) is sent as a bearer token.
+- `gemini`: Google's generateContent and streamGenerateContent (server-
+  sent events), the key in `x-goog-api-key`; the system text is
+  `systemInstruction`, tools are `functionDeclarations`, and the results
+  of tools go back as `functionResponse` parts.
+- `bedrock`: AWS's Converse API (`/model/<id>/converse` and
+  `converse-stream`, whose answer is AWS's binary event stream, read with
+  its CRCs). `key:` is a Bedrock API key, sent as a bearer token; without
+  one the request is signed with SigV4 and the AWS credentials of D120,
+  in AWS_REGION (or AWS_DEFAULT_REGION, else us-east-1). A Bedrock model
+  id holds colons (`anthropic.claude-3-haiku-20240307-v1:0`), so a model
+  is read as "provider:name" only when the part before its first colon is
+  a provider, or when no provider is configured; `nexo ai setup` accepts
+  colons in a Bedrock model.
+- Bedrock and Azure without a key and without those variables fail with
+  AIError.cloud_key, which names them.
+- A server that speaks OpenAI's API (Groq, DeepSeek, OpenRouter,
+  Together, vLLM, LM Studio) needs no provider of its own: `provider =
+  "openai"` with its `url` (D106).
+- tests/test_ai_providers.py runs each against a local server that
+  answers as the provider's documentation says, and checks Bedrock's
+  signature with its own implementation of SigV4.

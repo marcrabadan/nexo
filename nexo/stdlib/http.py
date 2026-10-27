@@ -142,6 +142,19 @@ class Streaming:
         finally:
             self.resp.close()
 
+    def raw(self):
+        """The bytes as they arrive (a binary stream, such as AWS's)."""
+        try:
+            while True:
+                chunk = self.resp.read1(65536)
+                if not chunk:
+                    return
+                yield chunk
+        except (socket.timeout, TimeoutError, ConnectionError, OSError) as exc:
+            raise failure("NetworkError", self.call.span, url=self.url, reason=network_reason(exc))
+        finally:
+            self.resp.close()
+
 
 def once(call, method, url, data, content_type, extra, limit, stream=False) -> Response:
     current = url

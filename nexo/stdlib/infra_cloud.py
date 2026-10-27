@@ -97,8 +97,11 @@ def need_env(*names) -> list[str]:
 
 # ------------------------------------------------------------------- aws
 
-def sigv4(method: str, url: str, headers: dict, body: bytes, service: str, region: str) -> dict:
-    """The headers of a request signed with AWS Signature Version 4."""
+def sigv4(method: str, url: str, headers: dict, body: bytes, service: str, region: str,
+          encoded_path: bool = False) -> dict:
+    """The headers of a request signed with AWS Signature Version 4. With
+    `encoded_path` the path, as sent, is encoded once more, as services
+    other than S3 ask (Bedrock's model ids hold a colon, sent as %3A)."""
     key_id, secret = need_env("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
     token = os.environ.get("AWS_SESSION_TOKEN")
     now = dt.datetime.now(dt.timezone.utc)
@@ -111,7 +114,7 @@ def sigv4(method: str, url: str, headers: dict, body: bytes, service: str, regio
     h["x-amz-content-sha256"] = payload
     if token:
         h["x-amz-security-token"] = token
-    path = urllib.parse.quote(urllib.parse.unquote(u.path or "/"), safe="/-_.~")
+    path = urllib.parse.quote(u.path if encoded_path else urllib.parse.unquote(u.path or "/"), safe="/-_.~")
     pairs = sorted(urllib.parse.parse_qsl(u.query, keep_blank_values=True))
     query = "&".join(f"{urllib.parse.quote(k, safe='-_.~')}={urllib.parse.quote(v, safe='-_.~')}" for k, v in pairs)
     names = sorted(h)

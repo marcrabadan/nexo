@@ -219,6 +219,13 @@ fn now_parts() -> (String, String) {
 
 /// The headers of a request signed with AWS Signature Version 4.
 pub fn sigv4(method: &str, url: &str, headers: &[(&str, String)], body: &[u8], service: &str, region: &str) -> R<Vec<(String, String)>> {
+    sigv4_path(method, url, headers, body, service, region, false)
+}
+
+/// SigV4; with `encoded_path` the path, as sent, is encoded once more, as
+/// services other than S3 ask (Bedrock's model ids hold a colon, sent as
+/// %3A, D173).
+pub fn sigv4_path(method: &str, url: &str, headers: &[(&str, String)], body: &[u8], service: &str, region: &str, encoded_path: bool) -> R<Vec<(String, String)>> {
     let key_id = need_env("AWS_ACCESS_KEY_ID")?;
     let secret = need_env("AWS_SECRET_ACCESS_KEY")?;
     let token = std::env::var("AWS_SESSION_TOKEN").ok().filter(|t| !t.is_empty());
@@ -236,7 +243,7 @@ pub fn sigv4(method: &str, url: &str, headers: &[(&str, String)], body: &[u8], s
     if let Some(t) = token {
         set(&mut h, "x-amz-security-token", t);
     }
-    let path = quote(&unquote(if path.is_empty() { "/" } else { &path }), true);
+    let path = if encoded_path { quote(&path, true) } else { quote(&unquote(if path.is_empty() { "/" } else { &path }), true) };
     let mut pairs: Vec<(String, String)> = query
         .split('&')
         .filter(|p| !p.is_empty())

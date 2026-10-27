@@ -20,7 +20,23 @@ const PROVIDERS: &[(&str, &str)] = &[
     ("anthropic", "https://api.anthropic.com"),
     ("openai", "https://api.openai.com"),
     ("ollama", "http://localhost:11434"),
+    // D173: Azure's address is its resource's, given with url; Bedrock's
+    // comes from the region of the environment
+    ("mistral", "https://api.mistral.ai"),
+    ("gemini", "https://generativelanguage.googleapis.com"),
+    ("azure", ""),
+    ("bedrock", ""),
 ];
+/// The providers that speak OpenAI's chat completions (D173).
+const OPENAI_LIKE: &[&str] = &["openai", "mistral", "azure"];
+const AZURE_VERSION: &str = "2024-10-21";
+const AZURE_SCOPE: &str = "https://cognitiveservices.azure.com/.default";
+const AWS_KEYS: &[&str] = &["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
+const AZURE_KEYS: &[&str] = &["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"];
+
+fn openai_like(provider: &str) -> bool {
+    OPENAI_LIKE.contains(&provider)
+}
 const BLOCK_KEYS: &[&str] = &["provider", "model", "key", "url", "fallback", "budget", "when_over_budget"];
 const LATER_KEYS: &[&str] = &[];
 const CREATIVITY: &[(&str, f64)] = &[("low", 0.2), ("medium", 0.7), ("high", 1.0)];
@@ -510,7 +526,10 @@ fn target(model: Option<String>, provider: Option<String>, layers: &[Layer], ali
     let mut provider = provider;
     let mut name = model.clone();
     if let Some(m) = &model {
-        if let Some((p, n)) = m.split_once(':') {
+        // a model names its provider before a colon; Bedrock's own model
+        // ids hold colons, so a configured provider keeps a name whose
+        // first part is not a provider (D173)
+        if let Some((p, n)) = m.split_once(':').filter(|(p, _)| provider_url(p).is_some() || provider.is_none()) {
             check_model_name(m, span)?;
             provider = Some(p.to_string());
             name = Some(n.to_string());
@@ -541,12 +560,80 @@ fn target(model: Option<String>, provider: Option<String>, layers: &[Layer], ali
 
 // ------------------------------------------------------------- providers
 
+/// The key of a call; none for ollama, and for Bedrock and Azure with the
+/// credentials of the environment (D173). A token of Azure AD comes as
+/// "Bearer <token>", which no api-key starts with.
 fn reveal(t: &Target, span: u32) -> R<Option<String>> {
+    if t.provider == "azure" && t.url.is_empty() {
+        return Err(failure_as("AIError", "AIError.url", span, &[("provider", t.provider.clone())]));
+    }
     match &t.key {
         None if t.provider == "ollama" => Ok(None),
+        None if t.provider == "bedrock" || t.provider == "azure" => {
+            let names = if t.provider == "bedrock" { AWS_KEYS } else { AZURE_KEYS };
+            if names.iter().all(|n| std::env::var(n).is_ok_and(|v| !v.is_empty())) {
+                return if t.provider == "azure" { Ok(Some(format!("Bearer {}", azure_token(span)?))) } else { Ok(None) };
+            }
+            Err(failure_as("AIError", "AIError.cloud_key", span, &[("provider", t.provider.clone()), ("names", names.join(" and "))]))
+        }
         None => Err(failure_as("AIError", "AIError.key", span, &[("provider", t.provider.clone())])),
         Some(k) => Ok(Some(crate::crypto::text_or_secret("key", k.v(), span)?)),
     }
+}
+
+static AZURE_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+/// A token of Azure AD for Azure OpenAI (client credentials, D120).
+fn azure_token(span: u32) -> R<String> {
+    if let Some(t) = AZURE_TOKEN.lock().unwrap().clone() {
+        return Ok(t);
+    }
+    let env = |n: &str| std::env::var(n).unwrap_or_default();
+    let host = std::env::var("AZURE_AUTHORITY_HOST").ok().filter(|v| !v.is_empty()).unwrap_or("https://login.microsoftonline.com".into());
+    let enc = |v: &str| -> String {
+        v.bytes()
+            .map(|b| match b {
+                b' ' => "+".to_string(),
+                b if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) => (b as char).to_string(),
+                b => format!("%{b:02X}"),
+            })
+            .collect()
+    };
+    let form = format!(
+        "grant_type=client_credentials&client_id={}&client_secret={}&scope={}",
+        enc(&env("AZURE_CLIENT_ID")),
+        enc(&env("AZURE_CLIENT_SECRET")),
+        enc(AZURE_SCOPE)
+    );
+    let url = format!("{}/{}/oauth2/v2.0/token", host.trim_end_matches('/'), env("AZURE_TENANT_ID"));
+    let r = crate::http::send("POST", &url, &Some((form.into_bytes(), "application/x-www-form-urlencoded")), &[], 60.0, 1, span)?;
+    let token = crate::data::parse_json(&r.text()).ok().and_then(|j| text(at(&j, "access_token")));
+    let Some(token) = token else {
+        return Err(failure("AIError", span, &[("model", "azure".into()), ("detail", msg("detail.ai_no_text", &[]))]));
+    };
+    *AZURE_TOKEN.lock().unwrap() = Some(token.clone());
+    Ok(token)
+}
+
+fn region() -> String {
+    ["AWS_REGION", "AWS_DEFAULT_REGION"].iter().find_map(|n| std::env::var(n).ok().filter(|v| !v.is_empty())).unwrap_or("us-east-1".into())
+}
+
+/// The headers of a call: signed with SigV4 for Bedrock without a key.
+fn signed(t: &Target, key: &Option<String>, url: &str, headers: Vec<(String, String)>, body: &[u8]) -> R<Vec<(String, String)>> {
+    if t.provider != "bedrock" || key.is_some() {
+        return Ok(headers);
+    }
+    let mut h: Vec<(&str, String)> = headers.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    h.push(("Content-Type", "application/json".into()));
+    crate::infra_cloud::sigv4_path("POST", url, &h, body, "bedrock", &region(), true)
+}
+
+/// A path segment as Python's quote(..., safe='') writes it.
+fn quote_segment(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
 }
 
 fn js(s: &str) -> String {
@@ -578,6 +665,25 @@ fn float(f: f64) -> String {
 struct Message {
     role: &'static str,
     content: String,
+}
+
+/// Messages as Gemini's contents.
+fn gemini_contents(messages: &[Message]) -> String {
+    let items: Vec<String> = messages
+        .iter()
+        .map(|m| {
+            let role = if m.role == "assistant" { "model" } else { "user" };
+            obj(&[("role", js(role)), ("parts", format!("[{}]", obj(&[("text", js(&m.content))])))])
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// Messages as Bedrock's Converse API has them.
+fn converse_messages(messages: &[Message]) -> String {
+    let items: Vec<String> =
+        messages.iter().map(|m| obj(&[("role", js(m.role)), ("content", format!("[{}]", obj(&[("text", js(&m.content))])))])).collect();
+    format!("[{}]", items.join(","))
 }
 
 fn messages_json(system: &str, messages: &[Message], with_system: bool) -> String {
@@ -615,14 +721,52 @@ fn request_of(
             headers = vec![("x-api-key".to_string(), key.unwrap_or_default()), ("anthropic-version".into(), "2023-06-01".into())];
             url = format!("{}/v1/messages", t.url);
         }
-        "openai" => {
+        p if openai_like(p) => {
             body.push(("temperature", float(temperature)));
             if let Some(m) = max_tokens {
                 body.push(("max_tokens", m.to_string()));
             }
             body.push(("messages", messages_json(system, messages, true)));
-            headers = vec![("Authorization".to_string(), format!("Bearer {}", key.unwrap_or_default()))];
-            url = format!("{}/v1/chat/completions", t.url);
+            let key = key.unwrap_or_default();
+            if p == "azure" {
+                headers = if key.starts_with("Bearer ") { vec![("Authorization".to_string(), key)] } else { vec![("api-key".to_string(), key)] };
+                url = format!("{}/openai/deployments/{}/chat/completions?api-version={AZURE_VERSION}", t.url, quote_segment(&t.name));
+            } else {
+                headers = vec![("Authorization".to_string(), format!("Bearer {key}"))];
+                url = format!("{}/v1/chat/completions", t.url);
+            }
+        }
+        "gemini" => {
+            let mut b = vec![("contents", gemini_contents(messages))];
+            if !system.is_empty() {
+                b.push(("systemInstruction", obj(&[("parts", format!("[{}]", obj(&[("text", js(system))])))])));
+            }
+            let mut config = vec![("temperature", float(temperature))];
+            if let Some(m) = max_tokens {
+                config.push(("maxOutputTokens", m.to_string()));
+            }
+            b.push(("generationConfig", obj(&config)));
+            let method = if stream { "streamGenerateContent?alt=sse" } else { "generateContent" };
+            let url = format!("{}/v1beta/models/{}:{method}", t.url, t.name);
+            return (url, obj(&b), vec![("x-goog-api-key".to_string(), key.unwrap_or_default())]);
+        }
+        "bedrock" => {
+            let mut b = vec![("messages", converse_messages(messages))];
+            if !system.is_empty() {
+                b.push(("system", format!("[{}]", obj(&[("text", js(system))]))));
+            }
+            let mut config = vec![("temperature", float(temperature))];
+            if let Some(m) = max_tokens {
+                config.push(("maxTokens", m.to_string()));
+            }
+            b.push(("inferenceConfig", obj(&config)));
+            let headers = match key {
+                Some(k) => vec![("Authorization".to_string(), format!("Bearer {k}"))],
+                None => Vec::new(),
+            };
+            let base = if t.url.is_empty() { format!("https://bedrock-runtime.{}.amazonaws.com", region()) } else { t.url.clone() };
+            let url = format!("{base}/model/{}/{}", quote_segment(&t.name), if stream { "converse-stream" } else { "converse" });
+            return (url, obj(&b), headers);
         }
         _ => {
             body.push(("messages", messages_json(system, messages, true)));
@@ -640,7 +784,7 @@ fn request_of(
     }
     if stream {
         body.push(("stream", "true".into()));
-        if t.provider == "openai" {
+        if t.provider == "openai" || t.provider == "azure" {
             body.push(("stream_options", obj(&[("include_usage", "true".into())])));
         }
     } else if t.provider == "ollama" {
@@ -695,11 +839,32 @@ fn answer_of(t: &Target, body: &str, stream: bool) -> Option<(Vec<String>, [i64;
                 let u = at(&data, "usage");
                 tokens = [int(u.and_then(|u| at(u, "input_tokens"))), int(u.and_then(|u| at(u, "output_tokens")))];
             }
-            "openai" => {
+            p if openai_like(p) => {
                 let m = at(idx(at(&data, "choices")?, 0)?, "message")?;
                 pieces.push(text(at(m, "content"))?);
                 let u = at(&data, "usage");
                 tokens = [int(u.and_then(|u| at(u, "prompt_tokens"))), int(u.and_then(|u| at(u, "completion_tokens")))];
+            }
+            "gemini" => {
+                let content = at(idx(at(&data, "candidates")?, 0)?, "content")?;
+                let Json::List(parts) = at(content, "parts")? else { return None };
+                for p in parts {
+                    if let Some(x) = at(p, "text") {
+                        pieces.push(text(Some(x))?);
+                    }
+                }
+                let u = at(&data, "usageMetadata");
+                tokens = [int(u.and_then(|u| at(u, "promptTokenCount"))), int(u.and_then(|u| at(u, "candidatesTokenCount")))];
+            }
+            "bedrock" => {
+                let Json::List(blocks) = at(at(at(&data, "output")?, "message")?, "content")? else { return None };
+                for b in blocks {
+                    if let Some(x) = at(b, "text") {
+                        pieces.push(text(Some(x))?);
+                    }
+                }
+                let u = at(&data, "usage");
+                tokens = [int(u.and_then(|u| at(u, "inputTokens"))), int(u.and_then(|u| at(u, "outputTokens")))];
             }
             _ => {
                 pieces.push(text(at(at(&data, "message")?, "content"))?);
@@ -745,7 +910,7 @@ fn event(t: &Target, line: &str, tokens: &mut [i64; 2]) -> Option<Vec<String>> {
             Some("message_delta") => tokens[1] = int(at(&ev, "usage").and_then(|u| at(u, "output_tokens"))),
             _ => {}
         },
-        "openai" => {
+        p if openai_like(p) => {
             if let Some(Json::List(choices)) = at(&ev, "choices") {
                 for c in choices {
                     if let Some(piece) = text(at(c, "delta").and_then(|d| at(d, "content"))).filter(|p| !p.is_empty()) {
@@ -757,6 +922,33 @@ fn event(t: &Target, line: &str, tokens: &mut [i64; 2]) -> Option<Vec<String>> {
                 *tokens = [int(at(u, "prompt_tokens")), int(at(u, "completion_tokens"))];
             }
         }
+        "gemini" => {
+            if let Some(c) = at(&ev, "candidates").and_then(|c| idx(c, 0)) {
+                if let Some(Json::List(parts)) = at(c, "content").and_then(|c| at(c, "parts")) {
+                    for p in parts {
+                        if let Some(piece) = text(at(p, "text")).filter(|p| !p.is_empty()) {
+                            pieces.push(piece);
+                        }
+                    }
+                }
+            }
+            if let Some(u) = at(&ev, "usageMetadata").filter(|u| !matches!(u, Json::Null)) {
+                *tokens = [int(at(u, "promptTokenCount")), int(at(u, "candidatesTokenCount"))];
+            }
+        }
+        "bedrock" => match text(at(&ev, "type")).as_deref() {
+            Some("contentBlockDelta") => {
+                if let Some(x) = at(&ev, "delta").and_then(|d| at(d, "text")) {
+                    pieces.push(text(Some(x))?);
+                }
+            }
+            Some("metadata") => {
+                let u = at(&ev, "usage");
+                *tokens = [int(u.and_then(|u| at(u, "inputTokens"))), int(u.and_then(|u| at(u, "outputTokens")))];
+            }
+            Some("exception") => return None,
+            _ => {}
+        },
         _ => {
             if let Some(piece) = text(at(&ev, "message").and_then(|m| at(m, "content"))).filter(|p| !p.is_empty()) {
                 pieces.push(piece);
@@ -767,6 +959,104 @@ fn event(t: &Target, line: &str, tokens: &mut [i64; 2]) -> Option<Vec<String>> {
         }
     }
     Some(pieces)
+}
+
+/// CRC-32 (IEEE), for the messages of an AWS event stream.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for b in data {
+        crc ^= *b as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
+/// The messages of an AWS event stream (Bedrock's converse-stream) as
+/// lines of server-sent events: `data: {"type": event, ...payload}`.
+struct EventLines {
+    inner: Box<dyn std::io::Read + Send + Sync>,
+    buf: Vec<u8>,
+    out: Vec<u8>,
+    at: usize,
+}
+
+impl EventLines {
+    /// The line of one whole message, or None.
+    fn message(&mut self) -> std::io::Result<Option<String>> {
+        if self.buf.len() < 12 {
+            return Ok(None);
+        }
+        let total = u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
+        if total < 16 || self.buf.len() < total {
+            return Ok(None);
+        }
+        let frame: Vec<u8> = self.buf.drain(..total).collect();
+        let crc = u32::from_be_bytes([frame[total - 4], frame[total - 3], frame[total - 2], frame[total - 1]]);
+        if crc32(&frame[..total - 4]) != crc {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "a message of the stream is corrupt"));
+        }
+        let size = u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]) as usize;
+        let mut headers: Vec<(String, String)> = Vec::new();
+        let mut p = 12;
+        while p < 12 + size && p < frame.len() {
+            let n = frame[p] as usize;
+            let name = String::from_utf8_lossy(&frame[p + 1..p + 1 + n]).into_owned();
+            let kind = frame[p + 1 + n];
+            p += 2 + n;
+            match kind {
+                6 | 7 => {
+                    let len = u16::from_be_bytes([frame[p], frame[p + 1]]) as usize;
+                    if kind == 7 {
+                        headers.push((name, String::from_utf8_lossy(&frame[p + 2..p + 2 + len]).into_owned()));
+                    }
+                    p += 2 + len;
+                }
+                2 => p += 1,
+                3 => p += 2,
+                4 => p += 4,
+                5 | 8 => p += 8,
+                9 => p += 16,
+                _ => {}
+            }
+        }
+        let header = |k: &str| headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+        let payload = crate::json::parse(&String::from_utf8_lossy(&frame[12 + size..total - 4])).unwrap_or(crate::json::Json::Obj(Vec::new()));
+        let mut pairs = Vec::new();
+        if header(":message-type") == "event" {
+            pairs.push(("type".to_string(), crate::json::s(header(":event-type"))));
+            if let crate::json::Json::Obj(p) = payload {
+                pairs.extend(p);
+            }
+        } else {
+            pairs.push(("type".to_string(), crate::json::s("exception")));
+            pairs.push(("message".to_string(), payload.get("message").clone()));
+        }
+        Ok(Some(format!("data: {}\n", crate::json::Json::Obj(pairs).compact())))
+    }
+}
+
+impl std::io::Read for EventLines {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        while self.at >= self.out.len() {
+            if let Some(line) = self.message()? {
+                self.out = line.into_bytes();
+                self.at = 0;
+                break;
+            }
+            let mut chunk = [0u8; 65536];
+            let n = self.inner.read(&mut chunk)?;
+            if n == 0 {
+                return Ok(0);
+            }
+            self.buf.extend_from_slice(&chunk[..n]);
+        }
+        let n = out.len().min(self.out.len() - self.at);
+        out[..n].copy_from_slice(&self.out[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
 }
 
 /// The answer of `ask(..., stream: true)`: its pieces as they arrive
@@ -837,8 +1127,11 @@ fn send_stream(
     span: u32,
 ) -> R<Val> {
     let key = reveal(t, span)?;
-    let (url, body, headers) = request_of(t, key, system, messages, temperature, max_tokens, true);
+    let (url, body, headers) = request_of(t, key.clone(), system, messages, temperature, max_tokens, true);
+    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
     let (reader, at) = crate::http::open("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, retries, span)?;
+    let reader: Box<dyn std::io::Read + Send + Sync> =
+        if t.provider == "bedrock" { Box::new(EventLines { inner: reader, buf: Vec::new(), out: Vec::new(), at: 0 }) } else { reader };
     let mut live = Live { t: t.clone(), url: at, lines: std::io::BufReader::new(reader), pieces: Vec::new(), tokens: [0, 0], done: false, span };
     // the first piece is read here, so that a model that cannot answer
     // still goes to the next one of the fallback (D164)
@@ -878,7 +1171,8 @@ fn send(
     span: u32,
 ) -> R<Vec<String>> {
     let key = reveal(t, span)?;
-    let (url, body, headers) = request_of(t, key, system, messages, temperature, max_tokens, stream);
+    let (url, body, headers) = request_of(t, key.clone(), system, messages, temperature, max_tokens, stream);
+    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
     let r = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, retries, span)?;
     let Some((pieces, tokens)) = answer_of(t, &r.text(), stream) else {
         let detail = msg("detail.ai_no_text", &[]);
@@ -1427,6 +1721,23 @@ fn dump(j: &Json) -> String {
 }
 
 fn tools_json(t: &Target, tools: &[Tool]) -> String {
+    if t.provider == "gemini" {
+        let decls: Vec<String> = tools
+            .iter()
+            .map(|x| obj(&[("name", js(&x.name)), ("description", js(&x.description)), ("parameters", x.params_schema())]))
+            .collect();
+        return format!("[{}]", obj(&[("functionDeclarations", format!("[{}]", decls.join(",")))]));
+    }
+    if t.provider == "bedrock" {
+        let specs: Vec<String> = tools
+            .iter()
+            .map(|x| {
+                let spec = obj(&[("name", js(&x.name)), ("description", js(&x.description)), ("inputSchema", obj(&[("json", x.params_schema())]))]);
+                obj(&[("toolSpec", spec)])
+            })
+            .collect();
+        return obj(&[("tools", format!("[{}]", specs.join(",")))]);
+    }
     let items: Vec<String> = tools
         .iter()
         .map(|x| {
@@ -1444,6 +1755,28 @@ fn tools_json(t: &Target, tools: &[Tool]) -> String {
 /// The body of an agent's request: the one of `ask` with structured
 /// messages and the tools.
 fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> String {
+    let temperature = float(0.7);
+    if t.provider == "gemini" || t.provider == "bedrock" {
+        let list = format!("[{}]", messages.join(","));
+        let mut body: Vec<(&str, String)> = Vec::new();
+        if t.provider == "gemini" {
+            body.push(("contents", list));
+            if !system.is_empty() {
+                body.push(("systemInstruction", obj(&[("parts", format!("[{}]", obj(&[("text", js(system))])))])));
+            }
+            body.push(("generationConfig", obj(&[("temperature", temperature)])));
+        } else {
+            body.push(("messages", list));
+            if !system.is_empty() {
+                body.push(("system", format!("[{}]", obj(&[("text", js(system))]))));
+            }
+            body.push(("inferenceConfig", obj(&[("temperature", temperature)])));
+        }
+        if !tools.is_empty() {
+            body.push((if t.provider == "bedrock" { "toolConfig" } else { "tools" }, tools_json(t, tools)));
+        }
+        return obj(&body);
+    }
     let mut body: Vec<(&str, String)> = vec![("model", js(&t.name))];
     let mut all = Vec::new();
     if t.provider != "anthropic" && !system.is_empty() {
@@ -1451,7 +1784,6 @@ fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> 
     }
     all.extend(messages.iter().cloned());
     let messages = format!("[{}]", all.join(","));
-    let temperature = float(0.7);
     match t.provider.as_str() {
         "anthropic" => {
             body.push(("max_tokens", MAX_TOKENS.to_string()));
@@ -1461,7 +1793,7 @@ fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> 
             }
             body.push(("messages", messages));
         }
-        "openai" => {
+        p if openai_like(p) => {
             body.push(("temperature", temperature));
             body.push(("messages", messages));
         }
@@ -1485,8 +1817,9 @@ type ToolCall = (String, String, Json);
 /// One request: (text, the calls, the assistant message as JSON).
 fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], span: u32) -> R<(String, Vec<ToolCall>, String)> {
     let key = reveal(t, span)?;
-    let (url, _, headers) = request_of(t, key, system, &[], 0.7, None, false);
+    let (url, _, headers) = request_of(t, key.clone(), system, &[], 0.7, None, false);
     let body = agent_body(t, system, messages, tools);
+    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
     let r = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, 60.0, 1, span)?;
     let bad = || {
         let detail = msg("detail.ai_no_text", &[]);
@@ -1518,7 +1851,51 @@ fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], spa
             let tokens = [int(u.and_then(|u| at(u, "input_tokens"))), int(u.and_then(|u| at(u, "output_tokens")))];
             return Some((text, calls, message, tokens));
         }
-        let message = if t.provider == "openai" { at(idx(at(&answer, "choices")?, 0)?, "message")? } else { at(&answer, "message")? };
+        if t.provider == "gemini" {
+            let parts = at(at(idx(at(&answer, "candidates")?, 0)?, "content")?, "parts")?;
+            let Json::List(items) = parts else { return None };
+            let mut text = String::new();
+            for p in items {
+                if let Some(x) = at(p, "text") {
+                    text.push_str(&text_of(Some(x))?);
+                }
+                if let Some(f) = at(p, "functionCall") {
+                    let args = match at(f, "args") {
+                        Some(j @ Json::Obj(_)) => clone_json(j),
+                        Some(Json::Null) | None => Json::Obj(Vec::new()),
+                        _ => return None,
+                    };
+                    calls.push((calls.len().to_string(), text_of(at(f, "name"))?, args));
+                }
+            }
+            let message = obj(&[("role", js("model")), ("parts", dump(parts))]);
+            let u = at(&answer, "usageMetadata");
+            let tokens = [int(u.and_then(|u| at(u, "promptTokenCount"))), int(u.and_then(|u| at(u, "candidatesTokenCount")))];
+            return Some((text, calls, message, tokens));
+        }
+        if t.provider == "bedrock" {
+            let content = at(at(at(&answer, "output")?, "message")?, "content")?;
+            let Json::List(blocks) = content else { return None };
+            let mut text = String::new();
+            for b in blocks {
+                if let Some(x) = at(b, "text") {
+                    text.push_str(&text_of(Some(x))?);
+                }
+                if let Some(u) = at(b, "toolUse") {
+                    let input = match at(u, "input") {
+                        Some(j @ Json::Obj(_)) => clone_json(j),
+                        Some(Json::Null) | None => Json::Obj(Vec::new()),
+                        _ => return None,
+                    };
+                    calls.push((text_of(at(u, "toolUseId"))?, text_of(at(u, "name"))?, input));
+                }
+            }
+            let message = obj(&[("role", js("assistant")), ("content", dump(content))]);
+            let u = at(&answer, "usage");
+            let tokens = [int(u.and_then(|u| at(u, "inputTokens"))), int(u.and_then(|u| at(u, "outputTokens")))];
+            return Some((text, calls, message, tokens));
+        }
+        let message = if openai_like(&t.provider) { at(idx(at(&answer, "choices")?, 0)?, "message")? } else { at(&answer, "message")? };
         let text = match at(message, "content") {
             Some(Json::Str(s)) => s.clone(),
             Some(Json::Null) | None => String::new(),
@@ -1540,7 +1917,7 @@ fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], spa
                 calls.push((id, text_of(at(f, "name"))?, args));
             }
         }
-        let tokens = if t.provider == "openai" {
+        let tokens = if openai_like(&t.provider) {
             let u = at(&answer, "usage");
             [int(u.and_then(|u| at(u, "prompt_tokens"))), int(u.and_then(|u| at(u, "completion_tokens")))]
         } else {
@@ -1686,7 +2063,12 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
     } else {
         String::new()
     };
-    let mut messages = vec![obj(&[("role", js("user")), ("content", js(&content))])];
+    let first = match t.provider.as_str() {
+        "gemini" => obj(&[("role", js("user")), ("parts", format!("[{}]", obj(&[("text", js(&content))])))]),
+        "bedrock" => obj(&[("role", js("user")), ("content", format!("[{}]", obj(&[("text", js(&content))])))]),
+        _ => obj(&[("role", js("user")), ("content", js(&content))]),
+    };
+    let mut messages = vec![first];
     for _ in 0..agent.max_steps {
         let (text, calls, message) = agent_step(t, &system, &messages, &tools, span)?;
         if calls.is_empty() {
@@ -1704,12 +2086,24 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
                     }
                     results.push(obj(&r));
                 }
-                "openai" => messages.push(obj(&[("role", js("tool")), ("tool_call_id", js(id)), ("content", js(&out))])),
+                "gemini" => {
+                    let response = obj(&[(if is_error { "error" } else { "content" }, js(&out))]);
+                    results.push(obj(&[("functionResponse", obj(&[("name", js(name)), ("response", response)]))]));
+                }
+                "bedrock" => {
+                    let mut r = vec![("toolUseId", js(id)), ("content", format!("[{}]", obj(&[("text", js(&out))])))];
+                    if is_error {
+                        r.push(("status", js("error")));
+                    }
+                    results.push(obj(&[("toolResult", obj(&r))]));
+                }
+                p if openai_like(p) => messages.push(obj(&[("role", js("tool")), ("tool_call_id", js(id)), ("content", js(&out))])),
                 _ => messages.push(obj(&[("role", js("tool")), ("content", js(&out))])),
             }
         }
         if !results.is_empty() {
-            messages.push(obj(&[("role", js("user")), ("content", format!("[{}]", results.join(",")))]));
+            let field = if t.provider == "gemini" { "parts" } else { "content" };
+            messages.push(obj(&[("role", js("user")), (field, format!("[{}]", results.join(",")))]));
         }
     }
     Err(failure_as("AIError", "AIError.steps", span, &[("agent", agent.name.clone()), ("n", agent.max_steps.to_string())]))

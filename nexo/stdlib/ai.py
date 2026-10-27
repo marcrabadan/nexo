@@ -27,7 +27,19 @@ PROVIDERS = {
     "anthropic": "https://api.anthropic.com",
     "openai": "https://api.openai.com",
     "ollama": "http://localhost:11434",
+    # D173: Azure's address is its resource's, given with url; Bedrock's
+    # comes from the region of the environment
+    "mistral": "https://api.mistral.ai",
+    "gemini": "https://generativelanguage.googleapis.com",
+    "azure": "",
+    "bedrock": "",
 }
+# the providers that speak OpenAI's chat completions (D173)
+OPENAI_LIKE = ("openai", "mistral", "azure")
+AZURE_VERSION = "2024-10-21"
+AZURE_SCOPE = "https://cognitiveservices.azure.com/.default"
+AWS_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+AZURE_KEYS = ("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET")
 BLOCK_KEYS = ["provider", "model", "key", "url", "fallback", "budget", "when_over_budget"]
 LATER_KEYS = ()
 CREATIVITY = {"low": 0.2, "medium": 0.7, "high": 1.0}
@@ -332,7 +344,10 @@ def target(call, model, provider, layers, aliases) -> Target:
     if model is not None and model in aliases:
         model = aliases[model]
     name = model
-    if model is not None and ":" in model:
+    # a model names its provider before a colon; Bedrock's own model ids
+    # hold colons, so a configured provider keeps a name whose first part
+    # is not a provider (D173)
+    if model is not None and ":" in model and (model.partition(":")[0] in PROVIDERS or provider is None):
         check_model_name(call, model)
         provider, _, name = model.partition(":")
     if provider is None or name is None:
@@ -348,13 +363,71 @@ def target(call, model, provider, layers, aliases) -> Target:
 
 # ------------------------------------------------------------- providers
 
+class Token(str):
+    """A token of Azure AD, sent as a bearer token instead of an api-key."""
+
+
+TOKENS: dict = {}
+
+
 def reveal(call, t: Target) -> str | None:
+    """The key of a call; none for ollama, and for Bedrock and Azure with
+    the credentials of the environment (D173)."""
     from .crypto import text_or_secret
+    if t.provider == "azure" and not t.url:
+        raise failure("AIError", call.span, key="AIError.url", provider=t.provider)
     if t.key is None:
         if t.provider == "ollama":
             return None
+        names = {"bedrock": AWS_KEYS, "azure": AZURE_KEYS}.get(t.provider)
+        if names is not None:
+            if all(os.environ.get(n) for n in names):
+                return azure_token(call) if t.provider == "azure" else None
+            raise failure("AIError", call.span, key="AIError.cloud_key", provider=t.provider,
+                          names=" and ".join(names))
         raise failure("AIError", call.span, key="AIError.key", provider=t.provider)
     return text_or_secret(call, "key", t.key)
+
+
+def azure_token(call) -> Token:
+    """A token of Azure AD for Azure OpenAI (client credentials, D120)."""
+    if "azure" not in TOKENS:
+        import urllib.parse
+        from .http import send as http_send
+        tenant, client, secret = (os.environ[n] for n in AZURE_KEYS)
+        host = (os.environ.get("AZURE_AUTHORITY_HOST") or "https://login.microsoftonline.com").rstrip("/")
+        form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client,
+                                       "client_secret": secret, "scope": AZURE_SCOPE}).encode()
+        r = http_send(call, "POST", f"{host}/{tenant}/oauth2/v2.0/token", form, "application/x-www-form-urlencoded",
+                      {}, 60.0, 1)
+        try:
+            TOKENS["azure"] = Token(json.loads(r.text())["access_token"])
+        except (ValueError, KeyError, TypeError):
+            raise failure("AIError", call.span, model="azure", detail=errors.msg("detail.ai_no_text"))
+    return TOKENS["azure"]
+
+
+def region() -> str:
+    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+
+
+def signed(t: Target, key, url: str, headers: dict, data: bytes) -> dict:
+    """The headers of a call: signed with SigV4 for Bedrock without a key."""
+    if t.provider != "bedrock" or key is not None:
+        return headers
+    from .infra_cloud import sigv4
+    return sigv4("POST", url, dict(headers, **{"Content-Type": "application/json"}), data, "bedrock", region(),
+                 encoded_path=True)
+
+
+def gemini_contents(messages: list) -> list:
+    return [m if "parts" in m else {"role": "model" if m["role"] == "assistant" else "user",
+                                    "parts": [{"text": m["content"]}]} for m in messages]
+
+
+def converse_messages(messages: list) -> list:
+    return [m if isinstance(m.get("content"), list) else {"role": m["role"], "content": [{"text": m["content"]}]}
+            for m in messages]
 
 
 def request_of(t: Target, key, system, messages, temperature, max_tokens, stream):
@@ -366,13 +439,42 @@ def request_of(t: Target, key, system, messages, temperature, max_tokens, stream
         body["messages"] = messages
         headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
         url = t.url + "/v1/messages"
-    elif t.provider == "openai":
+    elif t.provider in OPENAI_LIKE:
         body = {"model": t.name, "temperature": temperature}
         if max_tokens:
             body["max_tokens"] = max_tokens
         body["messages"] = ([{"role": "system", "content": system}] if system else []) + messages
-        headers = {"Authorization": f"Bearer {key}"}
-        url = t.url + "/v1/chat/completions"
+        if t.provider == "azure":
+            from urllib.parse import quote
+            headers = {"Authorization": f"Bearer {key}"} if isinstance(key, Token) else {"api-key": key}
+            url = f"{t.url}/openai/deployments/{quote(t.name, safe='')}/chat/completions?api-version={AZURE_VERSION}"
+        else:
+            headers = {"Authorization": f"Bearer {key}"}
+            url = t.url + "/v1/chat/completions"
+    elif t.provider == "gemini":
+        body = {"contents": gemini_contents(messages)}
+        if system:
+            body["systemInstruction"] = {"parts": [{"text": system}]}
+        config = {"temperature": temperature}
+        if max_tokens:
+            config["maxOutputTokens"] = max_tokens
+        body["generationConfig"] = config
+        headers = {"x-goog-api-key": key}
+        url = f"{t.url}/v1beta/models/{t.name}:" + ("streamGenerateContent?alt=sse" if stream else "generateContent")
+        return url, body, headers
+    elif t.provider == "bedrock":
+        from urllib.parse import quote
+        body = {"messages": converse_messages(messages)}
+        if system:
+            body["system"] = [{"text": system}]
+        config = {"temperature": temperature}
+        if max_tokens:
+            config["maxTokens"] = max_tokens
+        body["inferenceConfig"] = config
+        headers = {} if key is None else {"Authorization": f"Bearer {key}"}
+        base = t.url or f"https://bedrock-runtime.{region()}.amazonaws.com"
+        url = f"{base}/model/{quote(t.name, safe='')}/" + ("converse-stream" if stream else "converse")
+        return url, body, headers
     else:
         options = {"temperature": temperature}
         if max_tokens:
@@ -383,7 +485,7 @@ def request_of(t: Target, key, system, messages, temperature, max_tokens, stream
         url = t.url + "/api/chat"
     if stream:
         body["stream"] = True
-        if t.provider == "openai":
+        if t.provider in ("openai", "azure"):
             body["stream_options"] = {"include_usage": True}
     elif t.provider == "ollama":
         body["stream"] = False
@@ -404,10 +506,19 @@ def answer_of(call, t: Target, text: str, stream: bool):
             if t.provider == "anthropic":
                 pieces = [b["text"] for b in data["content"] if b.get("type") == "text"]
                 tokens = [data.get("usage", {}).get("input_tokens", 0), data.get("usage", {}).get("output_tokens", 0)]
-            elif t.provider == "openai":
+            elif t.provider in OPENAI_LIKE:
                 pieces = [data["choices"][0]["message"]["content"]]
                 u = data.get("usage") or {}
                 tokens = [u.get("prompt_tokens", 0), u.get("completion_tokens", 0)]
+            elif t.provider == "gemini":
+                parts = data["candidates"][0]["content"]["parts"]
+                pieces = [p["text"] for p in parts if "text" in p]
+                u = data.get("usageMetadata") or {}
+                tokens = [u.get("promptTokenCount", 0), u.get("candidatesTokenCount", 0)]
+            elif t.provider == "bedrock":
+                pieces = [b["text"] for b in data["output"]["message"]["content"] if "text" in b]
+                u = data.get("usage") or {}
+                tokens = [u.get("inputTokens", 0), u.get("outputTokens", 0)]
             else:
                 pieces = [data["message"]["content"]]
                 tokens = [data.get("prompt_eval_count", 0), data.get("eval_count", 0)]
@@ -443,13 +554,30 @@ def event(t: Target, line: str, tokens: list) -> list[str]:
             tokens[0] = ev["message"].get("usage", {}).get("input_tokens", 0)
         elif kind == "message_delta":
             tokens[1] = ev.get("usage", {}).get("output_tokens", 0)
-    elif t.provider == "openai":
+    elif t.provider in OPENAI_LIKE:
         for c in ev.get("choices") or []:
             piece = (c.get("delta") or {}).get("content")
             if piece:
                 pieces.append(piece)
         if ev.get("usage"):
             tokens[:] = [ev["usage"].get("prompt_tokens", 0), ev["usage"].get("completion_tokens", 0)]
+    elif t.provider == "gemini":
+        for c in (ev.get("candidates") or [])[:1]:
+            for p in (c.get("content") or {}).get("parts") or []:
+                if p.get("text"):
+                    pieces.append(p["text"])
+        u = ev.get("usageMetadata")
+        if u:
+            tokens[:] = [u.get("promptTokenCount", 0), u.get("candidatesTokenCount", 0)]
+    elif t.provider == "bedrock":
+        kind = ev.get("type")
+        if kind == "contentBlockDelta" and "text" in (ev.get("delta") or {}):
+            pieces.append(ev["delta"]["text"])
+        elif kind == "metadata":
+            u = ev.get("usage") or {}
+            tokens[:] = [u.get("inputTokens", 0), u.get("outputTokens", 0)]
+        elif kind == "exception":
+            raise ValueError(ev.get("message"))
     else:
         piece = (ev.get("message") or {}).get("content")
         if piece:
@@ -466,9 +594,10 @@ def send(call, t: Target, system, messages, temperature, max_tokens, stream, lim
     key = reveal(call, t)
     url, body, headers = request_of(t, key, system, messages, temperature, max_tokens, stream)
     data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    headers = signed(t, key, url, headers, data)
     if stream:
         r = http_send(call, "POST", url, data, "application/json", headers, limit, retries, stream=True)
-        answer = Live(call, t, r.lines())
+        answer = Live(call, t, event_lines(r.raw()) if t.provider == "bedrock" else r.lines())
         # the first piece is read here, so that a model that cannot answer
         # still goes to the next one of the fallback (D164)
         answer.pull()
@@ -477,6 +606,41 @@ def send(call, t: Target, system, messages, temperature, max_tokens, stream, lim
     pieces, tokens = answer_of(call, t, r.text(), stream)
     record_usage(f"{t.provider}:{t.name}", tokens)
     return pieces
+
+
+def event_lines(chunks):
+    """The messages of an AWS event stream (Bedrock's converse-stream) as
+    lines of server-sent events: `data: {"type": event, ...payload}`."""
+    import zlib
+    buf = b""
+    for chunk in chunks:
+        buf += chunk
+        while len(buf) >= 12:
+            total = int.from_bytes(buf[:4], "big")
+            if len(buf) < total:
+                break
+            frame, buf = buf[:total], buf[total:]
+            if zlib.crc32(frame[:-4]) != int.from_bytes(frame[-4:], "big"):
+                raise ValueError("a message of the stream is corrupt")
+            size = int.from_bytes(frame[4:8], "big")
+            headers, p = {}, 12
+            while p < 12 + size:
+                n = frame[p]
+                name = frame[p + 1:p + 1 + n].decode()
+                kind = frame[p + 1 + n]
+                p += 2 + n
+                if kind in (6, 7):
+                    length = int.from_bytes(frame[p:p + 2], "big")
+                    value = frame[p + 2:p + 2 + length]
+                    headers[name] = value.decode("utf-8", "replace") if kind == 7 else value
+                    p += 2 + length
+                else:
+                    p += {0: 0, 1: 0, 2: 1, 3: 2, 4: 4, 5: 8, 8: 8, 9: 16}[kind]
+            payload = json.loads(frame[12 + size:-4] or b"{}")
+            if headers.get(":message-type") == "event":
+                yield "data: " + json.dumps({"type": headers.get(":event-type"), **payload})
+            else:
+                yield "data: " + json.dumps({"type": "exception", "message": payload.get("message", "")})
 
 
 class Live(Lazy):
@@ -827,9 +991,15 @@ def b_ai_agent(call, name, **pairs):
     return Agent(name, model, tools, goal, steps, confirm, servers, confirm_servers)
 
 
-def tools_json(t: Target, tools: list) -> list:
+def tools_json(t: Target, tools: list):
     if t.provider == "anthropic":
         return [{"name": x.name, "description": x.description, "input_schema": x.params()} for x in tools]
+    if t.provider == "gemini":
+        return [{"functionDeclarations": [{"name": x.name, "description": x.description, "parameters": x.params()}
+                                          for x in tools]}]
+    if t.provider == "bedrock":
+        return {"tools": [{"toolSpec": {"name": x.name, "description": x.description,
+                                        "inputSchema": {"json": x.params()}}} for x in tools]}
     return [{"type": "function", "function": {"name": x.name, "description": x.description,
                                               "parameters": x.params()}} for x in tools]
 
@@ -840,8 +1010,9 @@ def agent_step(call, t: Target, system, messages, tools) -> tuple[str, list, Any
     key = reveal(call, t)
     url, body, headers = request_of(t, key, system, messages, CREATIVITY["medium"], None, False)
     if tools:
-        body["tools"] = tools_json(t, tools)
+        body["toolConfig" if t.provider == "bedrock" else "tools"] = tools_json(t, tools)
     data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    headers = signed(t, key, url, headers, data)
     r = http_send(call, "POST", url, data, "application/json", headers, 60.0, 1)
 
     def bad():
@@ -857,15 +1028,31 @@ def agent_step(call, t: Target, system, messages, tools) -> tuple[str, list, Any
             message = {"role": "assistant", "content": content}
             u = answer.get("usage", {})
             tokens = [u.get("input_tokens", 0), u.get("output_tokens", 0)]
+        elif t.provider == "gemini":
+            parts = answer["candidates"][0]["content"]["parts"]
+            text = "".join(p["text"] for p in parts if "text" in p)
+            found = [p["functionCall"] for p in parts if "functionCall" in p]
+            calls = [(str(i), f["name"], f.get("args") or {}) for i, f in enumerate(found)]
+            message = {"role": "model", "parts": parts}
+            u = answer.get("usageMetadata") or {}
+            tokens = [u.get("promptTokenCount", 0), u.get("candidatesTokenCount", 0)]
+        elif t.provider == "bedrock":
+            content = answer["output"]["message"]["content"]
+            text = "".join(b["text"] for b in content if "text" in b)
+            calls = [(b["toolUse"]["toolUseId"], b["toolUse"]["name"], b["toolUse"].get("input") or {})
+                     for b in content if "toolUse" in b]
+            message = {"role": "assistant", "content": content}
+            u = answer.get("usage") or {}
+            tokens = [u.get("inputTokens", 0), u.get("outputTokens", 0)]
         else:
-            message = answer["choices"][0]["message"] if t.provider == "openai" else answer["message"]
+            message = answer["choices"][0]["message"] if t.provider in OPENAI_LIKE else answer["message"]
             text = message.get("content") or ""
             for i, c in enumerate(message.get("tool_calls") or []):
                 args = c["function"].get("arguments") or {}
                 if isinstance(args, str):
                     args = json.loads(args) if args.strip() else {}
                 calls.append((c.get("id", str(i)), c["function"]["name"], args))
-            if t.provider == "openai":
+            if t.provider in OPENAI_LIKE:
                 u = answer.get("usage") or {}
                 tokens = [u.get("prompt_tokens", 0), u.get("completion_tokens", 0)]
             else:
@@ -960,12 +1147,20 @@ def run_agent(call, agent: Agent, input):
                 if is_error:
                     r["is_error"] = True
                 results.append(r)
-            elif t.provider == "openai":
+            elif t.provider == "gemini":
+                results.append({"functionResponse": {"name": name, "response": {"error" if is_error else "content": out}}})
+            elif t.provider == "bedrock":
+                r = {"toolUseId": cid, "content": [{"text": out}]}
+                if is_error:
+                    r["status"] = "error"
+                results.append({"toolResult": r})
+            elif t.provider in OPENAI_LIKE:
                 messages.append({"role": "tool", "tool_call_id": cid, "content": out})
             else:
                 messages.append({"role": "tool", "content": out})
         if results:
-            messages.append({"role": "user", "content": results})
+            messages.append({"role": "user", "parts": results} if t.provider == "gemini"
+                            else {"role": "user", "content": results})
     raise failure("AIError", call.span, key="AIError.steps", agent=agent.name, n=agent.max_steps)
 
 
@@ -1143,14 +1338,17 @@ def setup_command() -> int:
             return fail(NexoError("ai_provider", None, fix="suggest", provider=provider, suggestion=s))
         return fail(NexoError("ai_provider", None, provider=provider))
     model = ask_line("info.ai_setup_model")
-    if not model or ":" in model:
+    # (Bedrock's model ids hold colons, D173)
+    if not model or (":" in model and provider != "bedrock"):
         return fail(NexoError("ai_model", None, model=model))
     lines = ["[ai]", f"provider = {json.dumps(provider)}", f"model = {json.dumps(model)}"]
     if provider != "ollama":
         var = ask_line("info.ai_setup_key")
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", var):
-            return fail(NexoError("ai_setup_var", None, name=var))
-        lines.append(f"key = {json.dumps(var)}")
+        # Bedrock and Azure can do with the credentials of the environment
+        if not (var == "" and provider in ("bedrock", "azure")):
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", var):
+                return fail(NexoError("ai_setup_var", None, name=var))
+            lines.append(f"key = {json.dumps(var)}")
     url = ask_line("info.ai_setup_url")
     if url:
         lines.append(f"url = {json.dumps(url)}")

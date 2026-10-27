@@ -208,8 +208,9 @@ and secrets, the `http` client and `fake` (D92-D99, D105, D112).
 PostgreSQL (D163) and MySQL (D170) through their own protocols, and the
 document stores MongoDB (D171) and Elasticsearch (D172); `nexo.web` servers
 (D102-D104); `nexo.ai`: `ask`, blocks, tools and agents (D106-D109),
-`stream: true` as the answer arrives (D164), budgets (D165) and
-`mcp("name")` tools (D166); `use c` and `use python` (D110-D111).
+`stream: true` as the answer arrives (D164), budgets (D165),
+`mcp("name")` tools (D166) and the providers mistral, gemini, azure and
+bedrock (D173, tests/test_ai_providers.py); `use c` and `use python` (D110-D111).
 Tests that need a network use local servers: tests/test_http.py,
 test_web.py, test_db.py, test_postgres.py (a local PostgreSQL started
 by the test, skipped without initdb), test_mysql.py (likewise, without
