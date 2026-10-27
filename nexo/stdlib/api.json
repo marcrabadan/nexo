@@ -60,7 +60,7 @@
     {
       "title": "nexo.db",
       "entries": [
-        ["connect(url: str, key: secret?) -> database!", "Open (or create) an SQLite database; tables are @table types."]
+        ["connect(url: str, key: secret?) -> database!", "Open (or create) an SQLite file, or a PostgreSQL server (postgres://user@host/db, key: its password); tables are @table types."]
       ]
     },
     {

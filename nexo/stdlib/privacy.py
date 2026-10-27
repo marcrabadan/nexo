@@ -121,8 +121,19 @@ def unseal(call, key: bytes, text: str, table: str) -> str:
 # ------------------------------------------------ the database's side
 
 def ensure_table(db, call) -> None:
-    db.execute(call, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ("tbl" TEXT NOT NULL, "row" INTEGER NOT NULL, '
+    whole = "BIGINT" if db.pg else "INTEGER"
+    db.execute(call, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ("tbl" TEXT NOT NULL, "row" {whole} NOT NULL, '
                '"state" TEXT NOT NULL, PRIMARY KEY ("tbl", "row"))', [])
+
+
+def set_state(db, call, table: str, key, state: str) -> None:
+    """Mark a row restricted or erased (INSERT OR REPLACE in SQLite)."""
+    if db.pg:
+        db.execute(call, f'INSERT INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?) '
+                         'ON CONFLICT ("tbl", "row") DO UPDATE SET "state" = EXCLUDED."state"', [table, key, state])
+    else:
+        db.execute(call, f'INSERT OR REPLACE INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?)',
+                   [table, key, state])
 
 
 def hidden_where(info) -> str:
@@ -219,8 +230,7 @@ def erase_row(db, call, info, key) -> None:
                     referenced = True
     if referenced:
         anonymise(db, call, info, f"{quote(info.key)} = ?", [key])
-        db.execute(call, f'INSERT OR REPLACE INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?)',
-                   [info.name, key, "erased"])
+        set_state(db, call, info.name, key, "erased")
     else:
         db.execute(call, f"DELETE FROM {quote(info.name)} WHERE {quote(info.key)} = ?", [key])
         db.execute(call, f'DELETE FROM "{TABLE}" WHERE "tbl" = ? AND "row" = ?', [info.name, key])
@@ -284,8 +294,7 @@ def b_erase(call, record):
 def b_restrict(call, record):
     db, info, key = saved_row(call, "restrict", record)
     db.sync(call, info)
-    db.execute(call, f'INSERT OR REPLACE INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?)',
-               [info.name, key, "restricted"])
+    set_state(db, call, info.name, key, "restricted")
     return None
 
 

@@ -1,5 +1,6 @@
 //! nexo.db: databases through `connect` and `@table` types (section 6,
-//! D100). A database is an SQLite file; each `@table` type is a table
+//! D100). A database is an SQLite file or a PostgreSQL server (D163,
+//! pg.rs); each `@table` type is a table
 //! named after the type in lowercase, created (and given the columns of
 //! new fields) the first time the program uses it. `db.T` is a query;
 //! pipelines on a query run in SQL while their steps allow it (`where` on
@@ -17,6 +18,7 @@ use libsqlite3_sys as ffi;
 use nexo_diag::{msg, Diagnostic};
 
 use crate::fmt::{repr, type_name};
+use crate::pg::PgError;
 use crate::state::{diag, failure, failure_as, R};
 use crate::stdlib::{expects, missing_member};
 use crate::types::{lookup, RecordType, TypeDesc, TypeRef};
@@ -212,9 +214,17 @@ pub enum Sql {
     Text(String),
 }
 
+/// The connection: an SQLite file or a PostgreSQL server (D163).
+enum Backend {
+    Sqlite(Conn),
+    Pg(crate::pg::Connection),
+}
+
 pub struct Database {
     path: String,
-    conn: Mutex<Conn>,
+    conn: Mutex<Backend>,
+    /// a PostgreSQL server: its own words in a few statements (D163)
+    pg: bool,
     synced: Mutex<Vec<String>>,
     depth: Mutex<usize>,
     /// encrypts @private columns (D116)
@@ -252,15 +262,86 @@ fn errmsg(db: *mut ffi::sqlite3) -> String {
     unsafe { CStr::from_ptr(ffi::sqlite3_errmsg(db)).to_string_lossy().into_owned() }
 }
 
+/// The `?` of a statement (outside quotes) as PostgreSQL's $1, $2...
+fn numbered(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len() + 8);
+    let (mut n, mut quote_char) = (0, None);
+    for ch in sql.chars() {
+        match quote_char {
+            Some(q) => {
+                if ch == q {
+                    quote_char = None;
+                }
+            }
+            None if ch == '\'' || ch == '"' => quote_char = Some(ch),
+            None if ch == '?' => {
+                n += 1;
+                out.push_str(&format!("${n}"));
+                continue;
+            }
+            None => {}
+        }
+        out.push(ch);
+    }
+    out
+}
+
+const CONTROL: &[&str] = &["BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE"];
+
 impl Database {
-    fn run(&self, sql: &str, params: &[Sql]) -> Result<Rows, String> {
+    fn run(&self, sql: &str, params: &[Sql]) -> Result<Rows, PgError> {
         if std::env::var_os("NEXO_SQL_LOG").is_some() {
             let shown: Vec<String> = params.iter().map(py_repr).collect();
             crate::state::flush();
             eprintln!("sql: {sql} [{}]", shown.join(", "));
         }
-        let conn = self.conn.lock().unwrap();
-        let db = conn.0;
+        let mut conn = self.conn.lock().unwrap();
+        match &mut *conn {
+            Backend::Pg(c) => {
+                let a = c.execute(sql, params)?;
+                // the id of INSERT ... RETURNING
+                let last_id = match a.rows.first().and_then(|r| r.first()) {
+                    Some(Sql::Int(i)) => *i,
+                    _ => 0,
+                };
+                Ok(Rows { names: a.names, rows: a.rows, last_id })
+            }
+            Backend::Sqlite(c) => run_sqlite(c.0, sql, params).map_err(|message| PgError { message, ..Default::default() }),
+        }
+    }
+
+    /// A statement of nexo.db: on PostgreSQL with $n parameters, and inside
+    /// a transaction in a savepoint of its own, so that a failed one leaves
+    /// the transaction as it was, as in SQLite (D163).
+    fn statement(&self, sql: &str, params: &[Sql]) -> Result<Rows, PgError> {
+        if !self.pg {
+            return self.run(sql, params);
+        }
+        let sql = numbered(sql);
+        let guarded = *self.depth.lock().unwrap() > 0 && !CONTROL.iter().any(|c| sql.starts_with(c));
+        if guarded {
+            self.run("SAVEPOINT nexo_statement", &[])?;
+        }
+        match self.run(&sql, params) {
+            Ok(r) => {
+                if guarded {
+                    self.run("RELEASE SAVEPOINT nexo_statement", &[])?;
+                }
+                Ok(r)
+            }
+            Err(e) => {
+                if guarded {
+                    self.run("ROLLBACK TO SAVEPOINT nexo_statement", &[])?;
+                    self.run("RELEASE SAVEPOINT nexo_statement", &[])?;
+                }
+                Err(e)
+            }
+        }
+    }
+}
+
+fn run_sqlite(db: *mut ffi::sqlite3, sql: &str, params: &[Sql]) -> Result<Rows, String> {
+    {
         let c = CString::new(sql).map_err(|_| "the query has a NUL character".to_string())?;
         let mut stmt: *mut ffi::sqlite3_stmt = std::ptr::null_mut();
         let rc = unsafe { ffi::sqlite3_prepare_v2(db, c.as_ptr(), -1, &mut stmt, std::ptr::null_mut()) };
@@ -335,10 +416,19 @@ impl Database {
         let last_id = unsafe { ffi::sqlite3_last_insert_rowid(db) };
         Ok(Rows { names, rows, last_id })
     }
+}
 
-    fn fail(&self, text: String, info: Option<&TableInfo>, values: Option<&[(String, Val)]>, span: u32) -> crate::state::Fail {
-        if let (Some(rest), Some(info)) = (text.strip_prefix("UNIQUE constraint failed: "), info) {
-            let col = rest.split_once('.').map(|x| x.1).unwrap_or(rest);
+impl Database {
+    fn fail(&self, e: PgError, info: Option<&TableInfo>, values: Option<&[(String, Val)]>, span: u32) -> crate::state::Fail {
+        let column = if self.pg {
+            // unique_violation, with the detail `Key (email)=(...) already exists.`
+            let found = e.detail.strip_prefix("Key (").and_then(|r| r.split_once(")=")).map(|x| x.0.to_string());
+            found.filter(|_| e.code == "23505")
+        } else {
+            e.message.strip_prefix("UNIQUE constraint failed: ").map(|rest| rest.split_once('.').map(|x| x.1).unwrap_or(rest).to_string())
+        };
+        let text = e.message;
+        if let (Some(col), Some(info)) = (column.as_deref(), info) {
             let field = info.columns.iter().find(|c| c.name == col).map(|c| c.field.clone()).unwrap_or(col.to_string());
             let value = values.and_then(|vs| vs.iter().find(|(n, _)| *n == field).map(|(_, v)| repr(v.v()))).unwrap_or("none".into());
             return failure_as(
@@ -352,7 +442,21 @@ impl Database {
     }
 
     fn exec(&self, sql: &str, params: &[Sql], span: u32) -> R<Rows> {
-        self.run(sql, params).map_err(|e| self.fail(e, None, None, span))
+        self.statement(sql, params).map_err(|e| self.fail(e, None, None, span))
+    }
+
+    /// Mark a row restricted or erased (INSERT OR REPLACE in SQLite).
+    fn set_state(&self, table: &str, key: i64, state: &str, span: u32) -> R<()> {
+        let sql = if self.pg {
+            format!(
+                "INSERT INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?) ON CONFLICT (\"tbl\", \"row\") DO UPDATE SET \"state\" = EXCLUDED.\"state\"",
+                crate::privacy::TABLE
+            )
+        } else {
+            format!("INSERT OR REPLACE INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?)", crate::privacy::TABLE)
+        };
+        self.exec(&sql, &[Sql::Text(table.to_string()), Sql::Int(key), Sql::Text(state.to_string())], span)?;
+        Ok(())
     }
 
     /// A value as stored in a column: @private ones encrypted.
@@ -478,11 +582,7 @@ impl Database {
         let k = quote(info.key.as_deref().unwrap_or("id"));
         if referenced {
             self.anonymise(info, &format!("{k} = ?"), &[Sql::Int(key)], span)?;
-            self.exec(
-                &format!("INSERT OR REPLACE INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?)", crate::privacy::TABLE),
-                &[Sql::Text(info.name.clone()), Sql::Int(key), Sql::Text("erased".into())],
-                span,
-            )?;
+            self.set_state(&info.name, key, "erased", span)?;
         } else {
             self.exec(&format!("DELETE FROM {} WHERE {k} = ?", quote(&info.name)), &[Sql::Int(key)], span)?;
             self.exec(
@@ -505,29 +605,45 @@ impl Database {
                 span,
             ));
         }
-        let exists = self.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", &[Sql::Text(info.name.clone())], span)?;
-        if exists.rows.is_empty() {
-            self.exec(&create_sql(info), &[], span)?;
+        let text = |r: &Vec<Sql>, i: usize| match &r[i] {
+            Sql::Text(s) => Some(s.clone()),
+            _ => None,
+        };
+        let have: Vec<String> = if self.pg {
+            self.exec(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?",
+                &[Sql::Text(info.name.clone())],
+                span,
+            )?
+            .rows
+            .iter()
+            .filter_map(|r| text(r, 0))
+            .collect()
         } else {
-            let have: Vec<String> = self
-                .exec(&format!("PRAGMA table_info({})", quote(&info.name)), &[], span)?
-                .rows
-                .into_iter()
-                .filter_map(|r| match &r[1] {
-                    Sql::Text(s) => Some(s.clone()),
-                    _ => None,
-                })
-                .collect();
+            let exists = self.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", &[Sql::Text(info.name.clone())], span)?;
+            if exists.rows.is_empty() {
+                Vec::new()
+            } else {
+                self.exec(&format!("PRAGMA table_info({})", quote(&info.name)), &[], span)?.rows.iter().filter_map(|r| text(r, 1)).collect()
+            }
+        };
+        if have.is_empty() {
+            self.exec(&create_sql(info, self.pg), &[], span)?;
+        } else {
             for c in &info.columns {
                 if !have.contains(&c.name) {
-                    self.exec(&format!("ALTER TABLE {} ADD COLUMN {}", quote(&info.name), column_sql(info, c, true)), &[], span)?;
+                    self.exec(&format!("ALTER TABLE {} ADD COLUMN {}", quote(&info.name), column_sql(info, c, true, self.pg)), &[], span)?;
                 }
             }
         }
         self.synced.lock().unwrap().push(info.name.clone());
         if personal_table(info).is_some() {
             self.exec(
-                &format!("CREATE TABLE IF NOT EXISTS \"{}\" (\"tbl\" TEXT NOT NULL, \"row\" INTEGER NOT NULL, \"state\" TEXT NOT NULL, PRIMARY KEY (\"tbl\", \"row\"))", crate::privacy::TABLE),
+                &format!(
+                    "CREATE TABLE IF NOT EXISTS \"{}\" (\"tbl\" TEXT NOT NULL, \"row\" {} NOT NULL, \"state\" TEXT NOT NULL, PRIMARY KEY (\"tbl\", \"row\"))",
+                    crate::privacy::TABLE,
+                    if self.pg { "BIGINT" } else { "INTEGER" }
+                ),
                 &[],
                 span,
             )?;
@@ -575,11 +691,35 @@ fn sql_type(kind: &str) -> &'static str {
     }
 }
 
-fn column_sql(info: &TableInfo, c: &Column, adding: bool) -> String {
+/// The type of a column on PostgreSQL (D163): texts compare and sort byte
+/// by byte, as in SQLite.
+fn pg_type(kind: &str) -> &'static str {
+    match kind {
+        "int" | "ref" => "BIGINT",
+        "float" => "DOUBLE PRECISION",
+        "bool" => "BOOLEAN",
+        _ => "TEXT COLLATE \"C\"",
+    }
+}
+
+/// The type `nexo db diff` shows.
+fn type_shown(kind: &str, pg: bool) -> String {
+    if pg {
+        pg_type(kind).replace(" COLLATE \"C\"", "")
+    } else {
+        sql_type(kind).to_string()
+    }
+}
+
+fn column_sql(info: &TableInfo, c: &Column, adding: bool, pg: bool) -> String {
     if info.key.as_deref() == Some(&c.field) {
+        if pg {
+            return format!("{} BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY", quote(&c.name));
+        }
         return format!("{} INTEGER PRIMARY KEY AUTOINCREMENT", quote(&c.name));
     }
-    let mut s = format!("{} {}", quote(&c.name), if c.private { "TEXT" } else { sql_type(c.kind) });
+    let kind = if c.private { "str" } else { c.kind };
+    let mut s = format!("{} {}", quote(&c.name), if pg { pg_type(kind) } else { sql_type(kind) });
     if !c.optional && !adding {
         s.push_str(" NOT NULL");
     }
@@ -592,8 +732,8 @@ fn column_sql(info: &TableInfo, c: &Column, adding: bool) -> String {
     s
 }
 
-pub fn create_sql(info: &TableInfo) -> String {
-    let cols: Vec<String> = info.columns.iter().map(|c| column_sql(info, c, false)).collect();
+pub fn create_sql(info: &TableInfo, pg: bool) -> String {
+    let cols: Vec<String> = info.columns.iter().map(|c| column_sql(info, c, false, pg)).collect();
     format!("CREATE TABLE {} ({})", quote(&info.name), cols.join(", "))
 }
 
@@ -1208,8 +1348,11 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
                 vals.push(db.cell(fields[i].v(), c, span)?);
             }
             let marks: Vec<&str> = cols.iter().map(|_| "?").collect();
-            let sql = format!("INSERT INTO {} ({}) VALUES ({})", quote(&info.name), cols.join(", "), marks.join(", "));
-            let rows = db.run(&sql, &vals).map_err(|e| db.fail(e, Some(info), Some(&shown), span))?;
+            let mut sql = format!("INSERT INTO {} ({}) VALUES ({})", quote(&info.name), cols.join(", "), marks.join(", "));
+            if let (true, Some(k)) = (db.pg, &info.key) {
+                sql.push_str(&format!(" RETURNING {}", quote(k)));
+            }
+            let rows = db.statement(&sql, &vals).map_err(|e| db.fail(e, Some(info), Some(&shown), span))?;
             if let Some(k) = key_i {
                 if fields[k].is_none() {
                     r.fields.borrow_mut()[k] = Val::int(rows.last_id);
@@ -1249,7 +1392,7 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
             }
             vals.push(Sql::Int(key));
             let sql = format!("UPDATE {} SET {} WHERE {} = ?", quote(&info.name), sets.join(", "), quote(info.key.as_deref().unwrap()));
-            db.run(&sql, &vals).map_err(|e| db.fail(e, Some(info), Some(&shown), span))?;
+            db.statement(&sql, &vals).map_err(|e| db.fail(e, Some(info), Some(&shown), span))?;
             Ok(rec)
         }
         "remove" => {
@@ -1474,7 +1617,9 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
             }
             Node::Not(a) => build(a, q, column, usable, value, values, params, via, span)?.map(|x| format!("(NOT {x})")),
             Node::Truth(i) => match column(*i) {
-                Some(c) if c.kind == "bool" => Some(through(*i, format!("{} = 1", quote(&c.name)))),
+                Some(c) if c.kind == "bool" => {
+                    Some(through(*i, format!("{} = {}", quote(&c.name), if q.database().pg { "TRUE" } else { "1" })))
+                }
                 _ => None,
             },
             Node::Cmp(op, li, ri) => {
@@ -1498,7 +1643,8 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                     let v = get(*li)?;
                     let Some(s) = v.as_str() else { return Ok(None) };
                     params.push(Sql::Text(s.to_string()));
-                    return Ok(Some(through(*ri, format!("instr({}, ?) > 0", quote(&c.name)))));
+                    let f = if q.database().pg { "strpos" } else { "instr" };
+                    return Ok(Some(through(*ri, format!("{f}({}, ?) > 0", quote(&c.name)))));
                 }
                 if let (Some(a), Some(b)) = (lc, rc) {
                     if via[*li].is_some() || via[*ri].is_some() {
@@ -1576,7 +1722,11 @@ pub fn pipe_sort(src: V, column: &str, desc: bool) -> Option<Val> {
     if ["decimal", "money", "ref", "variant"].contains(&col.kind) || col.private {
         return None;
     }
-    let key = format!("{} {}", quote(&col.name), if desc { "DESC" } else { "ASC" });
+    let mut key = format!("{} {}", quote(&col.name), if desc { "DESC" } else { "ASC" });
+    if q.database().pg {
+        // none first, as in SQLite (D163)
+        key.push_str(if desc { " NULLS LAST" } else { " NULLS FIRST" });
+    }
     Some(query(q.db.v(), q.info.clone(), q.wheres.clone(), q.params.clone(), vec![key], None))
 }
 
@@ -1645,9 +1795,10 @@ pub fn group_aggregate(q: &Query, key: &Column, key_name: &str, kind: &str, tota
         sql.push_str(&format!(" WHERE {}", w.join(" AND ")));
     }
     sql.push_str(&format!(" GROUP BY {} ORDER BY MIN({})", quote(&key.name), quote(info.key.as_deref().unwrap_or("id"))));
-    let rows = match db.run(&sql, &q.params) {
+    // PostgreSQL adds bigints as numeric, which does not overflow
+    let rows = match db.statement(&sql, &q.params) {
         Ok(r) => r,
-        Err(e) if e.contains("integer overflow") => return Ok(None),
+        Err(e) if !db.pg && e.message.contains("integer overflow") => return Ok(None),
         Err(e) => return Err(db.fail(e, None, None, span)),
     };
     let int = |s: &Sql| match s {
@@ -1675,6 +1826,9 @@ pub fn group_aggregate(q: &Query, key: &Column, key_name: &str, kind: &str, tota
 
 pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
     let path = url.as_str().ok_or_else(|| expects("connect", "str", url, span))?.to_string();
+    if path.starts_with("postgres://") || path.starts_with("postgresql://") {
+        return connect_server(path, key, span);
+    }
     if let Some(scheme) = path.split_once("://").map(|x| x.0) {
         let what = format!("\"connect({})\"", crate::fmt::quote(&format!("{scheme}://...")));
         return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", what), span));
@@ -1698,13 +1852,36 @@ pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
     }
     let d = Database {
         path,
-        conn: Mutex::new(Conn(db)),
+        conn: Mutex::new(Backend::Sqlite(Conn(db))),
+        pg: false,
         synced: Mutex::new(Vec::new()),
         depth: Mutex::new(0),
         key: data_key,
         purged: Mutex::new(HashMap::new()),
     };
     d.exec("PRAGMA foreign_keys = ON", &[], span)?;
+    Ok(native(d))
+}
+
+/// connect("postgres://user@host:port/database", key: password) (D163).
+fn connect_server(path: String, key: Option<V>, span: u32) -> R<Val> {
+    let fail = |e: PgError, path: &str| failure("DatabaseError", span, &[("db", path.to_string()), ("reason", e.message)]);
+    let target = crate::pg::parse_url(&path).map_err(|e| fail(e, &path))?;
+    crate::policy::check("net", &target.host, span)?;
+    let mut password = None;
+    if let Some(k) = key.filter(|k| !k.is_none()) {
+        password = Some(crate::crypto::text_or_secret("connect", k, span)?);
+    }
+    let conn = crate::pg::Connection::open(&path, password.as_deref()).map_err(|e| fail(e, &path))?;
+    let d = Database {
+        path,
+        conn: Mutex::new(Backend::Pg(conn)),
+        pg: true,
+        synced: Mutex::new(Vec::new()),
+        depth: Mutex::new(0),
+        key: password.as_deref().map(crate::privacy::data_key),
+        purged: Mutex::new(HashMap::new()),
+    };
     Ok(native(d))
 }
 
@@ -1732,12 +1909,12 @@ impl Native for Transaction {
 
 pub fn begin(db: V, span: u32) -> R<Val> {
     let Some(d) = db.native::<Database>() else { return Err(expects("transaction", "database", db, span)) };
-    let mut depth = d.depth.lock().unwrap();
-    let sql = if *depth == 0 { "BEGIN".to_string() } else { format!("SAVEPOINT nexo_{}", *depth) };
+    let level = *d.depth.lock().unwrap();
+    let sql = if level == 0 { "BEGIN".to_string() } else { format!("SAVEPOINT nexo_{level}") };
     d.exec(&sql, &[], span)?;
-    *depth += 1;
+    *d.depth.lock().unwrap() = level + 1;
     let synced = d.synced.lock().unwrap().clone();
-    Ok(native(Transaction { db: Val::from(db), depth: *depth, done: std::sync::atomic::AtomicBool::new(false), synced }))
+    Ok(native(Transaction { db: Val::from(db), depth: level + 1, done: std::sync::atomic::AtomicBool::new(false), synced }))
 }
 
 pub fn end(tx: V, commit: bool, span: u32) -> R<Val> {
@@ -1766,54 +1943,69 @@ pub fn end(tx: V, commit: bool, span: u32) -> R<Val> {
 
 // ------------------------------------------------- migrations (D101)
 
-fn diff(db: &Database, infos: &[Arc<TableInfo>]) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+fn diff(db: &Database, infos: &[Arc<TableInfo>]) -> Result<(Vec<String>, Vec<String>, Vec<String>), PgError> {
     let text = |s: &Sql| match s {
         Sql::Text(t) => t.clone(),
         _ => String::new(),
     };
-    let existing: Vec<String> = db
-        .run(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'nexo_migrations' ORDER BY name",
-            &[],
-        )?
-        .rows
-        .iter()
-        .map(|r| text(&r[0]))
-        .collect();
+    let pg = db.pg;
+    let tables = if pg {
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema() AND table_name <> 'nexo_migrations' ORDER BY table_name"
+    } else {
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'nexo_migrations' ORDER BY name"
+    };
+    let existing: Vec<String> = db.run(tables, &[])?.rows.iter().map(|r| text(&r[0])).collect();
     let (mut changes, mut notes, mut drops) = (Vec::new(), Vec::new(), Vec::new());
     for info in infos {
         if !existing.contains(&info.name) {
-            changes.push(format!("{};", create_sql(info)));
+            changes.push(format!("{};", create_sql(info, pg)));
             continue;
         }
-        let have: Vec<(String, String)> = db
-            .run(&format!("PRAGMA table_info({})", quote(&info.name)), &[])?
+        let have: Vec<(String, String)> = if pg {
+            db.run(
+                "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 ORDER BY ordinal_position",
+                &[Sql::Text(info.name.clone())],
+            )?
             .rows
             .iter()
-            .map(|r| (text(&r[1]), text(&r[2])))
-            .collect();
+            .map(|r| (text(&r[0]), text(&r[1]).to_uppercase()))
+            .collect()
+        } else {
+            db.run(&format!("PRAGMA table_info({})", quote(&info.name)), &[])?
+                .rows
+                .iter()
+                .map(|r| (text(&r[1]), text(&r[2]).to_uppercase()))
+                .collect()
+        };
         let names: Vec<&str> = info.columns.iter().map(|c| c.name.as_str()).collect();
         let old: Vec<&str> = have.iter().map(|(n, _)| n.as_str()).collect();
+        let key_type = if pg { "BIGINT" } else { "INTEGER" };
         for c in &info.columns {
             if let Some((_, t)) = have.iter().find(|(n, _)| *n == c.name) {
-                let is_key = info.key.as_deref() == Some(&c.field) && t.to_uppercase() == "INTEGER";
-                if t.to_uppercase() != sql_type(c.kind) && !is_key {
+                let is_key = info.key.as_deref() == Some(&c.field) && t == key_type;
+                if *t != type_shown(c.kind, pg) && !is_key {
                     notes.push(msg(
                         "info.db_type_changed",
                         &[
                             ("table", info.name.clone()),
                             ("column", c.name.clone()),
-                            ("was", t.to_uppercase()),
-                            ("now", sql_type(c.kind).to_string()),
+                            ("was", t.clone()),
+                            ("now", type_shown(c.kind, pg)),
                         ],
                     ));
                 }
             }
         }
-        if old.iter().any(|n| !names.contains(n)) {
+        if pg && old.iter().any(|n| !names.contains(n)) {
+            for n in &old {
+                if !names.contains(n) {
+                    drops.push(format!("ALTER TABLE {} DROP COLUMN {};", quote(&info.name), quote(n)));
+                }
+            }
+        } else if old.iter().any(|n| !names.contains(n)) {
             // SQLite drops columns by building the table again
             let new = quote(&format!("{}_new", info.name));
-            let cols: Vec<String> = info.columns.iter().map(|c| column_sql(info, c, !old.contains(&c.name.as_str()))).collect();
+            let cols: Vec<String> = info.columns.iter().map(|c| column_sql(info, c, !old.contains(&c.name.as_str()), false)).collect();
             let kept: Vec<String> = names.iter().filter(|n| old.contains(n)).map(|n| quote(n)).collect();
             let kept = kept.join(", ");
             drops.push(format!("CREATE TABLE {new} ({});", cols.join(", ")));
@@ -1824,7 +2016,7 @@ fn diff(db: &Database, infos: &[Arc<TableInfo>]) -> Result<(Vec<String>, Vec<Str
         }
         for c in &info.columns {
             if !old.contains(&c.name.as_str()) {
-                changes.push(format!("ALTER TABLE {} ADD COLUMN {};", quote(&info.name), column_sql(info, c, true)));
+                changes.push(format!("ALTER TABLE {} ADD COLUMN {};", quote(&info.name), column_sql(info, c, true, pg)));
             }
         }
     }
@@ -1861,28 +2053,40 @@ pub fn run_command() -> i32 {
     let infos: Vec<Arc<TableInfo>> = registry().lock().unwrap().tables.iter().map(|(_, t)| t.clone()).collect();
     let parent = std::path::Path::new(&file).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     let folder = std::path::Path::new(if parent.is_empty() { "." } else { &parent }).join("migrations");
-    let c = CString::new(db_path.clone()).unwrap_or_default();
-    let mut raw: *mut ffi::sqlite3 = std::ptr::null_mut();
-    let flags = ffi::SQLITE_OPEN_READWRITE | ffi::SQLITE_OPEN_CREATE;
-    if unsafe { ffi::sqlite3_open_v2(c.as_ptr(), &mut raw, flags, std::ptr::null()) } != ffi::SQLITE_OK {
-        eprintln!("Error: {}", errmsg(raw));
-        return 1;
-    }
+    let fail = |e: PgError| {
+        eprintln!(
+            "Error: {}. {}",
+            msg("err.DatabaseError", &[("db", db_path.clone()), ("reason", e.message)]),
+            msg("fix.DatabaseError", &[])
+        );
+        1
+    };
+    let pg = db_path.starts_with("postgres://") || db_path.starts_with("postgresql://");
+    let backend = if pg {
+        // the password: the variable of the program's key: secret("NAME")
+        let password = std::env::var("NEXO_DB_KEY_NAME").ok().and_then(|n| std::env::var(n).ok());
+        match crate::pg::Connection::open(&db_path, password.as_deref()) {
+            Ok(c) => Backend::Pg(c),
+            Err(e) => return fail(e),
+        }
+    } else {
+        let c = CString::new(db_path.clone()).unwrap_or_default();
+        let mut raw: *mut ffi::sqlite3 = std::ptr::null_mut();
+        let flags = ffi::SQLITE_OPEN_READWRITE | ffi::SQLITE_OPEN_CREATE;
+        if unsafe { ffi::sqlite3_open_v2(c.as_ptr(), &mut raw, flags, std::ptr::null()) } != ffi::SQLITE_OK {
+            eprintln!("Error: {}", errmsg(raw));
+            return 1;
+        }
+        Backend::Sqlite(Conn(raw))
+    };
     let db = Database {
         path: db_path.clone(),
-        conn: Mutex::new(Conn(raw)),
+        conn: Mutex::new(backend),
+        pg,
         synced: Mutex::new(Vec::new()),
         depth: Mutex::new(0),
         key: None,
         purged: Mutex::new(HashMap::new()),
-    };
-    let fail = |e: String| {
-        eprintln!(
-            "Error: {}. {}",
-            msg("err.DatabaseError", &[("db", db_path.clone()), ("reason", e)]),
-            msg("fix.DatabaseError", &[])
-        );
-        1
     };
     if command == "diff" {
         let (changes, notes, drops) = match diff(&db, &infos) {
@@ -1949,7 +2153,8 @@ pub fn run_command() -> i32 {
             for s in &statements {
                 db.run(s, &[])?;
             }
-            db.run("INSERT INTO nexo_migrations (name) VALUES (?)", &[Sql::Text(name.clone())])?;
+            let insert = "INSERT INTO nexo_migrations (name) VALUES (?)";
+            db.run(&if pg { numbered(insert) } else { insert.to_string() }, &[Sql::Text(name.clone())])?;
             db.run("COMMIT", &[])
         })();
         if let Err(e) = result {
@@ -2059,10 +2264,6 @@ pub fn privacy_restrict(rec: V, span: u32) -> R<Val> {
     let (db, info, key) = saved_row("restrict", rec, span)?;
     let d = db.v().native::<Database>().unwrap();
     d.sync(db.v(), &info, span)?;
-    d.exec(
-        &format!("INSERT OR REPLACE INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?)", crate::privacy::TABLE),
-        &[Sql::Text(info.name.clone()), Sql::Int(key), Sql::Text("restricted".into())],
-        span,
-    )?;
+    d.set_state(&info.name, key, "restricted", span)?;
     Ok(Val::none())
 }

@@ -14,6 +14,7 @@ pub mod cow;
 pub mod crypto;
 pub mod data;
 pub mod db;
+pub mod pg;
 pub mod dec;
 pub mod flags;
 pub mod fmt;
