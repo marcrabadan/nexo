@@ -61,9 +61,6 @@
 .shield-limitations .card { border-radius: 0; border: 0; border-top: 1px solid var(--border-strong); background: none; box-shadow: none; padding: 26px 0 0; }
 .shield-limitations .card p:not(.shield-card-label) { font-size: 14px; line-height: 1.8; }
 .shield-boundary-note { padding: 22px 0 0 20px; border-left: 2px solid var(--border-strong); color: var(--muted); font-size: 14px; margin-top: 36px; }
-.shield-page #validation .facts { margin-top: 36px; margin-bottom: 30px; }
-.shield-page #validation .facts dt { color: var(--accent); font-size: clamp(28px, 3vw, 43px); font-weight: 550; }
-.shield-page #validation > .wrap > p { font-size: 14px; color: var(--muted); }
 .shield-page .ref-table caption { text-align: left; color: var(--muted); padding: 0 0 16px; font-size: 13px; }
 @media (max-width: 1040px) {
   .shield-flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -85,5 +82,4 @@
   .shield-capabilities .card { padding: 26px 22px; }
   .shield-columns { gap: 28px; }
   .shield-own-project { padding: 22px; }
-  .shield-page #validation .facts dt { font-size: 32px; }
 }

@@ -1,0 +1,1083 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexo examples — learn by reading real programs</title>
+<meta name="description" content="Learn Nexo through working examples: calculate an invoice, write tests, transform data and build web applications. Read the code, see its output and try a change.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/examples.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="examples-page">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="learn.html">Learn</a>
+      <a href="examples.html" aria-current="page">Examples</a>
+      <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<main id="main">
+<header class="examples-head"><div class="wrap">
+<p class="eyebrow">Learn by doing</p>
+<h1>Small programs.<br><em>Useful ideas.</em></h1>
+<p class="lede">Read a program, follow its output, then make it your own. Start with a simple invoice and explore richer examples when you’re ready.</p>
+<nav class="examples-jump" aria-label="Examples sections"><a href="#first-example">Start with an invoice <span aria-hidden="true">↓</span></a><a href="#programs">Explore programs <span aria-hidden="true">↓</span></a><a href="#modules">Explore modules <span aria-hidden="true">↓</span></a></nav>
+</div></header>
+<section id="first-example"><div class="wrap example-first-layout">
+<div class="example-first-copy"><p class="eyebrow">Start here</p><h2>Calculate an invoice.</h2><p>Give a price and quantity a name, calculate the tax and print the result. A currency such as <code>EUR</code> makes an amount a money value, so you can read the calculation in the same terms as an invoice.</p>
+<ol class="example-walkthrough"><li><strong>Name your values.</strong> <code>price</code> and <code>quantity</code> hold the inputs.</li><li><strong>Calculate the result.</strong> <code>*</code> multiplies, and <code>21%</code> expresses the tax rate.</li><li><strong>Print a message.</strong> A name inside <code>{ }</code> inserts its value into the text.</li></ol>
+<p>After <a href="index.html#start">installing Nexo</a>, save this as <code>invoice.nexo</code> in the repository root and run:</p><div class="code example-command"><div class="code-bar"><span>From the repository root</span><button class="copy" type="button">Copy</button></div><pre><code>.venv/bin/nexo invoice.nexo</code></pre></div>
+<p class="example-try"><strong>Try a change.</strong> Set <code>quantity</code> to <code>3</code>. Before running it again, predict the subtotal.</p><p><a href="learn.html">New to programming? Start with the guided lessons <span aria-hidden="true">→</span></a></p></div>
+<div class="code example-first-code"><div class="code-bar"><span>invoice.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">price = 49.90 EUR
+quantity = 2
+subtotal = price * quantity
+vat = subtotal * 21%
+
+print("Subtotal: {subtotal}")
+print("VAT: {vat}")
+print("Total: {subtotal + vat}")</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Subtotal: 99.80 EUR
+VAT: 20.96 EUR
+Total: 120.76 EUR</code></pre></div></div>
+</div></section>
+<section class="alt" id="programs">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Keep exploring</p>
+      <h2>See the ideas working together.</h2>
+      <p class="section-intro">Choose a program to see its source and output. Each one combines a few ideas into a practical task. The larger programs and their supporting data are in the <a href="https://github.com/marcrabadan/nexo/tree/main/examples"><code>examples/</code></a> folder of your checkout. The short tests example can be saved directly from this page.</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Programs">
+      <button class="tab" role="tab" id="tab-tests" aria-controls="panel-tests" aria-selected="true">Tests</button>
+      <button class="tab" role="tab" id="tab-sales" aria-controls="panel-sales" aria-selected="false" tabindex="-1">Sales report</button>
+      <button class="tab" role="tab" id="tab-bank" aria-controls="panel-bank" aria-selected="false" tabindex="-1">Bank contracts</button>
+      <button class="tab" role="tab" id="tab-grades" aria-controls="panel-grades" aria-selected="false" tabindex="-1">Grade book</button>
+      
+      <button class="tab" role="tab" id="tab-shop" aria-controls="panel-shop" aria-selected="false" tabindex="-1">Shop API</button>
+      <button class="tab" role="tab" id="tab-signup" aria-controls="panel-signup" aria-selected="false" tabindex="-1">Sign-ups</button>
+      <button class="tab" role="tab" id="tab-deploy" aria-controls="panel-deploy" aria-selected="false" tabindex="-1">Deploy</button>
+      <button class="tab" role="tab" id="tab-events" aria-controls="panel-events" aria-selected="false" tabindex="-1">Events</button>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-sales" aria-labelledby="tab-sales" hidden>
+<div class="example-lesson-note"><p class="example-concepts">What you’ll learn: Pipelines, files and grouped data</p><p>Run from the <code>examples/</code> directory so the program can find <code>data/sales.csv</code>. It writes a summary CSV alongside the source.</p><p class="example-run"><span>Run</span> <code>../.venv/bin/nexo sales_report.nexo</code></p><a href="reference.html#pipelines">Read the related language guide <span aria-hidden="true">→</span></a></div>
+      <p>Totals per region from a CSV file, with <code>where</code>, <code>group by</code>, <code>sum</code>, <code>sort by</code>, <code>take</code> and <code>save</code>.</p>
+<div class="code"><div class="code-bar"><span>examples/sales_report.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Sales report: totals per region from a CSV file.
+## Shows a pipeline with where, group by, sum, sort by, take and save.
+
+sales = read(&quot;data/sales.csv&quot;)
+
+print(&quot;Rows read: {sales |&gt; count}&quot;)
+
+by_region = sales
+  |&gt; where amount &gt; 0
+  |&gt; group by region
+  |&gt; sum amount
+  |&gt; sort by amount desc
+
+print(&quot;Sales per region:&quot;)
+for row in by_region:
+    print(&quot;  {row[&quot;region&quot;]}: {row[&quot;amount&quot;]} EUR&quot;)
+
+best = by_region |&gt; take 1
+print(&quot;Best region: {best[0][&quot;region&quot;]}&quot;)
+
+laptops = sales |&gt; where product == &quot;laptop&quot; |&gt; map amount
+print(&quot;Laptops sold: {len(laptops)}, average price {round(laptops |&gt; avg, 2)} EUR&quot;)
+
+refunds = sales |&gt; where amount &lt; 0 |&gt; count
+print(&quot;Refunds: {refunds}&quot;)
+
+by_region |&gt; save(&quot;sales_summary.out.csv&quot;)
+print(&quot;Saved sales_summary.out.csv&quot;)</code></pre><div class="out"><div class="out-label">$ nexo sales_report.nexo</div><pre><code>Rows read: 10
+Sales per region:
+  north: 1564.5 EUR
+  east: 1460.0 EUR
+  west: 1330.0 EUR
+  south: 1225.0 EUR
+Best region: north
+Laptops sold: 4, average price 1199.88 EUR
+Refunds: 1
+Saved sales_summary.out.csv</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-bank" aria-labelledby="tab-bank" hidden>
+<div class="example-lesson-note"><p class="example-concepts">What you’ll learn: Functions, exact money and contracts</p><p>Run from the <code>examples/</code> directory. Read the <code>expect</code> lines as the rules each operation must obey.</p><p class="example-run"><span>Run</span> <code>../.venv/bin/nexo bank.nexo</code></p><a href="reference.html#contracts">Read the related language guide <span aria-hidden="true">→</span></a></div>
+      <p>Accounts guarded by <code>expect</code>, <code>ensure</code> and <code>old()</code>; a broken contract is an error that can be handled.</p>
+<div class="code"><div class="code-bar"><span>examples/bank.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Bank accounts with contracts: expect, ensure and old() guard every
+## operation, and a broken contract is an error that can be handled.
+
+type Account:
+    owner: str
+    balance: money
+
+fn deposit(account: Account, amount: money):
+    expect amount &gt; 0.00 EUR
+    ensure account.balance == old(account.balance) + amount
+
+    account.balance += amount
+
+fn transfer(source: Account, target: Account, amount: money):
+    expect amount &gt; 0.00 EUR
+    expect source.balance &gt;= amount
+    ensure source.balance + target.balance == old(source.balance + target.balance)
+
+    source.balance -= amount
+    target.balance += amount
+
+ana = Account(owner: &quot;Ana&quot;, balance: 100.00 EUR)
+luis = Account(owner: &quot;Luis&quot;, balance: 20.00 EUR)
+
+deposit(ana, 50.00 EUR)
+transfer(ana, luis, 70.00 EUR)
+print(&quot;{ana.owner}: {ana.balance}&quot;)
+print(&quot;{luis.owner}: {luis.balance}&quot;)
+
+try:
+    transfer(luis, ana, 500.00 EUR)
+else e is ContractBroken:
+    print(&quot;Rejected: {e.message}&quot;)
+
+try:
+    deposit(ana, -5.00 EUR)
+else e is ContractBroken:
+    print(&quot;Rejected: {e.message}&quot;)
+
+test &quot;a transfer keeps the total&quot;:
+    a = Account(owner: &quot;A&quot;, balance: 10.00 EUR)
+    b = Account(owner: &quot;B&quot;, balance: 0.00 EUR)
+    transfer(a, b, 4.00 EUR)
+    assert a.balance == 6.00 EUR
+    assert b.balance == 4.00 EUR
+
+test &quot;cannot transfer more than the balance&quot;:
+    a = Account(owner: &quot;A&quot;, balance: 1.00 EUR)
+    b = Account(owner: &quot;B&quot;, balance: 0.00 EUR)
+    assert transfer(a, b, 2.00 EUR) fails</code></pre><div class="out"><div class="out-label">$ nexo bank.nexo</div><pre><code>Ana: 80.00 EUR
+Luis: 90.00 EUR
+Rejected: expect source.balance &gt;= amount does not hold (source.balance = 90.00 EUR, amount = 500.00 EUR)
+Rejected: expect amount &gt; 0.00 EUR does not hold (amount = -5.00 EUR)</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-grades" aria-labelledby="tab-grades" hidden>
+<div class="example-lesson-note"><p class="example-concepts">What you’ll learn: Records, methods and decisions</p><p>Run from the <code>examples/</code> directory. Follow one student through <code>average()</code> and <code>grade()</code> to see how data becomes a result.</p><p class="example-run"><span>Run</span> <code>../.venv/bin/nexo grades.nexo</code></p><a href="reference.html#types">Read the related language guide <span aria-hidden="true">→</span></a></div>
+      <p>Records with methods, an enum, a trait and <code>match</code> with guards.</p>
+<div class="code"><div class="code-bar"><span>examples/grades.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Grade book: records with methods, an enum, match with guards and a trait.
+
+trait Describable:
+    fn describe(self) -&gt; str
+
+type Grade:
+    Excellent
+    Good
+    Pass
+    Fail
+
+type Student is Describable:
+    name: str
+    scores: list[int]
+
+    fn average(self) -&gt; float:
+        return self.scores.sum() / len(self.scores)
+
+    fn describe(self) -&gt; str:
+        return &quot;{self.name} ({len(self.scores)} exams)&quot;
+
+fn grade(avg: float) -&gt; Grade:
+    match avg:
+        a if a &gt;= 9: return Excellent
+        a if a &gt;= 7: return Good
+        a if a &gt;= 5: return Pass
+        _: return Fail
+
+fn label(g: Grade) -&gt; str:
+    match g:
+        Excellent: return &quot;excellent&quot;
+        Good: return &quot;good&quot;
+        Pass: return &quot;pass&quot;
+        Fail: return &quot;fail&quot;
+
+students = [
+    Student(&quot;Ana&quot;, [9, 10, 9]),
+    Student(&quot;Luis&quot;, [6, 7, 5]),
+    Student(&quot;Eva&quot;, [4, 3, 6]),
+    Student(&quot;Marc&quot;, [8, 7, 9])
+]
+
+for s in students:
+    avg = s.average()
+    print(&quot;{s.describe()}: {round(avg, 1)} -&gt; {label(grade(avg))}&quot;)
+
+passed = students |&gt; where grade(it.average()) != Fail |&gt; count
+print(&quot;Passed: {passed} of {len(students)}&quot;)
+
+ranking = students |&gt; sort by it.average() desc |&gt; map name
+print(&quot;Ranking: {ranking}&quot;)
+
+test &quot;grades follow the average&quot;:
+    assert grade(9.5) == Excellent
+    assert grade(7.0) == Good
+    assert grade(4.9) == Fail
+
+test &quot;average of a student&quot;:
+    assert Student(&quot;X&quot;, [5, 7]).average() == 6.0</code></pre><div class="out"><div class="out-label">$ nexo grades.nexo</div><pre><code>Ana (3 exams): 9.3 -&gt; excellent
+Luis (3 exams): 6.0 -&gt; pass
+Eva (3 exams): 4.3 -&gt; fail
+Marc (3 exams): 8.0 -&gt; good
+Passed: 3 of 4
+Ranking: [&quot;Ana&quot;, &quot;Marc&quot;, &quot;Luis&quot;, &quot;Eva&quot;]</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-tests" aria-labelledby="tab-tests">
+<div class="example-lesson-note"><p class="example-concepts">What you’ll learn: Functions and built-in tests</p><p>Save the code below as <code>tests.nexo</code> in the repository root. The <code>test</code> command finds the named <code>test</code> blocks and checks their assertions.</p><p class="example-run"><span>Run</span> <code>.venv/bin/nexo test tests.nexo</code></p><a href="reference.html#contracts">Read the related language guide <span aria-hidden="true">→</span></a></div>
+      <p><code>test</code> blocks run with <code>nexo test</code>; <code>assert ... fails</code> checks that an expression fails, here with an integer overflow.</p>
+<div class="code"><div class="code-bar"><span>tests.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn add(a: int, b: int) -&gt; int:
+    return a + b
+
+test &quot;basic sum&quot;:
+    assert add(2, 3) == 5
+
+test &quot;int overflow is detected&quot;:
+    assert add(9223372036854775807, 1) fails</code></pre><div class="out"><div class="out-label">$ nexo test tests.nexo</div><pre><code>✓ basic sum
+✓ int overflow is detected
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-shop" aria-labelledby="tab-shop" hidden>
+<div class="example-lesson-note"><p class="example-concepts">What you’ll learn: Typed web routes, databases and authentication</p><p>The complete program is <code>examples/shop_api/shop.nexo</code>. Its tests use <code>SHOP_JWT_KEY</code> for authentication. Read the web-module guide before setting up this example.</p><a href="reference.html#mod-web">Read the related language guide <span aria-hidden="true">→</span></a></div>
+      <p>A web API with a database and <code>ask</code>, written in Nexo alone. Its tests fake the AI, so they run without a key.</p>
+<div class="code"><div class="code-bar"><span>examples/shop_api/shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># A shop&#x27;s web API with a database and AI, written in Nexo alone.
+# Run it with
+#     SHOP_JWT_KEY=... ANTHROPIC_KEY=... nexo shop.nexo
+# and test it, with the AI faked, with `nexo test shop.nexo`.
+use nexo.db
+
+db = connect(&quot;shop.db&quot;)
+tokens = jwt(key: secret(&quot;SHOP_JWT_KEY&quot;))
+
+ai:
+    provider = &quot;anthropic&quot;
+    model = &quot;claude-opus&quot;
+    key = secret(&quot;ANTHROPIC_KEY&quot;)
+
+@table
+type Product:
+    id: id
+    name: str @unique
+    price: decimal
+
+@table
+type Review:
+    id: id
+    product: ref Product
+    text: str
+    tone: str
+    score: int
+
+type NewProduct:
+    name: str
+    price: decimal
+
+type NewReview:
+    text: str
+
+type Opinion:
+    tone: &quot;positive&quot; | &quot;negative&quot; | &quot;neutral&quot;
+    score: 1..5
+
+## What the AI thinks of a review: its tone and a score from 1 to 5.
+fn opinion(text: str) -&gt; Opinion!:
+    o: Opinion = ask(&quot;Analyse this review of a product&quot;, text, creativity: low)?
+    return o
+
+## A short summary of the reviews of a product.
+fn summary(reviews: list[Review]) -&gt; str!:
+    if len(reviews) == 0:
+        return &quot;No reviews yet.&quot;
+    texts = reviews |&gt; map it.text
+    return ask(&quot;Summarise these reviews in one sentence&quot;, texts, max: 40 words)?
+
+server shop:
+    port = 8080
+    auth = tokens
+
+    @public
+    post &quot;/login&quot;(name: str):
+        return {&quot;token&quot;: tokens.sign({&quot;sub&quot;: name, &quot;role&quot;: &quot;admin&quot;}, expires: 1h)}
+
+    @public
+    get &quot;/products&quot;():
+        return db.Product |&gt; sort by name
+
+    @public
+    get &quot;/products/{id}&quot;(id: int):
+        return db.Product.find(id: id)?
+
+    @role(&quot;admin&quot;)
+    post &quot;/products&quot;(product: NewProduct):
+        return db.Product.add(name: product.name, price: product.price)
+
+    @public
+    @limit(10 per minute per ip)
+    post &quot;/products/{id}/reviews&quot;(id: int, review: NewReview):
+        product = db.Product.find(id: id)?
+        o = opinion(review.text)?
+        return db.Review.add(product: product, text: review.text, tone: o.tone, score: o.score)
+
+    @public
+    get &quot;/products/{id}/summary&quot;(id: int):
+        product = db.Product.find(id: id)?
+        reviews = db.Review |&gt; where product == product
+        scores = reviews |&gt; map it.score
+        var average = 0.0
+        if len(scores) &gt; 0:
+            average = float(scores |&gt; sum) / len(scores)
+        return {&quot;product&quot;: product.name, &quot;reviews&quot;: len(scores), &quot;score&quot;: average, &quot;summary&quot;: summary(reviews)?}
+
+test &quot;products need an admin&quot;:
+    try:
+        http.post(&quot;{shop.url}/products&quot;, {&quot;name&quot;: &quot;Lamp&quot;, &quot;price&quot;: 25}, retries: 0)
+    else e is HTTPError:
+        assert e.message.ends_with(&quot;401 Unauthorized&quot;)
+    login = http.post(&quot;{shop.url}/login?name=ana&quot;, none).json()
+    headers = {&quot;Authorization&quot;: &quot;Bearer {login[&quot;token&quot;]}&quot;}
+    lamp = http.post(&quot;{shop.url}/products&quot;, {&quot;name&quot;: &quot;Lamp&quot;, &quot;price&quot;: 25.50}, headers: headers)
+    assert lamp.status == 201
+    assert lamp.json()[&quot;name&quot;] == &quot;Lamp&quot;
+    assert http.get(&quot;{shop.url}/products&quot;).json()[0][&quot;price&quot;] == 25.5
+
+test &quot;reviews are analysed by the AI&quot;:
+    fake ask returns Opinion(tone: &quot;positive&quot;, score: 5)
+    login = http.post(&quot;{shop.url}/login?name=ana&quot;, none).json()
+    headers = {&quot;Authorization&quot;: &quot;Bearer {login[&quot;token&quot;]}&quot;}
+    chair = http.post(&quot;{shop.url}/products&quot;, {&quot;name&quot;: &quot;Chair&quot;, &quot;price&quot;: 80}, headers: headers).json()
+    review = http.post(&quot;{shop.url}/products/{chair[&quot;id&quot;]}/reviews&quot;, {&quot;text&quot;: &quot;Comfortable!&quot;}).json()
+    assert review[&quot;tone&quot;] == &quot;positive&quot; and review[&quot;score&quot;] == 5
+    fake ask returns &quot;Buyers love it.&quot;
+    s = http.get(&quot;{shop.url}/products/{chair[&quot;id&quot;]}/summary&quot;).json()
+    assert s[&quot;summary&quot;] == &quot;Buyers love it.&quot; and s[&quot;reviews&quot;] == 1 and s[&quot;score&quot;] == 5.0
+
+test &quot;a missing product is a 404&quot;:
+    try:
+        http.get(&quot;{shop.url}/products/999&quot;, retries: 0)
+    else e is HTTPError:
+        assert e.message.ends_with(&quot;404 Not Found&quot;)</code></pre><div class="out"><div class="out-label">$ SHOP_JWT_KEY=... nexo test shop.nexo</div><pre><code>✓ products need an admin
+✓ reviews are analysed by the AI
+✓ a missing product is a 404
+3 tests: 3 passed, 0 failed</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-signup" aria-labelledby="tab-signup" hidden>
+<div class="example-lesson-note"><p class="example-concepts">What you’ll learn: Validation, password hashing and error handling</p><p>Run from the <code>examples/</code> directory. The example creates its sample data locally and demonstrates successful and rejected sign-ups.</p><p class="example-run"><span>Run</span> <code>../.venv/bin/nexo signup.nexo</code></p><a href="reference.html#std-crypto">Read the related language guide <span aria-hidden="true">→</span></a></div>
+      <p>The standard library in one program: a <code>regex</code> checks the email, only the Argon2id hash of the password is kept, the time is shown in another zone, a template is filled with <code>render</code> and signed, and <code>log</code> hides the <code>@private</code> field.</p>
+<div class="code"><div class="code-bar"><span>examples/signup.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Sign-ups: checks an email with a regular expression, stores only the
+## hash of the password, signs the welcome letter and logs the account
+## with its @private fields hidden. Shows the standard library.
+
+type Account:
+    name: str
+    email: str
+    password: str @private
+    since: time
+
+    keep = 5 years after since
+    purpose = &quot;logging in&quot;
+
+email_format = regex(&quot;^([a-z0-9.]+)@([a-z0-9]+)\\.([a-z]+)$&quot;)
+
+fn sign_up(name: str, email: str, plain: str, moment: time) -&gt; Account!:
+    if not email_format.matches(email):
+        fail(&quot;\&quot;{email}\&quot; is not a valid email&quot;)
+    if len(plain) &lt; 8:
+        fail(&quot;the password needs at least 8 characters&quot;)
+    return Account(name: name, email: email, password: password.hash(plain), since: moment)
+
+fn log_in(account: Account, plain: str) -&gt; bool:
+    return password.check(plain, account.password)
+
+opening = time(2026, 10, 26, 9, 30, zone: &quot;Europe/Madrid&quot;)
+attempts = [
+    [&quot;Ana&quot;, &quot;ana@mail.com&quot;, &quot;correct horse&quot;],
+    [&quot;Luis&quot;, &quot;luis(at)mail.com&quot;, &quot;battery staple&quot;],
+    [&quot;Eva&quot;, &quot;eva@mail.com&quot;, &quot;short&quot;]
+]
+
+var accounts = []
+for a in attempts:
+    try:
+        accounts.add(sign_up(a[0], a[1], a[2], opening))
+        print(&quot;signed up: {a[0]}&quot;)
+    else e:
+        print(&quot;rejected {a[0]}: {e.message}&quot;)
+
+ana = accounts[0]
+print(&quot;Ana logs in: {log_in(ana, &quot;correct horse&quot;)}, with a wrong password: {log_in(ana, &quot;horse&quot;)}&quot;)
+print(&quot;Ana in New York: {ana.since.to_zone(&quot;America/New_York&quot;)}&quot;)
+print(&quot;parts of the email: {email_format.groups(ana.email)}&quot;)
+log(ana)
+
+letter = render(&quot;data/welcome.txt&quot;, name: ana.name, email: ana.email, since: ana.since.date)
+print(letter, end: &quot;&quot;)
+pair = keypair.new()
+signature = sign(letter, pair.private)
+print(&quot;signed: {verify(letter, signature, pair.public)}, changed: {verify(letter + &quot;!&quot;, signature, pair.public)}&quot;)
+
+test &quot;a bad email is rejected&quot;:
+    assert sign_up(&quot;X&quot;, &quot;x@&quot;, &quot;long enough&quot;, opening) fails
+
+test &quot;only the hash is kept&quot;:
+    a = sign_up(&quot;X&quot;, &quot;x@mail.com&quot;, &quot;long enough&quot;, opening)
+    assert a.password != &quot;long enough&quot;
+    assert log_in(a, &quot;long enough&quot;)</code></pre><div class="out"><div class="out-label">$ nexo signup.nexo</div><pre><code>signed up: Ana
+rejected Luis: &quot;luis(at)mail.com&quot; is not a valid email
+rejected Eva: the password needs at least 8 characters
+Ana logs in: true, with a wrong password: false
+Ana in New York: 2026-10-26T04:30:00-04:00
+parts of the email: [&quot;ana&quot;, &quot;mail&quot;, &quot;com&quot;]
+Account(name: &quot;Ana&quot;, email: &quot;ana@mail.com&quot;, password: &quot;***&quot;, since: 2026-10-26T09:30:00+01:00)
+Welcome, Ana!
+Your account ana@mail.com is ready since 2026-10-26.
+signed: true, changed: false</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-deploy" aria-labelledby="tab-deploy" hidden>
+<div class="example-lesson-note"><p class="example-concepts">What you’ll learn: One application, its infrastructure and its pipeline</p><p>The complete project is in <code>examples/deploy/</code>. The command shown exports the pipeline configuration; it does not apply infrastructure changes.</p><a href="reference.html#mod-infra">Read the related language guide <span aria-hidden="true">→</span></a></div>
+      <p>One file holds an app, its tests, the four places it runs (AWS, Azure, GCP and Kubernetes) and the pipeline that builds and deploys it. The app on Kubernetes reads the database on GCP, so <code>nexo apply</code> deploys GCP first.</p>
+<div class="code"><div class="code-bar"><span>examples/deploy/shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># One file holds an app, the four places it
+# runs (AWS, Azure, GCP and Kubernetes) and how it gets there.
+#     nexo shop.nexo                serves it on port 8080
+#     nexo test shop.nexo           runs its tests
+#     nexo plan / nexo apply        deploys it to the four targets
+#     nexo ci run --yes             builds its image and deploys it
+#     nexo ci export github         writes the workflow that does the same
+
+flags:
+    express_shipping = 20%
+
+type Order:
+    item: str
+    quantity: int
+
+## The price of shipping an order: express for some users (a flag).
+fn shipping(order: Order, user: str) -&gt; money:
+    if flag(&quot;express_shipping&quot;, user):
+        return 4.90 EUR
+    return 2.50 EUR + 0.10 EUR * order.quantity
+
+test &quot;shipping grows with the quantity&quot;:
+    assert shipping(Order(item: &quot;tea&quot;, quantity: 1), &quot;nobody&quot;) &lt;= shipping(Order(item: &quot;tea&quot;, quantity: 3), &quot;nobody&quot;)
+
+server shop:
+    port = 8080
+
+    @public
+    get &quot;/health&quot;:
+        return {&quot;ok&quot;: true}
+
+    @public
+    post &quot;/orders&quot;(order: Order, user: str):
+        return {&quot;item&quot;: order.item, &quot;shipping&quot;: shipping(order, user)}
+
+infra shop_aws:
+    cloud = &quot;aws&quot;
+    region = &quot;eu-west-1&quot;
+    budget = 200 EUR per month
+    network net:
+        allow from internet to api, port: 443
+    database orders
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url
+
+infra shop_azure:
+    cloud = &quot;azure&quot;
+    region = &quot;westeurope&quot;
+    database orders
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url
+
+infra shop_gcp:
+    cloud = &quot;gcp&quot;
+    region = &quot;europe-west1&quot;
+    database orders
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        env:
+            DB = orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url
+
+infra shop_k8s:
+    cloud = &quot;k8s&quot;
+    namespace = &quot;shop&quot;
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        scale 2..6:
+            cpu &gt; 60%
+        env:
+            DB = shop_gcp.orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url
+
+stage prod:
+    size = medium
+
+pipeline main:
+    trigger push to main
+    secrets = [&quot;API_KEY&quot;]
+    version = &quot;1.1.0&quot;
+
+    step checks:
+        test()
+
+    step build:
+        image = build_image(&quot;shop&quot;)
+
+    step deploy:
+        approve(by: [&quot;ops@shop.example&quot;])
+        apply(stage: &quot;prod&quot;, image: image)</code></pre><div class="out"><div class="out-label">$ nexo ci export github shop.nexo</div><pre><code>Wrote .github/workflows/main.yml.</code></pre></div></div>
+    </div>
+    <div class="panel" role="tabpanel" id="panel-events" aria-labelledby="tab-events" hidden>
+<div class="example-lesson-note"><p class="example-concepts">What you’ll learn: Event handlers, windows and feature flags</p><p>The complete program is <code>examples/events/events.nexo</code>. From that directory, run its tests to feed sample events through the local broker.</p><p class="example-run"><span>Run</span> <code>../../.venv/bin/nexo test events.nexo</code></p><a href="reference.html#mod-stream">Read the related language guide <span aria-hidden="true">→</span></a></div>
+      <p>Operations without a cloud: orders arrive on a stream and each is handled once, a bad one goes to the dead letters after its retries, clicks are counted per minute, and a flag gives a quarter of the users free shipping. The tests send the messages to the local broker.</p>
+<div class="code"><div class="code-bar"><span>examples/events/events.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Shop events: orders arrive on a stream and each one is handled once,
+## a bad one goes to the dead letters after its retries, clicks are counted
+## per minute, and a flag gives some users free shipping. Run the stream
+## part with `nexo test events.nexo`, on the local broker.
+use nexo.stream
+
+flags:
+    free_shipping = 25%
+    new_banner = users where country == &quot;ES&quot;
+
+type User:
+    id: int
+    country: str
+
+type Order:
+    id: int
+    user: int
+    total: decimal
+
+fn shipping(order: Order) -&gt; money:
+    if flag(&quot;free_shipping&quot;, order.user) or order.total &gt;= 50:
+        return 0.00 EUR
+    return 3.90 EUR
+
+fn process(order: Order):
+    if order.total &lt;= 0:
+        fail(&quot;order {order.id} has no total&quot;)
+    print(&quot;order {order.id}: {order.total} EUR + shipping {shipping(order)}&quot;)
+
+when kafka(&quot;orders&quot;) as msg, key: msg.json()[&quot;id&quot;]:
+    order: Order = validate(msg.json(), as: Order)?
+    process(order)?
+
+fn show(row):
+    print(&quot;clicks on {row[&quot;page&quot;]}: {row[&quot;count&quot;]}&quot;)
+
+kafka(&quot;clicks&quot;)
+  |&gt; window 1m
+  |&gt; group by page
+  |&gt; count
+  |&gt; each show
+
+var free = 0
+for user in range(1, 1001):
+    if flag(&quot;free_shipping&quot;, user):
+        free += 1
+print(&quot;free shipping for {free} of 1000 users&quot;)
+print(&quot;banner in ES: {flag(&quot;new_banner&quot;, User(id: 1, country: &quot;ES&quot;))}, in FR: {flag(&quot;new_banner&quot;, User(id: 2, country: &quot;FR&quot;))}&quot;)
+
+test &quot;every order is handled once&quot;:
+    kafka(&quot;orders&quot;).send({&quot;id&quot;: 1, &quot;user&quot;: 7, &quot;total&quot;: 20.00})
+    kafka(&quot;orders&quot;).send({&quot;id&quot;: 1, &quot;user&quot;: 7, &quot;total&quot;: 20.00})
+    kafka(&quot;orders&quot;).send({&quot;id&quot;: 2, &quot;user&quot;: 8, &quot;total&quot;: 80.00})
+    kafka(&quot;orders&quot;).send({&quot;id&quot;: 3, &quot;user&quot;: 9, &quot;total&quot;: 0})
+
+test &quot;clicks per minute&quot;:
+    start = time(2026, 10, 26, 9, 0, zone: &quot;UTC&quot;)
+    kafka(&quot;clicks&quot;).send({&quot;page&quot;: &quot;/home&quot;}, at: start)
+    kafka(&quot;clicks&quot;).send({&quot;page&quot;: &quot;/cart&quot;}, at: start + 10s)
+    kafka(&quot;clicks&quot;).send({&quot;page&quot;: &quot;/home&quot;}, at: start + 20s)
+    kafka(&quot;clicks&quot;).send({&quot;page&quot;: &quot;/home&quot;}, at: start + 70s)</code></pre><div class="out"><div class="out-label">$ nexo test events.nexo</div><pre><code>free shipping for 241 of 1000 users
+banner in ES: true, in FR: false
+order 1: 20.0 EUR + shipping 3.90 EUR
+order 2: 80.0 EUR + shipping 0.00 EUR
+orders: message 4 fails after 4 tries and goes to orders.dead: Unhandled error: order 3 has no total. Handle it with try and else e.
+✓ every order is handled once
+clicks on /home: 2
+clicks on /cart: 1
+clicks on /home: 1
+✓ clicks per minute
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+    </div>
+  </div>
+</section>
+<section class="alt" id="modules">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Go further</p>
+      <h2>Bring Nexo into your application.</h2>
+      <p class="section-intro">Once functions, types and errors feel familiar, explore databases, web APIs and other modules. These longer examples introduce one library at a time. They use the same Nexo syntax as the smaller programs above; modules that connect to external services need their own configuration.</p>
+    </div>
+
+    <div class="explorer">
+      <div class="explorer-list" role="tablist" aria-label="Library and cloud" aria-orientation="vertical">
+        <p class="explorer-group" role="presentation">Library</p>
+        <button class="ftab" role="tab" id="mt-db" aria-controls="mp-db" aria-selected="true"><strong>Databases</strong><span><code>@table</code>, queries, transactions</span></button>
+        <button class="ftab" role="tab" id="mt-web" aria-controls="mp-web" aria-selected="false" tabindex="-1"><strong>Web servers</strong><span><code>server</code>, routes, <code>@role</code></span></button>
+        <button class="ftab" role="tab" id="mt-ai" aria-controls="mp-ai" aria-selected="false" tabindex="-1"><strong>AI as a function</strong><span><code>ask</code>, typed answers, <code>fake</code></span></button>
+        <button class="ftab" role="tab" id="mt-crypto" aria-controls="mp-crypto" aria-selected="false" tabindex="-1"><strong>Secrets and crypto</strong><span><code>secret</code>, <code>password</code>, <code>sign</code></span></button>
+        <button class="ftab" role="tab" id="mt-text" aria-controls="mp-text" aria-selected="false" tabindex="-1"><strong>Dates, text and data</strong><span>time zones, <code>regex</code>, <code>convert</code></span></button>
+        <button class="ftab" role="tab" id="mt-interop" aria-controls="mp-interop" aria-selected="false" tabindex="-1"><strong>C and Python</strong><span><code>use c</code>, <code>use python</code></span></button>
+        <p class="explorer-group" role="presentation">Operations</p>
+        <button class="ftab" role="tab" id="mt-infra" aria-controls="mp-infra" aria-selected="false" tabindex="-1"><strong>Infrastructure</strong><span><code>infra</code>, <code>nexo plan</code></span></button>
+        <button class="ftab" role="tab" id="mt-ci" aria-controls="mp-ci" aria-selected="false" tabindex="-1"><strong>CI pipelines</strong><span><code>pipeline</code>, <code>nexo ci run</code></span></button>
+        <button class="ftab" role="tab" id="mt-stream" aria-controls="mp-stream" aria-selected="false" tabindex="-1"><strong>Streams</strong><span><code>when kafka(...)</code>, <code>window</code></span></button>
+        <button class="ftab" role="tab" id="mt-flags" aria-controls="mp-flags" aria-selected="false" tabindex="-1"><strong>Feature flags</strong><span><code>flags:</code>, <code>flag()</code></span></button>
+        <button class="ftab" role="tab" id="mt-privacy" aria-controls="mp-privacy" aria-selected="false" tabindex="-1"><strong>Privacy</strong><span><code>@personal</code>, <code>@private</code>, <code>keep</code></span></button>
+      </div>
+
+      <div class="explorer-panels">
+        <div class="fpanel" role="tabpanel" id="mp-db" aria-labelledby="mt-db">
+          <div class="fpanel-text">
+            <h3>Databases without SQL strings</h3>
+            <p>With <code>use nexo.db</code>, <code>@table</code> types are the schema, and <code>ref</code> and <code>many</code> are the relations between them. A pipeline on a table, such as <code>db.Order |&gt; where amount &gt; 100</code>, becomes one parameterised SQL query on SQLite.</p>
+            <p>Everything inside <code>db.transaction:</code> is kept or undone together: the second customer breaks <code>@unique</code>, so the order added before it is rolled back too. <code>nexo db diff</code> and <code>nexo db migrate</code> keep the database in step with the types.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>orders.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.db
+
+db = connect(&quot;shop.db&quot;)
+
+@table
+type Customer:
+    id: id
+    name: str
+    email: str @unique
+    orders: many Order
+
+@table
+type Order:
+    id: id
+    customer: ref Customer
+    amount: float
+
+ana = db.Customer.add(name: &quot;Ana&quot;, email: &quot;ana@mail.com&quot;)
+db.Order.add(customer: ana, amount: 49.9)
+db.Order.add(customer: ana, amount: 150.0)
+
+large = db.Order |&gt; where amount &gt; 100 |&gt; map it.amount
+print(large)
+print(ana.orders.count(), ana.orders |&gt; map it.amount |&gt; sum)
+
+try:
+    db.transaction:
+        db.Order.add(customer: ana, amount: 1.0)
+        db.Customer.add(name: &quot;Copy&quot;, email: &quot;ana@mail.com&quot;)
+else e:
+    print(e.message)
+print(db.Order.count())</code></pre><div class="out"><div class="out-label">$ nexo orders.nexo</div><pre><code>[150.0]
+2 199.9
+There is already a Customer with email = &quot;ana@mail.com&quot;
+2</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-web" aria-labelledby="mt-web" hidden>
+          <div class="fpanel-text">
+            <h3>A web API in a block</h3>
+            <p>A <code>server</code> block has typed routes: <code>{n}</code> arrives as an <code>int</code> and a body as an <code>Item</code>, and anything else is a 400. Returning a number answers with that status, and errors become status codes.</p>
+            <p><code>auth = jwt(...)</code> protects every route that is not <code>@public</code>, and <code>@role</code> asks for a role in the token. Under <code>nexo test</code> the server answers on a free port, at <code>shop.url</code>.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>api.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">tokens = jwt(key: password.generate(32))
+
+type Item:
+    name: str
+    price: decimal
+
+items = [Item(name: &quot;pen&quot;, price: 1.50)]
+
+server shop:
+    port = 8080
+    auth = tokens
+
+    @public
+    get &quot;/items/{n}&quot;(n: int):
+        if n &gt;= len(items):
+            return 404
+        return items[n]
+
+    @role(&quot;admin&quot;)
+    post &quot;/items&quot;(item: Item):
+        return item
+
+test &quot;routes answer JSON&quot;:
+    assert http.get(&quot;{shop.url}/items/0&quot;).json()[&quot;name&quot;] == &quot;pen&quot;
+
+test &quot;errors become status codes&quot;:
+    try:
+        http.get(&quot;{shop.url}/items/9&quot;, retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(shop.url, &quot;&quot;))
+    try:
+        http.post(&quot;{shop.url}/items&quot;, {&quot;name&quot;: &quot;cup&quot;, &quot;price&quot;: 2}, retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(shop.url, &quot;&quot;))</code></pre><div class="out"><div class="out-label">$ nexo test api.nexo</div><pre><code>✓ routes answer JSON
+GET /items/9 answered 404 Not Found
+POST /items answered 401 Unauthorized
+✓ errors become status codes
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-ai" aria-labelledby="mt-ai" hidden>
+          <div class="fpanel-text">
+            <h3>AI as a function call</h3>
+            <p><code>ask</code> sends an instruction and an input to the configured model (Anthropic, OpenAI or Ollama, set up with <code>nexo ai setup</code> or an <code>ai:</code> block). With a declared type the answer is that type, checked field by field, so <code>score</code> is always between 1 and 5.</p>
+            <p><code>fake ask returns ...</code> replaces the model inside a test, so tests run offline and without a key. <code>@tool</code> functions and <code>agent</code> blocks let the model call your code.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>reviews.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Opinion:
+    tone: &quot;positive&quot; | &quot;negative&quot; | &quot;neutral&quot;
+    score: 1..5
+
+fn classify(review: str) -&gt; Opinion!:
+    o: Opinion = ask(&quot;Analyse this review&quot;, review)?
+    return o
+
+fn summary(text: str) -&gt; str!:
+    return ask(&quot;Summarise this text&quot;, text, max: 20 words, creativity: low)?
+
+test &quot;a typed answer&quot;:
+    fake ask returns Opinion(tone: &quot;positive&quot;, score: 4)
+    assert classify(&quot;Great!&quot;).score == 4
+
+test &quot;a short summary&quot;:
+    fake ask returns &quot;A short text.&quot;
+    assert summary(&quot;A very long text&quot;) == &quot;A short text.&quot;</code></pre><div class="out"><div class="out-label">$ nexo test reviews.nexo</div><pre><code>✓ a typed answer
+✓ a short summary
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-crypto" aria-labelledby="mt-crypto" hidden>
+          <div class="fpanel-text">
+            <h3>Secrets that never leak</h3>
+            <p>The algorithms are chosen for you: Argon2id for <code>password.hash</code>, AES-256-GCM for <code>encrypt</code> and Ed25519 for <code>sign</code>. There is nothing to configure wrongly.</p>
+            <p><code>secret("NAME")</code> reads a secret from the environment. It can be passed where it is needed, such as a key or a header, but never printed, logged or written to a file. A key written in the code is a compile error.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>secrets.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">stored = password.hash(&quot;hunter2&quot;)
+print(password.check(&quot;hunter2&quot;, stored), password.check(&quot;hunter3&quot;, stored))
+
+k = key.new()
+hidden = encrypt(&quot;Ana&#x27;s card&quot;, k)
+print(decrypt(hidden, k))
+
+pair = keypair.new()
+signature = sign(&quot;contract v1&quot;, pair.private)
+print(verify(&quot;contract v1&quot;, signature, pair.public), verify(&quot;contract v2&quot;, signature, pair.public))
+
+db_pass = secret(&quot;DB_PASSWORD&quot;)
+print(&quot;the password is {db_pass}&quot;)</code></pre><div class="out"><div class="out-label">$ nexo secrets.nexo</div><pre><code>true false
+Ana&#x27;s card
+true false
+Error in secrets.nexo, line 13:
+  print(&quot;the password is {db_pass}&quot;)
+                          ^^^^^^^
+A secret cannot be shown or turned into text. Pass the secret only where it is needed (key: ..., a connect password, an http header); never to print, str() or a file.</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-text" aria-labelledby="mt-text" hidden>
+          <div class="fpanel-text">
+            <h3>Dates, text and data</h3>
+            <p>Dates and instants know their time zone: adding an hour across the change to summer time in Madrid gives 03:30, not 02:30. Durations such as <code>7 days</code> and <code>1h</code> are literals.</p>
+            <p><code>regex</code> leaves out lookarounds and backreferences, so a pattern matches the same in both implementations. <code>convert</code> turns records into CSV or JSON, and changing currency needs an explicit <code>rate</code>.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>dates.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">d = date(2026, 10, 24)
+print(d + 7 days, d.weekday)
+t = time(2026, 3, 29, 1, 30, zone: &quot;Europe/Madrid&quot;)
+print(t + 1h)
+print(t.to_zone(&quot;America/New_York&quot;))
+
+email = regex(&quot;(\\w+)@(\\w+)\\.com&quot;)
+print(email.groups(&quot;write to ana@mail.com today&quot;))
+print(regex(&quot;[0-9]+&quot;).find_all(&quot;ab 42 cd 7&quot;))
+
+type Row:
+    name: str
+    total: decimal
+rows = [Row(name: &quot;Ana&quot;, total: 10.5), Row(name: &quot;Luis, Jr&quot;, total: 3)]
+print(convert(rows, to: csv), end: &quot;&quot;)
+print(convert(10 EUR, to: USD, rate: 1.08))</code></pre><div class="out"><div class="out-label">$ nexo dates.nexo</div><pre><code>2026-10-31 6
+2026-03-29T03:30:00+02:00
+2026-03-28T20:30:00-04:00
+[&quot;ana&quot;, &quot;mail&quot;]
+[&quot;42&quot;, &quot;7&quot;]
+name,total
+Ana,10.5
+&quot;Luis, Jr&quot;,3
+10.80 USD</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-interop" aria-labelledby="mt-interop" hidden>
+          <div class="fpanel-text">
+            <h3>C and Python when you need them</h3>
+            <p><code>use c "libm"</code> reads the library's C header, so every call is checked against the real signature. <code>use python</code> imports a Python module, and numbers, texts, lists and maps cross between the two.</p>
+            <p>Calls into C are the only unsafe code in this edition, and <code>nexo audit</code> lists every one of them.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>interop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use c &quot;libm&quot;
+use python statistics as stats
+use python collections
+
+print(libm.sqrt(2.0), libm.pow(2, 10))
+print(stats.mean([1, 2, 3, 4]), stats.median([3, 1, 2]))
+print(collections.Counter(&quot;banana&quot;).most_common(1))
+print(libm.sqrt(&quot;two&quot;))</code></pre><div class="out"><div class="out-label">$ nexo interop.nexo</div><pre><code>1.4142135623730951 1024.0
+2.5 2
+[[&quot;a&quot;, 3]]
+Error in interop.nexo, line 8:
+  print(libm.sqrt(&quot;two&quot;))
+        ^^^^^^^^^^^^^^^^
+libm.sqrt: expects float, but gets str. Check the arguments of libm.sqrt.</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-infra" aria-labelledby="mt-infra" hidden>
+          <div class="fpanel-text">
+            <h3>Infrastructure in the same file</h3>
+            <p>An <code>infra</code> block declares apps, databases, storage, queues, networks and identities once. The same block works on <code>"aws"</code>, <code>"azure"</code>, <code>"gcp"</code> or <code>"k8s"</code>: each turns into that cloud's own resources.</p>
+            <p><code>nexo plan</code> asks the cloud's API what exists and shows what would change, what it costs and how available it is. A plan over <code>budget</code> is an error, and <code>apply</code>, <code>drift</code>, <code>destroy</code> and <code>import</code> use the same API.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>infra.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">infra shop:
+    cloud = &quot;gcp&quot;
+    region = &quot;europe-west1&quot;
+    budget = 100 EUR per month
+    storage photos
+    database orders
+    app api:
+        image = &quot;shop:1.0&quot;
+        port = 8080
+        replicas = 1..4
+        env:
+            DB = orders.url
+            API_KEY = secret(&quot;API_KEY&quot;)
+    output url = api.url</code></pre><div class="out"><div class="out-label">$ nexo plan infra.nexo</div><pre><code>Plan for shop (gcp, europe-west1, stage default):
+  + storage photos
+      + storage.buckets shop-photos
+  + database orders
+      + sqladmin.instances shop-orders
+      + sqladmin.databases orders
+  + app api
+      + secretmanager.secrets shop-api-api-key
+      + run.services shop-api
+      + iam.binding roles/run.invoker
+To create: 6, to change: 0, to delete: 0.
+Estimated cost: 44.10 EUR per month (budget: 100.00 EUR per month).
+Estimated availability: 99.85 %.</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-ci" aria-labelledby="mt-ci" hidden>
+          <div class="fpanel-text">
+            <h3>Pipelines that are ordinary code</h3>
+            <p>The steps of a <code>pipeline</code> are Nexo code with <code>test()</code>, <code>run</code>, <code>build_image</code>, <code>approve</code> and <code>apply</code>, and a variable set in one step is seen by the next.</p>
+            <p><code>nexo ci run</code> runs it on your machine, asking before each step (<code>--yes</code> runs the steps without those prompts). <code>nexo ci export github</code>, <code>gitlab</code>, <code>azure</code> or <code>jenkins</code> writes the file that runs the same steps in CI.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>app.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn total(prices: list[int]) -&gt; int:
+    return prices |&gt; sum
+
+test &quot;the total adds the prices&quot;:
+    assert total([2, 3]) == 5
+
+pipeline main:
+    trigger push to main
+    version = &quot;1.4.0&quot;
+
+    step checks:
+        test()
+
+    step build:
+        image = &quot;shop:{version}&quot;
+        run(&quot;echo building {image}&quot;)
+
+    step prod:
+        approve(by: [&quot;ana@shop.example&quot;, &quot;luis@shop.example&quot;])
+        print(&quot;deploying&quot;, image)
+
+    after success:
+        print(&quot;v{version} is live&quot;)</code></pre><div class="out"><div class="out-label">$ nexo ci run --yes app.nexo</div><pre><code>== step checks
+✓ the total adds the prices
+1 test: 1 passed, 0 failed
+== step build
+building shop:1.4.0
+== step prod
+Step prod approved with --yes (ana@shop.example, luis@shop.example approve it).
+deploying shop:1.4.0
+== after success
+v1.4.0 is live
+Pipeline main: 3 steps passed, version 1.4.0.</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-stream" aria-labelledby="mt-stream" hidden>
+          <div class="fpanel-text">
+            <h3>Streams are another source</h3>
+            <p><code>when kafka("orders") as msg</code> handles each message. A message that fails is tried again and then goes to the dead letters, and a <code>key</code> makes sure the same order is processed once.</p>
+            <p>A stream also starts a pipeline: <code>window 1m</code>, <code>sliding</code> and <code>session</code> group its messages by time. This edition has a local broker, so tests send messages with <code>.send</code>.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>stream.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.stream
+
+type Order:
+    id: int
+    total: int
+
+fn process(o: Order):
+    if o.total &lt; 0:
+        fail(&quot;negative total&quot;)
+    print(&quot;order&quot;, o.id, o.total)
+
+when kafka(&quot;orders&quot;) as msg, key: msg.json()[&quot;id&quot;]:
+    o: Order = validate(msg.json(), as: Order)?
+    process(o)?
+
+fn publish(row):
+    print(&quot;per minute&quot;, row)
+
+kafka(&quot;clicks&quot;)
+  |&gt; window 1m
+  |&gt; group by page
+  |&gt; count
+  |&gt; each publish
+
+test &quot;orders&quot;:
+    kafka(&quot;orders&quot;).send({&quot;id&quot;: 1, &quot;total&quot;: 30})
+    kafka(&quot;orders&quot;).send({&quot;id&quot;: 1, &quot;total&quot;: 30})
+    kafka(&quot;orders&quot;).send({&quot;id&quot;: 2, &quot;total&quot;: -5})
+
+test &quot;clicks by minute&quot;:
+    start = time(2026, 10, 24, 9, 0, zone: &quot;UTC&quot;)
+    kafka(&quot;clicks&quot;).send({&quot;page&quot;: &quot;/a&quot;}, at: start)
+    kafka(&quot;clicks&quot;).send({&quot;page&quot;: &quot;/b&quot;}, at: start + 10s)
+    kafka(&quot;clicks&quot;).send({&quot;page&quot;: &quot;/a&quot;}, at: start + 20s)
+    kafka(&quot;clicks&quot;).send({&quot;page&quot;: &quot;/a&quot;}, at: start + 70s)</code></pre><div class="out"><div class="out-label">$ nexo test stream.nexo</div><pre><code>order 1 30
+orders: message 3 fails after 4 tries and goes to orders.dead: Unhandled error: negative total. Handle it with try and else e.
+✓ orders
+per minute {&quot;page&quot;: &quot;/a&quot;, &quot;count&quot;: 2}
+per minute {&quot;page&quot;: &quot;/b&quot;, &quot;count&quot;: 1}
+per minute {&quot;page&quot;: &quot;/a&quot;, &quot;count&quot;: 1}
+✓ clicks by minute
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-flags" aria-labelledby="mt-flags" hidden>
+          <div class="fpanel-text">
+            <h3>Feature flags in the code</h3>
+            <p>A <code>flags</code> block declares each flag once: on or off, a percentage of users or the users that match a condition. <code>flag(name, user)</code> reads it.</p>
+            <p>A percentage is stable: the same user always gets the same answer, so a feature can grow from 10% to 100% without anyone seeing it come and go. <code>nexo flags set</code> changes a flag while the program runs, without a new release, and records who changed it.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>flags.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type User:
+    id: int
+    country: str
+
+flags:
+    new_checkout = 10%
+    dark_mode = users where country == &quot;ES&quot;
+    payments_v2 = off
+
+ana = User(id: 7, country: &quot;ES&quot;)
+luis = User(id: 8, country: &quot;FR&quot;)
+print(flag(&quot;payments_v2&quot;))
+print(flag(&quot;dark_mode&quot;, ana), flag(&quot;dark_mode&quot;, luis))
+
+var count = 0
+for i in range(1, 1001):
+    if flag(&quot;new_checkout&quot;, User(id: i, country: &quot;ES&quot;)):
+        count += 1
+print(&quot;{count} of 1000 users see the new checkout&quot;)
+print(flag(&quot;new_checkout&quot;, ana) == flag(&quot;new_checkout&quot;, ana))</code></pre><div class="out"><div class="out-label">$ nexo flags.nexo</div><pre><code>false
+true false
+107 of 1000 users see the new checkout
+true</code></pre></div></div>
+        </div>
+
+        <div class="fpanel" role="tabpanel" id="mp-privacy" aria-labelledby="mt-privacy" hidden>
+          <div class="fpanel-text">
+            <h3>Personal data, kept by rule</h3>
+            <p>Fields marked <code>@personal</code> or <code>@private</code> say what data is personal. <code>@private</code> fields are encrypted in the database and hidden by <code>log</code>, and <code>keep</code> erases old rows by itself. A personal type without <code>keep</code> and <code>purpose</code> is a warning, and an error in a release build.</p>
+            <p><code>privacy.export</code>, <code>erase</code> and <code>restrict</code> answer a person's requests, and <code>nexo privacy report</code> lists what personal data the program holds, why, and who can read it.</p>
+          </div>
+<div class="code"><div class="code-bar"><span>customers.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.db
+
+db = connect(&quot;shop.db&quot;, key: secret(&quot;DB_KEY&quot;))
+
+@table
+type Customer:
+    id: id
+    name: str @personal
+    email: str @personal
+    national_id: str @private
+    last_activity: date
+
+    keep = 5 years after last_activity
+    purpose = &quot;billing and shipping&quot;
+
+ana = db.Customer.add(name: &quot;Ana&quot;, email: &quot;ana@x.com&quot;, national_id: &quot;123A&quot;, last_activity: date(2026, 1, 2))
+log(ana)
+print(db.Customer.find(national_id: &quot;123A&quot;).name)
+print(db.sql(&quot;SELECT national_id FROM customer&quot;)[0][&quot;national_id&quot;].starts_with(&quot;nexo:&quot;))
+privacy.erase(ana)
+print(db.Customer.count())</code></pre><div class="out"><div class="out-label">$ DB_KEY=... nexo customers.nexo</div><pre><code>Customer(id: 1, name: &quot;Ana&quot;, email: &quot;ana@x.com&quot;, national_id: &quot;***&quot;, last_activity: 2026-01-02)
+Ana
+true
+0</code></pre></div><div class="out"><div class="out-label">$ nexo privacy report customers.nexo</div><pre><code>Personal data of customers.nexo:
+
+Customer: table customer in shop.db
+  name         personal
+  email        personal
+  national_id  sensitive, encrypted at rest
+  kept: 5 years after last_activity
+  purpose: billing and shipping
+  read by: the program</code></pre></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<section class="examples-next"><div class="wrap"><h2>Keep the next step small.</h2><p>Follow the guided lessons to learn each idea in order, or use the reference when you need an exact rule.</p><div class="actions"><a class="btn btn-primary" href="learn.html">Learn Nexo</a><a class="btn btn-ghost" href="reference.html">Open the reference</a></div></div></section>
+</main>
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="learn.html">Learn</a>
+      <a href="examples.html">Examples</a>
+      <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
+      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
+      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
+    </nav>
+  </div>
+</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

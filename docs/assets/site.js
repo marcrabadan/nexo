@@ -99,6 +99,10 @@
   }
   scheduleScrollRegions();
   window.addEventListener("resize", scheduleScrollRegions);
+  // Expanding an exercise reveals code that could not be measured while hidden.
+  document.addEventListener("toggle", function (event) {
+    if (event.target.tagName === "DETAILS") scheduleScrollRegions();
+  }, true);
   if (document.fonts) document.fonts.ready.then(scheduleScrollRegions);
 
   document.querySelectorAll(".copy").forEach(function (btn) {
