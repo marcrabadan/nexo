@@ -164,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.kinesis(h, method, u, data)
         if u.path.split("/")[1].endswith(".servicebus.windows.net"):
             return self.servicebus(h, method, u, data)
-        if u.path.startswith("/pubsub/v1/"):
+        if u.path.startswith("/pubsub/v1/") and self.streams_pubsub(method, u, data):
             return self.pubsub(h, method, u, data)
         if "x-amz-target" in h:
             return self.aws(h, method, u, data)
@@ -364,6 +364,20 @@ class Handler(BaseHTTPRequestHandler):
                 STATE.servicebus[key] = [m for m in messages if not (m["id"] == parts[4] and m["lock"] == parts[5])]
                 return self.reply(200 if len(STATE.servicebus[key]) < before else 410)
         return self.reply(400, {"error": {"message": "unknown request"}})
+
+    def streams_pubsub(self, method, u, data) -> bool:
+        """Whether a Pub/Sub request is of the data plane of the topics
+        /__streams made; the others are infra's, answered by gcp()."""
+        path = u.path[len("/pubsub/v1/"):]
+        with STATE.lock:
+            if method == "PUT" and "/subscriptions/" in path:
+                try:
+                    return json.loads(data.decode() or "{}").get("topic") in STATE.topics
+                except ValueError:
+                    return False
+            if path.endswith(":publish"):
+                return path[:-len(":publish")] in STATE.topics
+            return path.partition(":")[0] in STATE.subs or path.partition(":")[2] in ("pull", "acknowledge")
 
     def pubsub(self, h, method, u, data):
         import time
