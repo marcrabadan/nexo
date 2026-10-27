@@ -763,6 +763,18 @@ fn select_pick(
         sql.push_str(&format!(" LIMIT {n}"));
     }
     let rows = db.exec(&sql, params, span)?;
+    let columns: Vec<&Column> = match pick {
+        Some(p) => p.iter().map(|(_, c)| c).collect(),
+        None => info.columns.iter().collect(),
+    };
+    // the rows read here are the rows their refs to this same table point
+    // to, when they are among them
+    let k = if pick.is_none() { info.columns.iter().position(|c| Some(&c.field) == info.key.as_ref()) } else { None };
+    let own: Vec<i64> = match k {
+        Some(k) => rows.rows.iter().filter_map(|r| if let Sql::Int(i) = r[k] { Some(i) } else { None }).collect(),
+        None => Vec::new(),
+    };
+    prefetch(db, me, &columns, &rows.rows, cache, &own, &info.rtype.name, span)?;
     let mut out = Vec::with_capacity(rows.rows.len());
     if let Some(p) = pick {
         for row in &rows.rows {
@@ -774,14 +786,68 @@ fn select_pick(
         }
         return Ok(out);
     }
+    let later: Vec<usize> = (0..columns.len())
+        .filter(|i| !own.is_empty() && columns[*i].kind == "ref" && columns[*i].target.as_ref() == Some(&info.rtype.name))
+        .collect();
     for row in &rows.rows {
         let mut vals = Vec::with_capacity(row.len());
-        for (c, raw) in info.columns.iter().zip(row) {
-            vals.push(from_sql(db, me, raw, c, cache, span)?);
+        for (i, (c, raw)) in info.columns.iter().zip(row).enumerate() {
+            vals.push(if later.contains(&i) { Val::none() } else { from_sql(db, me, raw, c, cache, span)? });
         }
-        out.push(record(info, vals));
+        let rec = record(info, vals);
+        if let Some(Sql::Int(id)) = k.map(|k| &row[k]) {
+            cache.insert((info.rtype.name.clone(), *id), rec.clone());
+        }
+        out.push(rec);
+    }
+    for (rec, row) in out.iter().zip(&rows.rows) {
+        for i in &later {
+            let v = from_sql(db, me, &row[*i], columns[*i], cache, span)?;
+            if let Some(Obj::Record(r)) = rec.get() {
+                r.fields.borrow_mut()[*i] = v;
+            }
+        }
     }
     Ok(out)
+}
+
+/// The rows the `ref` columns of these rows point to, read with one
+/// statement per column (and per 500 ids) instead of one per row (D162);
+/// `own` are the ids of these rows, of the table `name`.
+#[allow(clippy::too_many_arguments)]
+fn prefetch(db: &Database, me: V, columns: &[&Column], rows: &[Vec<Sql>], cache: &mut Cache, own: &[i64], name: &str, span: u32) -> R<()> {
+    for (i, c) in columns.iter().enumerate() {
+        if c.kind != "ref" || c.private {
+            continue;
+        }
+        let tname = c.target.clone().unwrap_or_default();
+        let Some(target) = table(&tname) else { continue };
+        let (Some(key), Some(ki)) = (target.key.clone(), target.key_index()) else { continue };
+        let mut ids: Vec<i64> = Vec::new();
+        for row in rows {
+            if let Sql::Int(id) = row[i] {
+                if !cache.contains_key(&(tname.clone(), id)) && !ids.contains(&id) && !(tname == name && own.contains(&id)) {
+                    ids.push(id);
+                }
+            }
+        }
+        for chunk in ids.chunks(500) {
+            let marks = vec!["?"; chunk.len()].join(", ");
+            let params: Vec<Sql> = chunk.iter().map(|id| Sql::Int(*id)).collect();
+            let found = select(db, me, &target, &[format!("{} IN ({marks})", quote(&key))], &params, &[], None, cache, span)?;
+            for rec in found {
+                if let Some(Obj::Record(r)) = rec.get() {
+                    if let Some(id) = r.fields.borrow()[ki].v().as_int() {
+                        cache.insert((tname.clone(), id), rec.clone());
+                    }
+                }
+            }
+            for id in chunk {
+                cache.entry((tname.clone(), *id)).or_insert_with(Val::none);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A record of a table type from the values of its columns.
@@ -1323,8 +1389,39 @@ pub fn parse_plan(text: &str) -> Plan {
 /// `value(i)` evaluates leaf i outside the row.
 fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, span: u32) -> R<Option<(String, Vec<Sql>)>> {
     let info = &q.info;
-    // an encrypted column cannot be compared in SQL (D116)
-    let column = |i: usize| plan.names[i].as_ref().and_then(|n| info.column(n)).filter(|c| !c.private);
+    // the column of each leaf: a column of the table, or `ref.field`, a
+    // column of the table a required ref points to (D162); an encrypted
+    // column cannot be compared in SQL (D116)
+    let mut cols: Vec<Option<Column>> = Vec::new();
+    let mut via: Vec<Option<String>> = Vec::new();
+    for name in &plan.names {
+        let (mut col, mut through) = (None, None);
+        match name.as_deref().map(|n| n.split_once('.').map_or((n, None), |(a, b)| (a, Some(b)))) {
+            Some((n, None)) => col = info.column(n).filter(|c| !c.private).cloned(),
+            Some((r, Some(f))) => {
+                let target = info
+                    .column(r)
+                    .filter(|c| c.kind == "ref" && !c.optional && !c.private)
+                    .and_then(|c| Some((c, table(c.target.as_deref()?)?)))
+                    .filter(|(_, t)| t.key.is_some() && personal_table(t).is_none());
+                if let Some((rc, t)) = target {
+                    if let Some(c) = t.column(f).filter(|c| !c.private) {
+                        col = Some(c.clone());
+                        through = Some(format!(
+                            "{} IN (SELECT {} FROM {} WHERE ",
+                            quote(&rc.name),
+                            quote(t.key.as_deref().unwrap_or("id")),
+                            quote(&t.name)
+                        ));
+                    }
+                }
+            }
+            None => {}
+        }
+        cols.push(col);
+        via.push(through);
+    }
+    let column = |i: usize| cols[i].as_ref();
     let usable = |i: usize| {
         if column(i).is_some() {
             return true;
@@ -1357,21 +1454,27 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
         value: &mut dyn FnMut(usize) -> R<Val>,
         values: &mut HashMap<usize, Val>,
         params: &mut Vec<Sql>,
+        via: &[Option<String>],
         span: u32,
     ) -> R<Option<String>> {
         let _ = q;
+        // a condition on the table a ref points to, as one on the ref
+        let through = |i: usize, sql: String| match &via[i] {
+            Some(head) => format!("{head}{sql})"),
+            None => sql,
+        };
         Ok(match n {
             Node::And(a, b) | Node::Or(a, b) => {
-                let x = build(a, q, column, usable, value, values, params, span)?;
-                let y = build(b, q, column, usable, value, values, params, span)?;
+                let x = build(a, q, column, usable, value, values, params, via, span)?;
+                let y = build(b, q, column, usable, value, values, params, via, span)?;
                 match (x, y) {
                     (Some(x), Some(y)) => Some(format!("({x} {} {y})", if matches!(n, Node::And(..)) { "AND" } else { "OR" })),
                     _ => None,
                 }
             }
-            Node::Not(a) => build(a, q, column, usable, value, values, params, span)?.map(|x| format!("(NOT {x})")),
+            Node::Not(a) => build(a, q, column, usable, value, values, params, via, span)?.map(|x| format!("(NOT {x})")),
             Node::Truth(i) => match column(*i) {
-                Some(c) if c.kind == "bool" => Some(format!("{} = 1", quote(&c.name))),
+                Some(c) if c.kind == "bool" => Some(through(*i, format!("{} = 1", quote(&c.name)))),
                 _ => None,
             },
             Node::Cmp(op, li, ri) => {
@@ -1395,9 +1498,12 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                     let v = get(*li)?;
                     let Some(s) = v.as_str() else { return Ok(None) };
                     params.push(Sql::Text(s.to_string()));
-                    return Ok(Some(format!("instr({}, ?) > 0", quote(&c.name))));
+                    return Ok(Some(through(*ri, format!("instr({}, ?) > 0", quote(&c.name)))));
                 }
                 if let (Some(a), Some(b)) = (lc, rc) {
+                    if via[*li].is_some() || via[*ri].is_some() {
+                        return Ok(None);
+                    }
                     if a.kind != b.kind || ["decimal", "money", "variant", "ref"].contains(&a.kind) || (a.kind == "bool" && op != "=" && op != "<>") {
                         return Ok(None);
                     }
@@ -1408,6 +1514,7 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                     (_, Some(c)) => (c, *li, true),
                     _ => return Ok(None),
                 };
+                let at = if flipped { *ri } else { *li };
                 if col.kind == "decimal" || col.kind == "money" {
                     return Ok(None);
                 }
@@ -1417,8 +1524,8 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                 }
                 if v.is_none() {
                     return Ok(match op.as_str() {
-                        "=" => Some(format!("{} IS NULL", quote(&col.name))),
-                        "<>" => Some(format!("{} IS NOT NULL", quote(&col.name))),
+                        "=" => Some(through(at, format!("{} IS NULL", quote(&col.name)))),
+                        "<>" => Some(through(at, format!("{} IS NOT NULL", quote(&col.name)))),
                         _ => None,
                     });
                 }
@@ -1437,11 +1544,11 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                 } else {
                     op.as_str()
                 };
-                Some(format!("{} {sym} ?", quote(&col.name)))
+                Some(through(at, format!("{} {sym} ?", quote(&col.name))))
             }
         })
     }
-    let sql = build(&plan.tree, q, &column, &usable, value, &mut values, &mut params, span)?;
+    let sql = build(&plan.tree, q, &column, &usable, value, &mut values, &mut params, &via, span)?;
     Ok(sql.map(|s| (s, params)))
 }
 

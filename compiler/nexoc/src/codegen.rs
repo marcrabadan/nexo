@@ -346,6 +346,11 @@ fn where_plan(e: &Expr) -> Option<(String, Vec<&Expr>)> {
                 let _ = write!(out, "?({})", leaves.len() - 1);
                 true
             }
+            ExprKind::Attr { obj, .. } if matches!(obj.kind, ExprKind::Name(_)) => {
+                leaves.push(x);
+                let _ = write!(out, "?({})", leaves.len() - 1);
+                true
+            }
             _ => false,
         }
     }
@@ -356,8 +361,15 @@ fn where_plan(e: &Expr) -> Option<(String, Vec<&Expr>)> {
     }
     out.push('\u{1}');
     for l in &leaves {
-        if let ExprKind::Name(n) = &l.kind {
-            out.push_str(n);
+        match &l.kind {
+            ExprKind::Name(n) => out.push_str(n),
+            // `ref.field`: a column of the table a ref points to (D162)
+            ExprKind::Attr { obj, name, .. } => {
+                if let ExprKind::Name(r) = &obj.kind {
+                    let _ = write!(out, "{r}.{name}");
+                }
+            }
+            _ => {}
         }
         out.push('\u{3}');
         let mut reads = Vec::new();

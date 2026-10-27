@@ -2328,3 +2328,28 @@ when the result cannot differ from memory:
   differ, and so do decimal and money (stored as text).
 - `group by` with nothing after it reads nothing; any other step after
   it reads the rows and groups them in memory, as before.
+
+**D162. Relations in SQL.** Section 6 has `ref` and `many` fields and
+queries "translated to SQL"; D100 read the row of each `ref` field with
+its own statement, and ran a `where` that reads a field through a `ref`
+in memory.
+- The rows a query reads are read first; then the rows their `ref`
+  columns point to are read with one `SELECT ... WHERE id IN (...)` per
+  column (500 ids at most per statement, in the order they first
+  appear), and those rows' own refs the same way. A ref whose row is
+  missing or hidden (D116) is none, as before. A ref to a row the same
+  statement reads is that row's record, so rows that point to each other
+  (`boss: ref Person?`) are read once, where before reading them never
+  ended; the records then form a cycle through a type that refers to
+  itself, which is freed when the program ends (D79).
+- In a `where` on a query, `ref.field` (a bare ref column, then a field)
+  is a column of the table the ref points to: a comparison with a value,
+  `text in ref.field` or a bare bool `ref.field` becomes `ref_id IN
+  (SELECT id FROM target WHERE ...)`, with the rules of D100 for the
+  field. Only for a required ref (`ref T`, not `ref T?`, whose none
+  would be an error in memory) to a table with an `id` and without
+  personal data (whose hidden rows would be an error in memory too);
+  otherwise, and when comparing two columns, it runs in memory.
+- `many` fields were already a query (`customer_id = ?`), so
+  `ana.orders.count()` and the pipelines on it run in SQL as any query.
+  `group by` a ref stays an error, as in memory (a record is not a key).

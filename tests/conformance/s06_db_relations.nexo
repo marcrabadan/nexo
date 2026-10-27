@@ -1,0 +1,32 @@
+# where on ref.field and the rows refs point to, in SQL (D162)
+use nexo.db
+
+@table
+type Customer:
+    id: id
+    name: str
+    vip: bool
+    boss: ref Customer?
+    orders: many Order
+
+@table
+type Order:
+    id: id
+    customer: ref Customer
+    amount: int
+
+db = connect(":memory:")
+ana = db.Customer.add(name: "Ana", vip: true)
+luis = db.Customer.add(name: "Luis", vip: false, boss: ana)
+eva = db.Customer.add(name: "Eva", vip: false, boss: luis)
+for c in [ana, luis, eva, ana, luis]:
+    db.Order.add(customer: c, amount: len(c.name))
+for o in db.Order |> where customer.name == "Ana":
+    print(o.id, o.customer.name)
+print(db.Order |> where customer.vip |> count)
+print(db.Order |> where not customer.vip and amount > 3 |> map it.customer.name)
+print(db.Order |> where "u" in customer.name |> count)
+print(db.Order |> map it.customer.name)
+print(eva.boss.boss.name, ana.orders.count())
+# a ref that can be none runs in memory, where none has no name
+print(db.Customer |> where boss.name == "Ana" |> count)

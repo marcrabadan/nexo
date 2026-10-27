@@ -81,3 +81,19 @@ def test_diff_and_migrate(phase, tmp_path):
     with sqlite3.connect(tmp_path / "shop.db") as c:
         assert list(c.execute("SELECT * FROM customer")) == [(1, "Ana", None)]
         assert [r[0] for r in c.execute("SELECT name FROM nexo_migrations")] == ["0001.sql", "0002.sql"]
+
+
+def test_relations_run_in_sql(tmp_path):
+    phases = commands()
+    logs = [sql_log(p, tmp_path / p[0], "s06_db_relations.nexo") for p in phases]
+    if len(logs) == 2:
+        assert logs[0] == logs[1]
+    log = logs[0]
+    assert ('sql: SELECT "id", "customer_id", "amount" FROM "order" WHERE ("customer_id" IN '
+            '(SELECT "id" FROM "customer" WHERE "name" = ?)) ORDER BY "id" [\'Ana\']') in log
+    # the customers of the five orders, and their bosses (among them): one
+    # statement, not one per order
+    i = log.index('sql: SELECT "id", "customer_id", "amount" FROM "order" ORDER BY "id" []')
+    assert log[i + 1] == ('sql: SELECT "id", "name", "vip", "boss_id" FROM "customer" WHERE ("id" IN (?, ?, ?)) '
+                          'ORDER BY "id" [1, 2, 3]')
+    assert log[i + 2].startswith("sql: SELECT COUNT(*)")

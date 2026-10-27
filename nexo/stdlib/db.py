@@ -330,10 +330,55 @@ class Database(Native):
         if count:
             return cur.fetchone()[0]
         cache = {} if cache is None else cache
+        rows = cur.fetchall()
         if pick is not None:
+            self.prefetch(call, columns, rows, cache, set())
             return [{name: from_sql(call, self, raw, c, cache) for (name, c), raw in zip(pick, row)}
-                    for row in cur.fetchall()]
-        return [self.record(call, info, row, cache) for row in cur.fetchall()]
+                    for row in rows]
+        # the rows read here are the rows their refs to this same table
+        # point to, when they are among them
+        k = next((i for i, c in enumerate(columns) if c.field == info.key), None)
+        own = {row[k] for row in rows} if k is not None else set()
+        self.prefetch(call, columns, rows, cache, own, info.rtype.name)
+        later = [i for i, c in enumerate(columns) if own and c.kind == "ref" and c.target == info.rtype.name]
+        records = []
+        for row in rows:
+            fields = {c.field: None if i in later else from_sql(call, self, raw, c, cache)
+                      for i, (c, raw) in enumerate(zip(columns, row))}
+            rec = Record(info.rtype, fields, call.interp.stamp)
+            if k is not None:
+                cache[(info.rtype.name, row[k])] = rec
+            records.append(rec)
+        for rec, row in zip(records, rows):
+            for i in later:
+                rec.fields[columns[i].field] = from_sql(call, self, row[i], columns[i], cache)
+        return records
+
+    def prefetch(self, call, columns, rows, cache, own, name=None) -> None:
+        """The rows the `ref` columns of these rows point to, read with one
+        statement per column (and per 500 ids) instead of one per row (D162);
+        `own` are the ids of these rows, of the table `name`."""
+        tables = interp_tables(call.interp)
+        for i, c in enumerate(columns):
+            if c.kind != "ref" or c.private:
+                continue
+            target = tables.get(c.target)
+            if target is None or target.key is None:
+                continue
+            ids = []
+            for row in rows:
+                raw = row[i]
+                if raw is not None and (c.target, raw) not in cache and raw not in ids \
+                        and not (c.target == name and raw in own):
+                    ids.append(raw)
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                marks = ", ".join("?" for _ in chunk)
+                found = self.select(call, target, [f"{quote(target.key)} IN ({marks})"], chunk, None, None, cache)
+                for rec in found:
+                    cache[(c.target, rec.fields[target.key])] = rec
+                for raw in chunk:
+                    cache.setdefault((c.target, raw), None)
 
     def group(self, call, info, wheres, params, key: Column, total: Column | None):
         """The rows of `group by key` with COUNT(*) and, for sum and avg,
@@ -357,12 +402,6 @@ class Database(Native):
             if "integer overflow" in str(exc):
                 return None
             raise self.fail(call, exc)
-
-    def record(self, call, info: TableInfo, row, cache) -> Record:
-        fields = {}
-        for c, raw in zip(info.columns, row):
-            fields[c.field] = from_sql(call, self, raw, c, cache)
-        return Record(info.rtype, fields, call.interp.stamp)
 
     def sql(self, call, query):
         """db.sql("SELECT ... {value}"): the values become parameters."""
@@ -663,7 +702,7 @@ def where_plan(e: A.Expr):
             return None if a is None else ("not", a)
         if isinstance(x, A.Compare) and len(x.ops) == 1 and (x.ops[0] in OPS or x.ops[0] == "in"):
             return ("cmp", x.ops[0], leaf(x.operands[0]), leaf(x.operands[1]))
-        if isinstance(x, A.Name):
+        if isinstance(x, A.Name) or (isinstance(x, A.Attr) and isinstance(x.obj, A.Name)):
             return ("truth", leaf(x))
         return None
 
@@ -684,6 +723,8 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
     info = query.info
     params: list = []
     values: dict = {}
+    # leaves `ref.field`: i -> (the ref column, the table it points to) (D162)
+    via: dict = {}
 
     def column(i):
         x = leaves[i]
@@ -691,7 +732,27 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
             col = info.column(x.name)
             # an encrypted column cannot be compared in SQL (D116)
             return None if col is not None and col.private else col
+        if isinstance(x, A.Attr) and isinstance(x.obj, A.Name):
+            ref = info.column(x.obj.name)
+            if ref is None or ref.kind != "ref" or ref.optional or ref.private:
+                return None
+            target = interp_tables(query.call.interp).get(ref.target)
+            if target is None or target.key is None or personal_table(target):
+                return None
+            col = target.column(x.name)
+            if col is None or col.private:
+                return None
+            via[i] = (ref, target)
+            return col
         return None
+
+    def through(i, sql):
+        """A condition on the table a ref points to, as one on the ref."""
+        if i not in via:
+            return sql
+        ref, target = via[i]
+        return (f"{quote(ref.name)} IN (SELECT {quote(target.key)} FROM {quote(target.name)} "
+                f"WHERE {sql})")
 
     def usable(i):
         x = leaves[i]
@@ -739,7 +800,7 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
             col = column(node[1])
             if col is None or col.kind != "bool":
                 return None
-            return f"{quote(col.name)} = 1"
+            return through(node[1], f"{quote(col.name)} = 1")
         _, op, li, ri = node
         if not usable(li) or not usable(ri):
             return None
@@ -752,15 +813,18 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
                 if not isinstance(v, str):
                     return None
                 params.append(v)
-                return f"instr({quote(rc.name)}, ?) > 0"
+                return through(ri, f"instr({quote(rc.name)}, ?) > 0")
             return None
         if lc is not None and rc is not None:
+            if li in via or ri in via:
+                return None
             if lc.kind != rc.kind or lc.kind in ("decimal", "money", "variant", "ref") or (lc.kind == "bool" and op not in ("==", "!=")):
                 return None
             return f"{quote(lc.name)} {OPS[op]} {quote(rc.name)}"
         col, other, flipped = (lc, ri, False) if lc is not None else (rc, li, True)
         if col is None:
             return None
+        at = li if lc is not None else ri
         if col.kind in ("decimal", "money"):
             return None
         v = value(other)
@@ -768,9 +832,9 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
             return None
         if v is None:
             if op == "==":
-                return f"{quote(col.name)} IS NULL"
+                return through(at, f"{quote(col.name)} IS NULL")
             if op == "!=":
-                return f"{quote(col.name)} IS NOT NULL"
+                return through(at, f"{quote(col.name)} IS NOT NULL")
             return None
         if col.kind in ("bool", "variant", "ref") and op not in ("==", "!="):
             return None
@@ -778,7 +842,7 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
         sym = OPS[op]
         if flipped:
             sym = {"<": ">", ">": "<", "<=": ">=", ">=": "<="}.get(sym, sym)
-        return f"{quote(col.name)} {sym} ?"
+        return through(at, f"{quote(col.name)} {sym} ?")
 
     sql = build(plan)
     if sql is None:
