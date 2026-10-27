@@ -2137,3 +2137,64 @@ email.confirmed(email), max: 3 days`.
   error, since the next call would skip every step.
 - Step results passed to later steps, signals, parallel steps and a
   list of runs are not in the specification and are not added.
+
+**D152. Nexo Shield phase 1: application enforcement and honest isolation.**
+Shield reuses D142 policy syntax, matching and diagnostics through a typed Rust
+engine and a matching Python adapter. `security check|run|trace|audit file.nexo`
+requires a policy; check/audit reuse the current static checks, policy display
+and unsafe inventory. Run/trace enforce production decisions in development
+builds. Native C, Python and shell integrations are rejected in Shield execution:
+there is no OS confinement and granting permission cannot provide it. Ordinary
+D142 development/release behavior remains compatible. Internal `__policy` is
+not a user-callable API, and policy initialization is one-shot. The development
+recorder cannot override release/Shield decisions (fixing two escalation paths).
+Trace emits local JSON with all targets redacted; existing diagnostics can
+contain source snippets and are not sanitized audit events. No OS sandbox,
+resource limits, IP/DNS confinement, per-package attenuation or complete taint
+tracking is claimed. `docs/shield.md` records the trust boundaries and roadmap.
+
+Shield also rejects literal backslashes and ASCII control characters in HTTP
+URLs before authorization in both backends. A verified parser differential
+allowed a Rust request to reach `127.0.0.1` via
+`http://127.0.0.1:PORT\@allowed.example/` under a grant for `allowed.example`.
+Rejecting these ambiguous URLs, including redirect destinations, fixes the
+bypass without changing hostname rule syntax; encode such data explicitly.
+
+
+**D153. Shield phase 2: explicit offline workers and synchronous ceilings.**
+`security probe` checks actual kernel facilities. `security run|trace
+--sandbox=linux` requires Linux x86_64, Landlock ABI >=3, openat2, seccomp and a
+non-root dedicated worker; unavailable guarantees stop before target execution.
+The kernel profile is offline and single-process, with pinned filesystem grants,
+capability dropping, descriptor sealing and hard CPU/address-space/file/FD limits
+plus a supervising wall deadline. Network grants and filesystem deny exceptions
+that the profile cannot faithfully represent are rejected. The native `security
+worker` interface executes an independent constrained program; in-process FFI
+remains disallowed and there is no implicit typed RPC bridge.
+`--dependencies file.json` adds immutable version-1 file-module ceilings that
+intersect lexical and dynamic caller permissions. Scope guards are emitted only
+for context-enabled compilation and restored on returns and failures; an
+uninstrumented binary refuses a requested context. Async constructs are rejected
+under this profile until contexts can follow queued execution. Dependency returns
+are limited to bounded plain data; callable, deferred and opaque handles are
+rejected rather than exported without sealed contexts. There is no new
+policy syntax or package-registry claim. `docs/shield-isolation.md` specifies the
+trust boundary, unsafe kernel ABI module, exact limits and unsupported features.
+
+**D154. Shield Docker execution and validation.** Production packages the native
+compiler, static runtime and worker in a digest-pinned Debian image. A mandatory
+entrypoint checks the actual non-root, read-only, capability, seccomp, network
+and cgroup posture before execution. The host helper mounts disjoint source and
+output directories with explicit permissions; no Docker socket is exposed.
+Docker isolation complements API authorization; the explicit Linux worker mode
+still requires Landlock and never falls back. A separate validation image runs
+release Rust harnesses and both backends' security suites with the production
+binaries. CI requires positive kernel support, not merely skipped kernel tests.
+See `docs/shield-docker.md` for commands and boundaries.
+
+Shield also rejects persistent workflows before state loading or step execution.
+D151 exempts runtime workflow state from ordinary application policy; accepting
+it under Shield would bypass API filesystem authorization. This restriction
+also applies when write grants are present, until those state effects can be
+authorized throughout the active dependency context. Ordinary workflows retain
+their existing behavior.

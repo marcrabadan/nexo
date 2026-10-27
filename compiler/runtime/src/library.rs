@@ -176,6 +176,9 @@ pub fn clear_fakes() {
 
 pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let sig = &SIGS[(id.0 - BASE) as usize];
+    if sig.name == "__workflow" && crate::security::enforcing() {
+        return Err(crate::state::diag(nexo_diag::Diagnostic::new_spanless("security_workflow"), span));
+    }
     if sig.name == "render" {
         // render(path, name: value...): every named argument is a value
         return crate::text::render(args, names, span);

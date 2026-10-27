@@ -111,6 +111,19 @@ Two environment variables adjust the build: `NEXO_CC` picks the C compiler
 (default `clang`) and `NEXO_RUNTIME` points to `libnexo_runtime.a`
 (default: next to the `nexo` executable).
 
+### Nexo Shield
+
+`nexo security check|run|trace|audit app.nexo` adds strict policy execution and
+structured security decisions in both implementations. Shield rejects native
+C, Python and shell integrations until they can be isolated. It enforces Nexo
+API permissions; it is not an OS sandbox. See [the security model](docs/shield.md)
+for trust boundaries and tests. [Phase 2](docs/shield-isolation.md) adds
+`security probe`, opt-in Linux offline workers, hard limits and synchronous
+dependency ceilings with `--dependencies permissions.json`. OS execution fails
+closed on hosts without the required Landlock/seccomp support.
+[Docker deployment](docs/shield-docker.md) packages the native runtime with
+read-only sources, no external network and enforced container resource limits.
+
 ## Quick start
 
 Save this as `hello.nexo`:

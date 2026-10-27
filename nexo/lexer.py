@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+import os
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -155,6 +157,10 @@ class Lexer:
                 start = self.i
                 self.i = self.word_end(self.i)
                 word = src[start:self.i]
+                if os.environ.get("NEXO_SECURITY_DEPENDENCIES") and word in {'spawn', 'stream', 'parallel', 'on', '__web_server', '__pipeline', '__web_route', 'sync', '__ai_agent', '__stream_when', 'server', 'pipeline', 'emit', 'agent'}:
+                    raise NexoError("security_context_async", self.span(start))
+                if word == "__policy":
+                    raise NexoError("policy_internal", self.span(start))
                 self.add("KEYWORD" if word in KEYWORDS else "NAME", word, self.span(start))
                 continue
             if c == '"':

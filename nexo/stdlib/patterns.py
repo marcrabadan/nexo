@@ -253,6 +253,9 @@ class Workflow(Native):
 
 
 def b_workflow(call, name, args):
+    from .policy import enforcing
+    if enforcing():
+        raise NexoError("security_workflow", call.span)
     return Workflow(name, repr_value(args))
 
 

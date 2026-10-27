@@ -1,0 +1,8 @@
+policy:
+    allow read "input.txt"
+    allow write "/out"
+    deny shell
+
+text = read("input.txt")
+write("/out/result.txt", text)
+print("Shield Docker: {text}")

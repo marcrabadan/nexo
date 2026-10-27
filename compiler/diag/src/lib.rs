@@ -64,6 +64,11 @@ pub fn set_file(id: u32, name: &'static str, source: &'static str) {
     FILES.lock().unwrap().push((id, name, source));
 }
 
+/// Snapshot identities before untrusted application code can change paths.
+pub fn registered_files() -> Vec<(u32, &'static str)> {
+    FILES.lock().unwrap().iter().map(|f| (f.0, f.1)).collect()
+}
+
 /// (name, source) of a registered module file.
 pub fn file_of(id: u32) -> Option<(&'static str, &'static str)> {
     FILES.lock().unwrap().iter().find(|f| f.0 == id).map(|f| (f.1, f.2))

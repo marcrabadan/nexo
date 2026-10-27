@@ -129,7 +129,7 @@ p code, li code, td code, th code, h4 code, .ftab code {
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 750; font-size: 19px; letter-spacing: -0.01em; color: var(--text); text-decoration: none; }
 .brand:hover { color: var(--text); }
 .nav { display: flex; gap: 4px; }
-.nav a { color: var(--muted); text-decoration: none; font-size: 15px; padding: 6px 12px; border-radius: 8px; }
+.nav a { white-space: nowrap; color: var(--muted); text-decoration: none; font-size: 15px; padding: 6px 12px; border-radius: 8px; }
 .nav a:hover { color: var(--text); background: var(--bg-alt); }
 .header-tools { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .gh {
@@ -478,7 +478,7 @@ footer nav a:hover { color: var(--text); }
   .facts > div:nth-child(3) { border-left: 0; }
   .facts > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
 }
-@media (max-width: 820px) {
+@media (max-width: 1100px) {
   .nav {
     display: none; position: absolute; top: 64px; left: 0; right: 0; flex-direction: column; gap: 0;
     background: var(--bg); border-bottom: 1px solid var(--border); padding: 8px 16px 16px;
@@ -486,6 +486,8 @@ footer nav a:hover { color: var(--text); }
   .nav.open { display: flex; }
   .nav a { padding: 12px; font-size: 16px; }
   .menu { display: inline-grid; }
+}
+@media (max-width: 820px) {
   .steps { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {

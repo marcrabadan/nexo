@@ -24,7 +24,7 @@ from .types import NexoFailure, repr_value
 
 USAGE = ("Usage: nexo [file.nexo | new name | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp"
          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
-         " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo]]")
+         " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]")
 BANNER = "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit."
 
 
@@ -818,6 +818,9 @@ def run_docs(args: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     rest = args
+    if rest[:1] == ["security"]:
+        from .security import run_security
+        return run_security(rest[1:])
     if rest[:1] == ["docs"]:
         return run_docs(rest[1:])
     if rest[:1] == ["new"]:

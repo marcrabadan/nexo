@@ -448,6 +448,11 @@ pub fn signatures(text: &str) -> Vec<String> {
 /// Give every `__c_library(name, bound)` of the program its header, and
 /// every `__python_import(name)` the Python to load (D111).
 pub fn embed(program: &mut Program, folder: &Path) {
+    // Shield rejects these imports at their runtime boundary. Do not execute
+    // native discovery subprocesses, including for imports in dependencies.
+    if nexo_runtime::security::enforcing() {
+        return;
+    }
     let mut python = None;
     visit(&mut program.body, folder, &mut python);
 }

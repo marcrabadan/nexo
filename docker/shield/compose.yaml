@@ -1,0 +1,47 @@
+x-security: &security
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+    - seccomp=./seccomp.json
+  network_mode: none
+  cgroup: private
+  ulimits:
+    core: 0
+    nofile: {soft: 256, hard: 256}
+
+services:
+  shield:
+    <<: *security
+    image: ${NEXO_SHIELD_IMAGE:-nexo-shield:local}
+    build:
+      context: ../..
+      dockerfile: docker/shield/Dockerfile
+      target: runtime
+    user: "${SHIELD_UID:-10001}:${SHIELD_GID:-10001}"
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 1
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=134217728,mode=1777
+      - /out:rw,noexec,nosuid,nodev,size=16777216,uid=${SHIELD_UID:-10001},gid=${SHIELD_GID:-10001},mode=0700
+    command: [run, /app/main.nexo]
+
+  validation:
+    <<: *security
+    profiles: [validation]
+    image: ${NEXO_SHIELD_VALIDATION_IMAGE:-nexo-shield:validation}
+    build:
+      context: ../..
+      dockerfile: docker/shield/Dockerfile
+      target: validation
+    user: "10001:10001"
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 2
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=536870912,mode=1777
+      - /out:rw,noexec,nosuid,nodev,size=16777216,uid=10001,gid=10001,mode=0700
