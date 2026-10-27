@@ -2501,3 +2501,49 @@ is not written, and D117 had one partition per stream.
   same key wait in another, so it is still processed once.
 - Under `nexo test` the partitions are those the source asks for, and
   `send` delivers at once, as before.
+
+**D168. Streams on the clouds' services.** Section 19 lists `sqs`,
+`kinesis`, `servicebus`, `eventhub` and `pubsub`; D117 ran every source
+on the local broker. A source is now on its cloud when it has that
+cloud's option, and on the local broker otherwise: `sqs("orders",
+region: "eu-west-1")` and `kinesis(..., region:)` on AWS,
+`servicebus("orders", namespace: "shop")` on Azure, `pubsub("orders",
+project: "shop")` on Google Cloud. `eventhub` reads only through AMQP or
+Kafka's protocol, so it comes with the brokers on the network (D169).
+- Both phases talk to each service's own HTTP API with the credentials
+  and addresses of nexo.infra (D120): SQS's JSON protocol and Kinesis
+  signed with SigV4 (AWS_ENDPOINT_URL points both elsewhere), Service Bus
+  through REST with an Azure AD token (NEXO_AZURE_ENDPOINT puts its data
+  plane at ENDPOINT/HOST/...), Pub/Sub through REST
+  (PUBSUB_EMULATOR_HOST, or NEXO_GCP_ENDPOINT as for infra). The queues,
+  streams and topics are not created: an infra block creates them (its
+  `queue`), and a missing one is an HTTPError that names the source and
+  what the cloud says.
+- A queue (SQS, Service Bus, Pub/Sub) has one partition. A consumer
+  leases what it reads (SQS's visibility, Service Bus's peek-lock,
+  Pub/Sub's deadline, 60 seconds) and deletes each message once its
+  handlers ended, or once it went to the dead letters. Pub/Sub is read
+  through the subscription `<topic>.<group>` of the consumer group, made
+  when it is missing (it gets what is published after it exists). A
+  message that a window holds is deleted too: a queue keeps no position
+  to read it again after a stop.
+- A Kinesis stream's shards are its partitions, handled as D167 says;
+  the consumer group saves the sequence number it reached in each one in
+  .nexo/streams/kinesis, kept before the messages of an open window as
+  D117 does for the local broker.
+- `send(value, key:, at:)` keeps the time and the key in the message's
+  attributes (`nexo-time`, `nexo-key`) where the service has them; a
+  Kinesis record has its partition key (the key, or a hash of the data)
+  and the time it arrived. A FIFO SQS queue (`.fifo`) gets the key as
+  its message group. `msg.id` is the service's id: a text for SQS,
+  Kinesis and Pub/Sub, Service Bus's sequence number.
+- The dead letters go to `<name>.dead` on the same service, except on
+  SQS, whose names cannot have a dot: `<name>-dead`. The line on the
+  error output names it. A dead letter that cannot be sent stops the
+  consumer with its error, leaving the message to come back.
+- The policy checks `net` to the service's host when a program sends
+  and when a consumer starts (D142). Under `nexo test` every source is
+  on the in-memory broker, as before.
+- tests/cloud_emulator.py answers these data planes, and
+  tests/test_stream_cloud.py runs producers and consumers of each in
+  both phases.

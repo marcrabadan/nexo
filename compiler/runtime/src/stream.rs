@@ -19,6 +19,16 @@ use crate::value::*;
 
 pub const KINDS: &[&str] = &["kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket"];
 const REMOTE: &[&str] = &["servers", "url", "region", "namespace", "project", "endpoint"];
+
+/// The option that puts a source in its cloud (D168).
+pub fn cloud_option(kind: &str) -> Option<&'static str> {
+    match kind {
+        "sqs" | "kinesis" => Some("region"),
+        "servicebus" => Some("namespace"),
+        "pubsub" => Some("project"),
+        _ => None,
+    }
+}
 const ROOT: &str = ".nexo/streams";
 const BACKOFF: [u64; 3] = [100, 200, 400];
 
@@ -26,6 +36,8 @@ static TEST_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 
 struct Handler {
     stream: (String, String),
+    /// the region, namespace or project of a source in its cloud (D168)
+    place: Option<String>,
     /// partitions: n of its source, if given (D167)
     wanted: Option<i64>,
     func: Val,
@@ -86,11 +98,14 @@ pub struct Stream {
     pub name: String,
     /// partitions: n, if given (D167)
     pub wanted: Option<i64>,
+    /// the region, namespace or project of a source in its cloud (D168)
+    pub place: Option<String>,
 }
 
 impl Stream {
     fn ident(&self) -> String {
-        format!("{}:{}", self.kind, self.name)
+        let at = self.place.as_ref().map(|p| format!("@{p}")).unwrap_or_default();
+        format!("{}:{}{at}", self.kind, self.name)
     }
     fn pair(&self) -> (String, String) {
         (self.kind.clone(), self.name.clone())
@@ -129,7 +144,13 @@ impl Native for Stream {
         };
         let data = text(a[0])?;
         let key = if a[2].is_none() || a[2].tag == T_MISSING { None } else { Some(text(a[2])?) };
-        let message = append(&self.pair(), data, ms, key, self.wanted, Some(span))?;
+        let message = match &self.place {
+            Some(place) if !test_mode() => {
+                crate::policy::check("net", &crate::stream_cloud::host(&self.kind, place), span)?;
+                crate::stream_cloud::send(&self.pair(), place, &data, ms, key.as_deref(), None, span)?
+            }
+            _ => append(&self.pair(), data, ms, key, self.wanted, Some(span))?,
+        };
         if test_mode() {
             deliver(&message, span);
         }
@@ -143,16 +164,48 @@ impl Native for Stream {
     }
 }
 
+/// The id of a message: its number in the local broker, the id the cloud
+/// gives it (D168), or none.
+#[derive(Clone, PartialEq)]
+pub enum Id {
+    Int(i64),
+    Text(String),
+    None,
+}
+
+impl Id {
+    fn val(&self) -> Val {
+        match self {
+            Id::Int(n) => Val::int(*n),
+            Id::Text(t) => Val::str(t.clone()),
+            Id::None => Val::none(),
+        }
+    }
+    /// As Python's str() writes it (the dead-letter line).
+    fn shown(&self) -> String {
+        match self {
+            Id::Int(n) => n.to_string(),
+            Id::Text(t) => t.clone(),
+            Id::None => "None".into(),
+        }
+    }
+}
+
 /// One message: `msg.json()`, `msg.text()`, `msg.id`, `msg.time`,
 /// `msg.key` and `msg.partition` (D167).
 #[derive(Clone)]
 pub struct Message {
     pub stream: (String, String),
-    pub id: i64,
+    pub place: Option<String>,
+    pub id: Id,
     pub ms: i64,
     pub data: String,
     pub key: Option<String>,
     pub partition: i64,
+    /// where a consumer starts to read it again (a log), or what
+    /// acknowledges it (a queue)
+    pub before: Option<String>,
+    pub receipt: Option<String>,
 }
 
 impl Message {
@@ -173,11 +226,11 @@ impl Native for Message {
         "message"
     }
     fn repr(&self) -> String {
-        format!("message({}:{} {})", self.stream.0, self.stream.1, self.id)
+        format!("message({}:{} {})", self.stream.0, self.stream.1, self.id.shown())
     }
     fn member(&self, me: V, name: &str, span: u32) -> R<Val> {
         match name {
-            "id" => Ok(Val::int(self.id)),
+            "id" => Ok(self.id.val()),
             "time" => Ok(native(crate::time::Time { ms: self.ms, zone: crate::time::local_zone() })),
             "json" => Ok(Val::new(Obj::BuiltinMethod(Val::from(me), "json"))),
             "text" => Ok(Val::new(Obj::BuiltinMethod(Val::from(me), "text"))),
@@ -200,6 +253,7 @@ impl Native for Message {
 
 pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let mut wanted = None;
+    let mut place = None;
     for (i, n) in names.iter().enumerate() {
         let Some(n) = n else { continue };
         if *n == "partitions" {
@@ -209,10 +263,21 @@ pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Va
             }
             continue;
         }
+        if cloud_option(kind) == Some(*n) {
+            match args[i].as_str() {
+                Some(p) if !p.is_empty() => place = Some(p.to_string()),
+                _ => return Err(crate::stdlib::expects(n, "str", args[i], span)),
+            }
+            continue;
+        }
         if REMOTE.contains(n) {
             return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", format!("\"{kind}(..., {n}: ...)\"")), span));
         }
-        return Err(diag(Diagnostic::new_spanless("arg_unknown").arg("fn", kind.to_string()).arg("param", *n).arg("params", "partitions"), span));
+        let known = match cloud_option(kind) {
+            Some(o) => format!("partitions, {o}"),
+            None => "partitions".into(),
+        };
+        return Err(diag(Diagnostic::new_spanless("arg_unknown").arg("fn", kind.to_string()).arg("param", *n).arg("params", known), span));
     }
     let positional: Vec<V> = args.iter().zip(names).filter(|(_, n)| n.is_none()).map(|(a, _)| *a).collect();
     let nones: Vec<Option<&str>> = positional.iter().map(|_| None).collect();
@@ -221,7 +286,12 @@ pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Va
     if kind == "websocket" {
         return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", "\"websocket(...)\""), span));
     }
-    Ok(native(Stream { kind: kind.to_string(), name: name.to_string(), wanted }))
+    if let (Some(_), Some(_)) = (&place, wanted) {
+        // the cloud says how many partitions (shards) a stream has
+        let o = cloud_option(kind).unwrap_or("");
+        return Err(diag(Diagnostic::new_spanless("arg_unknown").arg("fn", kind.to_string()).arg("param", "partitions").arg("params", o), span));
+    }
+    Ok(native(Stream { kind: kind.to_string(), name: name.to_string(), wanted, place }))
 }
 
 /// Kafka's hash of a key, so a key goes to the partition Kafka's own
@@ -318,7 +388,7 @@ fn append(s: &(String, String), data: String, ms: i64, key: Option<String>, want
             let log = &mut b.memory[pos].1;
             let id = log.len() as i64 + 1;
             log.push((id, ms, data.clone()));
-            Message { stream: s.clone(), id, ms, data, key, partition: p }
+            Message { stream: s.clone(), place: None, id: Id::Int(id), ms, data, key, partition: p, before: Some((id - 1).to_string()), receipt: None }
         }));
     }
     let _guard = BROKER.lock().unwrap();
@@ -334,8 +404,18 @@ fn append(s: &(String, String), data: String, ms: i64, key: Option<String>, want
         let _ = std::io::Read::read_to_string(&mut &*f, &mut text);
         count = text.lines().count() as i64;
     }
-    let message = Message { stream: s.clone(), id: count + 1, ms, data, key, partition: p };
-    let mut fields = vec![("id", Json::Int(message.id)), ("time", Json::Int(ms)), ("data", json::s(message.data.clone()))];
+    let message = Message {
+        stream: s.clone(),
+        place: None,
+        id: Id::Int(count + 1),
+        ms,
+        data,
+        key,
+        partition: p,
+        before: Some(count.to_string()),
+        receipt: None,
+    };
+    let mut fields = vec![("id", Json::Int(count + 1)), ("time", Json::Int(ms)), ("data", json::s(message.data.clone()))];
     if let Some(k) = &message.key {
         fields.push(("key", json::s(k.clone())));
     }
@@ -352,7 +432,7 @@ fn append(s: &(String, String), data: String, ms: i64, key: Option<String>, want
 pub fn when(src: V, func: V, key: Option<V>, span: u32) -> R<Val> {
     let Some(s) = src.native::<Stream>() else { return Err(crate::stdlib::expects("when", "stream", src, span)) };
     let key = key.filter(|k| !k.is_none()).map(Val::from);
-    with(|b| b.handlers.push(Handler { stream: s.pair(), wanted: s.wanted, func: Val::from(func), key }));
+    with(|b| b.handlers.push(Handler { stream: s.pair(), place: s.place.clone(), wanted: s.wanted, func: Val::from(func), key }));
     Ok(Val::none())
 }
 
@@ -366,6 +446,11 @@ fn pending_message() -> String {
     let text = crate::state::pending_plain();
     crate::state::set_failing(0);
     text
+}
+
+/// The consumer group: the name of the program's file.
+pub fn group_name() -> String {
+    group()
 }
 
 fn group() -> String {
@@ -474,9 +559,26 @@ fn finish(func: &Val, mv: &Val, m: &Message, n: usize, k: Option<String>, span: 
 }
 
 fn dead(m: &Message, error: &str) {
-    let target = (m.stream.0.clone(), format!("{}.dead", m.stream.1));
-    let _ = append(&target, m.data.clone(), m.ms, m.key.clone(), None, None);
-    let line = msg("info.stream_dead", &[("stream", m.stream.1.clone()), ("id", m.id.to_string()), ("error", error.to_string())]);
+    let target = match &m.place {
+        Some(place) if !test_mode() => match crate::stream_cloud::dead(m, place) {
+            Ok(t) => t,
+            Err(_) => {
+                // the dead letter cannot be kept: the consumer stops, and
+                // the message, not acknowledged, comes back (at least once)
+                crate::state::report_pending();
+                std::process::exit(1);
+            }
+        },
+        _ => {
+            let t = (m.stream.0.clone(), format!("{}.dead", m.stream.1));
+            let _ = append(&t, m.data.clone(), m.ms, m.key.clone(), None, None);
+            t.1
+        }
+    };
+    let line = msg(
+        "info.stream_dead",
+        &[("stream", m.stream.1.clone()), ("id", m.id.shown()), ("dead", target), ("error", error.to_string())],
+    );
     // inside a partition's task the line waits with what the task wrote
     let captured = CAPTURE.with(|c| {
         let mut c = c.borrow_mut();
@@ -505,8 +607,9 @@ fn deliver(m: &Message, span: u32) {
 }
 
 fn handlers_of(m: &Message, span: u32) {
-    let handlers: Vec<(Val, Option<Val>)> =
-        with(|b| b.handlers.iter().filter(|h| h.stream == m.stream).map(|h| (h.func.clone(), h.key.clone())).collect());
+    let handlers: Vec<(Val, Option<Val>)> = with(|b| {
+        b.handlers.iter().filter(|h| h.stream == m.stream && h.place == m.place).map(|h| (h.func.clone(), h.key.clone())).collect()
+    });
     for (i, (f, k)) in handlers.iter().enumerate() {
         handle(f, k, m, i + 1, span);
     }
@@ -515,7 +618,10 @@ fn handlers_of(m: &Message, span: u32) {
 fn queries_of(m: &Message, span: u32) {
     let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
     for q in queries {
-        let mine = q.lock().unwrap().stream == m.stream;
+        let mine = {
+            let q = q.lock().unwrap();
+            q.stream == m.stream && q.place == m.place
+        };
         if mine {
             add(&q, m.clone(), span);
         }
@@ -530,6 +636,7 @@ type Op = Arc<dyn Fn(V) -> R<Val> + Send + Sync>;
 /// messages of each window; `each` at the end starts it.
 pub struct Query {
     stream: (String, String),
+    place: Option<String>,
     /// partitions: n of its source, if given (D167)
     wanted: Option<i64>,
     /// "window" | "sliding" | "session" and its size in ms
@@ -556,7 +663,8 @@ impl Native for QueryVal {
 /// The query behind a pipeline value whose source is a stream, if any.
 pub fn query_of(v: V) -> Option<(Arc<Mutex<Query>>, bool)> {
     if let Some(s) = v.native::<Stream>() {
-        return Some((Arc::new(Mutex::new(Query { stream: s.pair(), wanted: s.wanted, window: None, ops: Vec::new(), open: Vec::new() })), true));
+        let q = Query { stream: s.pair(), place: s.place.clone(), wanted: s.wanted, window: None, ops: Vec::new(), open: Vec::new() };
+        return Some((Arc::new(Mutex::new(q)), true));
     }
     v.native::<QueryVal>().map(|q| (q.0.clone(), false))
 }
@@ -564,12 +672,12 @@ pub fn query_of(v: V) -> Option<(Arc<Mutex<Query>>, bool)> {
 /// One more step of a stream pipeline (D117).
 pub fn push(src: V, op: Op, each: bool) -> Option<Val> {
     let (q, _) = query_of(src)?;
-    let (stream, wanted, window, mut ops) = {
+    let (stream, place, wanted, window, mut ops) = {
         let q = q.lock().unwrap();
-        (q.stream.clone(), q.wanted, q.window, q.ops.clone())
+        (q.stream.clone(), q.place.clone(), q.wanted, q.window, q.ops.clone())
     };
     ops.push(op);
-    let next = Arc::new(Mutex::new(Query { stream, wanted, window, ops, open: Vec::new() }));
+    let next = Arc::new(Mutex::new(Query { stream, place, wanted, window, ops, open: Vec::new() }));
     if each {
         with(|b| b.queries.push(next));
         return Some(Val::none());
@@ -581,9 +689,9 @@ pub fn window(src: V, size: V, kind: &'static str, step_span: u32, size_span: u3
     let Some((q, _)) = query_of(src) else {
         return Err(diag(Diagnostic::new_spanless("stream_window_source").arg("step", kind), step_span));
     };
-    let (stream, wanted, has) = {
+    let (stream, place, wanted, has) = {
         let q = q.lock().unwrap();
-        (q.stream.clone(), q.wanted, q.window.is_some() || !q.ops.is_empty())
+        (q.stream.clone(), q.place.clone(), q.wanted, q.window.is_some() || !q.ops.is_empty())
     };
     if has {
         return Err(diag(Diagnostic::new_spanless("stream_window_first").arg("step", kind), step_span));
@@ -603,7 +711,8 @@ pub fn window(src: V, size: V, kind: &'static str, step_span: u32, size_span: u3
     let Some(ms) = ms else {
         return Err(diag(Diagnostic::new_spanless("stream_window").arg("step", kind), size_span));
     };
-    Ok(native(QueryVal(Arc::new(Mutex::new(Query { stream, wanted, window: Some((kind, ms)), ops: Vec::new(), open: Vec::new() })))))
+    let q = Query { stream, place, wanted, window: Some((kind, ms)), ops: Vec::new(), open: Vec::new() };
+    Ok(native(QueryVal(Arc::new(Mutex::new(q)))))
 }
 
 fn run(q: &Arc<Mutex<Query>>, messages: Vec<Message>, span: u32) {
@@ -696,25 +805,31 @@ fn offset_path(s: &(String, String), partition: i64, count: i64) -> String {
     format!("{ROOT}/{}/{}.{partition}.{}.offset", s.0, s.1, group())
 }
 
-/// Save the offset of a partition up to `read`, but not past the messages
-/// of a window still open: after a stop they are read again (at least
-/// once, D117).
-fn acknowledge(s: &(String, String), partition: i64, count: i64, read: i64) {
-    let mut done = read;
+/// The position a consumer may save: `position`, but not past the
+/// messages of a window still open, so that after a stop they are read
+/// again (at least once, D117).
+pub fn kept(s: &(String, String), place: &Option<String>, partition: i64, mut position: Option<String>) -> Option<String> {
+    let num = |p: &str| p.parse::<i128>().unwrap_or(0);
     let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
     for q in queries {
         let g = q.lock().unwrap();
         let windowed = g.window.is_some_and(|w| w.0 != "sliding");
-        if g.stream == *s && windowed {
+        if g.stream == *s && g.place == *place && windowed {
             if let Some(first) = g.open.iter().find(|m| m.partition == partition) {
-                done = done.min(first.id - 1);
+                let earlier = match (&first.before, &position) {
+                    (None, _) | (_, None) => true,
+                    (Some(b), Some(p)) => num(b) < num(p),
+                };
+                if earlier {
+                    position = first.before.clone();
+                }
             }
         }
     }
-    let _ = std::fs::write(offset_path(s, partition, count), format!("{done}\n"));
+    position
 }
 
-/// The messages of a partition after `after`.
+/// The messages of a partition of the local broker after `after`.
 fn new_messages(s: &(String, String), partition: i64, count: i64, after: i64) -> Vec<Message> {
     let text = std::fs::read_to_string(log_path(s, partition, count)).unwrap_or_default();
     let mut out = Vec::new();
@@ -724,16 +839,82 @@ fn new_messages(s: &(String, String), partition: i64, count: i64, after: i64) ->
             continue;
         }
         let Some(d) = json::parse(line) else { continue };
+        let id = d.get("id").int().unwrap_or(n);
         out.push(Message {
             stream: s.clone(),
-            id: d.get("id").int().unwrap_or(n),
+            place: None,
+            id: Id::Int(id),
             ms: d.get("time").int().unwrap_or(0),
             data: d.get("data").str().unwrap_or("").to_string(),
             key: d.get("key").str().map(|k| k.to_string()),
             partition,
+            before: Some((id - 1).to_string()),
+            receipt: None,
         });
     }
     out
+}
+
+/// The broker of a stream: the local one of D117, or its cloud's (D168).
+enum Backend {
+    Local,
+    Cloud(String),
+}
+
+impl Backend {
+    fn of(place: &Option<String>) -> Backend {
+        match place {
+            Some(p) => Backend::Cloud(p.clone()),
+            None => Backend::Local,
+        }
+    }
+
+    /// Whether a consumer saves where it is (a log) or deletes what it
+    /// read (a queue).
+    fn log(&self, s: &(String, String)) -> bool {
+        match self {
+            Backend::Local => true,
+            Backend::Cloud(_) => s.0 == "kinesis",
+        }
+    }
+
+    fn partitions(&self, s: &(String, String), wanted: Option<i64>) -> R<i64> {
+        match self {
+            Backend::Local => partitions(s, wanted, Some(0)),
+            Backend::Cloud(place) => crate::stream_cloud::partitions(s, place, 0),
+        }
+    }
+
+    fn start(&self, s: &(String, String), p: i64, count: i64) -> Option<String> {
+        match self {
+            Backend::Local => {
+                let n: i64 = std::fs::read_to_string(offset_path(s, p, count)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0);
+                Some(n.to_string())
+            }
+            Backend::Cloud(_) => crate::stream_cloud::start(s, p),
+        }
+    }
+
+    fn poll(&self, s: &(String, String), p: i64, count: i64, position: &Option<String>) -> R<Vec<Message>> {
+        match self {
+            Backend::Local => {
+                let after = position.as_deref().and_then(|t| t.parse().ok()).unwrap_or(0);
+                Ok(new_messages(s, p, count, after))
+            }
+            Backend::Cloud(place) => crate::stream_cloud::poll(s, place, p, position, 0),
+        }
+    }
+
+    fn done(&self, s: &(String, String), p: i64, count: i64, messages: &[Message], position: &Option<String>) -> R<()> {
+        match self {
+            Backend::Local => {
+                let at = kept(s, &None, p, position.clone()).unwrap_or_else(|| "0".into());
+                let _ = std::fs::write(offset_path(s, p, count), format!("{at}\n"));
+                Ok(())
+            }
+            Backend::Cloud(place) => crate::stream_cloud::done(s, place, p, messages, position, 0),
+        }
+    }
 }
 
 /// The work of one round: the new messages of each partition of a stream,
@@ -769,62 +950,93 @@ impl Native for Round {
     }
 }
 
+/// A stream a consumer reads.
+struct Source {
+    stream: (String, String),
+    place: Option<String>,
+    backend: Backend,
+    count: i64,
+    /// what was delivered in each partition
+    read: Vec<Option<String>>,
+}
+
 /// `nexo file.nexo` with `when` handlers or stream pipelines: read the new
 /// messages of every stream until the program is stopped.
 pub fn listen_forever(program: &str) {
     let stem = std::path::Path::new(program).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     with(|b| b.group = if stem.is_empty() { "nexo".into() } else { stem });
-    let mut streams: Vec<((String, String), Option<i64>)> = Vec::new();
-    let all: Vec<((String, String), Option<i64>)> = with(|b| {
-        let mut v: Vec<((String, String), Option<i64>)> = b.handlers.iter().map(|h| (h.stream.clone(), h.wanted)).collect();
+    type Wanted = ((String, String), Option<String>, Option<i64>);
+    let mut found: Vec<Wanted> = Vec::new();
+    let all: Vec<Wanted> = with(|b| {
+        let mut v: Vec<Wanted> = b.handlers.iter().map(|h| (h.stream.clone(), h.place.clone(), h.wanted)).collect();
         v.extend(b.queries.iter().map(|q| {
             let q = q.lock().unwrap();
-            (q.stream.clone(), q.wanted)
+            (q.stream.clone(), q.place.clone(), q.wanted)
         }));
         v
     });
     for s in all {
-        if !streams.iter().any(|(x, _)| *x == s.0) {
-            streams.push(s);
+        if !found.iter().any(|(x, p, _)| *x == s.0 && *p == s.1) {
+            found.push(s);
         }
     }
-    let shown: Vec<String> = streams.iter().map(|(s, _)| format!("{}(\"{}\")", s.0, s.1)).collect();
+    let shown: Vec<String> = found.iter().map(|(s, _, _)| format!("{}(\"{}\")", s.0, s.1)).collect();
     crate::state::flush();
     eprintln!("{}", msg("info.stream_listening", &[("streams", shown.join(", "))]));
-    let mut counts = Vec::new();
-    for (s, wanted) in &streams {
-        match partitions(s, *wanted, Some(0)) {
-            Ok(c) => counts.push(c),
-            Err(_) => {
-                crate::state::report_pending();
-                std::process::exit(1);
+    let stop = || -> ! {
+        crate::state::report_pending();
+        std::process::exit(1);
+    };
+    let mut sources = Vec::new();
+    for (stream, place, wanted) in found {
+        let backend = Backend::of(&place);
+        if let Some(p) = &place {
+            if crate::policy::check("net", &crate::stream_cloud::host(&stream.0, p), 0).is_err() {
+                stop();
             }
         }
+        let count = match backend.partitions(&stream, wanted) {
+            Ok(c) => c,
+            Err(_) => stop(),
+        };
+        let read = (0..count).map(|p| backend.start(&stream, p, count)).collect();
+        sources.push(Source { stream, place, backend, count, read });
     }
-    // what was delivered, per stream and partition
-    let mut read: Vec<Vec<i64>> = streams
-        .iter()
-        .zip(&counts)
-        .map(|((s, _), &c)| {
-            (0..c).map(|p| std::fs::read_to_string(offset_path(s, p, c)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)).collect()
-        })
-        .collect();
     loop {
         let mut idle = true;
-        for (si, (s, _)) in streams.iter().enumerate() {
-            let count = counts[si];
-            let batches: Vec<(i64, Vec<Message>)> =
-                (0..count).map(|p| (p, new_messages(s, p, count, read[si][p as usize]))).filter(|(_, ms)| !ms.is_empty()).collect();
+        for src in sources.iter_mut() {
+            let (s, count) = (&src.stream, src.count);
+            let mut batches: Vec<(i64, Vec<Message>)> = Vec::new();
+            let mut unreachable = false;
+            for p in 0..count {
+                match src.backend.poll(s, p, count, &src.read[p as usize]) {
+                    Ok(ms) if !ms.is_empty() => batches.push((p, ms)),
+                    Ok(_) => {}
+                    Err(_) => {
+                        // a broker that cannot be reached now: tried again
+                        crate::state::report_pending();
+                        unreachable = true;
+                        break;
+                    }
+                }
+            }
+            if unreachable {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                continue;
+            }
             if batches.is_empty() {
                 continue;
             }
             idle = false;
+            let log = src.backend.log(s);
             if count == 1 {
                 for m in &batches[0].1 {
                     deliver(m, 0);
                     crate::state::flush();
-                    read[si][0] = m.id;
-                    acknowledge(s, 0, 1, m.id);
+                    src.read[0] = if log { Some(m.id.shown()) } else { None };
+                    if src.backend.done(s, 0, 1, std::slice::from_ref(m), &src.read[0]).is_err() {
+                        stop();
+                    }
                 }
                 continue;
             }
@@ -835,8 +1047,7 @@ pub fn listen_forever(program: &str) {
             let task = Val::new(Obj::BuiltinMethod(round, "run"));
             let items = list((0..batches.len() as i64).map(Val::int).collect());
             if crate::par::parallel_for(items.v(), task.v(), NONE, 0).is_err() {
-                crate::state::report_pending();
-                std::process::exit(1);
+                stop();
             }
             for events in events.lock().unwrap().iter() {
                 for (err, text) in events {
@@ -853,8 +1064,10 @@ pub fn listen_forever(program: &str) {
                 for m in ms {
                     queries_of(m, 0);
                 }
-                read[si][*p as usize] = ms[ms.len() - 1].id;
-                acknowledge(s, *p, count, read[si][*p as usize]);
+                src.read[*p as usize] = if log { Some(ms[ms.len() - 1].id.shown()) } else { None };
+                if src.backend.done(s, *p, count, ms, &src.read[*p as usize]).is_err() {
+                    stop();
+                }
             }
         }
         let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
@@ -862,10 +1075,15 @@ pub fn listen_forever(program: &str) {
             let d = due(&q.lock().unwrap());
             if d {
                 flush_query(&q);
-                let stream = q.lock().unwrap().stream.clone();
-                if let Some(si) = streams.iter().position(|(s, _)| *s == stream) {
-                    for p in 0..counts[si] {
-                        acknowledge(&stream, p, counts[si], read[si][p as usize]);
+                let (stream, place) = {
+                    let q = q.lock().unwrap();
+                    (q.stream.clone(), q.place.clone())
+                };
+                if let Some(src) = sources.iter().find(|x| x.stream == stream && x.place == place) {
+                    for p in 0..src.count {
+                        if src.backend.done(&src.stream, p, src.count, &[], &src.read[p as usize]).is_err() {
+                            stop();
+                        }
                     }
                 }
             }

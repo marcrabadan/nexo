@@ -121,7 +121,7 @@ fn http_with(method: &str, url: &str, headers: &[(String, String)], body: Option
     Ok(Answer { status, headers: hs, body: data })
 }
 
-fn error_text(body: &[u8]) -> String {
+pub fn error_text(body: &[u8]) -> String {
     let text = String::from_utf8_lossy(body).to_string();
     let Some(d) = json::parse(&text) else { return text.trim().chars().take(300).collect() };
     if let Some(msg) = d.get("error").get("message").str() {
@@ -146,7 +146,7 @@ fn check(a: &Answer, what: &str) -> R<()> {
     Ok(())
 }
 
-fn need_env(name: &str) -> R<String> {
+pub fn need_env(name: &str) -> R<String> {
     match std::env::var(name) {
         Ok(v) if !v.is_empty() => Ok(v),
         _ => Err(fail_d(Diagnostic::new_spanless("infra_credentials").arg("name", name))),

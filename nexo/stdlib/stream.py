@@ -28,6 +28,8 @@ from ..types import Builtin, Native, NexoFailure, Quantity, failure
 KINDS = ("kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket")
 # options that name a broker on the network: not available in phase 5 (D113)
 REMOTE = ("servers", "url", "region", "namespace", "project", "endpoint")
+# the option that puts a source in its cloud (D168)
+CLOUD = {"sqs": "region", "kinesis": "region", "servicebus": "namespace", "pubsub": "project"}
 ROOT = Path(".nexo") / "streams"
 BACKOFF = (0.1, 0.2, 0.4)
 
@@ -97,11 +99,14 @@ class Message(Native):
     `msg.key` and `msg.partition` (D167)."""
 
     type_name = "message"
-    __slots__ = ("stream", "id", "ms", "data", "key", "partition")
+    __slots__ = ("stream", "id", "ms", "data", "key", "partition", "before", "receipt")
 
-    def __init__(self, stream, id_, ms, data, key=None, partition=0):
+    def __init__(self, stream, id_, ms, data, key=None, partition=0, before=None, receipt=None):
         self.stream, self.id, self.ms, self.data = stream, id_, ms, data
         self.key, self.partition = key, partition
+        # where a consumer starts to read it again (a log), or what
+        # acknowledges it (a queue)
+        self.before, self.receipt = before, receipt
 
     def repr(self) -> str:
         return f"message({self.stream.ident()} {self.id})"
@@ -136,15 +141,24 @@ class Stream(Native):
     """A source: `kafka("orders")` and the others (section 19)."""
 
     type_name = "stream"
-    __slots__ = ("kind", "name", "wanted")
+    __slots__ = ("kind", "name", "wanted", "where")
 
-    def __init__(self, kind: str, name: str, wanted: int | None = None):
+    def __init__(self, kind: str, name: str, wanted: int | None = None, where: str | None = None):
         self.kind, self.name = kind, name
         # partitions: n of the source, if given (D167)
         self.wanted = wanted
+        # the region, namespace or project of a source in its cloud (D168)
+        self.where = where
 
     def ident(self) -> str:
-        return f"{self.kind}:{self.name}"
+        return f"{self.kind}:{self.name}" + (f"@{self.where}" if self.where else "")
+
+    def backend(self):
+        """The broker of the stream: the local one, or its cloud's."""
+        if self.where is None:
+            return LOCAL
+        from .stream_cloud import backend
+        return backend(self)
 
     def repr(self) -> str:
         return f'{self.kind}("{self.name}")'
@@ -194,7 +208,13 @@ class Stream(Native):
             raise expects(call, "send", "time", at)
         ms = at.ms if at is not None else now_ms()
         key_text = None if key is None else payload_text(call.interp.bind_value(key))
-        message = append(self, payload_text(call.interp.bind_value(value)), ms, key_text, call)
+        data = payload_text(call.interp.bind_value(value))
+        if TEST_MODE or self.where is None:
+            message = append(self, data, ms, key_text, call)
+        else:
+            from .policy import check
+            check(call, "net", self.backend().host(self))
+            message = self.backend().send(call, self, data, ms, key_text)
         if TEST_MODE:
             deliver(call, message)
         return None
@@ -230,19 +250,28 @@ def make_source(kind: str):
         from .core import expects
         if not isinstance(name, str):
             raise expects(call, kind, "str", name)
-        wanted = None
+        wanted = where = None
         for k, v in options.items():
             if k == "partitions":
                 if not isinstance(v, int) or isinstance(v, bool) or v < 1:
                     raise expects(call, "partitions", "int", v)
                 wanted = v
                 continue
+            if CLOUD.get(kind) == k:
+                if not isinstance(v, str) or not v:
+                    raise expects(call, k, "str", v)
+                where = v
+                continue
             if k in REMOTE:
                 raise NexoError("not_supported", call.span, what=f'"{kind}(..., {k}: ...)"')
-            raise NexoError("arg_unknown", call.span, fn=kind, param=k, params="partitions")
+            known = "partitions" + (f", {CLOUD[kind]}" if kind in CLOUD else "")
+            raise NexoError("arg_unknown", call.span, fn=kind, param=k, params=known)
         if kind == "websocket":
             raise NexoError("not_supported", call.span, what='"websocket(...)"')
-        return Stream(kind, name, wanted)
+        if where is not None and wanted is not None:
+            # the cloud says how many partitions (shards) a stream has
+            raise NexoError("arg_unknown", call.span, fn=kind, param="partitions", params=CLOUD[kind])
+        return Stream(kind, name, wanted, where)
     return b_source
 
 
@@ -290,11 +319,14 @@ def handle(call, fn, key, message: Message, n: int = 1) -> None:
 def dead(call, message: Message, error) -> None:
     from ..cli import failure_text
     stream = message.stream
-    target = Stream(stream.kind, stream.name + ".dead")
-    append(target, message.data, message.ms, message.key)
+    if TEST_MODE or stream.where is None:
+        append(Stream(stream.kind, stream.name + ".dead"), message.data, message.ms, message.key)
+        target = stream.name + ".dead"
+    else:
+        target = stream.backend().dead(call, message)
     text = error.text() if isinstance(error, NexoError) else failure_text(error.error)
     sys.stdout.flush()
-    sys.stderr.write(errors.msg("info.stream_dead", stream=stream.name, id=message.id, error=text) + "\n")
+    sys.stderr.write(errors.msg("info.stream_dead", stream=stream.name, id=message.id, dead=target, error=text) + "\n")
     sys.stderr.flush()
 
 
@@ -482,7 +514,7 @@ def read_offset(stream: Stream, partition: int = 0) -> int:
         return 0
 
 
-def save_offset(stream: Stream, partition: int, n: int) -> None:
+def save_offset(stream: Stream, partition: int, n) -> None:
     path = offset_path(stream, partition)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"{n}\n", encoding="utf-8")
@@ -499,24 +531,47 @@ def new_messages(stream: Stream, partition: int, after: int) -> list[Message]:
                     d = json.loads(line)
                 except ValueError:
                     continue
-                out.append(Message(stream, d.get("id", i), d.get("time", 0), d.get("data", ""), d.get("key"),
-                                   partition))
+                n = d.get("id", i)
+                out.append(Message(stream, n, d.get("time", 0), d.get("data", ""), d.get("key"), partition, n - 1))
     except OSError:
         pass
     return out
 
 
-def acknowledge(stream: Stream, partition: int, read: int) -> None:
-    """Save the offset of a partition up to `read`, but not past the
-    messages of a window still open: after a stop they are read again (at
-    least once, D117)."""
-    done = read
+def kept(stream: Stream, partition: int, position):
+    """The position a consumer may save: `position`, but not past the
+    messages of a window still open, so that after a stop they are read
+    again (at least once, D117)."""
     for q in QUERIES:
         if q.stream == stream and q.open and q.window is not None and q.window[0] != "sliding":
-            first = next((m.id for m in q.open if m.partition == partition), None)
-            if isinstance(first, int):
-                done = min(done, first - 1)
-    save_offset(stream, partition, done)
+            first = next((m for m in q.open if m.partition == partition), None)
+            if first is not None and (first.before is None or position is None or int(first.before) < int(position)):
+                position = first.before
+    return position
+
+
+class Local:
+    """The local broker of D117: the logs of .nexo/streams, an offset per
+    partition and consumer group."""
+    log = True  # a consumer saves where it is (a queue deletes what it read)
+
+    def host(self, stream):
+        return None
+
+    def partitions(self, call, stream: Stream) -> int:
+        return stream.partitions(call)
+
+    def start(self, call, stream: Stream, partition: int):
+        return read_offset(stream, partition)
+
+    def poll(self, call, stream: Stream, partition: int, position) -> list[Message]:
+        return new_messages(stream, partition, position)
+
+    def done(self, call, stream: Stream, partition: int, messages: list, position) -> None:
+        save_offset(stream, partition, kept(stream, partition, position))
+
+
+LOCAL = Local()
 
 
 def listen_forever(interp, program: str) -> None:
@@ -532,24 +587,41 @@ def listen_forever(interp, program: str) -> None:
     sys.stderr.write(errors.msg("info.stream_listening", streams=", ".join(s.repr() for s in streams)) + "\n")
     sys.stderr.flush()
     # what was delivered, per stream and partition
-    parts = [(s, p) for s in streams for p in range(s.partitions(call))]
-    read = {(s, p): read_offset(s, p) for s, p in parts}
+    try:
+        from .policy import check
+        for s in streams:
+            if s.backend().host(s) is not None:
+                check(call, "net", s.backend().host(s))
+        counts = {s: s.backend().partitions(call, s) for s in streams}
+        read = {(s, p): s.backend().start(call, s, p) for s in streams for p in range(counts[s])}
+    except (NexoFailure, NexoError) as exc:
+        from ..cli import report
+        report(exc)
+        raise SystemExit(1)
     try:
         while True:
             idle = True
             for s in streams:
-                batches = [(p, new_messages(s, p, read[(s, p)])) for p in range(s.partitions())]
+                b = s.backend()
+                try:
+                    batches = [(p, b.poll(call, s, p, read[(s, p)])) for p in range(counts[s])]
+                except (NexoFailure, NexoError) as exc:
+                    # a broker that cannot be reached now: tried again
+                    from ..cli import report
+                    report(exc)
+                    _time.sleep(1)
+                    continue
                 batches = [(p, ms) for p, ms in batches if ms]
                 if not batches:
                     continue
                 idle = False
-                if s.partitions() == 1:
+                if counts[s] == 1:
                     p, messages = batches[0]
                     for message in messages:
                         deliver(call, message)
                         sys.stdout.flush()
-                        read[(s, p)] = message.id
-                        acknowledge(s, p, read[(s, p)])
+                        read[(s, p)] = message.id if b.log else None
+                        b.done(call, s, p, [message], read[(s, p)])
                     continue
                 # one task per partition, each in order (D167); phase 0 runs
                 # the tasks one after the other, as `parallel for` does
@@ -559,13 +631,14 @@ def listen_forever(interp, program: str) -> None:
                 for p, messages in batches:
                     for m in messages:
                         queries_of(call, m)
-                    read[(s, p)] = messages[-1].id
-                    acknowledge(s, p, read[(s, p)])
+                    read[(s, p)] = messages[-1].id if b.log else None
+                    b.done(call, s, p, messages, read[(s, p)])
             for q in QUERIES:
                 if q.due():
                     q.flush(call)
-                    for p in range(q.stream.partitions()):
-                        acknowledge(q.stream, p, read[(q.stream, p)])
+                    b = q.stream.backend()
+                    for p in range(counts[q.stream]):
+                        b.done(call, q.stream, p, [], read[(q.stream, p)])
             if idle:
                 _time.sleep(0.2)
     except KeyboardInterrupt:

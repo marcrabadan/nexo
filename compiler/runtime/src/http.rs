@@ -81,7 +81,33 @@ pub fn status_text(status: i64) -> String {
     format!("{status} {}", reason(status)).trim().to_string()
 }
 
-fn network(url: &str, reason_key: &str, span: u32) -> crate::state::Fail {
+/// The message key of why a request could not be sent.
+pub fn transport_reason(t: &ureq::Transport) -> &'static str {
+    match t.kind() {
+        ureq::ErrorKind::Dns => "detail.unknown_host",
+        ureq::ErrorKind::ConnectionFailed => {
+            let text = t.to_string();
+            if text.contains("refused") {
+                "detail.refused"
+            } else if text.contains("timed out") {
+                "detail.timeout"
+            } else {
+                "detail.no_connection"
+            }
+        }
+        ureq::ErrorKind::Io => {
+            if t.to_string().contains("timed out") {
+                "detail.timeout"
+            } else {
+                "detail.no_connection"
+            }
+        }
+        ureq::ErrorKind::InvalidUrl | ureq::ErrorKind::UnknownScheme => "detail.bad_url",
+        _ => "detail.no_connection",
+    }
+}
+
+pub fn network(url: &str, reason_key: &str, span: u32) -> crate::state::Fail {
     failure("NetworkError", span, &[("url", url.to_string()), ("reason", msg(reason_key, &[]))])
 }
 
@@ -144,31 +170,7 @@ fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(Str
         let resp = match result {
             Ok(r) => r,
             Err(ureq::Error::Status(_, r)) => r,
-            Err(ureq::Error::Transport(t)) => {
-                let key = match t.kind() {
-                    ureq::ErrorKind::Dns => "detail.unknown_host",
-                    ureq::ErrorKind::ConnectionFailed => {
-                        let text = t.to_string();
-                        if text.contains("refused") {
-                            "detail.refused"
-                        } else if text.contains("timed out") {
-                            "detail.timeout"
-                        } else {
-                            "detail.no_connection"
-                        }
-                    }
-                    ureq::ErrorKind::Io => {
-                        if t.to_string().contains("timed out") {
-                            "detail.timeout"
-                        } else {
-                            "detail.no_connection"
-                        }
-                    }
-                    ureq::ErrorKind::InvalidUrl | ureq::ErrorKind::UnknownScheme => "detail.bad_url",
-                    _ => "detail.no_connection",
-                };
-                return Ok(Outcome::Retry(network(&current, key, span)));
-            }
+            Err(ureq::Error::Transport(t)) => return Ok(Outcome::Retry(network(&current, transport_reason(&t), span))),
         };
         let status = resp.status() as i64;
         let mut hs: Vec<(String, String)> = Vec::new();

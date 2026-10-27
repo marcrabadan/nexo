@@ -35,6 +35,7 @@ pub mod repl;
 pub mod state;
 pub mod stdlib;
 pub mod stream;
+pub mod stream_cloud;
 pub mod sync;
 pub mod text;
 pub mod time;
