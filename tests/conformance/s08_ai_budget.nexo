@@ -1,5 +1,9 @@
-# budget belongs with the cost controls of a later phase (D89)
+# a budget is money per day or per month (D165)
 ai:
     provider = "anthropic"
     key = secret("ANTHROPIC_KEY")
     budget = 5 EUR per day
+    when_over_budget = "ollama:llama"
+
+ai profile "work":
+    budget = 5 per day

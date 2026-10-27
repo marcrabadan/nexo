@@ -1,4 +1,9 @@
-# MCP servers come with a later phase (D89)
+# an MCP server is declared in nexo.toml as [mcp.NAME] (D166)
 agent support:
     model = "anthropic:claude-opus"
     tools = [mcp("github")]
+
+try:
+    support.handle("hello")
+else e:
+    print(e.kind, e.message)

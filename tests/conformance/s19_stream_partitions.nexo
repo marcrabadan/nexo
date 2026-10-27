@@ -1,0 +1,11 @@
+# partitions of a stream: a key keeps its partition (D167)
+use nexo.stream
+
+when kafka("jobs") as msg:
+    print(msg.partition, msg.key, msg.id, msg.text())
+
+test "keys keep their partition":
+    jobs = kafka("jobs", partitions: 3)
+    for who in ["f", "a", "b", "a", "f"]:
+        jobs.send("job of {who}", key: who)
+    jobs.send("no key")

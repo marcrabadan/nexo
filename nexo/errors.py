@@ -644,6 +644,8 @@ MESSAGES: dict[str, str] = {
     "info.privacy_program": "the program",
     "info.privacy_missing": "(not declared)",
     "info.privacy_reader": "{identity} (infra {infra}, database {database})",
+    "stream_partitions": "{stream} has {have} partitions, not {want}.",
+    "fix.stream_partitions": "Write partitions: {have}, or send to a new stream to have {want}.",
     "stream_window": "{step} needs a duration greater than zero.",
     "fix.stream_window": "Write it like this: |> {step} 1m.",
     "stream_window_source": "{step} only works in a pipeline that starts at a stream.",

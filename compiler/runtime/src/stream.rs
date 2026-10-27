@@ -1,8 +1,10 @@
 //! nexo.stream (section 19, D117): streams are sources for `when` and `|>`.
 //! Follows phase 0's stream.py: a local broker of append-only files under
-//! `.nexo/streams/<kind>/<name>.log` (in memory under `nexo test`, where
-//! `send` delivers at once), at-least-once handlers with 3 retries and a
-//! dead-letter stream, keys that are processed once, and windows.
+//! `.nexo/streams/<kind>/<name>.log` (one per partition when a stream has
+//! several, D167; in memory under `nexo test`, where `send` delivers at
+//! once), at-least-once handlers with 3 retries and a dead-letter stream,
+//! keys that are processed once, windows, and the partitions of a stream
+//! handled as parallel tasks, each in order.
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -24,6 +26,8 @@ static TEST_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 
 struct Handler {
     stream: (String, String),
+    /// partitions: n of its source, if given (D167)
+    wanted: Option<i64>,
     func: Val,
     key: Option<Val>,
 }
@@ -32,7 +36,7 @@ struct Handler {
 struct Broker {
     handlers: Vec<Handler>,
     queries: Vec<Arc<Mutex<Query>>>,
-    /// test mode: stream ident -> messages (id, ms, data)
+    /// test mode: stream ident#partition -> messages (id, ms, data)
     memory: Vec<(String, Vec<(i64, i64, String)>)>,
     keys: Vec<(String, Vec<String>)>,
     group: String,
@@ -80,6 +84,8 @@ fn now_ms() -> i64 {
 pub struct Stream {
     pub kind: String,
     pub name: String,
+    /// partitions: n, if given (D167)
+    pub wanted: Option<i64>,
 }
 
 impl Stream {
@@ -105,7 +111,7 @@ impl Native for Stream {
         Err(crate::stdlib::missing_member("stream", name, &["send"], span))
     }
     fn call_method(&self, _me: V, _name: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
-        let a = crate::stdlib::method_args("send", &["value", "at"], 1, args, names, span)?;
+        let a = crate::stdlib::method_args("send", &["value", "at", "key"], 1, args, names, span)?;
         let ms = if a[1].is_none() || a[1].tag == T_MISSING {
             now_ms()
         } else {
@@ -114,12 +120,16 @@ impl Native for Stream {
                 None => return Err(crate::stdlib::expects("send", "time", a[1], span)),
             }
         };
-        let value = crate::pipe::bind(a[0])?;
-        let data = match value.v().as_str() {
-            Some(s) => s.to_string(),
-            None => crate::data::to_json_compact(value.v()),
+        let text = |v: V| -> R<String> {
+            let value = crate::pipe::bind(v)?;
+            Ok(match value.v().as_str() {
+                Some(s) => s.to_string(),
+                None => crate::data::to_json_compact(value.v()),
+            })
         };
-        let message = append(&self.pair(), data, ms);
+        let data = text(a[0])?;
+        let key = if a[2].is_none() || a[2].tag == T_MISSING { None } else { Some(text(a[2])?) };
+        let message = append(&self.pair(), data, ms, key, self.wanted, Some(span))?;
         if test_mode() {
             deliver(&message, span);
         }
@@ -133,13 +143,16 @@ impl Native for Stream {
     }
 }
 
-/// One message: `msg.json()`, `msg.text()`, `msg.id`, `msg.time`.
+/// One message: `msg.json()`, `msg.text()`, `msg.id`, `msg.time`,
+/// `msg.key` and `msg.partition` (D167).
 #[derive(Clone)]
 pub struct Message {
     pub stream: (String, String),
     pub id: i64,
     pub ms: i64,
     pub data: String,
+    pub key: Option<String>,
+    pub partition: i64,
 }
 
 impl Message {
@@ -168,7 +181,9 @@ impl Native for Message {
             "time" => Ok(native(crate::time::Time { ms: self.ms, zone: crate::time::local_zone() })),
             "json" => Ok(Val::new(Obj::BuiltinMethod(Val::from(me), "json"))),
             "text" => Ok(Val::new(Obj::BuiltinMethod(Val::from(me), "text"))),
-            _ => Err(crate::stdlib::missing_member("message", name, &["id", "time", "json", "text"], span)),
+            "key" => Ok(self.key.clone().map(Val::str).unwrap_or_else(Val::none)),
+            "partition" => Ok(Val::int(self.partition)),
+            _ => Err(crate::stdlib::missing_member("message", name, &["id", "time", "json", "text", "key", "partition"], span)),
         }
     }
     fn call_method(&self, _me: V, name: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
@@ -184,28 +199,115 @@ impl Native for Message {
 }
 
 pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
-    for n in names.iter().flatten() {
+    let mut wanted = None;
+    for (i, n) in names.iter().enumerate() {
+        let Some(n) = n else { continue };
+        if *n == "partitions" {
+            match args[i].as_int() {
+                Some(c) if c >= 1 && args[i].tag == T_INT => wanted = Some(c),
+                _ => return Err(crate::stdlib::expects("partitions", "int", args[i], span)),
+            }
+            continue;
+        }
         if REMOTE.contains(n) {
             return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", format!("\"{kind}(..., {n}: ...)\"")), span));
         }
-        return Err(diag(Diagnostic::new_spanless("arg_unknown").arg("fn", kind.to_string()).arg("param", *n).arg("params", "-"), span));
+        return Err(diag(Diagnostic::new_spanless("arg_unknown").arg("fn", kind.to_string()).arg("param", *n).arg("params", "partitions"), span));
     }
-    let a = crate::stdlib::method_args(kind, &["name"], 1, args, names, span)?;
+    let positional: Vec<V> = args.iter().zip(names).filter(|(_, n)| n.is_none()).map(|(a, _)| *a).collect();
+    let nones: Vec<Option<&str>> = positional.iter().map(|_| None).collect();
+    let a = crate::stdlib::method_args(kind, &["name"], 1, &positional, &nones, span)?;
     let Some(name) = a[0].as_str() else { return Err(crate::stdlib::expects(kind, "str", a[0], span)) };
     if kind == "websocket" {
         return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", "\"websocket(...)\""), span));
     }
-    Ok(native(Stream { kind: kind.to_string(), name: name.to_string() }))
+    Ok(native(Stream { kind: kind.to_string(), name: name.to_string(), wanted }))
 }
 
-fn log_path(s: &(String, String)) -> String {
-    format!("{ROOT}/{}/{}.log", s.0, s.1)
+/// Kafka's hash of a key, so a key goes to the partition Kafka's own
+/// clients choose (D167).
+pub fn murmur2(data: &[u8]) -> u32 {
+    let m: u32 = 0x5BD1_E995;
+    let mut h: u32 = 0x9747_B28C ^ data.len() as u32;
+    let chunks = data.chunks_exact(4);
+    let rest = chunks.remainder();
+    for c in chunks {
+        let mut k = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        k = k.wrapping_mul(m);
+        k ^= k >> 24;
+        k = k.wrapping_mul(m);
+        h = h.wrapping_mul(m);
+        h ^= k;
+    }
+    if rest.len() == 3 {
+        h ^= (rest[2] as u32) << 16;
+    }
+    if rest.len() >= 2 {
+        h ^= (rest[1] as u32) << 8;
+    }
+    if !rest.is_empty() {
+        h ^= rest[0] as u32;
+        h = h.wrapping_mul(m);
+    }
+    h ^= h >> 13;
+    h = h.wrapping_mul(m);
+    h ^= h >> 15;
+    h
 }
 
-fn append(s: &(String, String), data: String, ms: i64) -> Message {
+/// The partition of a message: by its key, or by its data without one.
+pub fn partition_of(key: Option<&str>, data: &str, count: i64) -> i64 {
+    if count <= 1 {
+        return 0;
+    }
+    ((murmur2(key.unwrap_or(data).as_bytes()) & 0x7FFF_FFFF) as i64) % count
+}
+
+/// How many partitions a stream has: fixed when it is created (the file
+/// `<name>.partitions`), 1 for a stream created without them; an error
+/// when a source asks for another number.
+fn partitions(s: &(String, String), wanted: Option<i64>, span: Option<u32>) -> R<i64> {
     if test_mode() {
-        return with(|b| {
-            let ident = format!("{}:{}", s.0, s.1);
+        return Ok(wanted.unwrap_or(1));
+    }
+    let meta = format!("{ROOT}/{}/{}.partitions", s.0, s.1);
+    let mut have = std::fs::read_to_string(&meta).ok().and_then(|t| t.trim().parse::<i64>().ok()).unwrap_or(0);
+    if have == 0 && std::path::Path::new(&format!("{ROOT}/{}/{}.log", s.0, s.1)).exists() {
+        // a stream that already has its one log has one partition
+        have = 1;
+    }
+    if have == 0 {
+        have = wanted.unwrap_or(1);
+        if have > 1 {
+            let _ = std::fs::create_dir_all(format!("{ROOT}/{}", s.0));
+            let _ = std::fs::write(&meta, format!("{have}\n"));
+        }
+    }
+    if let (Some(w), Some(span)) = (wanted, span) {
+        if w != have {
+            let shown = format!("{}(\"{}\")", s.0, s.1);
+            let d = Diagnostic::new_spanless("stream_partitions").arg("stream", shown).arg("have", have.to_string()).arg("want", w.to_string());
+            return Err(diag(d, span));
+        }
+    }
+    Ok(have)
+}
+
+/// The log of a partition: `<name>.log` when the stream has one,
+/// `<name>.<p>.log` when it has several.
+fn log_path(s: &(String, String), partition: i64, count: i64) -> String {
+    if count == 1 {
+        return format!("{ROOT}/{}/{}.log", s.0, s.1);
+    }
+    format!("{ROOT}/{}/{}.{partition}.log", s.0, s.1)
+}
+
+fn append(s: &(String, String), data: String, ms: i64, key: Option<String>, wanted: Option<i64>, span: Option<u32>) -> R<Message> {
+    let count = partitions(s, wanted, span)?;
+    let p = partition_of(key.as_deref(), &data, count);
+    if test_mode() {
+        return Ok(with(|b| {
+            let ident = format!("{}:{}#{p}", s.0, s.1);
             let pos = match b.memory.iter().position(|(k, _)| *k == ident) {
                 Some(p) => p,
                 None => {
@@ -216,29 +318,33 @@ fn append(s: &(String, String), data: String, ms: i64) -> Message {
             let log = &mut b.memory[pos].1;
             let id = log.len() as i64 + 1;
             log.push((id, ms, data.clone()));
-            Message { stream: s.clone(), id, ms, data }
-        });
+            Message { stream: s.clone(), id, ms, data, key, partition: p }
+        }));
     }
     let _guard = BROKER.lock().unwrap();
-    let path = log_path(s);
+    let path = log_path(s, p, count);
     let _ = std::fs::create_dir_all(format!("{ROOT}/{}", s.0));
     // the lock of the file itself: producers in other processes count and
     // append one at a time, so ids stay unique
     let file = std::fs::OpenOptions::new().create(true).read(true).append(true).open(&path);
-    let mut count = 0;
+    let mut count: i64 = 0;
     if let Ok(f) = &file {
         let _ = f.lock();
         let mut text = String::new();
         let _ = std::io::Read::read_to_string(&mut &*f, &mut text);
         count = text.lines().count() as i64;
     }
-    let message = Message { stream: s.clone(), id: count + 1, ms, data };
-    let line = json::obj(vec![("id", Json::Int(message.id)), ("time", Json::Int(ms)), ("data", json::s(message.data.clone()))]).compact();
+    let message = Message { stream: s.clone(), id: count + 1, ms, data, key, partition: p };
+    let mut fields = vec![("id", Json::Int(message.id)), ("time", Json::Int(ms)), ("data", json::s(message.data.clone()))];
+    if let Some(k) = &message.key {
+        fields.push(("key", json::s(k.clone())));
+    }
+    let line = json::obj(fields).compact();
     if let Ok(mut f) = file {
         let _ = writeln!(f, "{line}");
         let _ = f.unlock();
     }
-    message
+    Ok(message)
 }
 
 // -------------------------------------------------------------- handlers
@@ -246,7 +352,7 @@ fn append(s: &(String, String), data: String, ms: i64) -> Message {
 pub fn when(src: V, func: V, key: Option<V>, span: u32) -> R<Val> {
     let Some(s) = src.native::<Stream>() else { return Err(crate::stdlib::expects("when", "stream", src, span)) };
     let key = key.filter(|k| !k.is_none()).map(Val::from);
-    with(|b| b.handlers.push(Handler { stream: s.pair(), func: Val::from(func), key }));
+    with(|b| b.handlers.push(Handler { stream: s.pair(), wanted: s.wanted, func: Val::from(func), key }));
     Ok(Val::none())
 }
 
@@ -299,23 +405,50 @@ fn remember_key(s: &(String, String), n: usize, k: String) {
 /// dead-letter stream.
 fn handle(func: &Val, key: &Option<Val>, m: &Message, n: usize, span: u32) {
     let mv = native(m.clone());
-    let mut k = None;
-    if let Some(kf) = key {
-        match call_value(kf.v(), &[mv.v()], span).and_then(|v| crate::pipe::bind(v.v())) {
-            Ok(v) => {
-                let text = repr(v.v());
-                if seen_key(&m.stream, n, &text) {
-                    return;
-                }
-                k = Some(text);
-            }
-            Err(_) => {
-                let e = pending_message();
-                dead(m, &e);
-                return;
+    let Some(kf) = key else { return finish(func, &mv, m, n, None, span) };
+    match call_value(kf.v(), &[mv.v()], span).and_then(|v| crate::pipe::bind(v.v())) {
+        Ok(v) => {
+            let text = repr(v.v());
+            // partitions run at once: a key another one is handling waits
+            // for it, then counts as seen
+            let _held = Busy::hold(format!("{}:{}#{n}#{text}", m.stream.0, m.stream.1));
+            if !seen_key(&m.stream, n, &text) {
+                finish(func, &mv, m, n, Some(text), span);
             }
         }
+        Err(_) => {
+            let e = pending_message();
+            dead(m, &e);
+        }
     }
+}
+
+/// The keys being handled now, by stream, handler and key.
+static BUSY: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static BUSY_FREE: std::sync::Condvar = std::sync::Condvar::new();
+
+struct Busy(String);
+
+impl Busy {
+    fn hold(slot: String) -> Busy {
+        let mut busy = BUSY.lock().unwrap();
+        while busy.contains(&slot) {
+            busy = BUSY_FREE.wait(busy).unwrap();
+        }
+        busy.push(slot.clone());
+        Busy(slot)
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        BUSY.lock().unwrap().retain(|s| *s != self.0);
+        BUSY_FREE.notify_all();
+    }
+}
+
+/// The handler with its retries; then the dead-letter stream.
+fn finish(func: &Val, mv: &Val, m: &Message, n: usize, k: Option<String>, span: u32) {
     let mut error = None;
     for attempt in 0..4 {
         match call_value(func.v(), &[mv.v()], span) {
@@ -342,18 +475,44 @@ fn handle(func: &Val, key: &Option<Val>, m: &Message, n: usize, span: u32) {
 
 fn dead(m: &Message, error: &str) {
     let target = (m.stream.0.clone(), format!("{}.dead", m.stream.1));
-    append(&target, m.data.clone(), m.ms);
-    crate::state::flush();
-    eprintln!("{}", msg("info.stream_dead", &[("stream", m.stream.1.clone()), ("id", m.id.to_string()), ("error", error.to_string())]));
+    let _ = append(&target, m.data.clone(), m.ms, m.key.clone(), None, None);
+    let line = msg("info.stream_dead", &[("stream", m.stream.1.clone()), ("id", m.id.to_string()), ("error", error.to_string())]);
+    // inside a partition's task the line waits with what the task wrote
+    let captured = CAPTURE.with(|c| {
+        let mut c = c.borrow_mut();
+        let Some(events) = c.as_mut() else { return false };
+        if let Some(out) = crate::state::with_task(|s| s.buffer.as_mut().map(std::mem::take)).filter(|o| !o.is_empty()) {
+            events.push((false, out));
+        }
+        events.push((true, line.clone()));
+        true
+    });
+    if !captured {
+        crate::state::flush();
+        eprintln!("{line}");
+    }
+}
+
+thread_local! {
+    /// what a partition's task writes, in order: (to the error output, text)
+    static CAPTURE: std::cell::RefCell<Option<Vec<(bool, String)>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// A message reaches every handler and query of its stream.
 fn deliver(m: &Message, span: u32) {
+    handlers_of(m, span);
+    queries_of(m, span);
+}
+
+fn handlers_of(m: &Message, span: u32) {
     let handlers: Vec<(Val, Option<Val>)> =
         with(|b| b.handlers.iter().filter(|h| h.stream == m.stream).map(|h| (h.func.clone(), h.key.clone())).collect());
     for (i, (f, k)) in handlers.iter().enumerate() {
         handle(f, k, m, i + 1, span);
     }
+}
+
+fn queries_of(m: &Message, span: u32) {
     let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
     for q in queries {
         let mine = q.lock().unwrap().stream == m.stream;
@@ -371,6 +530,8 @@ type Op = Arc<dyn Fn(V) -> R<Val> + Send + Sync>;
 /// messages of each window; `each` at the end starts it.
 pub struct Query {
     stream: (String, String),
+    /// partitions: n of its source, if given (D167)
+    wanted: Option<i64>,
     /// "window" | "sliding" | "session" and its size in ms
     window: Option<(&'static str, i64)>,
     ops: Vec<Op>,
@@ -395,7 +556,7 @@ impl Native for QueryVal {
 /// The query behind a pipeline value whose source is a stream, if any.
 pub fn query_of(v: V) -> Option<(Arc<Mutex<Query>>, bool)> {
     if let Some(s) = v.native::<Stream>() {
-        return Some((Arc::new(Mutex::new(Query { stream: s.pair(), window: None, ops: Vec::new(), open: Vec::new() })), true));
+        return Some((Arc::new(Mutex::new(Query { stream: s.pair(), wanted: s.wanted, window: None, ops: Vec::new(), open: Vec::new() })), true));
     }
     v.native::<QueryVal>().map(|q| (q.0.clone(), false))
 }
@@ -403,12 +564,12 @@ pub fn query_of(v: V) -> Option<(Arc<Mutex<Query>>, bool)> {
 /// One more step of a stream pipeline (D117).
 pub fn push(src: V, op: Op, each: bool) -> Option<Val> {
     let (q, _) = query_of(src)?;
-    let (stream, window, mut ops) = {
+    let (stream, wanted, window, mut ops) = {
         let q = q.lock().unwrap();
-        (q.stream.clone(), q.window, q.ops.clone())
+        (q.stream.clone(), q.wanted, q.window, q.ops.clone())
     };
     ops.push(op);
-    let next = Arc::new(Mutex::new(Query { stream, window, ops, open: Vec::new() }));
+    let next = Arc::new(Mutex::new(Query { stream, wanted, window, ops, open: Vec::new() }));
     if each {
         with(|b| b.queries.push(next));
         return Some(Val::none());
@@ -420,9 +581,9 @@ pub fn window(src: V, size: V, kind: &'static str, step_span: u32, size_span: u3
     let Some((q, _)) = query_of(src) else {
         return Err(diag(Diagnostic::new_spanless("stream_window_source").arg("step", kind), step_span));
     };
-    let (stream, has) = {
+    let (stream, wanted, has) = {
         let q = q.lock().unwrap();
-        (q.stream.clone(), q.window.is_some() || !q.ops.is_empty())
+        (q.stream.clone(), q.wanted, q.window.is_some() || !q.ops.is_empty())
     };
     if has {
         return Err(diag(Diagnostic::new_spanless("stream_window_first").arg("step", kind), step_span));
@@ -442,7 +603,7 @@ pub fn window(src: V, size: V, kind: &'static str, step_span: u32, size_span: u3
     let Some(ms) = ms else {
         return Err(diag(Diagnostic::new_spanless("stream_window").arg("step", kind), size_span));
     };
-    Ok(native(QueryVal(Arc::new(Mutex::new(Query { stream, window: Some((kind, ms)), ops: Vec::new(), open: Vec::new() })))))
+    Ok(native(QueryVal(Arc::new(Mutex::new(Query { stream, wanted, window: Some((kind, ms)), ops: Vec::new(), open: Vec::new() })))))
 }
 
 fn run(q: &Arc<Mutex<Query>>, messages: Vec<Message>, span: u32) {
@@ -528,23 +689,84 @@ pub fn drain() {
 
 // --------------------------------------------------------------- run mode
 
-fn offset_path(s: &(String, String)) -> String {
-    format!("{ROOT}/{}/{}.{}.offset", s.0, s.1, group())
+fn offset_path(s: &(String, String), partition: i64, count: i64) -> String {
+    if count == 1 {
+        return format!("{ROOT}/{}/{}.{}.offset", s.0, s.1, group());
+    }
+    format!("{ROOT}/{}/{}.{partition}.{}.offset", s.0, s.1, group())
 }
 
-/// Save the offset up to `read`, but not past the messages of a window
-/// still open: after a stop they are read again (at least once, D117).
-fn acknowledge(s: &(String, String), read: i64) {
+/// Save the offset of a partition up to `read`, but not past the messages
+/// of a window still open: after a stop they are read again (at least
+/// once, D117).
+fn acknowledge(s: &(String, String), partition: i64, count: i64, read: i64) {
     let mut done = read;
     let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
     for q in queries {
         let g = q.lock().unwrap();
         let windowed = g.window.is_some_and(|w| w.0 != "sliding");
-        if g.stream == *s && windowed && !g.open.is_empty() {
-            done = done.min(g.open[0].id - 1);
+        if g.stream == *s && windowed {
+            if let Some(first) = g.open.iter().find(|m| m.partition == partition) {
+                done = done.min(first.id - 1);
+            }
         }
     }
-    let _ = std::fs::write(offset_path(s), format!("{done}\n"));
+    let _ = std::fs::write(offset_path(s, partition, count), format!("{done}\n"));
+}
+
+/// The messages of a partition after `after`.
+fn new_messages(s: &(String, String), partition: i64, count: i64, after: i64) -> Vec<Message> {
+    let text = std::fs::read_to_string(log_path(s, partition, count)).unwrap_or_default();
+    let mut out = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let n = i as i64 + 1;
+        if n <= after {
+            continue;
+        }
+        let Some(d) = json::parse(line) else { continue };
+        out.push(Message {
+            stream: s.clone(),
+            id: d.get("id").int().unwrap_or(n),
+            ms: d.get("time").int().unwrap_or(0),
+            data: d.get("data").str().unwrap_or("").to_string(),
+            key: d.get("key").str().map(|k| k.to_string()),
+            partition,
+        });
+    }
+    out
+}
+
+/// The work of one round: the new messages of each partition of a stream,
+/// handled by one task per partition (D167).
+struct Round {
+    batches: Vec<Vec<Message>>,
+    /// what each task wrote, in order: (to the error output, text)
+    events: Arc<Mutex<Vec<Vec<(bool, String)>>>>,
+}
+
+impl Native for Round {
+    fn type_name(&self) -> &str {
+        "task"
+    }
+    fn repr(&self) -> String {
+        "task".into()
+    }
+    fn call_method(&self, _me: V, _name: &str, args: &[V], _names: &[Option<&str>], _span: u32) -> R<Val> {
+        let i = args.first().and_then(|a| a.as_int()).unwrap_or(0) as usize;
+        CAPTURE.with(|c| *c.borrow_mut() = Some(Vec::new()));
+        for m in &self.batches[i] {
+            handlers_of(m, 0);
+        }
+        let mut events = CAPTURE.with(|c| c.borrow_mut().take()).unwrap_or_default();
+        if let Some(out) = crate::state::with_task(|s| s.buffer.as_mut().map(std::mem::take)).filter(|o| !o.is_empty()) {
+            events.push((false, out));
+        }
+        self.events.lock().unwrap()[i] = events;
+        Ok(Val::none())
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// `nexo file.nexo` with `when` handlers or stream pipelines: read the new
@@ -552,46 +774,87 @@ fn acknowledge(s: &(String, String), read: i64) {
 pub fn listen_forever(program: &str) {
     let stem = std::path::Path::new(program).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     with(|b| b.group = if stem.is_empty() { "nexo".into() } else { stem });
-    let mut streams: Vec<(String, String)> = Vec::new();
-    let all: Vec<(String, String)> = with(|b| {
-        let mut v: Vec<(String, String)> = b.handlers.iter().map(|h| h.stream.clone()).collect();
-        v.extend(b.queries.iter().map(|q| q.lock().unwrap().stream.clone()));
+    let mut streams: Vec<((String, String), Option<i64>)> = Vec::new();
+    let all: Vec<((String, String), Option<i64>)> = with(|b| {
+        let mut v: Vec<((String, String), Option<i64>)> = b.handlers.iter().map(|h| (h.stream.clone(), h.wanted)).collect();
+        v.extend(b.queries.iter().map(|q| {
+            let q = q.lock().unwrap();
+            (q.stream.clone(), q.wanted)
+        }));
         v
     });
     for s in all {
-        if !streams.contains(&s) {
+        if !streams.iter().any(|(x, _)| *x == s.0) {
             streams.push(s);
         }
     }
-    let shown: Vec<String> = streams.iter().map(|s| format!("{}(\"{}\")", s.0, s.1)).collect();
+    let shown: Vec<String> = streams.iter().map(|(s, _)| format!("{}(\"{}\")", s.0, s.1)).collect();
     crate::state::flush();
     eprintln!("{}", msg("info.stream_listening", &[("streams", shown.join(", "))]));
-    // what was delivered, per stream
-    let mut read: Vec<i64> =
-        streams.iter().map(|s| std::fs::read_to_string(offset_path(s)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)).collect();
+    let mut counts = Vec::new();
+    for (s, wanted) in &streams {
+        match partitions(s, *wanted, Some(0)) {
+            Ok(c) => counts.push(c),
+            Err(_) => {
+                crate::state::report_pending();
+                std::process::exit(1);
+            }
+        }
+    }
+    // what was delivered, per stream and partition
+    let mut read: Vec<Vec<i64>> = streams
+        .iter()
+        .zip(&counts)
+        .map(|((s, _), &c)| {
+            (0..c).map(|p| std::fs::read_to_string(offset_path(s, p, c)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0)).collect()
+        })
+        .collect();
     loop {
         let mut idle = true;
-        for (si, s) in streams.iter().enumerate() {
-            let mut done = read[si];
-            let text = std::fs::read_to_string(log_path(s)).unwrap_or_default();
-            for (i, line) in text.lines().enumerate() {
-                let n = i as i64 + 1;
-                if n <= done {
-                    continue;
+        for (si, (s, _)) in streams.iter().enumerate() {
+            let count = counts[si];
+            let batches: Vec<(i64, Vec<Message>)> =
+                (0..count).map(|p| (p, new_messages(s, p, count, read[si][p as usize]))).filter(|(_, ms)| !ms.is_empty()).collect();
+            if batches.is_empty() {
+                continue;
+            }
+            idle = false;
+            if count == 1 {
+                for m in &batches[0].1 {
+                    deliver(m, 0);
+                    crate::state::flush();
+                    read[si][0] = m.id;
+                    acknowledge(s, 0, 1, m.id);
                 }
-                let Some(d) = json::parse(line) else { continue };
-                let m = Message {
-                    stream: s.clone(),
-                    id: d.get("id").int().unwrap_or(n),
-                    ms: d.get("time").int().unwrap_or(0),
-                    data: d.get("data").str().unwrap_or("").to_string(),
-                };
-                idle = false;
-                deliver(&m, 0);
-                crate::state::flush();
-                done = m.id;
-                read[si] = done;
-                acknowledge(s, done);
+                continue;
+            }
+            // one task per partition, each in order (D167): what they write
+            // comes out in partition order, as `parallel for` does
+            let events = Arc::new(Mutex::new(vec![Vec::new(); batches.len()]));
+            let round = native(Round { batches: batches.iter().map(|(_, ms)| ms.clone()).collect(), events: events.clone() });
+            let task = Val::new(Obj::BuiltinMethod(round, "run"));
+            let items = list((0..batches.len() as i64).map(Val::int).collect());
+            if crate::par::parallel_for(items.v(), task.v(), NONE, 0).is_err() {
+                crate::state::report_pending();
+                std::process::exit(1);
+            }
+            for events in events.lock().unwrap().iter() {
+                for (err, text) in events {
+                    if *err {
+                        crate::state::flush();
+                        eprintln!("{text}");
+                    } else {
+                        crate::state::write_out(text);
+                    }
+                }
+            }
+            crate::state::flush();
+            for (p, ms) in &batches {
+                for m in ms {
+                    queries_of(m, 0);
+                }
+                read[si][*p as usize] = ms[ms.len() - 1].id;
+                acknowledge(s, *p, count, read[si][*p as usize]);
             }
         }
         let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
@@ -600,8 +863,10 @@ pub fn listen_forever(program: &str) {
             if d {
                 flush_query(&q);
                 let stream = q.lock().unwrap().stream.clone();
-                if let Some(si) = streams.iter().position(|s| *s == stream) {
-                    acknowledge(&stream, read[si]);
+                if let Some(si) = streams.iter().position(|(s, _)| *s == stream) {
+                    for p in 0..counts[si] {
+                        acknowledge(&stream, p, counts[si], read[si][p as usize]);
+                    }
                 }
             }
         }

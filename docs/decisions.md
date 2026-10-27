@@ -2468,3 +2468,36 @@ and how it is reached is not written.
   60 seconds is an AIError that names it; a name without a table is an
   AIError that says how to add it. An agent's tools inherit the program's
   policy inside the program; a server is another program, with its own.
+
+**D167. Partitions of a stream.** Section 19 says `when` on a stream
+"scales with implicit `parallel` per partition, preserving order within
+each one"; how a stream gets partitions and which one a message goes to
+is not written, and D117 had one partition per stream.
+- A source can say how many partitions its stream has:
+  `kafka("orders", partitions: 4)`. The number is fixed when the stream is
+  created (in the local broker, the file `<name>.partitions`; a stream
+  that exists with one log has one); a source that asks for another
+  number is an error that names both. Without it a stream has the
+  partitions it was created with, or one. The local broker keeps one log
+  per partition (`<name>.<p>.log`) and one offset per partition and
+  consumer group; a stream with one partition keeps the files of D117.
+- `send(value, key: k)` sends a message with a key (a text as it is,
+  another value as compact JSON); the partition is Kafka's own:
+  murmur2 of the key, as positive, modulo the partitions, so a key keeps
+  its partition and its order, and a Kafka client elsewhere would choose
+  the same one. Without a key the data is hashed instead. A message has
+  `msg.key` (none without one) and `msg.partition`; `msg.id` is its
+  position in its partition. The `key:` of `send`, like any `key:`, is
+  never a text written in the code (section 9): it comes from the data.
+- A consumer reads the new messages of each partition and, for a stream
+  with several, handles them as `parallel for` handles its elements (D52,
+  D80): one task per partition, each in order, on threads in phase 1 and
+  one after the other in phase 0; what the tasks write (dead-letter lines
+  too) comes out in partition order, and the race rules of the tasks
+  apply to the handlers. Then the pipelines of the stream get the same
+  messages, partition by partition, and the offsets are saved. A stream
+  with one partition is handled as before, message by message.
+- With `key:` on `when`, a key being handled in one partition makes the
+  same key wait in another, so it is still processed once.
+- Under `nexo test` the partitions are those the source asks for, and
+  `send` delivers at once, as before.
