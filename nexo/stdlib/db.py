@@ -191,7 +191,8 @@ def from_sql(call, db: "Database", raw: Any, col: Column, cache: dict) -> Any:
         info = interp_tables(call.interp).get(col.target)
         key = (col.target, raw)
         if key not in cache:
-            rows = db.select(call, info, [f'"{info.key}" = ?'], [raw], None, None, cache)
+            wheres, params = db.equal(info.column(info.key), raw)
+            rows = db.select(call, info, wheres, params, None, None, cache)
             cache[key] = rows[0] if rows else None
         return cache[key]
     return raw
@@ -293,6 +294,8 @@ CONTROL = ("BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE")
 
 class Database(Native):
     type_name = "database"
+    # a document store (D171-D172) rather than an SQL database
+    document = False
 
     def __init__(self, path: str, conn, dialect: str = "sqlite"):
         self.path = path
@@ -445,10 +448,10 @@ class Database(Native):
             purge(self, call, info)
         return [hidden_where(info)]
 
-    def select(self, call, info, wheres, params, order, limit, cache=None, count=False, pick=None):
-        self.sync(call, info)
+    def fetch(self, call, info, wheres, params, order, limit, count, columns):
+        """The rows (tuples of the columns' raw values) of a query, or their
+        number."""
         wheres = self.guard(call, info) + list(wheres)
-        columns = info.columns if pick is None else [c for _, c in pick]
         what = "COUNT(*)" if count else ", ".join(quote(c.name) for c in columns)
         sql = f"SELECT {what} FROM {quote(info.name)}"
         if wheres:
@@ -464,8 +467,37 @@ class Database(Native):
         cur = self.execute(call, sql, list(params))
         if count:
             return cur.fetchone()[0]
+        return cur.fetchall()
+
+    # the words of a query (D171): a document store has its own
+    def where(self, query, plan, leaves, value_of):
+        """A where plan as one more condition and its values, or None."""
+        return sql_where(query, plan, leaves, value_of)
+
+    def order_key(self, col: Column, desc: bool):
+        key = f"{quote(col.name)} {'DESC' if desc else 'ASC'}"
+        if self.pg:
+            # none first, as in SQLite (D163)
+            key += " NULLS LAST" if desc else " NULLS FIRST"
+        return key
+
+    def equal(self, col: Column, raw) -> tuple[list, list]:
+        """The condition `col = raw` (a stored value) and its values."""
+        if raw is None:
+            return [f"{quote(col.name)} IS NULL"], []
+        return [f"{quote(col.name)} = ?"], [raw]
+
+    def keys_in(self, info: TableInfo, ids: list) -> tuple[list, list]:
+        marks = ", ".join("?" for _ in ids)
+        return [f"{quote(info.key)} IN ({marks})"], list(ids)
+
+    def select(self, call, info, wheres, params, order, limit, cache=None, count=False, pick=None):
+        self.sync(call, info)
+        columns = info.columns if pick is None else [c for _, c in pick]
+        rows = self.fetch(call, info, wheres, params, order, limit, count, columns)
+        if count:
+            return rows
         cache = {} if cache is None else cache
-        rows = cur.fetchall()
         if pick is not None:
             self.prefetch(call, columns, rows, cache, set())
             return [{name: from_sql(call, self, raw, c, cache) for (name, c), raw in zip(pick, row)}
@@ -508,8 +540,8 @@ class Database(Native):
                     ids.append(raw)
             for start in range(0, len(ids), 500):
                 chunk = ids[start:start + 500]
-                marks = ", ".join("?" for _ in chunk)
-                found = self.select(call, target, [f"{quote(target.key)} IN ({marks})"], chunk, None, None, cache)
+                wheres, params = self.keys_in(target, chunk)
+                found = self.select(call, target, wheres, params, None, None, cache)
                 for rec in found:
                     cache[(c.target, rec.fields[target.key])] = rec
                 for raw in chunk:
@@ -557,6 +589,29 @@ class Database(Native):
             return []
         names = [d[0] for d in cur.description]
         return [{n: v for n, v in zip(names, row)} for row in cur.fetchall()]
+
+    # writes
+    def insert(self, call, info: TableInfo, record: Record) -> None:
+        cols = [c for c in info.columns if c.field != info.key or record.fields.get(c.field) is not None]
+        self.guard(call, info)
+        values = [self.cell(call, record.fields[c.field], c) for c in cols]
+        sql = (f"INSERT INTO {quote(info.name)} ({', '.join(quote(c.name) for c in cols)}) "
+               f"VALUES ({', '.join('?' for _ in cols)})")
+        if self.pg and info.key is not None:
+            sql += f" RETURNING {quote(info.key)}"
+        cur = self.execute(call, sql, values, info, record.fields)
+        if info.key is not None and record.fields.get(info.key) is None:
+            record.fields[info.key] = cur.lastrowid
+
+    def replace(self, call, info: TableInfo, key, record: Record) -> None:
+        cols = [c for c in info.columns if c.field != info.key]
+        values = [self.cell(call, record.fields[c.field], c) for c in cols]
+        sets = ", ".join(f"{quote(c.name)} = ?" for c in cols)
+        self.execute(call, f"UPDATE {quote(info.name)} SET {sets} WHERE {quote(info.key)} = ?", values + [key],
+                     info, record.fields)
+
+    def delete(self, call, info: TableInfo, key) -> None:
+        self.execute(call, f"DELETE FROM {quote(info.name)} WHERE {quote(info.key)} = ?", [key])
 
     # transactions (D100)
     def begin(self, call):
@@ -727,11 +782,9 @@ class Query(Lazy, Native):
             col = info.column(field)
             if col is None:
                 raise _no_field(call, info, field)
-            if value is None:
-                wheres.append(f"{quote(col.name)} IS NULL")
-            else:
-                wheres.append(f"{quote(col.name)} = ?")
-                params.append(self.db.cell(call, value, col))
+            w, p = self.db.equal(col, None if value is None else self.db.cell(call, value, col))
+            wheres += w
+            params += p
             shown.append(f"{col.field} = {repr_value(plain(value))}")
         rows = self.db.select(call, info, wheres, params, None, 1)
         if not rows:
@@ -749,16 +802,7 @@ class Query(Lazy, Native):
         else:
             record = interp.construct(info.rtype, list(fields.items()), call.node)
         self.db.sync(call, info)
-        cols = [c for c in info.columns if c.field != info.key or record.fields.get(c.field) is not None]
-        self.db.guard(call, info)
-        values = [self.db.cell(call, record.fields[c.field], c) for c in cols]
-        sql = (f"INSERT INTO {quote(info.name)} ({', '.join(quote(c.name) for c in cols)}) "
-               f"VALUES ({', '.join('?' for _ in cols)})")
-        if self.db.pg and info.key is not None:
-            sql += f" RETURNING {quote(info.key)}"
-        cur = self.db.execute(call, sql, values, info, record.fields)
-        if info.key is not None and record.fields.get(info.key) is None:
-            record.fields[info.key] = cur.lastrowid
+        self.db.insert(call, info, record)
         return record
 
     def key_of(self, call, target) -> int:
@@ -784,18 +828,14 @@ class Query(Lazy, Native):
         for name, value in fields.items():
             interp.set_attr(record, name, value, call.span, call.span)
         self.db.sync(call, info)
-        cols = [c for c in info.columns if c.field != info.key]
-        values = [self.db.cell(call, record.fields[c.field], c) for c in cols]
-        sets = ", ".join(f"{quote(c.name)} = ?" for c in cols)
-        self.db.execute(call, f"UPDATE {quote(info.name)} SET {sets} WHERE {quote(info.key)} = ?", values + [key],
-                        info, record.fields)
+        self.db.replace(call, info, key, record)
         return record
 
     def m_remove(self, call, record):
         info = self.info
         key = self.key_of(call, record)
         self.db.sync(call, info)
-        self.db.execute(call, f"DELETE FROM {quote(info.name)} WHERE {quote(info.key)} = ?", [key])
+        self.db.delete(call, info, key)
         return None
 
 
@@ -826,7 +866,7 @@ def relation(call, record: Record, name: str):
     key = record.fields.get(info.key) if info.key else None
     if key is None:
         raise NexoError("db_unsaved", call.span, type=record.type.name)
-    return Query(db, target, call, [f"{quote(col.name)} = ?"], [key])
+    return Query(db, target, call, *db.equal(col, key))
 
 
 # ------------------------------------------------- pipelines in SQL (D100)
@@ -867,11 +907,19 @@ def leaf_names(x: A.Expr) -> set:
     return {n for n, _ in names}
 
 
-def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
-    """The SQL of a where plan for this table, or None to run it in memory.
-    value_of(i) evaluates leaf i outside the row."""
+def where_tree(query: Query, plan, leaves, value_of):
+    """The conditions of a where plan the database can run, as a tree
+    (D171), or None to run it in memory. value_of(i) evaluates leaf i
+    outside the row. Leaves:
+      ("truth", col, via)            a bool column is true
+      ("contains", col, text, via)   a text column holds a text
+      ("colcol", lc, op, rc)         two columns compared
+      ("null", col, is_null, via)    a column is (or is not) none
+      ("cmp", col, op, raw, via)     a column against a value (op in SQL's
+                                     words, the column on the left)
+    and ("and"|"or", a, b), ("not", a). via is (ref column, table) when the
+    column is of the table a ref points to (D162)."""
     info = query.info
-    params: list = []
     values: dict = {}
     # leaves `ref.field`: i -> (the ref column, the table it points to) (D162)
     via: dict = {}
@@ -895,14 +943,6 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
             via[i] = (ref, target)
             return col
         return None
-
-    def through(i, sql):
-        """A condition on the table a ref points to, as one on the ref."""
-        if i not in via:
-            return sql
-        ref, target = via[i]
-        return (f"{quote(ref.name)} IN (SELECT {quote(target.key)} FROM {quote(target.name)} "
-                f"WHERE {sql})")
 
     def usable(i):
         x = leaves[i]
@@ -942,15 +982,15 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
         kind = node[0]
         if kind in ("and", "or"):
             a, b = build(node[1]), build(node[2])
-            return None if a is None or b is None else f"({a} {kind.upper()} {b})"
+            return None if a is None or b is None else (kind, a, b)
         if kind == "not":
             a = build(node[1])
-            return None if a is None else f"(NOT {a})"
+            return None if a is None else ("not", a)
         if kind == "truth":
             col = column(node[1])
             if col is None or col.kind != "bool":
                 return None
-            return through(node[1], f"{quote(col.name)} = {'TRUE' if query.db.pg else 1}")
+            return ("truth", col, via.get(node[1]))
         _, op, li, ri = node
         if not usable(li) or not usable(ri):
             return None
@@ -962,15 +1002,14 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
                 v = value(li)
                 if not isinstance(v, str):
                     return None
-                params.append(v)
-                return through(ri, f"{'strpos' if query.db.pg else 'instr'}({quote(rc.name)}, ?) > 0")
+                return ("contains", rc, v, via.get(ri))
             return None
         if lc is not None and rc is not None:
             if li in via or ri in via:
                 return None
             if lc.kind != rc.kind or lc.kind in ("decimal", "money", "variant", "ref") or (lc.kind == "bool" and op not in ("==", "!=")):
                 return None
-            return f"{quote(lc.name)} {OPS[op]} {quote(rc.name)}"
+            return ("colcol", lc, OPS[op], rc)
         col, other, flipped = (lc, ri, False) if lc is not None else (rc, li, True)
         if col is None:
             return None
@@ -981,34 +1020,67 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
         if not fits(col, v):
             return None
         if v is None:
-            if op == "==":
-                return through(at, f"{quote(col.name)} IS NULL")
-            if op == "!=":
-                return through(at, f"{quote(col.name)} IS NOT NULL")
+            if op in ("==", "!="):
+                return ("null", col, op == "==", via.get(at))
             return None
         if col.kind in ("bool", "variant", "ref") and op not in ("==", "!="):
             return None
-        params.append(to_sql(query.call, v, col))
         sym = OPS[op]
         if flipped:
             sym = {"<": ">", ">": "<", "<=": ">=", ">=": "<="}.get(sym, sym)
-        return through(at, f"{quote(col.name)} {sym} ?")
+        return ("cmp", col, sym, to_sql(query.call, v, col), via.get(at))
 
-    sql = build(plan)
-    if sql is None:
-        return None
-    return sql, params
+    return build(plan)
+
+
+def render_sql(tree, db) -> tuple[str, list]:
+    """The SQL of a where tree and its parameters, in order."""
+    params: list = []
+
+    def through(v, sql):
+        """A condition on the table a ref points to, as one on the ref."""
+        if v is None:
+            return sql
+        ref, target = v
+        return (f"{quote(ref.name)} IN (SELECT {quote(target.key)} FROM {quote(target.name)} "
+                f"WHERE {sql})")
+
+    def render(node):
+        kind = node[0]
+        if kind in ("and", "or"):
+            return f"({render(node[1])} {kind.upper()} {render(node[2])})"
+        if kind == "not":
+            return f"(NOT {render(node[1])})"
+        if kind == "truth":
+            return through(node[2], f"{quote(node[1].name)} = {'TRUE' if db.pg else 1}")
+        if kind == "contains":
+            params.append(node[2])
+            return through(node[3], f"{'strpos' if db.pg else 'instr'}({quote(node[1].name)}, ?) > 0")
+        if kind == "colcol":
+            return f"{quote(node[1].name)} {node[2]} {quote(node[3].name)}"
+        if kind == "null":
+            return through(node[3], f"{quote(node[1].name)} IS {'' if node[2] else 'NOT '}NULL")
+        params.append(node[3])
+        return through(node[4], f"{quote(node[1].name)} {node[2]} ?")
+
+    return render(tree), params
+
+
+def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
+    """The SQL of a where plan for this table, or None to run it in memory."""
+    tree = where_tree(query, plan, leaves, value_of)
+    return None if tree is None else render_sql(tree, query.db)
 
 
 def pipe_where(query: Query, plan, leaves, value_of):
     """A query with one more condition, or None (run in memory)."""
     if query.order or query.limit is not None or query.pick is not None:
         return None
-    built = sql_where(query, plan, leaves, value_of)
+    built = query.db.where(query, plan, leaves, value_of)
     if built is None:
         return None
-    sql, params = built
-    return query.derive(wheres=query.wheres + [sql], params=query.params + params)
+    cond, params = built
+    return query.derive(wheres=query.wheres + [cond], params=query.params + params)
 
 
 def pipe_sort(query: Query, e: A.Expr, desc: bool):
@@ -1017,11 +1089,7 @@ def pipe_sort(query: Query, e: A.Expr, desc: bool):
     col = query.info.column(e.name)
     if col is None or col.kind in ("decimal", "money", "ref", "variant") or col.private:
         return None
-    key = f"{quote(col.name)} {'DESC' if desc else 'ASC'}"
-    if query.db.pg:
-        # none first, as in SQLite (D163)
-        key += " NULLS LAST" if desc else " NULLS FIRST"
-    return query.derive(order=[key])
+    return query.derive(order=[query.db.order_key(col, desc)])
 
 
 def pipe_take(query: Query, n: int):
@@ -1049,6 +1117,9 @@ INT_MAX = (1 << 63) - 1
 def group_column(query: Query, name: str) -> Column | None:
     """The column a query can be grouped by in SQL (D161), or None."""
     if query.order or query.limit is not None or query.pick is not None or query.info.key is None:
+        return None
+    if query.db.document:
+        # a document store groups in memory (D171)
         return None
     col = query.info.column(name)
     if col is None or col.private or col.kind not in GROUP_KINDS:
@@ -1096,6 +1167,9 @@ def b_connect(call, url, key=None):
         raise expects(call, "connect", "str", url)
     if url.startswith(SERVERS):
         return connect_server(call, url, key)
+    if url.startswith(DOCUMENTS):
+        from .docdb import connect
+        return connect(call, url, key)
     if "://" in url:
         raise NexoError("not_supported", call.span, what=f'"connect({repr_value(url.split("://")[0] + "://...")})"')
     if url != ":memory:":
@@ -1119,6 +1193,8 @@ def b_connect(call, url, key=None):
 
 
 SERVERS = ("postgres://", "postgresql://", "mysql://")
+# the document stores (D171-D172)
+DOCUMENTS = ("mongodb://", "elasticsearch://")
 
 
 def dialect_of(url: str) -> str:
@@ -1359,6 +1435,9 @@ def run_command(interp, command: str, file: str, db_path: str | None, allow_drop
         sys.stderr.write("Error: " + errors.msg("db_no_target", file=file) + " "
                          + errors.msg("fix.db_no_target") + "\n")
         return 1
+    if db_path.startswith(DOCUMENTS):
+        print(errors.msg("info.db_no_schema", db=db_path))
+        return 0
     folder = os.path.join(os.path.dirname(file) or ".", "migrations")
     from .mysql import MysqlError
     from .pg import PgError

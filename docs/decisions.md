@@ -2645,3 +2645,73 @@ compiler/runtime/src/mysql.rs):
   not installed) and runs the db conformance cases, privacy,
   transactions, migrations and the TLS checks in both phases, which send
   the same SQL.
+
+**D171. Document stores, and MongoDB.** Section 6 has one `connect` for
+"a local file or a server" and queries "translated to SQL"; it names no
+document store. `connect("mongodb://user@host/shop", key:
+secret("DB_PASS"))` now opens MongoDB with the same `@table` types,
+queries, relations, transactions and privacy, and the same results as on
+SQLite (nexo/stdlib/docdb.py and mongo.py, compiler/runtime/src/docdb.rs
+and mongo.rs, with no driver library):
+- A table is a collection, a row a document whose `_id` is its key; a
+  field that is none is left out of the document. Ids are ints, as on SQL
+  databases, from a counter per table in `nexo_counters` (an id a failed
+  insert took is not given again). A table without `id: id` gets a
+  hidden key `nexo_row`.
+- The conditions of a `where` are those SQL runs (where_tree in db.py
+  and db.rs, which also renders SQL), in negation normal form, each leaf
+  leaving out the rows whose column is none, as SQL's three-valued logic
+  does; `sort by`, `take`, `count` and `pick` run in the store too. A
+  condition on the table a ref points to, two columns compared, and
+  `group by` run in memory, with the same result. `in` on a text is a
+  regular expression of the text, its signs escaped.
+- `@unique` is a unique index with a partial filter (`$exists`), so
+  several rows can have none, as in SQL.
+- `db.transaction` keeps a journal of what it wrote and writes it back
+  when it fails, nested ones too: a failed statement leaves the
+  transaction as it was, as in SQLite. MongoDB's own transactions need a
+  replica set and end at the first failed statement, so they are not
+  used: other programs can see a transaction's writes before it ends,
+  and a program that stops halfway keeps them. This is weaker than an
+  SQL transaction, and said here so.
+- The address is `mongodb://user@host:port,host2:port/database`
+  (27017 by default); with several hosts the client uses the primary.
+  `key:` is the password, checked with SCRAM-SHA-256 against the users of
+  the `admin` database. A server on another machine is reached with TLS
+  only, checked against the system's certificates; `mongodb+srv://` (a
+  DNS lookup) is not read: write the hosts.
+- `db.sql` is an error on a document store (`db_no_sql`); `nexo db diff`
+  and `migrate` say that it keeps no schema (`info.db_no_schema`): its
+  collections and unique indexes are made when a program first uses a
+  table.
+- NEXO_SQL_LOG writes every command (`mongo: {...}`); both phases send
+  the same ones. tests/mongo_server.py is a MongoDB written from the wire
+  protocol's documentation for the tests (MongoDB is not packaged by the
+  system), and tests/test_docdb.py runs the db conformance cases,
+  transactions, privacy and errors on it in both phases.
+
+**D172. Elasticsearch.** As D171, `connect("elasticsearch://user@host:9200/
+shop", key: secret("ES_PASS"))` keeps the tables of a program in
+Elasticsearch, through its REST API (nexo/stdlib/elastic.py,
+compiler/runtime/src/elastic.rs):
+- A table is an index named `<path>-<table>` (`shop-customer`), or the
+  table's name when the address has no path; a row is a document whose
+  id is its key. Each index has a strict mapping: int, ref and bool are
+  `long`, float `double`, the rest `keyword`, so texts compare and sort
+  byte by byte, as in SQLite (a text holds at most 32766 bytes there). A
+  field is added to the mapping when its type gets it; a type that
+  changes is not.
+- `where` is the query DSL (term, range, exists, wildcard, bool), none
+  values sort first ascending and last descending as in SQLite, and the
+  rows are read in pages of 1000 with search_after.
+- Elasticsearch has no unique keys: a `@unique` value is a document of
+  `nexo_unique` whose id is a hash of the table, column and value,
+  created only when it does not exist, before the row; ids come from a
+  counter document updated by a script. Every write asks for a refresh,
+  so that a program reads what it wrote, which costs time on a large
+  index.
+- `key:` is the password of the user in the address (Basic), or, with
+  no user, an API key. HTTPS for any host but this machine.
+- Transactions, `db.sql`, `nexo db` and the logs (`elastic: METHOD path
+  body`) are those of D171; tests/es_server.py is an Elasticsearch
+  written from its documentation for the tests.

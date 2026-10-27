@@ -402,8 +402,11 @@ fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
 }
 
 /// SCRAM-SHA-256 (RFC 5802, RFC 7677) without channel binding.
-struct Scram {
+pub(crate) struct Scram {
     password: Vec<u8>,
+    /// PostgreSQL takes the user from the startup message; MongoDB from
+    /// here (with = and , written as =3D and =2C)
+    user: String,
     nonce: String,
     bare: String,
     auth: Vec<u8>,
@@ -411,18 +414,23 @@ struct Scram {
 }
 
 impl Scram {
-    fn new(password: &str) -> Scram {
+    pub(crate) fn new(password: &str) -> Scram {
+        Self::with_user(password, "")
+    }
+
+    pub(crate) fn with_user(password: &str, user: &str) -> Scram {
         let mut raw = [0u8; 18];
         let _ = getrandom::getrandom(&mut raw);
-        Scram { password: password.as_bytes().to_vec(), nonce: crate::crypto::b64(&raw), bare: String::new(), auth: Vec::new(), server_key: Vec::new() }
+        let user = user.replace('=', "=3D").replace(',', "=2C");
+        Scram { password: password.as_bytes().to_vec(), user, nonce: crate::crypto::b64(&raw), bare: String::new(), auth: Vec::new(), server_key: Vec::new() }
     }
 
-    fn first(&self) -> String {
-        format!("n,,n=,r={}", self.nonce)
+    pub(crate) fn first(&self) -> String {
+        format!("n,,n={},r={}", self.user, self.nonce)
     }
 
-    fn finish(&mut self, server_first: &str) -> Result<String, PgError> {
-        self.bare = format!("n=,r={}", self.nonce);
+    pub(crate) fn finish(&mut self, server_first: &str) -> Result<String, PgError> {
+        self.bare = format!("n={},r={}", self.user, self.nonce);
         let bad = || PgError::new("the server's SCRAM answer is not valid");
         let mut nonce = "";
         let mut salt = Vec::new();
@@ -459,7 +467,7 @@ impl Scram {
         Ok(format!("{without},p={}", crate::crypto::b64(&proof)))
     }
 
-    fn verify(&self, server_final: &str) -> Result<(), PgError> {
+    pub(crate) fn verify(&self, server_final: &str) -> Result<(), PgError> {
         let expected = format!("v={}", crate::crypto::b64(&hmac(&self.server_key, &self.auth)));
         if server_final.split(',').next() != Some(expected.as_str()) {
             return Err(PgError::new("the server's SCRAM signature is not valid"));

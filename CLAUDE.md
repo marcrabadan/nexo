@@ -49,7 +49,8 @@ nexo/
   errors.py       error type + section 14 renderer + message catalog (English, D125)
   stdlib/         builtins, io, data (JSON/CSV), sync (nexo.sync); phase 4:
                   clock, text, crypto, http, db, pg (PostgreSQL, D163),
-                  mysql (D170),
+                  mysql (D170), docdb (document stores: mongo D171,
+                  elastic D172),
                   web, ai, clib (use c), pylib (use python); phase 5: cfg (the blocks of D114),
                   flags, privacy, stream, stream_cloud (SQS, Kinesis,
                   Service Bus, Pub/Sub, D168), stream_net (D169: kafka,
@@ -101,7 +102,8 @@ compiler/
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
-                  http, db, pg, mysql, web, ai, clib, pylib; phase 5: cfg, flags,
+                  http, db, pg, mysql, docdb, mongo, elastic, web, ai, clib,
+                  pylib; phase 5: cfg, flags,
                   privacy, stream, stream_cloud, stream_net, kafka, amqp,
                   websocket, infra, infra_cloud, ci, ci_export;
                   policy.rs: the checks of the program policy, D142;
@@ -203,14 +205,16 @@ runtimes (D92). Standard library: time, text (`find`, `regex`, `render`),
 and secrets, the `http` client and `fake` (D92-D99, D105, D112).
 `nexo.db` on SQLite with pipelines translated to SQL and migrations
 (D100-D101), `pick`, `group by` and relations in SQL (D161-D162), and
-PostgreSQL (D163) and MySQL (D170) through their own protocols; `nexo.web` servers
+PostgreSQL (D163) and MySQL (D170) through their own protocols, and the
+document stores MongoDB (D171) and Elasticsearch (D172); `nexo.web` servers
 (D102-D104); `nexo.ai`: `ask`, blocks, tools and agents (D106-D109),
 `stream: true` as the answer arrives (D164), budgets (D165) and
 `mcp("name")` tools (D166); `use c` and `use python` (D110-D111).
 Tests that need a network use local servers: tests/test_http.py,
 test_web.py, test_db.py, test_postgres.py (a local PostgreSQL started
 by the test, skipped without initdb), test_mysql.py (likewise, without
-mysqld), test_ai.py, test_interop.py,
+mysqld), test_docdb.py (on tests/mongo_server.py and es_server.py),
+test_ai.py, test_interop.py,
 test_exit_criterion.py.
 
 Phase 5: the blocks of D114 (`infra`, `stage`, `pipeline`, `flags`) are

@@ -51,7 +51,7 @@ pub struct TableInfo {
 }
 
 impl TableInfo {
-    fn column(&self, field: &str) -> Option<&Column> {
+    pub(crate) fn column(&self, field: &str) -> Option<&Column> {
         self.columns.iter().find(|c| c.field == field)
     }
 
@@ -71,6 +71,11 @@ struct Registry {
 fn registry() -> &'static Mutex<Registry> {
     static R: OnceLock<Mutex<Registry>> = OnceLock::new();
     R.get_or_init(|| Mutex::new(Registry::default()))
+}
+
+/// Every @table type's table.
+pub(crate) fn tables() -> Vec<Arc<TableInfo>> {
+    registry().lock().unwrap().tables.iter().map(|(_, t)| t.clone()).collect()
 }
 
 fn table(name: &str) -> Option<Arc<TableInfo>> {
@@ -206,7 +211,31 @@ impl Drop for Conn {
     }
 }
 
-#[derive(Clone, Debug)]
+/// One condition of a query: SQL text, or a condition of a document
+/// store (D171).
+#[derive(Clone)]
+pub enum Clause {
+    Sql(String),
+    Doc(crate::docdb::Cond),
+}
+
+/// One sort key of a query: SQL text, or (column, descending) on a
+/// document store.
+#[derive(Clone)]
+pub enum Sort {
+    Sql(String),
+    Doc(String, bool),
+}
+
+fn sql_clauses(wheres: &[Clause]) -> Vec<String> {
+    wheres.iter().filter_map(|w| if let Clause::Sql(s) = w { Some(s.clone()) } else { None }).collect()
+}
+
+fn sql_sorts(order: &[Sort]) -> Vec<String> {
+    order.iter().filter_map(|o| if let Sort::Sql(s) = o { Some(s.clone()) } else { None }).collect()
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Sql {
     Null,
     Int(i64),
@@ -220,24 +249,43 @@ enum Backend {
     Sqlite(Conn),
     Pg(crate::pg::Connection),
     Mysql(crate::mysql::Connection),
+    /// a document store: its connection is the store of `doc` (D171)
+    Doc,
 }
 
 pub struct Database {
-    path: String,
+    pub(crate) path: String,
     conn: Mutex<Backend>,
     /// a PostgreSQL server: its own words in a few statements (D163)
     pg: bool,
     /// a MySQL server (D170)
     mysql: bool,
-    synced: Mutex<Vec<String>>,
-    depth: Mutex<usize>,
+    /// a document store (D171-D172)
+    pub(crate) doc: Option<crate::docdb::Doc>,
+    pub(crate) synced: Mutex<Vec<String>>,
+    pub(crate) depth: Mutex<usize>,
     /// encrypts @private columns (D116)
-    key: Option<[u8; 32]>,
+    pub(crate) key: Option<[u8; 32]>,
     /// when the keep period of each table was last applied (seconds)
-    purged: Mutex<HashMap<String, f64>>,
+    pub(crate) purged: Mutex<HashMap<String, f64>>,
 }
 
-fn now_secs() -> f64 {
+/// A database on a document store (D171-D172).
+pub(crate) fn document_database(path: String, doc: crate::docdb::Doc, key: Option<[u8; 32]>) -> Val {
+    native(Database {
+        path,
+        conn: Mutex::new(Backend::Doc),
+        pg: false,
+        mysql: false,
+        doc: Some(doc),
+        synced: Mutex::new(Vec::new()),
+        depth: Mutex::new(0),
+        key,
+        purged: Mutex::new(HashMap::new()),
+    })
+}
+
+pub(crate) fn now_secs() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
@@ -315,7 +363,32 @@ impl Database {
                 Ok(Rows { names: a.names, rows: a.rows, last_id: a.last_id })
             }
             Backend::Sqlite(c) => run_sqlite(c.0, sql, params).map_err(|message| PgError { message, ..Default::default() }),
+            Backend::Doc => Err(PgError { message: "not an SQL database".into(), ..Default::default() }),
         }
+    }
+
+    /// The condition `col = raw` (a stored value) and its values.
+    pub(crate) fn equal(&self, col: &Column, raw: Sql) -> (Vec<Clause>, Vec<Sql>) {
+        if self.doc.is_some() {
+            return match raw {
+                Sql::Null => (vec![Clause::Doc(crate::docdb::Cond::Null(col.name.clone(), true))], Vec::new()),
+                raw => (vec![Clause::Doc(crate::docdb::Cond::Cmp(col.name.clone(), "eq", raw))], Vec::new()),
+            };
+        }
+        match raw {
+            Sql::Null => (vec![Clause::Sql(format!("{} IS NULL", quote(&col.name)))], Vec::new()),
+            raw => (vec![Clause::Sql(format!("{} = ?", quote(&col.name)))], vec![raw]),
+        }
+    }
+
+    fn keys_in(&self, info: &TableInfo, ids: &[i64]) -> (Vec<Clause>, Vec<Sql>) {
+        let key = info.key.clone().unwrap_or_default();
+        let ids: Vec<Sql> = ids.iter().map(|i| Sql::Int(*i)).collect();
+        if self.doc.is_some() {
+            return (vec![Clause::Doc(crate::docdb::Cond::In(key, ids))], Vec::new());
+        }
+        let marks = vec!["?"; ids.len()].join(", ");
+        (vec![Clause::Sql(format!("{} IN ({marks})", quote(&key)))], ids)
     }
 
     /// "sqlite", "pg" or "mysql": each server has its own words in a few
@@ -473,6 +546,9 @@ impl Database {
 
     /// Mark a row restricted or erased (INSERT OR REPLACE in SQLite).
     fn set_state(&self, table: &str, key: i64, state: &str, span: u32) -> R<()> {
+        if self.doc.is_some() {
+            return crate::docdb::set_state(self, table, key, state, span);
+        }
         let sql = if self.mysql {
             format!(
                 "INSERT INTO \"{}\" (\"tbl\", \"row\", \"state\") VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE \"state\" = VALUES(\"state\")",
@@ -491,7 +567,7 @@ impl Database {
     }
 
     /// A value as stored in a column: @private ones encrypted.
-    fn cell(&self, v: V, c: &Column, span: u32) -> R<Sql> {
+    pub(crate) fn cell(&self, v: V, c: &Column, span: u32) -> R<Sql> {
         let raw = to_sql(v, span)?;
         if !c.private {
             return Ok(raw);
@@ -507,13 +583,16 @@ impl Database {
 
     /// The rows past their keep period are erased (when due) and the
     /// restricted or erased ones left out (D116).
-    fn guard(&self, me: V, info: &TableInfo, span: u32) -> R<Vec<String>> {
+    pub(crate) fn guard(&self, me: V, info: &TableInfo, span: u32) -> R<Vec<Clause>> {
         let Some(p) = personal_table(info) else { return Ok(Vec::new()) };
         let due = self.purged.lock().unwrap().get(&info.name).is_none_or(|t| now_secs() - t >= 86400.0);
+        if self.doc.is_some() {
+            return crate::docdb::guard(self, me, info, &p, due, span);
+        }
         if due {
             self.purge(me, info, &p, span)?;
         }
-        Ok(vec![hidden_where(info)])
+        Ok(vec![Clause::Sql(hidden_where(info))])
     }
 
     /// Erase the rows past their keep period (section 23, rule 2).
@@ -596,6 +675,9 @@ impl Database {
     /// Delete the row, or anonymise it when other rows point to it; the
     /// personal fields of the rows that point to it are anonymised too.
     fn erase_row(&self, me: V, info: &TableInfo, key: i64, span: u32) -> R<()> {
+        if self.doc.is_some() {
+            return crate::docdb::erase_row(self, me, info, key, span);
+        }
         let tables: Vec<Arc<TableInfo>> = registry().lock().unwrap().tables.iter().map(|(_, t)| t.clone()).collect();
         let mut referenced = false;
         for other in &tables {
@@ -625,7 +707,7 @@ impl Database {
         Ok(())
     }
 
-    fn sync(&self, me: V, info: &TableInfo, span: u32) -> R<()> {
+    pub(crate) fn sync(&self, me: V, info: &TableInfo, span: u32) -> R<()> {
         registry().lock().unwrap().db_of_type.insert(info.rtype.name.clone(), Val::from(me));
         if self.synced.lock().unwrap().contains(&info.name) {
             return Ok(());
@@ -635,6 +717,9 @@ impl Database {
                 Diagnostic::new_spanless("privacy_key").arg("table", info.name.clone()).arg("db", self.path.clone()),
                 span,
             ));
+        }
+        if self.doc.is_some() {
+            return crate::docdb::ensure(self, info, personal_table(info).is_some(), span);
         }
         if self.mysql {
             // a server checks that a foreign key's table exists: those this
@@ -960,8 +1045,9 @@ fn from_sql(db: &Database, me: V, raw: &Sql, c: &Column, cache: &mut Cache, span
                 return Ok(v.clone());
             }
             let Some(info) = table(&target) else { return Ok(Val::none()) };
-            let key = quote(info.key.as_deref().unwrap_or("id"));
-            let rows = select(db, me, &info, &[format!("{key} = ?")], &[Sql::Int(*id)], &[], None, cache, span)?;
+            let Some(kc) = info.key.as_deref().and_then(|k| info.column(k)) else { return Ok(Val::none()) };
+            let (w, p) = db.equal(kc, Sql::Int(*id));
+            let rows = select(db, me, &info, &w, &p, &[], None, cache, span)?;
             let v = rows.into_iter().next().unwrap_or(Val::none());
             cache.insert(k, v.clone());
             v
@@ -971,7 +1057,7 @@ fn from_sql(db: &Database, me: V, raw: &Sql, c: &Column, cache: &mut Cache, span
 }
 
 #[allow(clippy::too_many_arguments)]
-fn select(db: &Database, me: V, info: &TableInfo, wheres: &[String], params: &[Sql], order: &[String], limit: Option<i64>, cache: &mut Cache, span: u32) -> R<Vec<Val>> {
+fn select(db: &Database, me: V, info: &TableInfo, wheres: &[Clause], params: &[Sql], order: &[Sort], limit: Option<i64>, cache: &mut Cache, span: u32) -> R<Vec<Val>> {
     select_pick(db, me, info, wheres, params, order, limit, None, cache, span)
 }
 
@@ -981,41 +1067,42 @@ fn select_pick(
     db: &Database,
     me: V,
     info: &TableInfo,
-    wheres: &[String],
+    wheres: &[Clause],
     params: &[Sql],
-    order: &[String],
+    order: &[Sort],
     limit: Option<i64>,
     pick: Option<&[(String, Column)]>,
     cache: &mut Cache,
     span: u32,
 ) -> R<Vec<Val>> {
     db.sync(me, info, span)?;
-    let mut all = db.guard(me, info, span)?;
-    all.extend(wheres.iter().cloned());
-    let wheres = &all;
-    let cols: Vec<String> = match pick {
-        Some(p) => p.iter().map(|(_, c)| quote(&c.name)).collect(),
-        None => info.columns.iter().map(|c| quote(&c.name)).collect(),
-    };
-    let mut sql = format!("SELECT {} FROM {}", cols.join(", "), quote(&info.name));
-    if !wheres.is_empty() {
-        let w: Vec<String> = wheres.iter().map(|w| format!("({w})")).collect();
-        sql.push_str(&format!(" WHERE {}", w.join(" AND ")));
-    }
-    let mut keys: Vec<String> = order.to_vec();
-    if let Some(k) = &info.key {
-        keys.push(quote(k));
-    }
-    if !keys.is_empty() {
-        sql.push_str(&format!(" ORDER BY {}", keys.join(", ")));
-    }
-    if let Some(n) = limit {
-        sql.push_str(&format!(" LIMIT {n}"));
-    }
-    let rows = db.exec(&sql, params, span)?;
     let columns: Vec<&Column> = match pick {
         Some(p) => p.iter().map(|(_, c)| c).collect(),
         None => info.columns.iter().collect(),
+    };
+    let rows = if db.doc.is_some() {
+        Rows { names: Vec::new(), rows: crate::docdb::fetch(db, me, info, wheres, order, limit, &columns, pick.is_some(), span)?, last_id: 0 }
+    } else {
+        let mut all = sql_clauses(&db.guard(me, info, span)?);
+        all.extend(sql_clauses(wheres));
+        let wheres = &all;
+        let cols: Vec<String> = columns.iter().map(|c| quote(&c.name)).collect();
+        let mut sql = format!("SELECT {} FROM {}", cols.join(", "), quote(&info.name));
+        if !wheres.is_empty() {
+            let w: Vec<String> = wheres.iter().map(|w| format!("({w})")).collect();
+            sql.push_str(&format!(" WHERE {}", w.join(" AND ")));
+        }
+        let mut keys: Vec<String> = sql_sorts(order);
+        if let Some(k) = &info.key {
+            keys.push(quote(k));
+        }
+        if !keys.is_empty() {
+            sql.push_str(&format!(" ORDER BY {}", keys.join(", ")));
+        }
+        if let Some(n) = limit {
+            sql.push_str(&format!(" LIMIT {n}"));
+        }
+        db.exec(&sql, params, span)?
     };
     // the rows read here are the rows their refs to this same table point
     // to, when they are among them
@@ -1081,10 +1168,10 @@ fn prefetch(db: &Database, me: V, columns: &[&Column], rows: &[Vec<Sql>], cache:
                 }
             }
         }
+        let _ = &key;
         for chunk in ids.chunks(500) {
-            let marks = vec!["?"; chunk.len()].join(", ");
-            let params: Vec<Sql> = chunk.iter().map(|id| Sql::Int(*id)).collect();
-            let found = select(db, me, &target, &[format!("{} IN ({marks})", quote(&key))], &params, &[], None, cache, span)?;
+            let (w, params) = db.keys_in(&target, chunk);
+            let found = select(db, me, &target, &w, &params, &[], None, cache, span)?;
             for rec in found {
                 if let Some(Obj::Record(r)) = rec.get() {
                     if let Some(id) = r.fields.borrow()[ki].v().as_int() {
@@ -1109,10 +1196,13 @@ fn record(info: &TableInfo, vals: Vec<Val>) -> Val {
     }))
 }
 
-fn count(db: &Database, me: V, info: &TableInfo, wheres: &[String], params: &[Sql], span: u32) -> R<i64> {
+fn count(db: &Database, me: V, info: &TableInfo, wheres: &[Clause], params: &[Sql], span: u32) -> R<i64> {
     db.sync(me, info, span)?;
-    let mut all = db.guard(me, info, span)?;
-    all.extend(wheres.iter().cloned());
+    if db.doc.is_some() {
+        return crate::docdb::count(db, me, info, wheres, span);
+    }
+    let mut all = sql_clauses(&db.guard(me, info, span)?);
+    all.extend(sql_clauses(wheres));
     let wheres = &all;
     let mut sql = format!("SELECT COUNT(*) FROM {}", quote(&info.name));
     if !wheres.is_empty() {
@@ -1155,6 +1245,9 @@ impl Native for Database {
         let Some(text) = a[0].native::<SqlText>() else {
             return Err(diag(Diagnostic::new_spanless("sql_literal"), span));
         };
+        if self.doc.is_some() {
+            return Err(crate::docdb::no_sql(self, span));
+        }
         let tables: Vec<Arc<TableInfo>> = registry().lock().unwrap().tables.iter().map(|(_, t)| t.clone()).collect();
         for info in &tables {
             let owner = registry().lock().unwrap().db_of_type.get(&info.rtype.name).map(|v| v.v());
@@ -1275,24 +1368,24 @@ pub fn sql_text(parts: V, values: V, span: u32) -> R<Val> {
 pub struct Query {
     db: Val,
     info: Arc<TableInfo>,
-    wheres: Vec<String>,
+    wheres: Vec<Clause>,
     params: Vec<Sql>,
-    order: Vec<String>,
+    order: Vec<Sort>,
     limit: Option<i64>,
     /// `pick` of columns: rows are maps of these (D161)
     pick: Option<Vec<(String, Column)>>,
 }
 
-fn query(db: V, info: Arc<TableInfo>, wheres: Vec<String>, params: Vec<Sql>, order: Vec<String>, limit: Option<i64>) -> Val {
+fn query(db: V, info: Arc<TableInfo>, wheres: Vec<Clause>, params: Vec<Sql>, order: Vec<Sort>, limit: Option<i64>) -> Val {
     query_pick(db, info, wheres, params, order, limit, None)
 }
 
 fn query_pick(
     db: V,
     info: Arc<TableInfo>,
-    wheres: Vec<String>,
+    wheres: Vec<Clause>,
     params: Vec<Sql>,
-    order: Vec<String>,
+    order: Vec<Sort>,
     limit: Option<i64>,
     pick: Option<Vec<(String, Column)>>,
 ) -> Val {
@@ -1414,12 +1507,10 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
                     ));
                 };
                 let Some(col) = info.column(n) else { return Err(no_field(info, n, span)) };
-                if v.is_none() {
-                    wheres.push(format!("{} IS NULL", quote(&col.name)));
-                } else {
-                    wheres.push(format!("{} = ?", quote(&col.name)));
-                    params.push(db.cell(*v, col, span)?);
-                }
+                let raw = if v.is_none() { Sql::Null } else { db.cell(*v, col, span)? };
+                let (w, p) = db.equal(col, raw);
+                wheres.extend(w);
+                params.extend(p);
                 shown.push(format!("{} = {}", col.field, repr(v.plain())));
             }
             let rows = select(db, me, info, &wheres, &params, &[], Some(1), &mut Cache::new(), span)?;
@@ -1456,6 +1547,14 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
                 }
                 cols.push(quote(&c.name));
                 vals.push(db.cell(fields[i].v(), c, span)?);
+            }
+            if db.doc.is_some() {
+                if let Some(id) = crate::docdb::insert(db, info, &fields, &shown, span)? {
+                    if let Some(k) = key_i {
+                        r.fields.borrow_mut()[k] = Val::int(id);
+                    }
+                }
+                return Ok(rec);
             }
             let marks: Vec<&str> = cols.iter().map(|_| "?").collect();
             let mut sql = format!("INSERT INTO {} ({}) VALUES ({})", quote(&info.name), cols.join(", "), marks.join(", "));
@@ -1500,6 +1599,10 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
                 sets.push(format!("{} = ?", quote(&c.name)));
                 vals.push(db.cell(fields[i].v(), c, span)?);
             }
+            if db.doc.is_some() {
+                crate::docdb::replace(db, info, key, &fields, &shown, span)?;
+                return Ok(rec);
+            }
             vals.push(Sql::Int(key));
             let sql = format!("UPDATE {} SET {} WHERE {} = ?", quote(&info.name), sets.join(", "), quote(info.key.as_deref().unwrap()));
             db.statement(&sql, &vals).map_err(|e| db.fail(e, Some(info), Some(&shown), span))?;
@@ -1509,6 +1612,10 @@ pub fn query_method(q: &Query, name: &str, args: &[V], names: &[Option<&str>], s
             let a = crate::stdlib::method_args("remove", &["record"], 1, args, names, span)?;
             let (key, _) = key_of(q, a[0], "remove", span)?;
             db.sync(me, info, span)?;
+            if db.doc.is_some() {
+                crate::docdb::delete(db, info, key, span)?;
+                return Ok(Val::none());
+            }
             let sql = format!("DELETE FROM {} WHERE {} = ?", quote(&info.name), quote(info.key.as_deref().unwrap()));
             db.exec(&sql, &[Sql::Int(key)], span)?;
             Ok(Val::none())
@@ -1562,7 +1669,8 @@ pub fn relation(rec: V, name: &str, span: u32) -> Option<R<Val>> {
         let (Some(db), Some(key)) = (db, key) else {
             return Err(diag(Diagnostic::new_spanless("db_unsaved").arg("type", r.ty.name.clone()), span));
         };
-        Ok(query(db.v(), target, vec![format!("{} = ?", quote(&col.name))], vec![Sql::Int(key)], Vec::new(), None))
+        let (w, p) = db.v().native::<Database>().unwrap().equal(&col, Sql::Int(key));
+        Ok(query(db.v(), target, w, p, Vec::new(), None))
     })())
 }
 
@@ -1638,9 +1746,59 @@ pub fn parse_plan(text: &str) -> Plan {
     Plan { tree: node(&b, &mut i), names, mentions }
 }
 
-/// The SQL of a where plan for a query, or None to run it in memory.
+/// The conditions of a where plan the database can run, as a tree (D171).
+/// `via` of a leaf is the head of the SQL that puts a condition on the
+/// table a ref points to (D162).
+pub enum Tree {
+    And(Box<Tree>, Box<Tree>),
+    Or(Box<Tree>, Box<Tree>),
+    Not(Box<Tree>),
+    /// a bool column is true
+    Truth(Column, Option<String>),
+    /// a text column holds a text
+    Contains(Column, String, Option<String>),
+    /// two columns compared
+    ColCol(Column, String, Column),
+    /// a column is (or is not) none
+    Null(Column, bool, Option<String>),
+    /// a column against a value, the op in SQL's words
+    Cmp(Column, String, Sql, Option<String>),
+}
+
+/// The SQL of a where tree and its parameters, in order.
+fn render_sql(tree: &Tree, pg: bool, params: &mut Vec<Sql>) -> String {
+    let through = |via: &Option<String>, sql: String| match via {
+        Some(head) => format!("{head}{sql})"),
+        None => sql,
+    };
+    match tree {
+        Tree::And(a, b) => {
+            let x = render_sql(a, pg, params);
+            format!("({x} AND {})", render_sql(b, pg, params))
+        }
+        Tree::Or(a, b) => {
+            let x = render_sql(a, pg, params);
+            format!("({x} OR {})", render_sql(b, pg, params))
+        }
+        Tree::Not(a) => format!("(NOT {})", render_sql(a, pg, params)),
+        Tree::Truth(c, via) => through(via, format!("{} = {}", quote(&c.name), if pg { "TRUE" } else { "1" })),
+        Tree::Contains(c, text, via) => {
+            params.push(Sql::Text(text.clone()));
+            let f = if pg { "strpos" } else { "instr" };
+            through(via, format!("{f}({}, ?) > 0", quote(&c.name)))
+        }
+        Tree::ColCol(a, op, b) => format!("{} {op} {}", quote(&a.name), quote(&b.name)),
+        Tree::Null(c, is_null, via) => through(via, format!("{} IS {}NULL", quote(&c.name), if *is_null { "" } else { "NOT " })),
+        Tree::Cmp(c, sym, raw, via) => {
+            params.push(raw.clone());
+            through(via, format!("{} {sym} ?", quote(&c.name)))
+        }
+    }
+}
+
+/// The where tree of a plan for a query, or None to run it in memory.
 /// `value(i)` evaluates leaf i outside the row.
-fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, span: u32) -> R<Option<(String, Vec<Sql>)>> {
+pub fn where_tree(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, span: u32) -> R<Option<Tree>> {
     let info = &q.info;
     // the column of each leaf: a column of the table, or `ref.field`, a
     // column of the table a required ref points to (D162); an encrypted
@@ -1681,7 +1839,6 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
         }
         !plan.mentions[i].iter().any(|n| n == "it" || info.column(n).is_some())
     };
-    let mut params = Vec::new();
     let mut values: HashMap<usize, Val> = HashMap::new();
     fn fits(col: &Column, v: V) -> bool {
         if v.is_none() {
@@ -1706,30 +1863,23 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
         usable: &dyn Fn(usize) -> bool,
         value: &mut dyn FnMut(usize) -> R<Val>,
         values: &mut HashMap<usize, Val>,
-        params: &mut Vec<Sql>,
         via: &[Option<String>],
         span: u32,
-    ) -> R<Option<String>> {
+    ) -> R<Option<Tree>> {
         let _ = q;
-        // a condition on the table a ref points to, as one on the ref
-        let through = |i: usize, sql: String| match &via[i] {
-            Some(head) => format!("{head}{sql})"),
-            None => sql,
-        };
         Ok(match n {
             Node::And(a, b) | Node::Or(a, b) => {
-                let x = build(a, q, column, usable, value, values, params, via, span)?;
-                let y = build(b, q, column, usable, value, values, params, via, span)?;
+                let x = build(a, q, column, usable, value, values, via, span)?;
+                let y = build(b, q, column, usable, value, values, via, span)?;
                 match (x, y) {
-                    (Some(x), Some(y)) => Some(format!("({x} {} {y})", if matches!(n, Node::And(..)) { "AND" } else { "OR" })),
+                    (Some(x), Some(y)) if matches!(n, Node::And(..)) => Some(Tree::And(Box::new(x), Box::new(y))),
+                    (Some(x), Some(y)) => Some(Tree::Or(Box::new(x), Box::new(y))),
                     _ => None,
                 }
             }
-            Node::Not(a) => build(a, q, column, usable, value, values, params, via, span)?.map(|x| format!("(NOT {x})")),
+            Node::Not(a) => build(a, q, column, usable, value, values, via, span)?.map(|x| Tree::Not(Box::new(x))),
             Node::Truth(i) => match column(*i) {
-                Some(c) if c.kind == "bool" => {
-                    Some(through(*i, format!("{} = {}", quote(&c.name), if q.database().pg { "TRUE" } else { "1" })))
-                }
+                Some(c) if c.kind == "bool" => Some(Tree::Truth(c.clone(), via[*i].clone())),
                 _ => None,
             },
             Node::Cmp(op, li, ri) => {
@@ -1752,9 +1902,7 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                     }
                     let v = get(*li)?;
                     let Some(s) = v.as_str() else { return Ok(None) };
-                    params.push(Sql::Text(s.to_string()));
-                    let f = if q.database().pg { "strpos" } else { "instr" };
-                    return Ok(Some(through(*ri, format!("{f}({}, ?) > 0", quote(&c.name)))));
+                    return Ok(Some(Tree::Contains(c.clone(), s.to_string(), via[*ri].clone())));
                 }
                 if let (Some(a), Some(b)) = (lc, rc) {
                     if via[*li].is_some() || via[*ri].is_some() {
@@ -1763,7 +1911,7 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                     if a.kind != b.kind || ["decimal", "money", "variant", "ref"].contains(&a.kind) || (a.kind == "bool" && op != "=" && op != "<>") {
                         return Ok(None);
                     }
-                    return Ok(Some(format!("{} {op} {}", quote(&a.name), quote(&b.name))));
+                    return Ok(Some(Tree::ColCol(a.clone(), op.clone(), b.clone())));
                 }
                 let (col, other, flipped) = match (lc, rc) {
                     (Some(c), _) => (c, *ri, false),
@@ -1780,15 +1928,14 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                 }
                 if v.is_none() {
                     return Ok(match op.as_str() {
-                        "=" => Some(through(at, format!("{} IS NULL", quote(&col.name)))),
-                        "<>" => Some(through(at, format!("{} IS NOT NULL", quote(&col.name)))),
+                        "=" | "<>" => Some(Tree::Null(col.clone(), op == "=", via[at].clone())),
                         _ => None,
                     });
                 }
                 if ["bool", "variant", "ref"].contains(&col.kind) && op != "=" && op != "<>" {
                     return Ok(None);
                 }
-                params.push(to_sql(v.v(), span)?);
+                let raw = to_sql(v.v(), span)?;
                 let sym = if flipped {
                     match op.as_str() {
                         "<" => ">",
@@ -1800,12 +1947,11 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
                 } else {
                     op.as_str()
                 };
-                Some(through(at, format!("{} {sym} ?", quote(&col.name))))
+                Some(Tree::Cmp(col.clone(), sym.to_string(), raw, via[at].clone()))
             }
         })
     }
-    let sql = build(&plan.tree, q, &column, &usable, value, &mut values, &mut params, &via, span)?;
-    Ok(sql.map(|s| (s, params)))
+    build(&plan.tree, q, &column, &usable, value, &mut values, &via, span)
 }
 
 /// `where` on a query: one more condition in SQL, or None (in memory).
@@ -1814,9 +1960,18 @@ pub fn pipe_where(src: V, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, s
     if !q.order.is_empty() || q.limit.is_some() || q.pick.is_some() {
         return Ok(None);
     }
-    let Some((sql, params)) = sql_where(&q, plan, value, span)? else { return Ok(None) };
+    let Some(tree) = where_tree(&q, plan, value, span)? else { return Ok(None) };
+    let (clause, params) = if q.database().doc.is_some() {
+        match crate::docdb::nnf(&tree, false) {
+            Some(c) => (Clause::Doc(c), Vec::new()),
+            None => return Ok(None),
+        }
+    } else {
+        let mut params = Vec::new();
+        (Clause::Sql(render_sql(&tree, q.database().pg, &mut params)), params)
+    };
     let mut wheres = q.wheres.clone();
-    wheres.push(sql);
+    wheres.push(clause);
     let mut all = q.params.clone();
     all.extend(params);
     Ok(Some(query(q.db.v(), q.info.clone(), wheres, all, q.order.clone(), q.limit)))
@@ -1832,12 +1987,15 @@ pub fn pipe_sort(src: V, column: &str, desc: bool) -> Option<Val> {
     if ["decimal", "money", "ref", "variant"].contains(&col.kind) || col.private {
         return None;
     }
+    if q.database().doc.is_some() {
+        return Some(query(q.db.v(), q.info.clone(), q.wheres.clone(), q.params.clone(), vec![Sort::Doc(col.name.clone(), desc)], None));
+    }
     let mut key = format!("{} {}", quote(&col.name), if desc { "DESC" } else { "ASC" });
     if q.database().pg {
         // none first, as in SQLite (D163)
         key.push_str(if desc { " NULLS LAST" } else { " NULLS FIRST" });
     }
-    Some(query(q.db.v(), q.info.clone(), q.wheres.clone(), q.params.clone(), vec![key], None))
+    Some(query(q.db.v(), q.info.clone(), q.wheres.clone(), q.params.clone(), vec![Sort::Sql(key)], None))
 }
 
 /// `take n` on a query.
@@ -1868,6 +2026,10 @@ pub fn group_column(src: V, name: &str) -> Option<(Arc<Query>, Column)> {
     if !q.order.is_empty() || q.limit.is_some() || q.pick.is_some() || q.info.key.is_none() {
         return None;
     }
+    if q.database().doc.is_some() {
+        // a document store groups in memory (D171)
+        return None;
+    }
     let col = q.info.column(name)?.clone();
     if col.private || !GROUP_KINDS.contains(&col.kind) {
         return None;
@@ -1892,8 +2054,8 @@ pub fn group_aggregate(q: &Query, key: &Column, key_name: &str, kind: &str, tota
     let db = q.database();
     let me = q.db.v();
     db.sync(me, info, span)?;
-    let mut wheres = db.guard(me, info, span)?;
-    wheres.extend(q.wheres.iter().cloned());
+    let mut wheres = sql_clauses(&db.guard(me, info, span)?);
+    wheres.extend(sql_clauses(&q.wheres));
     let mut what = format!("{}, COUNT(*)", quote(&key.name));
     if let Some(c) = tc {
         let t = quote(&c.name);
@@ -1939,6 +2101,9 @@ pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
     if path.starts_with("postgres://") || path.starts_with("postgresql://") || path.starts_with("mysql://") {
         return connect_server(path, key, span);
     }
+    if path.starts_with("mongodb://") || path.starts_with("elasticsearch://") {
+        return crate::docdb::connect(path, key, span);
+    }
     if let Some(scheme) = path.split_once("://").map(|x| x.0) {
         let what = format!("\"connect({})\"", crate::fmt::quote(&format!("{scheme}://...")));
         return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", what), span));
@@ -1965,6 +2130,7 @@ pub fn connect(url: V, key: Option<V>, span: u32) -> R<Val> {
         conn: Mutex::new(Backend::Sqlite(Conn(db))),
         pg: false,
         mysql: false,
+        doc: None,
         synced: Mutex::new(Vec::new()),
         depth: Mutex::new(0),
         key: data_key,
@@ -2000,6 +2166,7 @@ fn connect_server(path: String, key: Option<V>, span: u32) -> R<Val> {
         conn: Mutex::new(conn),
         pg: !mysql,
         mysql,
+        doc: None,
         synced: Mutex::new(Vec::new()),
         depth: Mutex::new(0),
         key: password.as_deref().map(crate::privacy::data_key),
@@ -2043,6 +2210,12 @@ impl Native for Transaction {
 pub fn begin(db: V, span: u32) -> R<Val> {
     let Some(d) = db.native::<Database>() else { return Err(expects("transaction", "database", db, span)) };
     let level = *d.depth.lock().unwrap();
+    if d.doc.is_some() {
+        crate::docdb::begin(d);
+        *d.depth.lock().unwrap() = level + 1;
+        let synced = d.synced.lock().unwrap().clone();
+        return Ok(native(Transaction { db: Val::from(db), depth: level + 1, done: std::sync::atomic::AtomicBool::new(false), synced }));
+    }
     if d.mysql && level == 0 {
         // MySQL commits what a transaction did when a table is created or
         // changed: the tables are made before it begins (D170)
@@ -2072,6 +2245,10 @@ pub fn end(tx: V, commit: bool, span: u32) -> R<Val> {
     let d = t.db.v().native::<Database>().unwrap();
     let level = t.depth - 1;
     *d.depth.lock().unwrap() = level;
+    if d.doc.is_some() {
+        crate::docdb::end(d, commit, level, span)?;
+        return Ok(Val::none());
+    }
     if !commit {
         // a table created inside the transaction is gone again
         *d.synced.lock().unwrap() = t.synced.clone();
@@ -2227,6 +2404,10 @@ pub fn run_command() -> i32 {
         eprintln!("Error: {} {}", msg("db_no_target", &[("file", file.clone())]), msg("fix.db_no_target", &[]));
         return 1;
     };
+    if db_path.starts_with("mongodb://") || db_path.starts_with("elasticsearch://") {
+        println!("{}", msg("info.db_no_schema", &[("db", db_path.clone())]));
+        return 0;
+    }
     let infos: Vec<Arc<TableInfo>> = registry().lock().unwrap().tables.iter().map(|(_, t)| t.clone()).collect();
     let parent = std::path::Path::new(&file).parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
     let folder = std::path::Path::new(if parent.is_empty() { "." } else { &parent }).join("migrations");
@@ -2262,6 +2443,7 @@ pub fn run_command() -> i32 {
         conn: Mutex::new(backend),
         pg,
         mysql,
+        doc: None,
         synced: Mutex::new(Vec::new()),
         depth: Mutex::new(0),
         key: None,
@@ -2408,8 +2590,9 @@ fn plain_row(rec: V) -> Val {
 pub fn privacy_export(rec: V, span: u32) -> R<Val> {
     let (db, info, key) = saved_row("export", rec, span)?;
     let d = db.v().native::<Database>().unwrap();
-    let k = quote(info.key.as_deref().unwrap_or("id"));
-    let rows = select(d, db.v(), &info, &[format!("{k} = ?")], &[Sql::Int(key)], &[], Some(1), &mut Cache::new(), span)?;
+    let kc = info.key.as_deref().and_then(|k| info.column(k)).cloned().unwrap();
+    let (w, p) = d.equal(&kc, Sql::Int(key));
+    let rows = select(d, db.v(), &info, &w, &p, &[], Some(1), &mut Cache::new(), span)?;
     let Some(row) = rows.into_iter().next() else {
         return Err(failure_as(
             "NotFound",
@@ -2422,7 +2605,8 @@ pub fn privacy_export(rec: V, span: u32) -> R<Val> {
     for (field, target) in &info.many {
         let Some(t) = table(target) else { continue };
         let Some(col) = t.columns.iter().find(|c| c.kind == "ref" && c.target.as_deref() == Some(&info.rtype.name)) else { continue };
-        let related = select(d, db.v(), &t, &[format!("{} = ?", quote(&col.name))], &[Sql::Int(key)], &[], None, &mut Cache::new(), span)?;
+        let (w, p) = d.equal(col, Sql::Int(key));
+        let related = select(d, db.v(), &t, &w, &p, &[], None, &mut Cache::new(), span)?;
         let items: Vec<Val> = related.iter().map(|r| plain_row(r.v())).collect();
         if let Some(Obj::Map(m)) = data.get() {
             m.borrow_mut().insert(Key::Str(field.clone()), Val::str(field.clone()), list(items));

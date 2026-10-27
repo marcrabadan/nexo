@@ -245,12 +245,15 @@ class Connection:
 class Scram:
     """SCRAM-SHA-256 (RFC 5802, RFC 7677) without channel binding."""
 
-    def __init__(self, password: str):
+    def __init__(self, password: str, user: str = ""):
+        # PostgreSQL takes the user from the startup message; MongoDB from
+        # here (with = and , written as =3D and =2C)
         self.password = password.encode("utf-8")
+        self.user = user.replace("=", "=3D").replace(",", "=2C")
         self.nonce = base64.b64encode(os.urandom(18)).decode()
 
     def first(self) -> str:
-        self.bare = f"n=,r={self.nonce}"
+        self.bare = f"n={self.user},r={self.nonce}"
         return "n,," + self.bare
 
     def final(self, server_first: str) -> str:
