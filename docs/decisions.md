@@ -2350,6 +2350,8 @@ in memory.
   would be an error in memory) to a table with an `id` and without
   personal data (whose hidden rows would be an error in memory too);
   otherwise, and when comparing two columns, it runs in memory.
+  The table the ref points to is made (synchronised) before the query
+  runs, so a query on a new database finds nothing instead of failing.
 - `many` fields were already a query (`customer_id = ?`), so
   `ana.orders.count()` and the pipelines on it run in SQL as any query.
   `group by` a ref stays an error, as in memory (a record is not a key).
@@ -2593,7 +2595,9 @@ url: "amqp://user@host/")`, `eventhub("clicks", namespace: "shop")`, and
   on the same broker. A failure of a broker is a NetworkError that names
   the source and the reason (`err.NetworkError.broker`); a consumer that
   cannot reach its broker tries again every second.
-- The policy checks `net` to the broker's host (D142). Under `nexo test`
+- The policy checks `net` to every host a client connects to (D142):
+  each bootstrap server it tries, and the brokers Kafka's metadata names
+  (leaders, coordinators). Under `nexo test`
   every source is on the in-memory broker, as before.
 - tests/kafka_broker.py, tests/amqp_broker.py and tests/ws_server.py are
   written from each protocol's specification, sharing no code with the

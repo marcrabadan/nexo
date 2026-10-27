@@ -265,11 +265,19 @@ class Client:
         self.leaders: dict = {}  # (topic, partition) -> node
         self.counts: dict = {}  # topic -> partitions
         self.bootstrap = None
+        # called with each host before a connection to it: the program's
+        # policy (D142), for the bootstrap servers and the brokers found
+        self.check = None
+
+    def allow(self, host: str) -> None:
+        if self.check is not None:
+            self.check(host)
 
     def any(self) -> Conn:
         if self.bootstrap is None:
             last = None
             for host, port in self.servers:
+                self.allow(host)
                 try:
                     self.bootstrap = Conn(host, port, self.sasl)
                     break
@@ -284,6 +292,7 @@ class Client:
     def node(self, n: int) -> Conn:
         if n not in self.conns:
             host, port = self.brokers[n]
+            self.allow(host)
             self.conns[n] = Conn(host, port, self.sasl)
         return self.conns[n]
 

@@ -1817,6 +1817,8 @@ pub fn where_tree(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>
                     .filter(|(_, t)| t.key.is_some() && personal_table(t).is_none());
                 if let Some((rc, t)) = target {
                     if let Some(c) = t.column(f).filter(|c| !c.private) {
+                        // the subquery reads that table: it exists first
+                        q.database().sync(q.db.v(), &t, span)?;
                         col = Some(c.clone());
                         through = Some(format!(
                             "{} IN (SELECT {} FROM {} WHERE ",

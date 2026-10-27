@@ -195,3 +195,22 @@ def test_source_errors_are_the_same_in_both_phases(program, tmp_path):
         assert r.returncode == 1
         outs.append(r.stdout.decode())
     assert len(set(outs)) == 1, outs
+
+
+POLICY = """policy:
+    allow net "localhost"
+    deny net "127.0.0.1"
+k = kafka("orders", servers: "localhost:1,127.0.0.1:{port}")
+k.send("x")
+print("sent")
+"""
+
+
+@pytest.mark.parametrize("phase", PHASES, ids=lambda c: c[0])
+def test_the_policy_checks_every_broker_a_client_reaches(phase, tmp_path):
+    # the first server is allowed; the next one, which answers, is not
+    broker = kafka_broker.start({"orders": 1})
+    (tmp_path / "p.nexo").write_text(POLICY.replace("{port}", str(broker.port)))
+    out = run(phase[1], ["p.nexo"], tmp_path).stdout.decode()
+    assert "The policy denies connecting to 127.0.0.1" in out and "sent" not in out
+    assert broker.topics["orders"] == [[]]

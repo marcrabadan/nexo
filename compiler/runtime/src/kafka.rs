@@ -429,17 +429,29 @@ pub struct Client {
     leaders: HashMap<(String, i32), i32>,
     pub counts: HashMap<String, i64>,
     bootstrap: Option<Conn>,
+    /// called with each host before a connection to it: the program's
+    /// policy (D142), for the bootstrap servers and the brokers found;
+    /// false stops the request
+    pub check: Option<Box<dyn Fn(&str) -> bool + Send>>,
 }
 
 impl Client {
     pub fn new(servers: Vec<(String, u16)>, sasl: Option<(String, Vec<u8>)>) -> Client {
-        Client { servers, sasl, conns: HashMap::new(), brokers: HashMap::new(), leaders: HashMap::new(), counts: HashMap::new(), bootstrap: None }
+        Client { servers, sasl, conns: HashMap::new(), brokers: HashMap::new(), leaders: HashMap::new(), counts: HashMap::new(), bootstrap: None, check: None }
+    }
+
+    fn allow(&self, host: &str) -> Result<(), KafkaError> {
+        match &self.check {
+            Some(check) if !check(host) => Err(KafkaError { reason: format!("the policy does not allow {host}"), code: Some(-1) }),
+            _ => Ok(()),
+        }
     }
 
     fn any(&mut self) -> Result<&mut Conn, KafkaError> {
         if self.bootstrap.is_none() {
             let mut last = lost("no server");
             for (host, port) in self.servers.clone() {
+                self.allow(&host)?;
                 match Conn::new(&host, port, &self.sasl) {
                     Ok(c) => {
                         self.bootstrap = Some(c);
@@ -459,6 +471,7 @@ impl Client {
     fn node(&mut self, n: i32) -> Result<&mut Conn, KafkaError> {
         if !self.conns.contains_key(&n) {
             let (host, port) = self.brokers.get(&n).cloned().ok_or_else(|| lost("the broker is not known"))?;
+            self.allow(&host)?;
             let c = Conn::new(&host, port, &self.sasl)?;
             self.conns.insert(n, c);
         }

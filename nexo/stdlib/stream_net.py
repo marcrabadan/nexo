@@ -69,8 +69,11 @@ class Kafka:
         return servers_of(stream.where)[1][0][0]
 
     def run(self, call, stream, what):
+        from .policy import check
+        client = self.client(call, stream)
+        client.check = lambda host: check(call, "net", host)
         try:
-            return what(self.client(call, stream))
+            return what(client)
         except KafkaError as exc:
             if exc.code is None:
                 # a connection that is lost is made again next time

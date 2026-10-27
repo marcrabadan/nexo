@@ -940,6 +940,9 @@ def where_tree(query: Query, plan, leaves, value_of):
             col = target.column(x.name)
             if col is None or col.private:
                 return None
+            if i not in via:
+                # the subquery reads that table: it exists first
+                query.db.sync(query.call, target)
             via[i] = (ref, target)
             return col
         return None

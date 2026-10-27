@@ -91,8 +91,20 @@ fn kafka<T>(s: &Pair, place: &str, span: u32, what: impl FnOnce(&mut crate::kafk
         };
         all.insert(id.clone(), client);
     }
-    match what(all.get_mut(&id).unwrap()) {
+    // the policy's failure, when it stopped a connection (D142)
+    let blocked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = blocked.clone();
+    let client = all.get_mut(&id).unwrap();
+    client.check = Some(Box::new(move |host: &str| {
+        let ok = crate::policy::check("net", host, span).is_ok();
+        if !ok {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        ok
+    }));
+    match what(client) {
         Ok(v) => Ok(v),
+        Err(_) if blocked.load(std::sync::atomic::Ordering::SeqCst) => Err(crate::state::Fail),
         Err(e) => {
             if e.code.is_none() {
                 // a connection that is lost is made again next time
