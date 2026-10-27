@@ -571,7 +571,7 @@ details are in D84.
 `compiler/bench/languages.py` runs the same benchmarks in C, Rust, Go,
 Java, JavaScript and Python as well, checks that every one prints the
 same result, and writes `languages.json`; `compiler/bench/site.py` puts
-the results in the performance section of the site (`docs/index.html`).
+the results on the benchmark page (`docs/benchmarks.html`).
 
 **Interpreter and compiler differences.** The two implementations print
 the same output for every program. The compiler catches some mistakes

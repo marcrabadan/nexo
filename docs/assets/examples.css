@@ -1,0 +1,37 @@
+/* Working examples share the site's typography, controls and themes. */
+.examples-head { padding: 68px 0 44px; border-bottom: 1px solid var(--border); }
+.examples-head h1 { font-size: clamp(44px, 6vw, 72px); }
+.examples-head .lede { max-width: 42em; margin-bottom: 30px; }
+.examples-jump { display: flex; flex-wrap: wrap; gap: 12px 28px; font-size: 13px; }
+.examples-jump a { display: inline-flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; padding: 8px 0; }
+.examples-jump a:hover { color: var(--accent); }
+.example-first-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 64px; align-items: start; }
+.example-first-copy > p { color: var(--muted); font-size: 16px; line-height: 1.85; }
+.example-first-copy > .eyebrow { color: var(--accent); font-size: 11px; }
+.example-first-copy h2 { max-width: 13em; }
+.example-walkthrough { margin: 24px 0; padding-left: 22px; color: var(--muted); font-size: 15px; line-height: 1.85; }
+.example-walkthrough li { padding-left: 5px; margin-bottom: 12px; }
+.example-walkthrough strong { color: var(--text); }
+.example-first-code { margin-top: 6px; }
+.example-command .code-bar { padding-block: 8px; }
+.example-command pre { font-size: 13px; }
+.example-try { padding-left: 18px; border-left: 2px solid var(--accent); margin-top: 28px; }
+.examples-page .section-intro { font-size: 16px; max-width: 58em; }
+.example-lesson-note { margin: 0 0 24px; padding: 22px 24px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.example-lesson-note p { margin: 0 0 12px; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.example-lesson-note .example-concepts { color: var(--text); font-weight: 600; font-size: 15px; }
+.example-lesson-note a { font-size: 13px; }
+.example-run span { margin-right: 10px; font-size: 12px; color: var(--muted); }
+.example-run code { display: inline-block; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.examples-page .panel > p { font-size: 15px; line-height: 1.8; }
+.examples-page .fpanel-text p { font-size: 15px; }
+.examples-next { border-top: 1px solid var(--border); }
+.examples-next p { max-width: 42em; color: var(--muted); margin-bottom: 26px; }
+@media (max-width: 900px) { .example-first-layout { gap: 36px; } }
+@media (max-width: 760px) {
+  .example-first-layout { grid-template-columns: 1fr; gap: 32px; }
+  .examples-head { padding: 44px 0 32px; }
+  .examples-head .lede { font-size: 16px; }
+  .examples-jump { gap: 8px 20px; font-size: 12px; }
+  .example-lesson-note { padding: 18px; }
+}

@@ -1,0 +1,7 @@
+fn invoice_total(price, quantity):
+    subtotal = price * quantity
+    vat = subtotal * 21%
+    return subtotal + vat
+
+print(invoice_total(19.90 EUR, 3))
+print(invoice_total(49.90 EUR, 2))

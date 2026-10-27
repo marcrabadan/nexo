@@ -1,0 +1,87 @@
+/* A reading-first lesson layout, using the shared light/dark palette. */
+.learn-head { padding: 70px 0 60px; border-bottom: 1px solid var(--border); }
+.learn-head h1 { font-size: clamp(42px, 5.3vw, 70px); max-width: 16ch; margin-bottom: 24px; }
+.learn-head .lede { font-size: 18px; max-width: 48em; margin-bottom: 26px; }
+.learn-intro-links { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; }
+.learn-layout { display: grid; grid-template-columns: 224px minmax(0, 780px); gap: 64px; align-items: start; padding-block: 64px 90px; }
+.learn-side { position: sticky; top: 112px; }
+.learn-side-title { margin: 0 0 16px; color: var(--text); font-size: 13px; font-weight: 700; }
+.learn-side nav > a { color: var(--muted); font-size: 13px; text-decoration: none; display: inline-block; }
+.learn-side nav > a:hover { color: var(--accent); }
+.learn-side ol { list-style: none; padding: 0; margin: 20px 0; border-left: 1px solid var(--border); counter-reset: lesson; }
+.learn-side li { counter-increment: lesson; }
+.learn-side li a { display: block; padding: 12px 0 12px 18px; color: var(--text); text-decoration: none; font-size: 13px; line-height: 1.6; }
+.learn-side li a::before { content: "0" counter(lesson) " / "; color: var(--accent); font: 10px var(--mono); }
+.learn-side li a:hover { background: var(--bg-alt); }
+.learn-side small { display: block; font-size: 11px; color: var(--muted); margin-top: 5px; }
+.learn-body { min-width: 0; }
+.learn-body section { padding: 52px 0; scroll-margin-top: 82px; border-top: 1px solid var(--border); }
+.learn-body .learn-before { padding-top: 0; border-top: 0; }
+.learn-body h2 { font-size: clamp(30px, 3.4vw, 42px); margin-bottom: 20px; }
+.learn-body h3 { font-size: 22px; font-weight: 600; margin: 32px 0 16px; }
+.learn-body p, .lesson-explain { font-size: 16px; line-height: 1.85; color: var(--muted); }
+.learn-body > section > p { margin: 0 0 20px; }
+.learn-note { background: var(--bg-alt); padding: 22px 24px; border-left: 2px solid var(--accent); margin-top: 28px; }
+.learn-note strong { font-size: 15px; color: var(--text); }
+.learn-note p { margin: 8px 0 0; }
+.lesson-label { display: flex; gap: 18px; align-items: center; margin-bottom: 22px; color: var(--muted); font: 11px/1.6 var(--mono); }
+.lesson-label span:first-child { color: var(--accent); }
+.learn-body .lesson-goal { color: var(--text); font-size: 17px; margin-bottom: 26px; }
+.learn-body .code pre { font-size: 14px; line-height: 1.9; }
+.learn-body .code .out-label { font-size: 11px; }
+.lesson-run { margin: 24px 0 32px; }
+.lesson-run > p { margin-bottom: 12px; font-size: 14px; }
+.learn-command { margin: 0 0 12px; }
+.learn-command .code-bar::before { display: none; }
+.learn-command .code-bar { padding-block: 8px; }
+.learn-command pre { padding-block: 14px; }
+.lesson-download { display: inline-block; margin-top: 6px; font-size: 12px; text-underline-offset: 4px; }
+.lesson-explain { padding-left: 24px; margin: 0 0 24px; }
+.lesson-explain li { padding-left: 8px; margin: 14px 0; }
+.lesson-explain li::marker { color: var(--accent); font: 12px var(--mono); }
+.lesson-tip { border-left: 1px solid var(--border-strong); padding: 0 0 0 20px; }
+.lesson-exercise { border: 1px solid var(--border-strong); border-radius: 10px; padding: 26px; margin: 34px 0; background: var(--bg-alt); }
+.learn-body .lesson-exercise .eyebrow { margin-bottom: 12px; font-size: 10px; }
+.lesson-exercise h3 { margin: 0 0 14px; }
+.lesson-exercise > p:last-of-type { margin-bottom: 20px; }
+.lesson-exercise details { border-top: 1px solid var(--border); padding-top: 18px; }
+.lesson-exercise summary { cursor: pointer; color: var(--text); font-size: 14px; font-weight: 600; padding: 0 0 3px; }
+.lesson-exercise details[open] > summary { margin-bottom: 20px; }
+.lesson-exercise details > p { font-size: 14px; margin: 20px 0 10px; }
+.lesson-recap { margin: 32px 0 22px; }
+.lesson-recap strong { color: var(--text); font-size: 14px; }
+.lesson-recap p { margin: 6px 0 0; }
+.lesson-next { display: flex; justify-content: space-between; align-items: center; gap: 20px; color: var(--accent); border-top: 1px solid var(--border); padding-top: 20px; font-size: 14px; text-decoration: none; }
+.lesson-next:hover { text-decoration: underline; }
+.learn-topic-links { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 30px 0; }
+.learn-topic-links a { display: block; border: 1px solid var(--border); padding: 22px; text-decoration: none; border-radius: 8px; background: var(--bg-alt); }
+.learn-topic-links a:hover { border-color: var(--accent); }
+.learn-topic-links strong { display: block; color: var(--text); font-size: 15px; font-weight: 600; line-height: 1.5; margin-bottom: 10px; }
+.learn-topic-links span { display: block; color: var(--muted); font-size: 13px; line-height: 1.8; }
+@media (max-width: 1040px) {
+  .learn-layout { grid-template-columns: 1fr; gap: 40px; }
+  .learn-side { position: static; }
+  .learn-side ol { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: 8px; margin-block: 16px; }
+  .learn-side li + li { border-left: 1px solid var(--border); }
+  .learn-side li a { padding: 16px; }
+  .learn-side nav > a { margin-right: 18px; }
+  .learn-body { max-width: 780px; }
+}
+@media (max-width: 640px) {
+  .learn-head { padding: 42px 0; }
+  .learn-head .lede { font-size: 16px; }
+  .learn-layout { padding-top: 32px; padding-bottom: 48px; }
+  .learn-body section { padding-block: 38px; }
+  .learn-side ol { grid-template-columns: 1fr; }
+  .learn-side li + li { border-left: 0; border-top: 1px solid var(--border); }
+  .learn-side li a { padding: 12px 16px; }
+  .learn-side small { margin-left: 36px; }
+  .learn-body p, .lesson-explain { font-size: 15px; }
+  .learn-body .lesson-goal { font-size: 16px; }
+  .lesson-label { gap: 12px; font-size: 10px; }
+  .learn-body .code pre { font-size: 12px; }
+  .lesson-exercise { padding: 20px 16px; }
+  .learn-note { padding: 18px; }
+  .lesson-next { font-size: 13px; }
+  .learn-topic-links { grid-template-columns: 1fr; }
+}

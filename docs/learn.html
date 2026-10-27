@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Learn Nexo — your first program</title>
+<meta name="description" content="Learn Nexo step by step: print a greeting, calculate an invoice with exact money, and write a reusable function. Short examples, explained code and exercises with solutions.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/learn.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="learn-page">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="learn.html" aria-current="page">Learn</a>
+      <a href="examples.html">Examples</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<main id="main">
+<header class="learn-head"><div class="wrap">
+  <p class="eyebrow">Learn Nexo</p>
+  <h1>Read it.<br>Change it. <em>Make it yours.</em></h1>
+  <p class="lede">Start with a greeting. Turn a price into an invoice. Then make the calculation reusable. Each lesson adds one idea to the code you already understand.</p>
+  <div class="learn-intro-links"><a class="btn btn-primary" href="#hello">Start the first lesson</a><a class="text-link" href="index.html#start">Install Nexo first</a></div>
+</div></header>
+<div class="wrap learn-layout">
+<aside class="learn-side">
+  <nav aria-label="Lessons">
+    <p class="learn-side-title">Your first programs</p>
+    <a href="#before">Before you begin</a>
+    <ol><li><a href="#hello"><span>Hello, Nexo</span><small>Text and printing</small></a></li><li><a href="#money"><span>An invoice, one step at a time</span><small>Names and exact money</small></a></li><li><a href="#functions"><span>Write it once. Use it again.</span><small>Functions</small></a></li></ol>
+    <a href="#next">Keep learning</a>
+  </nav>
+</aside>
+<div class="learn-body">
+<section class="learn-before" id="before">
+  <p class="eyebrow">Before you begin</p>
+  <h2>A file, a command, a result.</h2>
+  <p>You will need a text editor and a terminal. Follow the <a href="index.html#start">installation instructions</a>, then open a terminal in the Nexo repository folder. Save each example in that folder using the filename shown above its code.</p>
+  <p>Run the command shown beneath the example. Nexo reads the file and prints its result in your terminal. These pages show the expected output so you can compare yours.</p>
+  <div class="learn-note"><strong>How to use these lessons</strong><p>Read the example, run it, then change it. Try each exercise before opening its solution. You can also download the example files.</p></div>
+</section>
+<section class="lesson" id="hello" aria-labelledby="hello-title">
+  <div class="lesson-label"><span>Lesson 1</span><span>Text and printing</span></div>
+  <h2 id="hello-title">Hello, Nexo.</h2>
+  <p class="lesson-goal">Your task: greet someone by name.</p>
+  <div class="code"><div class="code-bar"><span>hello.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = "Ada"
+print("Hello, {name}!")</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Hello, Ada!</code></pre></div></div>
+  <div class="lesson-run"><p>First <a href="index.html#start">install Nexo</a> if you haven’t already. Save the code as <code>hello.nexo</code>, then run:</p><div class="code learn-command"><div class="code-bar"><span>From your Nexo checkout</span><button class="copy" type="button">Copy</button></div><pre><code>.venv/bin/nexo hello.nexo</code></pre></div><a class="lesson-download" href="learn/hello.nexo" download>Download hello.nexo</a></div>
+  <h3>Read the code</h3>
+  <ol class="lesson-explain"><li><code>name = "Ada"</code> gives the text <code>"Ada"</code> a name. Double quotes mark text.</li><li><code>print(...)</code> displays a value in the terminal.</li><li>Inside text, <code>{name}</code> inserts the value of <code>name</code>. The result is <code>Hello, Ada!</code>.</li></ol>
+  <div class="lesson-exercise"><p class="eyebrow">Your turn</p><h3>Make the greeting yours</h3><p>Change the name to <code>"Sam"</code>. Add a second <code>print</code> that displays <code>"Your invoice is ready."</code> on its own line.</p><details><summary>Show one solution</summary><div class="code"><div class="code-bar"><span>hello-exercise.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = "Sam"
+print("Hello, {name}!")
+print("Your invoice is ready.")</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Hello, Sam!
+Your invoice is ready.</code></pre></div></div><a class="lesson-download" href="learn/hello-exercise.nexo" download>Download the solution</a></details></div>
+  <div class="lesson-recap"><strong>You can now</strong><p>Store text under a name, insert it into a sentence and print the result.</p></div>
+  <a class="lesson-next" href="#money">Next: calculate your first invoice <span aria-hidden="true">→</span></a>
+</section>
+<section class="lesson" id="money" aria-labelledby="money-title">
+  <div class="lesson-label"><span>Lesson 2</span><span>Names and exact money</span></div>
+  <h2 id="money-title">An invoice, one step at a time.</h2>
+  <p class="lesson-goal">Your task: calculate the total for three items, including VAT.</p>
+  <div class="code"><div class="code-bar"><span>money.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">price = 19.90 EUR
+quantity = 3
+subtotal = price * quantity
+vat = subtotal * 21%
+
+print("Subtotal: {subtotal}")
+print("VAT: {vat}")
+print("Total: {subtotal + vat}")</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Subtotal: 59.70 EUR
+VAT: 12.54 EUR
+Total: 72.24 EUR</code></pre></div></div>
+  <div class="lesson-run"><p>Save the code as <code>money.nexo</code>, then run:</p><div class="code learn-command"><div class="code-bar"><span>From your Nexo checkout</span><button class="copy" type="button">Copy</button></div><pre><code>.venv/bin/nexo money.nexo</code></pre></div><a class="lesson-download" href="learn/money.nexo" download>Download money.nexo</a></div>
+  <h3>Read the calculation</h3>
+  <ol class="lesson-explain"><li><code>price</code> and <code>quantity</code> name the inputs. A name lets you use a value without repeating it.</li><li><code>19.90 EUR</code> is a money value: an exact decimal amount together with its currency. Nexo keeps the currency in the result.</li><li><code>*</code> means multiply. <code>price * quantity</code> calculates the subtotal; <code>21%</code> expresses the VAT rate directly.</li><li><code>subtotal + vat</code> adds the two money amounts. You can put this calculation inside <code>{...}</code> to print it.</li></ol>
+  <p class="lesson-tip">A name stays bound to its value by default. To work with a value that changes while a program runs, use <a href="reference.html#values"><code>var</code></a>. This invoice does not need it.</p>
+  <div class="lesson-exercise"><p class="eyebrow">Your turn</p><h3>Change the order</h3><p>Set <code>quantity</code> to <code>2</code> and run the program again. Keep the same price and VAT rate. What do you expect the new total to be?</p><details><summary>Show one solution</summary><div class="code"><div class="code-bar"><span>money-exercise.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">price = 19.90 EUR
+quantity = 2
+subtotal = price * quantity
+vat = subtotal * 21%
+
+print("Subtotal: {subtotal}")
+print("VAT: {vat}")
+print("Total: {subtotal + vat}")</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Subtotal: 39.80 EUR
+VAT: 8.36 EUR
+Total: 48.16 EUR</code></pre></div></div><p>The total is <code>48.16 EUR</code>. Only the quantity changed; the rest of the calculation uses its new value.</p><a class="lesson-download" href="learn/money-exercise.nexo" download>Download the solution</a></details></div>
+  <div class="lesson-recap"><strong>You can now</strong><p>Name the inputs to a calculation, use money and percentages, and print a useful result.</p></div>
+  <a class="lesson-next" href="#functions">Next: reuse the invoice calculation <span aria-hidden="true">→</span></a>
+</section>
+<section class="lesson" id="functions" aria-labelledby="functions-title">
+  <div class="lesson-label"><span>Lesson 3</span><span>Functions</span></div>
+  <h2 id="functions-title">Write it once.<br>Use it again.</h2>
+  <p class="lesson-goal">Your task: calculate two invoices without copying the same calculation.</p>
+  <div class="code"><div class="code-bar"><span>functions.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn invoice_total(price, quantity):
+    subtotal = price * quantity
+    vat = subtotal * 21%
+    return subtotal + vat
+
+print(invoice_total(19.90 EUR, 3))
+print(invoice_total(49.90 EUR, 2))</code></pre><div class="out"><div class="out-label">Output</div><pre><code>72.24 EUR
+120.76 EUR</code></pre></div></div>
+  <div class="lesson-run"><p>Save the code as <code>functions.nexo</code>, then run:</p><div class="code learn-command"><div class="code-bar"><span>From your Nexo checkout</span><button class="copy" type="button">Copy</button></div><pre><code>.venv/bin/nexo functions.nexo</code></pre></div><a class="lesson-download" href="learn/functions.nexo" download>Download functions.nexo</a></div>
+  <h3>Give the calculation a name</h3>
+  <ol class="lesson-explain"><li><code>fn invoice_total(price, quantity):</code> defines a function: a named piece of code you can reuse. <code>price</code> and <code>quantity</code> are the inputs it receives.</li><li>The four spaces before each calculation put that line inside the function. A colon starts the block; indentation shows what belongs to it.</li><li><code>return</code> sends the calculated value back to the place that called the function.</li><li><code>invoice_total(19.90 EUR, 3)</code> calls the function with a price and a quantity. <code>print</code> displays the returned result. The second call uses the same code with different inputs.</li></ol>
+  <div class="lesson-exercise"><p class="eyebrow">Your turn</p><h3>Reuse just the VAT calculation</h3><p>Write a function named <code>add_vat</code> with one input, <code>amount</code>. Return that amount plus 21% VAT. Call it with the subtotal <code>19.90 EUR * 3</code> and print the result.</p><details><summary>Show one solution</summary><div class="code"><div class="code-bar"><span>functions-exercise.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn add_vat(amount):
+    return amount + amount * 21%
+
+subtotal = 19.90 EUR * 3
+print(add_vat(subtotal))</code></pre><div class="out"><div class="out-label">Output</div><pre><code>72.24 EUR</code></pre></div></div><p>This smaller function works with any subtotal in the same currency. It does not need to know the item price or quantity.</p><a class="lesson-download" href="learn/functions-exercise.nexo" download>Download the solution</a></details></div>
+  <div class="lesson-recap"><strong>You can now</strong><p>Write a function, give it inputs, return a result and reuse it. Your invoice calculator is ready for more than one order.</p></div>
+  <a class="lesson-next" href="#next">Next: choose what to build <span aria-hidden="true">→</span></a>
+</section>
+<section class="learn-next-topics" id="next">
+  <p class="eyebrow">Keep learning</p><h2>Build on what you know.</h2><p>You have used names, text, money and functions. Follow the topic that fits your next program, or explore a complete example.</p>
+  <div class="learn-topic-links"><a href="reference.html#control"><strong>Make decisions and repeat work</strong><span>Use <code>if</code> and <code>for</code> to work with different inputs.</span></a><a href="reference.html#builtin-types"><strong>Keep several values together</strong><span>Store and work with lists, maps and sets.</span></a><a href="reference.html#errors"><strong>Handle things that can go wrong</strong><span>Read <code>T!</code>, <code>?</code> and <code>try</code>.</span></a><a href="reference.html#pipelines"><strong>Turn rows into answers</strong><span>Filter, transform and total your data.</span></a></div>
+  <div class="actions"><a class="btn btn-primary" href="examples.html">Explore complete examples</a><a class="btn btn-ghost" href="reference.html">Open the reference</a></div>
+</section>
+</div>
+</div>
+</main>
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="learn.html">Learn</a>
+      <a href="examples.html">Examples</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
+      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
+      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
+    </nav>
+  </div>
+</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

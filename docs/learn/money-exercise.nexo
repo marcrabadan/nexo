@@ -1,0 +1,8 @@
+price = 19.90 EUR
+quantity = 2
+subtotal = price * quantity
+vat = subtotal * 21%
+
+print("Subtotal: {subtotal}")
+print("VAT: {vat}")
+print("Total: {subtotal + vat}")
