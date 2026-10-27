@@ -123,7 +123,9 @@ pub extern "C" fn nx_tls() -> *mut Tls {
 }
 
 /// Run the program on a thread with a large stack, so that deep recursion
-/// reaches the call limit before the end of the stack.
+/// reaches the call limit before the end of the stack. (Running it on the
+/// main thread, on a stack of its own, starts 0.25 ms sooner but makes
+/// programs that make many objects about 15% slower.)
 #[no_mangle]
 pub extern "C" fn nx_start(entry: extern "C" fn(*mut Tls)) -> ! {
     if std::env::var("NEXO_SECURITY_SANDBOX").is_ok_and(|s| s == "linux-offline-v1") {
@@ -145,6 +147,17 @@ pub extern "C" fn nx_start(entry: extern "C" fn(*mut Tls)) -> ! {
 #[no_mangle]
 pub extern "C" fn nx_too_deep() {
     diag(Diagnostic::new_spanless("too_deep"), 0);
+}
+
+/// An int-only function was entered with its depth over the thread's
+/// limit: too many nested calls, or a `try within` whose clock to check.
+#[no_mangle]
+pub extern "C" fn nx_enter_slow(depth: u64) {
+    if depth > state::MAX_DEPTH {
+        nx_too_deep();
+    } else {
+        nx_check_deadline();
+    }
 }
 
 #[no_mangle]
@@ -361,6 +374,13 @@ pub unsafe extern "C" fn nx_list(items: *const V, n: u64) -> V {
 #[no_mangle]
 pub extern "C" fn nx_list_push(lt: u64, lb: u64, t: u64, b: u64) {
     let Some(Obj::List(items)) = v(lt, lb).get() else { return };
+    // an int onto a list of ints, as in nx_list_add (D137)
+    if t == T_INT {
+        if let ListItems::Ints(xs) = items.borrow_mut() {
+            xs.push(b as i64);
+            return;
+        }
+    }
     if let Ok(x) = pipe::bind(v(t, b)) {
         items.borrow_mut().push(x);
     }
@@ -1749,6 +1769,7 @@ pub extern "C" fn nx_test_finish() -> ! {
     if let Ok(path) = std::env::var("NEXO_TEST_REPORT") {
         let _ = std::fs::write(path, format!("{run} {passed}\n"));
     }
+    crate::library::write_coverage();
     // a mistake in a handler of a server is a broken program (D102)
     nx_exit(if crate::web::MISTAKE.load(std::sync::atomic::Ordering::SeqCst) { 1 } else { 0 })
 }

@@ -1,0 +1,11 @@
+# A faked method of a record that never leaves its test keeps its fake (D157)
+type P:
+    x: int
+
+    fn norm(self) -> int:
+        return self.x * self.x
+
+test "the fake answers":
+    fake p.norm returns 99
+    p = P(3)
+    assert p.norm() == 99

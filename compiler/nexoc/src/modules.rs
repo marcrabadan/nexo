@@ -101,6 +101,11 @@ pub struct Linker {
 }
 
 impl Linker {
+    /// The first node id the modules did not take.
+    pub fn next_id(&self) -> u32 {
+        self.next_id
+    }
+
     pub fn new(main_file: &str, next_id: u32) -> Linker {
         let root = project_root(main_file);
         let main = Path::new(main_file).canonicalize().unwrap_or_else(|_| PathBuf::from(main_file));

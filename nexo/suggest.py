@@ -126,6 +126,10 @@ def calls_of(program: A.Program, source: str) -> list[tuple[str, list[str]]]:
     lines = source.split("\n")
     enums = {s.name: [v.name for v in s.variants] for s in program.body
              if isinstance(s, A.TypeDef) and s.variants and all(not v.params for v in s.variants)}
+    # a named union or range (`type Level = "low" | "high"`) gives its values
+    for s in program.body:
+        if isinstance(s, A.TypeDef) and isinstance(s.alias, (A.LiteralUnion, A.RangeType)):
+            enums[s.name] = _candidates(s.alias, lines, enums)
     out = []
     for fn in program.body:
         if not isinstance(fn, A.FnDef) or not fn.params:

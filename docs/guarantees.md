@@ -47,7 +47,7 @@ of Landlock; requesting the Linux worker still requires its kernel facilities.
 | Guarantee | State | Evidence |
 | --- | --- | --- |
 | The compiler understands intent | Met (the tool); the public set of cases needs a model | `nexo check --intent` asks the configured model whether each function does what its `##` comments and contracts say (D132), tested against a local model. The public set of known mismatches, run against a real model, is still to be written. |
-| Tests proposed automatically | Met (the tool) | `nexo test --suggest` proposes edge cases from types, contracts and unions and records what the code gives now (D131). Branch coverage before and after is not measured yet: neither phase has a coverage tool. |
+| Tests proposed automatically | Met | `nexo test --suggest` proposes edge cases from types, contracts and unions and records what the code gives now (D131). `nexo test --coverage` measures branch coverage in both phases (D155): on the program of `tests/test_phase6.py`, the suggested cases take it from 2 of 10 branches (20%) to 10 of 10 (100%). |
 | Every error comes with its fix | Met | Every message that reports a problem has its fix sentence in both catalogs (`tests/unit/test_errors.py`). Of the 32 programs in the repository that do not compile (27 kinds of error), 32 say how to fix it (100%) and 6 (19%) have an edit that `nexo fix` or the editor applies (`compiler/scripts/fix_rate.py`). |
 | Verifiable AI-generated code | Partly | One way to do each thing, types at boundaries and contracts, and `nexo check` validates code before it runs. The rate of LLM-generated programs that compile and pass their tests on the first try needs a benchmark run against models. |
 | AI does not invent APIs | Met (the tool); the comparison needs a model | `nexo docs --for-ai` prints the exact list of what a program can use, from `nexo/stdlib/api.json`, which a test keeps equal to the builtins of both phases (D130). The comparison with and without it needs models. |
@@ -60,10 +60,10 @@ checks, since Nexo checks int overflow).
 
 | Goal | Value | Today | State |
 | --- | --- | --- | --- |
-| Performance on typical code | under 1.5× Rust's time | strings 1.11×, parallel 1.30×, maps 1.42×, loop 1.60×, hello 1.77×, fib 2.04×, lists 2.15×, records 2.53× | Not met |
-| Memory | under 1.3× Rust's RAM | 1.0× or less on seven benchmarks (strings 0.75×); lists 1.10× | Met |
-| Compilation | 100,000 lines in under 10 s in development mode | 13.9 s (about 3 s in the compiler, the rest in clang on four cores) | Not met |
-| Program start-up | under 20 ms | 2.3 ms | Met |
+| Performance on typical code | under 1.5× Rust's time | records 0.42×, strings 1.15×, hello 1.26×, loop 1.29×, parallel 1.39×, maps 1.45×, lists 1.57×, fib 1.70× | Not met (two of eight) |
+| Memory | under 1.3× Rust's RAM | 1.0× or less on seven benchmarks (strings 0.75×); lists 1.06× | Met |
+| Compilation | 100,000 lines in under 10 s in development mode | 10.6 s (9.3 to 13 s as the shared machine is loaded; 20% less than before D158, measured side by side) | Not met, by little |
+| Program start-up | under 20 ms | 1.9 ms | Met |
 | First useful program | under 1 hour for someone with no experience | not measured | Needs people (user studies) |
 | From idea to production | one project for code, infrastructure and deployment | `examples/deploy` holds an app, its tests, its infrastructure on four clouds and its pipeline in one file (phase 5) | Met |
 
@@ -86,16 +86,29 @@ as two words so its fast instruction selector takes them (D141); the
 compiler also leaves out checks it proves are not needed (D140, D141),
 which made the IR half its size.
 
+The second round (D156-D160): programs are linked without
+position-independent code, so they start without relocating the
+runtime; an int-only function checks its depth and the clock with one
+comparison and returns its int, with failures in the thread state; a
+record that never leaves its function is kept as its fields and its
+methods become functions of ints (records went from 2.5× to 0.4×, since
+the Rust program boxes its value); fused pipeline steps take ints and
+`sum` adds them in the loop; and development builds name registers per
+function, balance their parts by clang's work and link with lld. The
+machine of goals.json is a shared cloud machine: the same Rust programs
+took up to 45% longer from one hour to the next, so the ratios move by
+about ±0.1× between runs (fib 1.55× to 1.7×, lists 1.57× to 1.65×).
+
 What is left is the shape of the compiled code: every value is two words
 with a tag (a list of ints is kept as plain ints, D137), every heap
 value is an object of the same size (112 bytes), and an operation on a
 value whose type is not known calls the runtime. Times are measured on
-programs of 10 to 60 ms, so a few milliseconds of start-up count. Meeting
-1.5× on records, lists and calls needs values specialised by type (records
-on the stack when they do not escape, unboxed lists of ints, calls that
-pass ints in registers everywhere), and meeting 10 s for 100,000 lines
-needs smaller code still, or generating it on several threads. Both are
-compiler work for the next releases, or the goals change.
+programs of 10 to 60 ms, so a few milliseconds of start-up count. What
+keeps fib above 1.5× is that every call passes the thread state and the
+depth and checks for a failure after it returning (Rust's has none of
+the three); lists spends it adding to a list through the runtime, one call
+per element. Compiling stays near 10 s because the compiler writes all
+the IR before clang starts (3.3 s) and clang reads it as text.
 
 ## What is needed to finish phase 6
 

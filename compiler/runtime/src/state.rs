@@ -39,11 +39,15 @@ pub struct Tls {
     /// 1 in a task started with `spawn`: it cannot read the program's
     /// variables that others may change (see sync.rs)
     pub isolated: u64,
+    /// the depth an int-only function compares its own with when it is
+    /// entered: MAX_DEPTH, or 0 while a `try within` runs, so that one
+    /// comparison checks both (D156)
+    pub limit: u64,
 }
 
 thread_local! {
     static TLS: UnsafeCell<Tls> = const {
-        UnsafeCell::new(Tls { failing: 0, deadline_active: 0, pad: [0; 6], depth: 0, stamp: 0, isolated: 0 })
+        UnsafeCell::new(Tls { failing: 0, deadline_active: 0, pad: [0; 6], depth: 0, stamp: 0, isolated: 0, limit: MAX_DEPTH })
     };
     static TASK: RefCell<TaskState> = RefCell::new(TaskState::default());
 }
@@ -176,6 +180,7 @@ pub fn set_deadline_active(on: bool) {
         nx_any_deadline.fetch_sub(1, Ordering::Relaxed);
     }
     t().deadline_active = on as u8;
+    t().limit = if on { 0 } else { MAX_DEPTH };
 }
 
 pub fn span(id: u32) -> Option<Span> {

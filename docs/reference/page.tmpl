@@ -259,6 +259,9 @@
   <p><code>test "name":</code> blocks live next to the code and run with <code>nexo test</code>; running the file skips them. <code>assert expr</code> checks a condition, and <code>assert expr fails</code> checks that it fails.</p>
 {{run:contracts.nexo}}
 {{test:contracts.nexo}}
+  <p><code>nexo test --coverage</code> runs the same tests and then says how many branches they ran, and which never ran: the body of each function, each branch of an <code>if</code> (and the case where no condition holds), each arm of a <code>match</code>, each loop body and each <code>else</code> of a <code>try</code>. Code inside <code>test</code> blocks and lambdas is not counted (D155).</p>
+{{src:coverage.nexo}}
+{{out:test --coverage:coverage.nexo}}
 </section>
 
 <section class="ref-sec" id="modules">
@@ -536,7 +539,7 @@
       <tr><td><code>nexo file.nexo</code></td><td>Runs a program</td></tr>
       <tr><td><code>nexo new name</code></td><td>Creates a project: <code>nexo.toml</code> and <code>src/main.nexo</code> with a test</td></tr>
       <tr><td><code>nexo build [--release [--trust-ensure]] [-o out] file.nexo</code></td><td>Compiles to a native program (compiler only)</td></tr>
-      <tr><td><code>nexo test [paths]</code></td><td>Runs the <code>test</code> blocks</td></tr>
+      <tr><td><code>nexo test [paths]</code></td><td>Runs the <code>test</code> blocks; <code>--coverage</code> adds the branches they ran, <code>--suggest file.nexo</code> proposes edge cases</td></tr>
       <tr><td><code>nexo fmt [paths]</code></td><td>Formats files in place; there are no options</td></tr>
       <tr><td><code>nexo lint [paths]</code>, <code>nexo fix [paths]</code></td><td>Warnings with their fixes, and applying the safe ones</td></tr>
       <tr><td><code>nexo check [paths]</code></td><td>The compile checks, without running anything</td></tr>

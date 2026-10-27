@@ -1,0 +1,13 @@
+✓ some of each
+1 test: 1 passed, 0 failed
+Branch coverage: 11 of 20 (55%).
+s14_coverage.nexo:9: the function "Counter.bump" never ran.
+s14_coverage.nexo:17: the match arm never ran.
+s14_coverage.nexo:23: the elif branch never ran.
+s14_coverage.nexo:30: the if never ran with every condition false.
+s14_coverage.nexo:37: the loop body never ran.
+s14_coverage.nexo:39: the loop body never ran.
+s14_coverage.nexo:46: the else of the try never ran.
+s14_coverage.nexo:50: the undo of "keep" never ran.
+s14_coverage.nexo:60: the function "steps" never ran.
+Add tests that run them; nexo test --suggest proposes some.

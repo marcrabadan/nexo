@@ -210,6 +210,14 @@ class Interpreter:
         if self.linker is None:
             self.linker = Linker(file)
         self.linker.link(program)
+        from . import cover
+        if cover.TABLE is not None:
+            # the modules first, in the order they were loaded (D155)
+            for info in self.linker.modules.values():
+                if not getattr(info, "covered", False):
+                    info.covered = True
+                    cover.instrument(info.program, cover.TABLE)
+            cover.instrument(program, cover.TABLE)
         return program
 
     def run(self, source: str, file: str) -> None:

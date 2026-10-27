@@ -22,7 +22,7 @@ from .errors import NexoError
 from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
-USAGE = ("Usage: nexo [file.nexo | new name | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp"
+USAGE = ("Usage: nexo [file.nexo | new name | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp"
          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
          " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]")
 BANNER = "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit."
@@ -106,10 +106,14 @@ def test_files(paths: list[str]) -> list[Path]:
     return found
 
 
-def run_tests(paths: list[str]) -> int:
+def run_tests(paths: list[str], coverage: bool = False) -> int:
+    """`nexo test [paths]`; with --coverage, the branches the tests ran (D155)."""
+    from . import cover
     files = test_files(paths)
     total = passed = 0
     broken_files = 0
+    branches: dict = {}
+    covered: set = set()
     for f in files:
         try:
             source = f.read_text(encoding="utf-8")
@@ -123,6 +127,9 @@ def run_tests(paths: list[str]) -> int:
         interp = Interpreter()
         from .stdlib import stream
         stream.TEST_MODE = True
+        if coverage:
+            cover.TABLE = []
+            cover.HITS.clear()
         try:
             interp.run(source, name)
         except (NexoError, NexoFailure) as exc:
@@ -156,6 +163,11 @@ def run_tests(paths: list[str]) -> int:
             passed += 1
             print(f"✓ {test.name}")
             sys.stdout.flush()
+        if coverage:
+            for i, b in enumerate(cover.TABLE):
+                branches.setdefault(b.key(), b)
+                if i in cover.HITS:
+                    covered.add(b.key())
         # a mistake in a handler of a server is a broken program (D102)
         from .stdlib import web
         if web.MISTAKES:
@@ -165,6 +177,9 @@ def run_tests(paths: list[str]) -> int:
         print(errors.msg("no_tests", path=", ".join(paths) or "."))
         return 0
     print(summary(total, passed, total - passed))
+    if coverage:
+        cover.TABLE = None
+        sys.stdout.write(cover.report(branches, covered))
     sys.stdout.flush()
     return 0 if passed == total and not broken_files else 1
 
@@ -827,6 +842,9 @@ def main(argv: list[str] | None = None) -> int:
         return run_new(rest[1:])
     if rest[:2] == ["test", "--suggest"]:
         return run_suggest(rest[2:])
+    if rest[:2] == ["test", "--coverage"]:
+        sys.setrecursionlimit(10000)
+        return run_tests(rest[2:], coverage=True)
     if rest[:2] == ["check", "--intent"]:
         return run_intent(rest[2:])
     if rest[:1] == ["db"]:

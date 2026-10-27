@@ -1733,8 +1733,9 @@ blocks for every top-level function whose parameters all have a type it
 can make values of: for `int` 0, 1, -1 and the largest int, plus the
 values on each side of the bound of an `expect param OP literal` (either
 way round); for `float` 0.0, -1.5 and 1.5; for `str` "" and "a b"; for
-`bool` both; each literal of a union; the two bounds of a range; each
-variant of an enum of the file (variants without data); `[]` and a list
+`bool` both; each literal of a union; the two bounds of a range (also when the
+union or range is a named type of the file, `type Level = "low" |
+"high"`); each variant of an enum of the file (variants without data); `[]` and a list
 of one value; `none` for `T?`. A first case uses, for each parameter, its
 first value that keeps the `expect`s; every other case changes one
 parameter. A function with a parameter of another type (a record, money,
@@ -2198,3 +2199,109 @@ it under Shield would bypass API filesystem authorization. This restriction
 also applies when write grants are present, until those state effects can be
 authorized throughout the active dependency context. Ordinary workflows retain
 their existing behavior.
+
+**D155. `nexo test --coverage`.** "Goals and guarantees" measures "Tests
+proposed automatically" by "branch coverage before and after", and no
+section names a coverage tool, so it is an option of `nexo test`, as
+`--suggest` is (D131): `nexo test --coverage [paths]` runs the same
+tests and, after their summary, prints `Branch coverage: 6 of 10 (60%).`
+(rounded down), each branch that never ran as `file:line: what.`, by
+file and line, and a sentence on how to cover them. The exit code is
+that of `nexo test`: coverage is a measure, not a rule.
+- A branch is a block that runs on some paths only, as the developer
+  wrote it: the body of each function and method (`the function
+  "Shape.area" never ran`, on the line of its name), each branch of an
+  `if`, `elif` and `else`, the path an `if` without `else` takes when no
+  condition holds (on the line of the `if`), each arm of a `match`, each
+  loop body (`for`, `while`, `repeat`) and each `else` of a `try`; the
+  `undo` part of an action is its own branch. The others are on the line
+  of their first statement.
+- Not counted: `test` blocks (they are what runs the code), lambdas,
+  `parallel for` and `on`/`when` blocks (code inside expressions and
+  events), and the code the parser writes for module blocks and patterns
+  (functions whose names start with `__`, the `try` of `protect`,
+  transactions, actions and workflows, the steps of a workflow).
+  Function bodies count, so a function with no `if` that no test calls
+  is still found.
+- Both parsers' programs get a call `__cover(n)` first in each branch
+  (after the `expect`s and `ensure`s that open it) before they run or
+  are compiled, so both phases count the same branches; the modules a
+  file uses are counted too. A file whose tests do not run (it does not
+  load, or has no test) adds nothing. With several files, a branch
+  counts once and is covered if any file's tests ran it.
+- Statement and line coverage, reports in other formats and a minimum
+  percentage are not in the specification and are not added.
+
+**D156. Programs that start sooner and calls that check less.** Two
+changes to compiled programs, neither of which shows in their output:
+- They are linked without position-independent code (`-fno-pic`,
+  `-no-pie`): the runtime's tables need no relocation when the program
+  starts (20,000 of them), and the code reads the runtime's globals
+  directly. A program that prints one line starts in about 1.7 ms instead
+  of 2.5 ms. The program still runs on a thread with a large stack (D73):
+  running it on the main thread, with a stack of its own, started 0.25 ms
+  sooner but made programs that create many objects about 15% slower.
+- An int-only function (D84) checked the depth of calls and, when some
+  thread had a `try within`, the clock, at every call. The thread state
+  now holds a limit that is the largest depth, or 0 while a `try within`
+  runs, so one comparison does both, and the slow path tells them apart.
+  fib(32) runs about 20% faster.
+
+**D157. Records that never leave their function are kept as their
+fields.** Section 7 says the compiler moves a value when it proves a
+single owner; the same proof allows more for small records. A variable
+whose type is defined once at the top level with only `int` fields,
+which is only given values by `name = T(a, b)` (arguments certainly
+ints that do not read it), only read as `name.field` and used to call
+methods that read `self` only through its fields, take ints and return
+an int, and that no other function can see, is replaced by one int per
+field; each of those methods becomes a top-level function that takes the
+fields (compiler/nexoc/src/unbox.rs). Every argument is evaluated before
+any field changes, as the record is built before it is assigned, so a
+failure in a later argument leaves the fields as they were; a method
+call that a test fakes (`fake p.norm returns 99`) keeps its record,
+since fakes are found by the text of the call. Such a record can never be
+printed, compared, stored or shared, so nothing can tell the difference,
+and every expression keeps its span, so errors read the same. Any other
+record is an object as before. The `records` benchmark builds such a
+record in a loop: it went from 2.5× Rust's time to about 0.4× (the Rust
+program boxes its value, as a record that escapes would need).
+
+**D158. Compiling 100,000 lines in under 10 s.** Three changes to how a
+development build is made, none of which changes the program it gives:
+- Registers, labels and stack slots are numbered again from 1 in each
+  function, so their names stay short: the IR of the program of
+  `compiler/bench/goals.py` went from 121 MB to 102 MB, and both the
+  compiler (which writes it) and clang (which reads it) take less time.
+- The parts compiled at the same time (D135) are balanced by an
+  estimate of clang's work rather than by bytes: the first part also
+  reads the program's data, and a very large function (the top level of
+  a big program) costs clang more per line than many small ones.
+- The parts are linked with lld when it is installed (`ld.lld` on the
+  PATH); otherwise with the system's linker, as before. Linking went
+  from about 1.1 s to 0.3 s. Release builds keep the system's linker, so
+  they stay the same byte for byte (D128).
+The program of goals.py now compiles in about 9.5 s on the 4 cores of
+goals.json (it took 13.9 s).
+
+**D159. An int-only function returns its int.** The body of a function
+whose parameters and result are all `int` (D84) returned a value of two
+words, and its caller checked the tag of the first to know whether it
+had failed. It now returns the int itself, or 0 when it fails, and the
+caller looks at the failure flag of the thread state, which the failure
+already set: one comparison with memory after each call, where there
+were six instructions. fib(32) went from 1.9× to about 1.55× Rust's
+time. The usual entry of such a function (called through a value, with
+named arguments...) gives back the two words as before.
+
+**D160. Fused pipelines over ints.** In a fused `where`/`map`/`sum` loop
+(D134), each step was a function called with the element as a value of
+two words, whose code checked its type at every operation even when the
+list holds ints (D137). A step that captures nothing is now also
+compiled to take the element as an int, like an int-only function
+(D84): the loop calls it when the element is an int and the usual one
+otherwise, and LLVM folds the checks away. A step that is an operator or
+a literal no longer goes through the runtime to see whether it named a
+function (D51), and `sum` adds ints in the loop itself while the total
+is an int (an overflow and any other value go to the runtime as
+before). The `lists` benchmark went from 2.1× to about 1.6× Rust's time.

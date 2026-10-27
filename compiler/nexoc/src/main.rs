@@ -18,6 +18,7 @@ mod ast;
 mod cheader;
 mod checker;
 mod codegen;
+mod cover;
 mod docs;
 mod fmt;
 mod intent;
@@ -39,6 +40,7 @@ mod sbom;
 mod split;
 mod suggest;
 mod typecheck;
+mod unbox;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
@@ -46,7 +48,7 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]"
+    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]"
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -75,9 +77,18 @@ fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, 
     // the modules of the program's files (D124)
     let mut linker = modules::Linker::new(name, next_id);
     linker.link(&mut program).map_err(fail)?;
+    let mut next_id = linker.next_id();
+    if cover::enabled() {
+        next_id = cover::instrument(&mut program, name, next_id);
+    }
     program.files = linker.files;
-    let res = resolve::resolve(&program).map_err(fail)?;
+    let mut res = resolve::resolve(&program).map_err(fail)?;
     typecheck::check(&program, &res).map_err(fail)?;
+    // records that never leave their function become ints (D157)
+    if unbox::unbox(&mut program, &res, &mut next_id) {
+        res = resolve::resolve(&program).map_err(fail)?;
+        typecheck::check(&program, &res).map_err(fail)?;
+    }
     let opts = codegen::Options {
         file: name.to_string(),
         test_mode,
@@ -519,6 +530,20 @@ fn cc_version() -> String {
         .unwrap_or(cc)
 }
 
+/// lld, when it is installed: it links the parts of a large development
+/// build in a fraction of the time (D158).
+fn fast_linker() -> &'static [&'static str] {
+    static LLD: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let found = *LLD.get_or_init(|| {
+        std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|d| d.join("ld.lld").is_file()))
+    });
+    if found {
+        &["-fuse-ld=lld"]
+    } else {
+        &[]
+    }
+}
+
 /// Compile IR and link it with the runtime into a native executable.
 /// Development mode does not optimise: it compiles several times faster
 /// (D127).
@@ -536,7 +561,9 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     let _ = std::fs::create_dir_all(&dir);
     let ll = dir.join("program.ll");
     let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
-    let libs = ["-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
+    // not position-independent: the program starts without relocating the
+    // runtime's tables and reads its globals directly (D156)
+    let libs = ["-no-pie", "-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc"];
     let fail = |output: std::process::Output| String::from_utf8_lossy(&output.stderr).into_owned();
     let dev = opt != "-O2";
     let mut parts = 1;
@@ -561,7 +588,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
         let gc: &[&str] = if dev { &[] } else { &["-Wl,--gc-sections"] };
         let output = Command::new(&cc)
             .arg(opt)
-            .arg("-Wno-override-module")
+            .args(["-Wno-override-module", "-fno-pic"])
             .arg(&ll)
             .arg(runtime_lib())
             .args(["-o"])
@@ -589,7 +616,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
                         let m = dev_ir(m);
                         let mut child = Command::new(&cc)
                             .arg(opt)
-                            .arg("-Wno-override-module")
+                            .args(["-Wno-override-module", "-fno-pic"])
                             .args(["-c", "-x", "ir", "-", "-o"])
                             .arg(obj)
                             .stdin(Stdio::piped())
@@ -621,6 +648,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
         }
         drop(modules);
         let output = Command::new(&cc)
+            .args(fast_linker())
             .args(&objects)
             .arg(runtime_lib())
             .args(["-o"])
@@ -820,10 +848,14 @@ fn test_files(paths: &[String]) -> Vec<PathBuf> {
     found
 }
 
-/// `nexo test [paths]`: run the top level of each file, then its tests (D54).
+/// `nexo test [paths]`: run the top level of each file, then its tests
+/// (D54); with --coverage, the branches the tests ran (D155).
 fn run_tests(paths: &[String]) -> u8 {
     let files = test_files(paths);
     let (mut total, mut passed, mut broken) = (0u32, 0u32, 0u32);
+    let mut branches: Vec<cover::Branch> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut covered = std::collections::HashSet::new();
     for f in &files {
         let display = f.to_string_lossy().into_owned();
         let source = match read_source(&display) {
@@ -859,8 +891,13 @@ fn run_tests(paths: &[String]) -> u8 {
         }
         let report = dir.join("report");
         let _ = std::fs::remove_file(&report);
+        let hits = dir.join("cover");
+        let _ = std::fs::remove_file(&hits);
         let mut cmd = Command::new(&exe);
         cmd.env("NEXO_TEST_REPORT", &report);
+        if cover::enabled() {
+            cmd.env("NEXO_COVER_REPORT", &hits);
+        }
         if files.len() > 1 {
             cmd.env("NEXO_TEST_HEADER", &name);
         }
@@ -870,6 +907,21 @@ fn run_tests(paths: &[String]) -> u8 {
         if nums.len() == 2 {
             total += nums[0];
             passed += nums[1];
+            if cover::enabled() && nums[0] > 0 {
+                let ran: std::collections::HashSet<usize> = std::fs::read_to_string(&hits)
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .filter_map(|n| n.parse().ok())
+                    .collect();
+                for (i, b) in cover::TABLE.lock().unwrap().iter().enumerate() {
+                    if seen.insert(b.key()) {
+                        branches.push(b.clone());
+                    }
+                    if ran.contains(&i) {
+                        covered.insert(b.key());
+                    }
+                }
+            }
         }
         if !ok || nums.len() != 2 {
             broken += 1;
@@ -882,6 +934,9 @@ fn run_tests(paths: &[String]) -> u8 {
         return 0;
     }
     println!("{}", summary(total, passed, total - passed));
+    if cover::enabled() {
+        print!("{}", cover::report(&branches, &covered));
+    }
     if passed == total && broken == 0 {
         0
     } else {
@@ -1270,6 +1325,10 @@ fn main() -> ExitCode {
     } else {
         match rest[0].as_str() {
             "test" if rest.get(1).map(String::as_str) == Some("--suggest") => run_suggest(&rest[2..]),
+            "test" if rest.get(1).map(String::as_str) == Some("--coverage") => {
+                cover::ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+                run_tests(&rest[2..])
+            }
             "test" => run_tests(&rest[1..]),
             "build" => build(&rest[1..]),
             "fmt" => run_fmt(&rest[1..]),

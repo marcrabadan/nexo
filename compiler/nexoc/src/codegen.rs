@@ -137,6 +137,15 @@ struct FnState {
     sure: Vec<BindingId>,
     /// the register pointing at the call depth in the thread state
     depth_ptr: String,
+    /// the entry of an int-only function checked the clock with its depth
+    /// (D156): the first statement of its body does not
+    entry_checked: bool,
+    /// the last number of a name local to this function (D158)
+    local: usize,
+    /// registers that certainly hold an int: no counts, no tag checks
+    int_regs: std::collections::HashSet<String>,
+    /// registers that certainly hold a bool, and the i1 it was made from
+    bool_regs: HashMap<String, String>,
     /// every `return` so far gave a value known to be an int
     ret_ints: bool,
 }
@@ -188,6 +197,8 @@ pub struct Gen<'a> {
     leaf_fns: HashMap<u32, (String, String)>,
     /// functions on ints only: the version that takes the numbers directly
     int_workers: HashMap<FrameId, String>,
+    /// the steps of fused pipelines compiled to take an int element (D160)
+    step_workers: HashMap<FrameId, String>,
     /// set while compiling such a version
     int_params: bool,
     /// the next block is the body of an `if` or `match` branch (D139)
@@ -206,10 +217,6 @@ pub struct Gen<'a> {
     var_decls: std::collections::HashSet<u32>,
     /// the bindings of each frame, in order
     frame_bindings: HashMap<FrameId, Vec<BindingId>>,
-    /// registers that certainly hold an int: no counts, no tag checks
-    int_regs: std::collections::HashSet<String>,
-    /// registers that certainly hold a bool, and the i1 it was made from
-    bool_regs: HashMap<String, String>,
     /// what the contract prover knows, and the type each method belongs to
     prover: Option<crate::prove::Types>,
     method_of: HashMap<u32, String>,
@@ -449,6 +456,7 @@ impl<'a> Gen<'a> {
             frame_fns: HashMap::new(),
             leaf_fns: HashMap::new(),
             int_workers: HashMap::new(),
+            step_workers: HashMap::new(),
             int_params: false,
             branch_body: false,
             fs: Vec::new(),
@@ -458,8 +466,6 @@ impl<'a> Gen<'a> {
             single_var: Default::default(),
             var_decls: Default::default(),
             frame_bindings: HashMap::new(),
-            int_regs: Default::default(),
-            bool_regs: HashMap::new(),
             prover: None,
             method_of: HashMap::new(),
             ints: None,
@@ -576,9 +582,31 @@ impl<'a> Gen<'a> {
         self.known_types = types;
     }
 
+    /// Does this register of the function being written certainly hold an int?
+    fn is_int_reg(&self, r: &str) -> bool {
+        self.fs.last().is_some_and(|f| f.int_regs.contains(r))
+    }
+
+    fn is_bool_reg(&self, r: &str) -> bool {
+        self.fs.last().is_some_and(|f| f.bool_regs.contains_key(r))
+    }
+
     fn next(&mut self) -> usize {
         self.counter += 1;
         self.counter
+    }
+
+    /// A number for a name local to the function being written: registers,
+    /// labels and slots start again in each function, so the names stay
+    /// short (D158).
+    fn local(&mut self) -> usize {
+        match self.fs.last_mut() {
+            Some(f) => {
+                f.local += 1;
+                f.local
+            }
+            None => self.next(),
+        }
     }
 
     fn f(&mut self) -> &mut FnState {
@@ -878,7 +906,7 @@ impl<'a> Gen<'a> {
 
     fn emit(&mut self, line: &str) {
         if self.f().terminated {
-            let l = format!("D{}", self.next());
+            let l = format!("D{}", self.local());
             let f = self.f();
             let _ = writeln!(f.body, "{l}:");
             f.terminated = false;
@@ -897,7 +925,7 @@ impl<'a> Gen<'a> {
     }
 
     fn label(&mut self) -> String {
-        format!("L{}", self.next())
+        format!("L{}", self.local())
     }
 
     fn place(&mut self, label: &str) {
@@ -921,11 +949,11 @@ impl<'a> Gen<'a> {
     }
 
     fn reg(&mut self) -> String {
-        format!("%r{}", self.next())
+        format!("%r{}", self.local())
     }
 
     fn alloca(&mut self, ty: &str) -> String {
-        let name = format!("%a{}", self.next());
+        let name = format!("%a{}", self.local());
         let f = self.f();
         let _ = writeln!(f.allocas, "  {name} = alloca {ty}");
         name
@@ -1001,7 +1029,7 @@ impl<'a> Gen<'a> {
         if extra.is_empty() {
             return label;
         }
-        let pad = format!("PAD{}", self.next());
+        let pad = format!("PAD{}", self.local());
         let mut text = format!("{pad}:\n");
         for l in extra.iter().rev() {
             text.push_str(&self.release_text(l));
@@ -1079,7 +1107,7 @@ impl<'a> Gen<'a> {
     fn rc_inc(&mut self, v: &Val) {
         match v {
             Val::Lit(t, _) if *t != T_OBJ => return,
-            Val::Reg(r) if self.int_regs.contains(r) || self.bool_regs.contains_key(r) => return,
+            Val::Reg(r) if self.is_int_reg(r) || self.is_bool_reg(r) => return,
             _ => {}
         }
         let x = self.agg(v);
@@ -1089,7 +1117,7 @@ impl<'a> Gen<'a> {
     fn rc_dec(&mut self, v: &Val) {
         match v {
             Val::Lit(t, _) if *t != T_OBJ => return,
-            Val::Reg(r) if self.int_regs.contains(r) || self.bool_regs.contains_key(r) => return,
+            Val::Reg(r) if self.is_int_reg(r) || self.is_bool_reg(r) => return,
             _ => {}
         }
         let x = self.agg(v);
@@ -1231,8 +1259,8 @@ impl<'a> Gen<'a> {
     fn is_tag(&mut self, v: &Val, tag: u64) -> String {
         let known = match v {
             Val::Lit(t, _) => Some(*t),
-            Val::Reg(r) if self.int_regs.contains(r) => Some(T_INT),
-            Val::Reg(r) if self.bool_regs.contains_key(r) => Some(T_BOOL),
+            Val::Reg(r) if self.is_int_reg(r) => Some(T_INT),
+            Val::Reg(r) if self.is_bool_reg(r) => Some(T_BOOL),
             _ => None,
         };
         if let Some(t) = known {
@@ -1274,7 +1302,7 @@ impl<'a> Gen<'a> {
     /// The i1 of a value known to be a bool.
     fn known_bool(&self, v: &Val) -> Option<String> {
         match v {
-            Val::Reg(r) => self.bool_regs.get(r).cloned(),
+            Val::Reg(r) => self.fs.last().and_then(|f| f.bool_regs.get(r).cloned()),
             _ => None,
         }
     }
@@ -1284,7 +1312,7 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("{z} = zext i1 {cond} to i64"));
         let r = self.reg();
         self.emitf(format_args!("{r} = insertvalue %V {{ i64 1, i64 0 }}, i64 {z}, 1"));
-        self.bool_regs.insert(r.clone(), cond.to_string());
+        self.f().bool_regs.insert(r.clone(), cond.to_string());
         Val::Reg(r)
     }
 
@@ -1315,7 +1343,7 @@ impl<'a> Gen<'a> {
     fn plain(&mut self, v: Val) -> Val {
         match &v {
             Val::Lit(..) => v,
-            Val::Reg(r) if self.int_regs.contains(r) => v,
+            Val::Reg(r) if self.is_int_reg(r) => v,
             Val::Reg(r) => {
                 let x = self.reg();
                 self.emitf(format_args!("{x} = call %V @nx_plainv(%V {r})"));
@@ -1683,10 +1711,19 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
         let d = self.reg();
         self.emitf(format_args!("{d} = load i64, ptr {dp}"));
-        let r = self.reg();
-        self.emitf(format_args!("{r} = call %V {worker}(ptr %tls, ptr %clo, i64 {d}, {}, i32 %span)", payloads.join(", ")));
+        let x = self.reg();
+        self.emitf(format_args!("{x} = call i64 {worker}(ptr %tls, ptr %clo, i64 {d}, {}, i32 %span)", payloads.join(", ")));
         self.emitf(format_args!("store i64 {d}, ptr {dp}"));
-        self.emitf(format_args!("ret %V {r}"));
+        // the int, or nothing when it failed (D159)
+        let r = self.reg();
+        self.emitf(format_args!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {x}, 1"));
+        let fl = self.reg();
+        self.emitf(format_args!("{fl} = load i8, ptr %tls"));
+        let failed = self.reg();
+        self.emitf(format_args!("{failed} = icmp ne i8 {fl}, 0"));
+        let out = self.reg();
+        self.emitf(format_args!("{out} = select i1 {failed}, %V {{ i64 0, i64 0 }}, %V {r}"));
+        self.emitf(format_args!("ret %V {out}"));
         self.f().terminated = true;
         let st = self.fs.pop().unwrap();
         let mut text = format!("define internal %V {name}(ptr %tls, ptr %clo, ptr %args, i32 %span) {{\nentry:\n");
@@ -1716,6 +1753,10 @@ impl<'a> Gen<'a> {
             ret_label: format!("RET{n}"),
             depth: None,
             int_params: false,
+            entry_checked: false,
+            local: 0,
+            int_regs: Default::default(),
+            bool_regs: HashMap::new(),
             sure: Vec::new(),
             depth_ptr: String::new(),
             ret_ints: true,
@@ -1783,15 +1824,35 @@ impl<'a> Gen<'a> {
         if !int_params {
             self.emitf(format_args!("store i64 {d1}, ptr {dp}"));
         }
-        let deep = self.reg();
-        self.emitf(format_args!("{deep} = icmp ugt i64 {d1}, {MAX_DEPTH}"));
-        let too = self.label();
-        let fine = self.label();
-        self.cond_br(&deep, &too, &fine);
-        self.place(&too);
-        self.call_void("nx_too_deep", "");
-        self.fail_here();
-        self.place(&fine);
+        if int_params {
+            // one comparison checks the depth and, while a `try within`
+            // runs, the clock (the limit is then 0, D156)
+            let lp = self.reg();
+            self.emitf(format_args!("{lp} = getelementptr inbounds i8, ptr %tls, i64 32"));
+            let lim = self.reg();
+            self.emitf(format_args!("{lim} = load i64, ptr {lp}"));
+            let over = self.reg();
+            self.emitf(format_args!("{over} = icmp ugt i64 {d1}, {lim}"));
+            let slow = self.label();
+            let fine = self.label();
+            self.cond_br(&over, &slow, &fine);
+            self.place(&slow);
+            self.call_void("nx_enter_slow", &format!("i64 {d1}"));
+            self.check();
+            self.br(&fine);
+            self.place(&fine);
+            self.f().entry_checked = true;
+        } else {
+            let deep = self.reg();
+            self.emitf(format_args!("{deep} = icmp ugt i64 {d1}, {MAX_DEPTH}"));
+            let too = self.label();
+            let fine = self.label();
+            self.cond_br(&deep, &too, &fine);
+            self.place(&too);
+            self.call_void("nx_too_deep", "");
+            self.fail_here();
+            self.place(&fine);
+        }
         let free = self.res.frames[frame].free.clone();
         if !free.is_empty() {
             let p = self.reg();
@@ -1811,7 +1872,7 @@ impl<'a> Gen<'a> {
             if int_params {
                 let v = self.reg();
                 self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 %p{i}, 1"));
-                self.int_regs.insert(v.clone());
+                self.f().int_regs.insert(v.clone());
                 self.store_binding(*b, &Val::Reg(v));
                 continue;
             }
@@ -1930,7 +1991,10 @@ impl<'a> Gen<'a> {
         let mut text = String::new();
         if let (true, FrameSrc::Fn(f)) = (int_params, src) {
             let ps: Vec<String> = (0..f.params.len()).map(|i| format!("i64 %p{i}")).collect();
-            let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, i64 %depth, {}, i32 %span) {{\nentry:", ps.join(", "));
+            let _ = writeln!(text, "define internal i64 {name}(ptr %tls, ptr %clo, i64 %depth, {}, i32 %span) {{\nentry:", ps.join(", "));
+        } else if int_params {
+            // a step of a fused pipeline whose element is an int (D160)
+            let _ = writeln!(text, "define internal %V {name}(ptr %tls, ptr %clo, i64 %depth, i64 %p0, i32 %span) #1 {{\nentry:");
         } else {
             // the step of a pipeline is small and called from one loop: it
             // goes inside it (D134)
@@ -1946,7 +2010,15 @@ impl<'a> Gen<'a> {
         }
         self.leave_depth();
         if let Some(token) = &security_scope { self.call_void("nx_security_restore", &format!("i64 {token}")); }
-        self.emitf(format_args!("ret %V {r}"));
+        let worker = int_params && matches!(src, FrameSrc::Fn(_));
+        if worker {
+            // an int-only worker returns the int itself (D159)
+            let x = self.reg();
+            self.emitf(format_args!("{x} = extractvalue %V {r}, 1"));
+            self.emitf(format_args!("ret i64 {x}"));
+        } else {
+            self.emitf(format_args!("ret %V {r}"));
+        }
         self.f().terminated = true;
         let unwinds: Vec<String> = self.f().unwind.iter().map(|(u, _)| u.clone()).collect();
         let mut tail = String::new();
@@ -1960,7 +2032,8 @@ impl<'a> Gen<'a> {
                 format!("  %ud{n}p = getelementptr inbounds i8, ptr %tls, i64 8\n  %ud{n} = load i64, ptr %ud{n}p\n  %ud{n}x = sub i64 %ud{n}, 1\n  store i64 %ud{n}x, ptr %ud{n}p\n")
             };
             let security = security_scope.as_ref().map(|t| format!("  call void @nx_security_restore(i64 {t})\n")).unwrap_or_default();
-            let _ = writeln!(tail, "{u}:\n{release}{ret_release}{depth}{security}  ret %V {{ i64 0, i64 0 }}");
+            let failed = if worker { "ret i64 0" } else { "ret %V { i64 0, i64 0 }" };
+            let _ = writeln!(tail, "{u}:\n{release}{ret_release}{depth}{security}  {failed}");
         }
         let st = self.fs.pop().unwrap();
         text.push_str(&st.allocas);
@@ -2183,7 +2256,11 @@ impl<'a> Gen<'a> {
             self.echo_next = top && self.repl_live;
             // the statements of the top level never run inside `try within`
             if !top && (!sparse || (k == 0 && !branch)) {
-                self.deadline_tick();
+                if sparse && k == 0 && std::mem::take(&mut self.f().entry_checked) {
+                    // the entry of the function has just checked it (D156)
+                } else {
+                    self.deadline_tick();
+                }
             }
             let before = self.f().live.len();
             // a statement that uses a shared variable holds its lock
@@ -2334,7 +2411,7 @@ impl<'a> Gen<'a> {
                         let l = self.f().ret_label.clone();
                         let int = match &v {
                             Val::Lit(t, _) => *t == T_INT,
-                            Val::Reg(r) => self.int_regs.contains(r),
+                            Val::Reg(r) => self.is_int_reg(r),
                         };
                         self.f().ret_ints &= int;
                         self.own(&v);
@@ -2497,7 +2574,7 @@ impl<'a> Gen<'a> {
                         self.place(&yes);
                         let v = self.reg();
                         self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {cur}, 1"));
-                        self.int_regs.insert(v.clone());
+                        self.f().int_regs.insert(v.clone());
                         self.enter_scope(scope);
                         self.store_binding(var, &Val::Reg(v));
                         self.block(body)?;
@@ -2686,7 +2763,7 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("{n_} = load i64, ptr {pi}"));
         let xi = self.reg();
         self.emitf(format_args!("{xi} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {n_}, 1"));
-        self.int_regs.insert(xi.clone());
+        self.f().int_regs.insert(xi.clone());
         self.emitf(format_args!("store %V {xi}, ptr {item}"));
         self.br(&got);
         self.place(&val_l);
@@ -3529,7 +3606,7 @@ impl<'a> Gen<'a> {
                 self.emitf(format_args!("{bits} = extractvalue %V {r}, 1"));
                 let n = self.reg();
                 self.emitf(format_args!("{n} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {bits}, 1"));
-                self.int_regs.insert(n.clone());
+                self.f().int_regs.insert(n.clone());
                 self.unlive(&Live::Reg(r.clone()));
                 return Ok(Val::Reg(n));
             }
@@ -3954,7 +4031,7 @@ impl<'a> Gen<'a> {
         };
         let v = self.reg();
         self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
-        self.int_regs.insert(v.clone());
+        self.f().int_regs.insert(v.clone());
         self.emitf(format_args!("store %V {v}, ptr {slot}"));
         self.br(&done);
         self.place(&slow);
@@ -3996,7 +4073,7 @@ impl<'a> Gen<'a> {
                 }
                 let x = self.reg();
                 self.emitf(format_args!("{x} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {v}, 1"));
-                self.int_regs.insert(x.clone());
+                self.f().int_regs.insert(x.clone());
                 return Ok(Val::Reg(x));
             }
             "+" | "-" | "*" => {
@@ -4075,7 +4152,7 @@ impl<'a> Gen<'a> {
         };
         let v = self.reg();
         self.emitf(format_args!("{v} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {res}, 1"));
-        self.int_regs.insert(v.clone());
+        self.f().int_regs.insert(v.clone());
         let done = self.label();
         self.br(&done);
         // the runtime reports the error (it always fails here)
@@ -4469,7 +4546,7 @@ impl<'a> Gen<'a> {
             let v = self.load_binding(cands[0]);
             if let Val::Reg(r) = &v {
                 if self.int_binding(cands[0]) {
-                    self.int_regs.insert(r.clone());
+                    self.f().int_regs.insert(r.clone());
                 }
             }
             self.rc_inc(&v);
@@ -4873,7 +4950,7 @@ impl<'a> Gen<'a> {
         self.check();
         if m.ret.as_ref().is_some_and(crate::narrow::is_int_type) {
             // the frame checks what it returns
-            self.int_regs.insert(r.clone());
+            self.f().int_regs.insert(r.clone());
         }
         for v in evaluated.iter().rev() {
             self.drop_val(v);
@@ -5011,22 +5088,18 @@ impl<'a> Gen<'a> {
                         d
                     }
                 };
-                self.emitf(format_args!("{r} = call %V {worker}(ptr %tls, ptr {clo}, i64 {d}, {}, i32 {sp})", ps.join(", ")));
+                // the worker returns the int itself; the thread state says
+                // whether it failed (D159)
+                let x = self.reg();
+                self.emitf(format_args!("{x} = call i64 {worker}(ptr %tls, ptr {clo}, i64 {d}, {}, i32 {sp})", ps.join(", ")));
                 if !self.f().int_params {
                     // the worker leaves its own depth in the thread state
                     let dp = self.reg();
                     self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
                     self.emitf(format_args!("store i64 {d}, ptr {dp}"));
                 }
-                // it returns an int unless it failed
-                let t = self.reg();
-                self.emitf(format_args!("{t} = extractvalue %V {r}, 0"));
-                let c = self.reg();
-                self.emitf(format_args!("{c} = icmp ne i64 {t}, {T_INT}"));
-                let ok = self.label();
-                let unwind = self.unwind_label();
-                self.cond_br(&c, &unwind, &ok);
-                self.place(&ok);
+                self.check();
+                self.emitf(format_args!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {x}, 1"));
             }
             _ => {
                 let arr = self.values_array(&vals);
@@ -5038,6 +5111,23 @@ impl<'a> Gen<'a> {
             self.drop_val(v);
         }
         Ok(Some(self.owned(Val::Reg(r))))
+    }
+
+    /// The step compiled once more to take an int element in a register:
+    /// its type checks fold away (D160). Only for a step that captures
+    /// nothing.
+    fn step_worker(&mut self, frame: FrameId, e: &'a Expr) -> GResult<Option<String>> {
+        if !self.res.frames[frame].free.is_empty() || self.res.frames[frame].params.len() != 1 {
+            return Ok(None);
+        }
+        if let Some(w) = self.step_workers.get(&frame) {
+            return Ok(Some(w.clone()));
+        }
+        let name = format!("@sw.{}", self.next());
+        self.step_workers.insert(frame, name.clone());
+        self.int_params = true;
+        self.compile_frame(frame, FrameSrc::Step(e), &name)?;
+        Ok(Some(name))
     }
 
     fn step_closure(&mut self, node: Node, e: &'a Expr) -> GResult<Val> {
@@ -5085,6 +5175,7 @@ impl<'a> Gen<'a> {
         self.place(&fused);
         let last = steps.len() - 1;
         let mut fns: Vec<(String, String, Option<String>)> = Vec::new();
+        let mut workers: Vec<Option<String>> = Vec::new();
         for (i, step) in steps[..last].iter().enumerate() {
             let x = step.expr.as_ref().unwrap();
             let node = Node::Step(e.id, i);
@@ -5102,7 +5193,9 @@ impl<'a> Gen<'a> {
                 self.emitf(format_args!("{p} = call ptr @nx_func_ptr({cb})"));
                 (p, Some(cs))
             };
+            let worker = self.step_worker(frame, x)?;
             fns.push((fname, clo.0, clo.1));
+            workers.push(worker);
         }
         let first_sp = self.span_id(steps[0].span);
         let cur = self.load(&src_slot);
@@ -5141,18 +5234,68 @@ impl<'a> Gen<'a> {
             let x = step.expr.as_ref().unwrap();
             let esp = self.span_id(x.span);
             let (fname, clo, _) = fns[i].clone();
-            let arr = self.values_array(std::slice::from_ref(&v));
-            let r = self.reg();
-            self.emitf(format_args!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {esp})"));
+            let r = if let Some(w) = workers[i].clone() {
+                // an int element goes to the step that takes ints (D160)
+                let out = self.alloca("%V");
+                let tag = self.tag_of(&v);
+                let is_int = self.reg();
+                self.emitf(format_args!("{is_int} = icmp eq i64 {tag}, {T_INT}"));
+                let fast = self.label();
+                let slow = self.label();
+                let join = self.label();
+                self.cond_br(&is_int, &fast, &slow);
+                self.place(&fast);
+                let bits = self.bits_of(&v);
+                let d = match self.f().depth.clone() {
+                    Some(d) => d,
+                    None => {
+                        let dp = self.reg();
+                        self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+                        let d = self.reg();
+                        self.emitf(format_args!("{d} = load i64, ptr {dp}"));
+                        d
+                    }
+                };
+                let r1 = self.reg();
+                self.emitf(format_args!("{r1} = call %V {w}(ptr %tls, ptr null, i64 {d}, i64 {bits}, i32 {esp})"));
+                if !self.f().int_params {
+                    let dp = self.reg();
+                    self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
+                    self.emitf(format_args!("store i64 {d}, ptr {dp}"));
+                }
+                self.emitf(format_args!("store %V {r1}, ptr {out}"));
+                self.br(&join);
+                self.place(&slow);
+                let arr = self.values_array(std::slice::from_ref(&v));
+                let r2 = self.reg();
+                self.emitf(format_args!("{r2} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {esp})"));
+                self.emitf(format_args!("store %V {r2}, ptr {out}"));
+                self.br(&join);
+                self.place(&join);
+                let r = self.reg();
+                self.emitf(format_args!("{r} = load %V, ptr {out}"));
+                r
+            } else {
+                let arr = self.values_array(std::slice::from_ref(&v));
+                let r = self.reg();
+                self.emitf(format_args!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {esp})"));
+                r
+            };
             self.check();
             let r = self.owned(Val::Reg(r));
-            // a step that names a function calls it with the element (D51)
-            let rt = self.tb(&r);
-            let vt = self.tb(&v);
-            let r2 = self.call_v("nx_pipe_step", &format!("{rt}, {vt}, i32 {esp}"));
-            self.check();
-            let r2 = self.owned(r2);
-            self.drop_val(&r);
+            // a step that names a function calls it with the element (D51);
+            // an operator or a literal never gives a function
+            let r2 = if may_be_callable(x) {
+                let rt = self.tb(&r);
+                let vt = self.tb(&v);
+                let r2 = self.call_v("nx_pipe_step", &format!("{rt}, {vt}, i32 {esp}"));
+                self.check();
+                let r2 = self.owned(r2);
+                self.drop_val(&r);
+                r2
+            } else {
+                r
+            };
             if step.kind == StepKind::Where {
                 let c = self.truth(&r2, x.span, "where");
                 let keep = self.label();
@@ -5172,8 +5315,67 @@ impl<'a> Gen<'a> {
             }
         }
         if is_sum {
+            // ints are added here while the total is an int; anything else
+            // (and an overflow, which the runtime reports) goes to nx_sum_push
+            let vv = self.agg(&v);
+            let vtag = self.reg();
+            self.emitf(format_args!("{vtag} = extractvalue %V {vv}, 0"));
+            let vbits = self.reg();
+            self.emitf(format_args!("{vbits} = extractvalue %V {vv}, 1"));
+            let av = self.reg();
+            self.emitf(format_args!("{av} = load %V, ptr {acc}"));
+            let atag = self.reg();
+            self.emitf(format_args!("{atag} = extractvalue %V {av}, 0"));
+            let rtag = self.reg();
+            let rv = self.reg();
+            self.emitf(format_args!("{rv} = load %V, ptr {rest}"));
+            self.emitf(format_args!("{rtag} = extractvalue %V {rv}, 0"));
+            let c1 = self.reg();
+            self.emitf(format_args!("{c1} = icmp eq i64 {vtag}, {T_INT}"));
+            let c2 = self.reg();
+            self.emitf(format_args!("{c2} = icmp eq i64 {rtag}, {T_NONE}"));
+            let c3 = self.reg();
+            self.emitf(format_args!("{c3} = icmp eq i64 {atag}, {T_INT}"));
+            let c4 = self.reg();
+            self.emitf(format_args!("{c4} = icmp eq i64 {atag}, {T_UNDEF}"));
+            let ints = self.reg();
+            self.emitf(format_args!("{ints} = and i1 {c1}, {c2}"));
+            let add = self.reg();
+            self.emitf(format_args!("{add} = and i1 {ints}, {c3}"));
+            let first = self.reg();
+            self.emitf(format_args!("{first} = and i1 {ints}, {c4}"));
+            let fast = self.label();
+            let not_add = self.label();
+            let set_first = self.label();
+            let slow = self.label();
+            let done = self.label();
+            self.cond_br(&add, &fast, &not_add);
+            self.place(&fast);
+            let abits = self.reg();
+            self.emitf(format_args!("{abits} = extractvalue %V {av}, 1"));
+            let sum = self.reg();
+            self.emitf(format_args!("{sum} = call {{ i64, i1 }} @llvm.sadd.with.overflow.i64(i64 {abits}, i64 {vbits})"));
+            let ovf = self.reg();
+            self.emitf(format_args!("{ovf} = extractvalue {{ i64, i1 }} {sum}, 1"));
+            let store = self.label();
+            self.cond_br(&ovf, &slow, &store);
+            self.place(&store);
+            let s0 = self.reg();
+            self.emitf(format_args!("{s0} = extractvalue {{ i64, i1 }} {sum}, 0"));
+            let nv = self.reg();
+            self.emitf(format_args!("{nv} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {s0}, 1"));
+            self.emitf(format_args!("store %V {nv}, ptr {acc}"));
+            self.br(&done);
+            self.place(&not_add);
+            self.cond_br(&first, &set_first, &slow);
+            self.place(&set_first);
+            self.emitf(format_args!("store %V {vv}, ptr {acc}"));
+            self.br(&done);
+            self.place(&slow);
             let vt = self.tb(&v);
             self.call_void("nx_sum_push", &format!("ptr {acc}, ptr {rest}, {vt}"));
+            self.br(&done);
+            self.place(&done);
         } else {
             let c = self.reg();
             self.emitf(format_args!("{c} = load i64, ptr {acc}"));
@@ -5199,7 +5401,7 @@ impl<'a> Gen<'a> {
             self.emitf(format_args!("{c} = load i64, ptr {acc}"));
             let r = self.reg();
             self.emitf(format_args!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {c}, 1"));
-            self.int_regs.insert(r.clone());
+            self.f().int_regs.insert(r.clone());
             Val::Reg(r)
         };
         for (_, _, cs) in fns.iter().rev() {
@@ -5578,6 +5780,7 @@ declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
+declare void @nx_enter_slow(i64)
 declare void @nx_too_deep()
 declare void @nx_security_result(i64, i64, i32)
 declare void @nx_security_contexts_ready()

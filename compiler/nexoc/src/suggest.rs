@@ -150,7 +150,7 @@ fn candidates(t: &TypeExpr, lines: &[&str], enums: &[(String, Vec<String>)]) -> 
 /// (function, the calls of its cases) for each function it can test.
 pub fn calls_of(program: &Program, source: &str) -> Vec<(String, Vec<String>)> {
     let lines: Vec<&str> = source.split('\n').collect();
-    let enums: Vec<(String, Vec<String>)> = program
+    let mut enums: Vec<(String, Vec<String>)> = program
         .body
         .iter()
         .filter_map(|s| match &s.kind {
@@ -160,6 +160,17 @@ pub fn calls_of(program: &Program, source: &str) -> Vec<(String, Vec<String>)> {
             _ => None,
         })
         .collect();
+    // a named union or range (`type Level = "low" | "high"`) gives its values
+    for s in &program.body {
+        if let StmtKind::Type(t) = &s.kind {
+            if let Some(alias @ (TypeExpr::Union { .. } | TypeExpr::Range { .. })) = &t.alias {
+                if let Some(values) = candidates(alias, &lines, &enums) {
+                    enums.retain(|(n, _)| n != &t.name);
+                    enums.push((t.name.clone(), values));
+                }
+            }
+        }
+    }
     let mut out = Vec::new();
     'fns: for s in &program.body {
         let StmtKind::Fn(f) = &s.kind else { continue };
