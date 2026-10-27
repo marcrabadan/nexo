@@ -1,0 +1,14 @@
+[{"region": "north", "count": 2}, {"region": "south", "count": 1}, {"region": "east", "count": 1}]
+[{"region": "north", "units": 7}, {"region": "south", "units": 5}]
+[{"kind": Retail, "units": 2.0}, {"kind": Online, "units": 4.5}]
+[{"note": none, "count": 3}, {"note": "x", "count": 1}]
+[{"region": "north", "units": 3}, {"region": "south", "units": 5}]
+3
+[{"region": "north", "price": 1.6}, {"region": "south", "price": 2.25}, {"region": "east", "price": 0.2}]
+[{"region": "east", "count": 1}, {"region": "north", "count": 2}, {"region": "south", "count": 1}]
+[{"region": "north", "extra ?? 0": 0}, {"region": "south", "extra ?? 0": 2}, {"region": "east", "extra ?? 0": 7}]
+[{"region": "north"}, {"region": "north"}]
+Error in s06_db_group.nexo, line 41:
+  print(db.Sale |> group by region |> sum units)
+                                      ^^^^^^^^^
+Unhandled error (Overflow): The result does not fit in a 64-bit int. Use smaller values, or decimal(x) or float(x) for large numbers.

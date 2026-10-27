@@ -121,8 +121,26 @@ def unseal(call, key: bytes, text: str, table: str) -> str:
 # ------------------------------------------------ the database's side
 
 def ensure_table(db, call) -> None:
-    db.execute(call, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ("tbl" TEXT NOT NULL, "row" INTEGER NOT NULL, '
-               '"state" TEXT NOT NULL, PRIMARY KEY ("tbl", "row"))', [])
+    whole = "BIGINT" if db.pg or db.mysql else "INTEGER"
+    # MySQL keys a text of a known length (D170)
+    text = "VARCHAR(255)" if db.mysql else "TEXT"
+    db.execute(call, f'CREATE TABLE IF NOT EXISTS "{TABLE}" ("tbl" {text} NOT NULL, "row" {whole} NOT NULL, '
+               f'"state" {text} NOT NULL, PRIMARY KEY ("tbl", "row"))', [])
+
+
+def set_state(db, call, table: str, key, state: str) -> None:
+    """Mark a row restricted or erased (INSERT OR REPLACE in SQLite)."""
+    if db.document:
+        return db.set_state(call, table, key, state)
+    if db.mysql:
+        db.execute(call, f'INSERT INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?) '
+                         'ON DUPLICATE KEY UPDATE "state" = VALUES("state")', [table, key, state])
+    elif db.pg:
+        db.execute(call, f'INSERT INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?) '
+                         'ON CONFLICT ("tbl", "row") DO UPDATE SET "state" = EXCLUDED."state"', [table, key, state])
+    else:
+        db.execute(call, f'INSERT OR REPLACE INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?)',
+                   [table, key, state])
 
 
 def hidden_where(info) -> str:
@@ -138,19 +156,23 @@ def now_ms() -> int:
     return int(_time.time() * 1000)
 
 
+def cutoff_of(p, col) -> str:
+    """The stored value before which a row is past its keep period."""
+    from .clock import Date, Time
+    seconds = int(p.keep)
+    if col.kind == "date":
+        today = Time(now_ms(), "UTC").date()
+        return Date.from_ordinal(today.ordinal() - seconds // DAY).repr()
+    return Time(now_ms() - seconds * 1000, "UTC").iso_utc()
+
+
 def purge(db, call, info) -> None:
     """Erase the rows past their keep period (section 23, rule 2)."""
     p = info_of(info.rtype)
     if p is None or p.keep is None or info.key is None:
         return
-    from .clock import Date, Time
     col = info.column(p.after)
-    seconds = int(p.keep)
-    if col.kind == "date":
-        today = Time(now_ms(), "UTC").date()
-        cutoff = Date.from_ordinal(today.ordinal() - seconds // DAY).repr()
-    else:
-        cutoff = Time(now_ms() - seconds * 1000, "UTC").iso_utc()
+    cutoff = cutoff_of(p, col)
     rows = db.execute(call, f"SELECT {quote(info.key)} FROM {quote(info.name)} WHERE {quote(col.name)} < ? AND "
                       f'{quote(info.key)} NOT IN (SELECT "row" FROM "{TABLE}" WHERE "tbl" = ? AND "state" = \'erased\') '
                       f"ORDER BY {quote(info.key)}", [cutoff, info.name]).fetchall()
@@ -207,6 +229,8 @@ def anonymise(db, call, info, where: str, params: list) -> None:
 def erase_row(db, call, info, key) -> None:
     """Delete the row, or anonymise it when other rows point to it; the
     personal fields of the rows that point to it are anonymised too."""
+    if db.document:
+        return db.erase_row(call, info, key)
     from .db import interp_tables
     referenced = False
     for other in interp_tables(call.interp).values():
@@ -219,8 +243,7 @@ def erase_row(db, call, info, key) -> None:
                     referenced = True
     if referenced:
         anonymise(db, call, info, f"{quote(info.key)} = ?", [key])
-        db.execute(call, f'INSERT OR REPLACE INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?)',
-                   [info.name, key, "erased"])
+        set_state(db, call, info.name, key, "erased")
     else:
         db.execute(call, f"DELETE FROM {quote(info.name)} WHERE {quote(info.key)} = ?", [key])
         db.execute(call, f'DELETE FROM "{TABLE}" WHERE "tbl" = ? AND "row" = ?', [info.name, key])
@@ -261,7 +284,7 @@ def b_export(call, record):
         col = next((c for c in tinfo.columns if c.kind == "ref" and c.target == info.rtype.name), None) if tinfo else None
         if col is None:
             continue
-        rows = Query(db, tinfo, call, [f"{quote(col.name)} = ?"], [key]).m_all(call)
+        rows = Query(db, tinfo, call, *db.equal(col, key)).m_all(call)
         data[name] = [plain_row(r) for r in rows]
     path = f"{info.name}-{key}.json"
     from .policy import check
@@ -284,8 +307,7 @@ def b_erase(call, record):
 def b_restrict(call, record):
     db, info, key = saved_row(call, "restrict", record)
     db.sync(call, info)
-    db.execute(call, f'INSERT OR REPLACE INTO "{TABLE}" ("tbl", "row", "state") VALUES (?, ?, ?)',
-               [info.name, key, "restricted"])
+    set_state(db, call, info.name, key, "restricted")
     return None
 
 

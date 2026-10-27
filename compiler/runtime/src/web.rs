@@ -79,9 +79,9 @@ fn now_secs() -> f64 {
 
 /// `10 per minute per ip` (D93).
 pub struct Rate {
-    amount: Val,
-    unit: String,
-    per: Option<String>,
+    pub(crate) amount: Val,
+    pub(crate) unit: String,
+    pub(crate) per: Option<String>,
 }
 
 impl Native for Rate {

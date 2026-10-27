@@ -1,0 +1,8 @@
+0 f 1 job of f
+1 a 1 job of a
+2 b 1 job of b
+1 a 2 job of a
+0 f 2 job of f
+1 none 3 no key
+✓ keys keep their partition
+1 test: 1 passed, 0 failed

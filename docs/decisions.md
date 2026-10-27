@@ -2305,3 +2305,453 @@ a literal no longer goes through the runtime to see whether it named a
 function (D51), and `sum` adds ints in the loop itself while the total
 is an int (an overflow and any other value go to the runtime as
 before). The `lists` benchmark went from 2.1× to about 1.6× Rust's time.
+
+**D161. More pipeline steps in SQL.** Section 6 says queries "use the
+same pipeline; they are translated to SQL", and D100 translated `where`,
+`sort by`, `take` and `count`. Two more steps now run in the database
+when the result cannot differ from memory:
+- `pick a, b` of columns of the table reads only those columns; the rows
+  are maps, as in memory. After it only `take` and `count` stay in SQL
+  (a `where` or `sort by` on the picked rows runs in memory).
+- `group by column` on a query whose steps so far are `where` only, of a
+  table with an `id`, by a column of type int, str, bool, date, time or
+  an enum without data (not `@private`), followed by `count`, `sum
+  column` or `avg column`, is one `SELECT key, COUNT(*) ... GROUP BY key
+  ORDER BY MIN(id)`: groups come in the order their first row comes, as
+  in memory. `sum` and `avg` are of a required `int` column; the
+  statement also asks for its `MIN` and `MAX`, and when a group's count
+  times the largest absolute value does not fit in an int (so some order
+  of adding them could overflow) the rows are read and added in memory,
+  which gives the Overflow error of memory. `avg` is the sum divided by
+  the count as `/` divides them. Float sums stay in memory, since SQLite
+  adds reals with compensated summation and the last digit could
+  differ, and so do decimal and money (stored as text).
+- `group by` with nothing after it reads nothing; any other step after
+  it reads the rows and groups them in memory, as before.
+
+**D162. Relations in SQL.** Section 6 has `ref` and `many` fields and
+queries "translated to SQL"; D100 read the row of each `ref` field with
+its own statement, and ran a `where` that reads a field through a `ref`
+in memory.
+- The rows a query reads are read first; then the rows their `ref`
+  columns point to are read with one `SELECT ... WHERE id IN (...)` per
+  column (500 ids at most per statement, in the order they first
+  appear), and those rows' own refs the same way. A ref whose row is
+  missing or hidden (D116) is none, as before. A ref to a row the same
+  statement reads is that row's record, so rows that point to each other
+  (`boss: ref Person?`) are read once, where before reading them never
+  ended; the records then form a cycle through a type that refers to
+  itself, which is freed when the program ends (D79).
+- In a `where` on a query, `ref.field` (a bare ref column, then a field)
+  is a column of the table the ref points to: a comparison with a value,
+  `text in ref.field` or a bare bool `ref.field` becomes `ref_id IN
+  (SELECT id FROM target WHERE ...)`, with the rules of D100 for the
+  field. Only for a required ref (`ref T`, not `ref T?`, whose none
+  would be an error in memory) to a table with an `id` and without
+  personal data (whose hidden rows would be an error in memory too);
+  otherwise, and when comparing two columns, it runs in memory.
+  The table the ref points to is made (synchronised) before the query
+  runs, so a query on a new database finds nothing instead of failing.
+- `many` fields were already a query (`customer_id = ?`), so
+  `ana.orders.count()` and the pipelines on it run in SQL as any query.
+  `group by` a ref stays an error, as in memory (a record is not a key).
+
+**D163. PostgreSQL.** Section 6 connects to a server with
+`connect("postgres://prod/shop", key: secret("DB_PASS"))`; D100 left
+servers for later. Both phases now speak PostgreSQL's protocol (version
+3) themselves, with no driver library (nexo/stdlib/pg.py,
+compiler/runtime/src/pg.rs):
+- The address is `postgres://user@host:port/database` (or
+  `postgresql://`); the user is `postgres` when there is none, the port
+  5432 and the database the user's name. A password inside the address is
+  a DatabaseError: it goes in `key:` (a text or a secret), as section 6
+  writes it, so it is never in the code (section 9). The same key encrypts
+  the `@private` columns (D116), as the key of an SQLite file does.
+  Authentication is SCRAM-SHA-256 (the default of PostgreSQL since 14)
+  or a cleartext password; MD5 is refused as unsupported. The program
+  policy checks `net` to the host (D142).
+- TLS is always asked for, and its certificate is checked against the
+  system's authorities (`SSL_CERT_FILE` adds one, in both phases) and the
+  host name. A server that does not offer TLS is accepted only on this
+  machine (localhost, 127.x, ::1). Failures read the same in both phases:
+  "the certificate is not trusted", "the TLS handshake failed", "cannot
+  reach host:port: Connection refused".
+- The tables and queries are those of SQLite, with PostgreSQL's words
+  where they differ: `id` is `BIGINT GENERATED BY DEFAULT AS IDENTITY`
+  and `add` reads it with `RETURNING`; ints are `BIGINT`, floats `DOUBLE
+  PRECISION`, bools `BOOLEAN` (`= TRUE` for a bare bool column), the
+  other kinds `TEXT COLLATE "C"`, so texts compare and sort byte by byte
+  as in SQLite and in memory; `text in column` uses `strpos`; `sort by`
+  puts none first (`NULLS FIRST`, and `NULLS LAST` with `desc`) as SQLite
+  does; parameters are `$1, $2...` (the SQL log shows them so); a
+  repeated `@unique` value is read from the server's detail; tables and
+  columns are found in `information_schema`; the rows marked by privacy
+  are kept with `ON CONFLICT ... DO UPDATE`. Floats travel as the
+  shortest text that reads back the same (`extra_float_digits` 3).
+- Inside `db.transaction:` each statement runs in a savepoint of its own,
+  so a statement that fails (and is handled with `try`) leaves the
+  transaction as it was, as in SQLite; PostgreSQL would otherwise refuse
+  every later statement of the transaction.
+- `group by` sums (D161) need no overflow check from the server, which
+  adds bigints as numeric; the check of D161 still decides.
+- `nexo db diff|migrate` take the server from the program's first
+  `connect("postgres://...", key: secret("NAME"))` and the password from
+  the variable NAME; removed columns are `ALTER TABLE ... DROP COLUMN`.
+- The tests start a PostgreSQL server with TLS and a certificate
+  authority of their own (tests/test_postgres.py, skipped when PostgreSQL
+  is not installed), run the db conformance programs on it with the
+  output of SQLite, and compare the SQL both phases send.
+
+**D164. `ask(..., stream: true)` as the answer arrives.** D107 returned
+the list of pieces once the answer was complete. Now:
+- `ask` reads until the first piece of text has arrived and returns a
+  lazy list of the pieces, read from the open connection as the program
+  asks for them: `for chunk in ask(..., stream: true):` runs its block for
+  each piece when it arrives. Before waiting for the next piece, what the
+  program has written is flushed, so `print(chunk, end: "")` shows at
+  once. Like any lazy value (section 6, rule 4), an assignment reads the
+  whole answer first; looping over the same answer again gives the
+  pieces already read, without asking again.
+- What happens before the first piece is as before: retries, the next
+  model of `fallback`, an answer with no text (AIError). After it, a
+  failure ends the loop with its error: NetworkError when the connection
+  is lost, AIError for a line that is not valid. The line of usage.csv is
+  written when the answer ends.
+
+**D165. AI budgets.** Section 8 shows `budget = 5 EUR per day` and
+`when_over_budget = local` in the `ai` block, and `nexo ai usage`
+showing "spend per model and per day"; the prices of the models are not
+written, and D107 left them out because they change.
+- Prices are configuration, never built in: an `[ai.prices]` table in
+  nexo.toml or the user's ai.toml gives each model (as `"provider:model"`)
+  the price of a million input tokens and of a million output tokens,
+  `"openai:gpt-mini" = ["0.15 EUR", "0.60 EUR"]`, both in one currency.
+  ollama's models run on this machine and cost nothing.
+- `budget` is an amount of money `per day` or `per month` (in a toml
+  file, the text `"5 EUR per day"`); it is read key by key like the other
+  keys (D106), so a profile can have its own. The spend of the period is
+  that of the lines of usage.csv (D107) of this day or calendar month, at
+  the prices now known; usage.csv is the user's, so the budget counts
+  every program of the user.
+- With a budget, every model a call may use (its model, the fallback and
+  `when_over_budget`) needs a price in the budget's currency: a model
+  without one, or with prices in another currency (section 17, rule 3:
+  currencies are not added), is an AIError that says how to add it.
+- Before each `ask` and when an agent's `handle` starts, a spend that has
+  reached the budget sends the call to `when_over_budget` (an alias or
+  `provider:model`, without fallback), or, when there is none, fails
+  with AIError "The AI budget of 5.00 EUR per day is spent (5.02 EUR so
+  far)". A call that starts under the budget is not stopped halfway.
+- `nexo ai usage` adds the spend of each day and model whose price is
+  known, in whole cents (half to even).
+
+**D166. MCP servers as tools of an agent.** Section 8 says "any MCP
+server is connected with `tools = [mcp("name")]`"; where the server is
+and how it is reached is not written.
+- A server is declared in nexo.toml (or the user's ai.toml, D106) as a
+  table `[mcp.NAME]` with `command = ["program", "argument", ...]`; it
+  speaks the Model Context Protocol on its standard input and output
+  (one JSON-RPC message per line, as `nexo mcp` does, D146). Servers over
+  the network are not part of this edition. `mcp("NAME")` is a value
+  that names it; the same name is the same server in the whole program.
+- The server starts the first time an agent's `handle` needs it, in the
+  program's folder, with its errors discarded: `initialize`, then
+  `tools/list` (every page). It stays for the rest of the program.
+  Starting it is running a command, so the program policy checks `shell`
+  with the command (D142): a program that uses one needs `allow shell`.
+- Its tools join the agent's @tool functions, described to the model
+  with the server's own name, description and input schema. A call goes
+  to the server as `tools/call`; the model gets the text of the answer,
+  marked as an error when the server says so. Two tools with one name
+  are an AIError. `confirm = [mcp("NAME")]` asks before each call of a
+  tool of that server, showing its arguments.
+- A server that cannot be started, closes its output, answers with an
+  error or with something that is not an answer, or does not answer in
+  60 seconds is an AIError that names it; a name without a table is an
+  AIError that says how to add it. An agent's tools inherit the program's
+  policy inside the program; a server is another program, with its own.
+
+**D167. Partitions of a stream.** Section 19 says `when` on a stream
+"scales with implicit `parallel` per partition, preserving order within
+each one"; how a stream gets partitions and which one a message goes to
+is not written, and D117 had one partition per stream.
+- A source can say how many partitions its stream has:
+  `kafka("orders", partitions: 4)`. The number is fixed when the stream is
+  created (in the local broker, the file `<name>.partitions`; a stream
+  that exists with one log has one); a source that asks for another
+  number is an error that names both. Without it a stream has the
+  partitions it was created with, or one. The local broker keeps one log
+  per partition (`<name>.<p>.log`) and one offset per partition and
+  consumer group; a stream with one partition keeps the files of D117.
+- `send(value, key: k)` sends a message with a key (a text as it is,
+  another value as compact JSON); the partition is Kafka's own:
+  murmur2 of the key, as positive, modulo the partitions, so a key keeps
+  its partition and its order, and a Kafka client elsewhere would choose
+  the same one. Without a key the data is hashed instead. A message has
+  `msg.key` (none without one) and `msg.partition`; `msg.id` is its
+  position in its partition. The `key:` of `send`, like any `key:`, is
+  never a text written in the code (section 9): it comes from the data.
+- A consumer reads the new messages of each partition and, for a stream
+  with several, handles them as `parallel for` handles its elements (D52,
+  D80): one task per partition, each in order, on threads in phase 1 and
+  one after the other in phase 0; what the tasks write (dead-letter lines
+  too) comes out in partition order, and the race rules of the tasks
+  apply to the handlers. Then the pipelines of the stream get the same
+  messages, partition by partition, and the offsets are saved. A stream
+  with one partition is handled as before, message by message.
+- With `key:` on `when`, a key being handled in one partition makes the
+  same key wait in another, so it is still processed once.
+- Under `nexo test` the partitions are those the source asks for, and
+  `send` delivers at once, as before.
+
+**D168. Streams on the clouds' services.** Section 19 lists `sqs`,
+`kinesis`, `servicebus`, `eventhub` and `pubsub`; D117 ran every source
+on the local broker. A source is now on its cloud when it has that
+cloud's option, and on the local broker otherwise: `sqs("orders",
+region: "eu-west-1")` and `kinesis(..., region:)` on AWS,
+`servicebus("orders", namespace: "shop")` on Azure, `pubsub("orders",
+project: "shop")` on Google Cloud. `eventhub` reads only through AMQP or
+Kafka's protocol, so it comes with the brokers on the network (D169).
+- Both phases talk to each service's own HTTP API with the credentials
+  and addresses of nexo.infra (D120): SQS's JSON protocol and Kinesis
+  signed with SigV4 (AWS_ENDPOINT_URL points both elsewhere), Service Bus
+  through REST with an Azure AD token (NEXO_AZURE_ENDPOINT puts its data
+  plane at ENDPOINT/HOST/...), Pub/Sub through REST
+  (PUBSUB_EMULATOR_HOST, or NEXO_GCP_ENDPOINT as for infra). The queues,
+  streams and topics are not created: an infra block creates them (its
+  `queue`), and a missing one is an HTTPError that names the source and
+  what the cloud says.
+- A queue (SQS, Service Bus, Pub/Sub) has one partition. A consumer
+  leases what it reads (SQS's visibility, Service Bus's peek-lock,
+  Pub/Sub's deadline, 60 seconds) and deletes each message once its
+  handlers ended, or once it went to the dead letters. Pub/Sub is read
+  through the subscription `<topic>.<group>` of the consumer group, made
+  when it is missing (it gets what is published after it exists). A
+  message that a window holds is deleted too: a queue keeps no position
+  to read it again after a stop.
+- A Kinesis stream's shards are its partitions, handled as D167 says;
+  the consumer group saves the sequence number it reached in each one in
+  .nexo/streams/kinesis, kept before the messages of an open window as
+  D117 does for the local broker.
+- `send(value, key:, at:)` keeps the time and the key in the message's
+  attributes (`nexo-time`, `nexo-key`) where the service has them; a
+  Kinesis record has its partition key (the key, or a hash of the data)
+  and the time it arrived. A FIFO SQS queue (`.fifo`) gets the key as
+  its message group. `msg.id` is the service's id: a text for SQS,
+  Kinesis and Pub/Sub, Service Bus's sequence number.
+- The dead letters go to `<name>.dead` on the same service, except on
+  SQS, whose names cannot have a dot: `<name>-dead`. The line on the
+  error output names it. A dead letter that cannot be sent stops the
+  consumer with its error, leaving the message to come back.
+- The policy checks `net` to the service's host when a program sends
+  and when a consumer starts (D142). Under `nexo test` every source is
+  on the in-memory broker, as before.
+- tests/cloud_emulator.py answers these data planes, and
+  tests/test_stream_cloud.py runs producers and consumers of each in
+  both phases.
+
+**D169. Streams on brokers on the network.** D113 left out brokers on
+the network; section 19 writes `kafka("orders", servers: ...)` and lists
+`rabbit`, `eventhub` and `websocket`. A source is now on a broker on the
+network when it has its option, and on the local broker otherwise:
+`kafka("orders", servers: "user@host:9092,host2:9092")`, `rabbit("orders",
+url: "amqp://user@host/")`, `eventhub("clicks", namespace: "shop")`, and
+`websocket("wss://host/path")`, whose source is the address itself.
+- Both phases speak each protocol themselves, with no library: Kafka's
+  binary protocol (the requests of the versions that Kafka 1.0 to 4.x
+  answer, record batches of format 2), AMQP 0-9-1 with publisher
+  confirms, WebSocket (RFC 6455). Compressed Kafka batches are not read:
+  one is a NetworkError that names its codec. The specification asks for
+  no codec, and the producers of Nexo do not compress.
+- A broker on another machine is reached with TLS only (`amqps://`,
+  `wss://`, Kafka on any host but this machine), checked against the
+  system's certificates; plain sockets only to this machine.
+- `key:` is the broker's password, a text or a `secret` (Kafka's SASL
+  PLAIN with the user of `servers:`, RabbitMQ's PLAIN with the user of
+  the url); `key:` without the broker's option is an unknown parameter.
+  Event Hubs is read through its Kafka endpoint
+  (`<namespace>.servicebus.windows.net:9093`, or NEXO_EVENTHUB_SERVERS)
+  with a token of Azure AD (OAUTHBEARER), the credentials of D120.
+- A broker says how many partitions a topic has, so `partitions:` goes
+  with the local broker only. Kafka's partitions are handled as D167
+  says; `send` picks the partition with Kafka's own hash of the key. The
+  consumer group (the program's file name) commits the offset after the
+  last message handled (before an open window, as D117), and a new group
+  starts from the first message. One consumer of a group reads every
+  partition: Nexo does not join Kafka's group protocol, so two consumers
+  of one group would each read everything.
+- RabbitMQ: a queue has one partition. A consumer takes messages with
+  Basic.Get and acknowledges each once its handlers ended or once it went
+  to the dead letters; a message not acknowledged comes back when the
+  connection closes (at least once). The time and the key are the headers
+  `nexo-time` and `nexo-key`, as D168's attributes. A connection the
+  broker closed while it was idle is made again once.
+- WebSocket: each text or binary message the server sends is a message
+  (`msg.id` counts them from 1); `send` writes a text message on the same
+  connection. A WebSocket keeps nothing, so a consumer saves no position
+  and its dead letters go to the local broker, to the stream named by
+  the address (`host_port_path.dead`).
+- The dead letters of Kafka, Event Hubs and RabbitMQ go to `<name>.dead`
+  on the same broker. A failure of a broker is a NetworkError that names
+  the source and the reason (`err.NetworkError.broker`); a consumer that
+  cannot reach its broker tries again every second.
+- The policy checks `net` to every host a client connects to (D142):
+  each bootstrap server it tries, and the brokers Kafka's metadata names
+  (leaders, coordinators). Under `nexo test`
+  every source is on the in-memory broker, as before.
+- tests/kafka_broker.py, tests/amqp_broker.py and tests/ws_server.py are
+  written from each protocol's specification, sharing no code with the
+  clients; tests/test_stream_net.py runs producers and consumers on them
+  in both phases. A check against a real Kafka is not part of the suite.
+
+**D170. MySQL.** Section 6 has "one way to connect, whether to a local
+file or a server"; D163 added PostgreSQL. `connect("mysql://user@host/
+shop", key: secret("DB_PASS"))` now opens a MySQL server, with the same
+tables, queries, transactions, privacy and migrations. Both phases speak
+MySQL's client/server protocol themselves (nexo/stdlib/mysql.py,
+compiler/runtime/src/mysql.rs):
+- The address is `mysql://user@host:port/database`; the user is `root`
+  when there is none, the port 3306, and the database must be named.
+  A password in the address is refused, as in D163: it goes in `key:`.
+- TLS is asked for whenever the server offers it, and its certificate is
+  checked against the host name; a server that does not offer it is
+  accepted only on this machine. Logins are caching_sha2_password (MySQL
+  8's own; its full login sends the password, so it needs TLS) and
+  mysql_native_password.
+- Every statement with values is a prepared statement with binary
+  parameters, so values never become SQL text. Rows come back as SQLite
+  gives them: whole DECIMALs (the sums of `group by`) as ints, which do
+  not overflow, as on PostgreSQL.
+- Each connection sets `sql_mode` with ANSI_QUOTES, so `"name"` quotes a
+  name in the SQL of nexo.db and in `db.sql`, as in SQLite and
+  PostgreSQL; PIPES_AS_CONCAT makes `||` join texts; strict mode makes a
+  value that does not fit an error; the time zone is UTC.
+- Types: int and ref BIGINT, float DOUBLE, bool BOOLEAN, texts LONGTEXT
+  with the collation utf8mb4_0900_bin, so that they compare and sort byte
+  by byte as in SQLite (MySQL 8.0 or later; MariaDB has no such
+  collation). InnoDB indexes 3072 bytes of a column at most, so a
+  `@unique` text is a VARCHAR(768): a longer one is a DatabaseError.
+  MySQL sorts a text by its first 1024 bytes (max_sort_length). The id
+  is `BIGINT AUTO_INCREMENT`.
+- MySQL ignores a REFERENCES written on a column: a `ref` is a table
+  constraint `fk_<table>_<column>`, and the tables it points to are
+  created first. `nexo db diff` drops that constraint before its column.
+- MySQL commits a transaction when a table is created or changed, so
+  `db.transaction` creates the program's tables before it begins; a
+  table so created stays after a rollback (empty). A migration's
+  statements are not undone when one fails halfway, for the same reason.
+  A failed statement leaves a transaction as it was, as in SQLite, so no
+  savepoint per statement is needed (D163 needs one on PostgreSQL).
+  Savepoints are released with `RELEASE SAVEPOINT`.
+- `null`s sort first ascending and last descending, as in SQLite; `in`
+  on a text is `INSTR`, as in SQLite.
+- tests/test_mysql.py starts a MySQL server with TLS (skipped when it is
+  not installed) and runs the db conformance cases, privacy,
+  transactions, migrations and the TLS checks in both phases, which send
+  the same SQL.
+
+**D171. Document stores, and MongoDB.** Section 6 has one `connect` for
+"a local file or a server" and queries "translated to SQL"; it names no
+document store. `connect("mongodb://user@host/shop", key:
+secret("DB_PASS"))` now opens MongoDB with the same `@table` types,
+queries, relations, transactions and privacy, and the same results as on
+SQLite (nexo/stdlib/docdb.py and mongo.py, compiler/runtime/src/docdb.rs
+and mongo.rs, with no driver library):
+- A table is a collection, a row a document whose `_id` is its key; a
+  field that is none is left out of the document. Ids are ints, as on SQL
+  databases, from a counter per table in `nexo_counters` (an id a failed
+  insert took is not given again). A table without `id: id` gets a
+  hidden key `nexo_row`.
+- The conditions of a `where` are those SQL runs (where_tree in db.py
+  and db.rs, which also renders SQL), in negation normal form, each leaf
+  leaving out the rows whose column is none, as SQL's three-valued logic
+  does; `sort by`, `take`, `count` and `pick` run in the store too. A
+  condition on the table a ref points to, two columns compared, and
+  `group by` run in memory, with the same result. `in` on a text is a
+  regular expression of the text, its signs escaped.
+- `@unique` is a unique index with a partial filter (`$exists`), so
+  several rows can have none, as in SQL.
+- `db.transaction` keeps a journal of what it wrote and writes it back
+  when it fails, nested ones too: a failed statement leaves the
+  transaction as it was, as in SQLite. MongoDB's own transactions need a
+  replica set and end at the first failed statement, so they are not
+  used: other programs can see a transaction's writes before it ends,
+  and a program that stops halfway keeps them. This is weaker than an
+  SQL transaction, and said here so.
+- The address is `mongodb://user@host:port,host2:port/database`
+  (27017 by default); with several hosts the client uses the primary.
+  `key:` is the password, checked with SCRAM-SHA-256 against the users of
+  the `admin` database. A server on another machine is reached with TLS
+  only, checked against the system's certificates; `mongodb+srv://` (a
+  DNS lookup) is not read: write the hosts.
+- `db.sql` is an error on a document store (`db_no_sql`); `nexo db diff`
+  and `migrate` say that it keeps no schema (`info.db_no_schema`): its
+  collections and unique indexes are made when a program first uses a
+  table.
+- NEXO_SQL_LOG writes every command (`mongo: {...}`); both phases send
+  the same ones. tests/mongo_server.py is a MongoDB written from the wire
+  protocol's documentation for the tests (MongoDB is not packaged by the
+  system), and tests/test_docdb.py runs the db conformance cases,
+  transactions, privacy and errors on it in both phases.
+
+**D172. Elasticsearch.** As D171, `connect("elasticsearch://user@host:9200/
+shop", key: secret("ES_PASS"))` keeps the tables of a program in
+Elasticsearch, through its REST API (nexo/stdlib/elastic.py,
+compiler/runtime/src/elastic.rs):
+- A table is an index named `<path>-<table>` (`shop-customer`), or the
+  table's name when the address has no path; a row is a document whose
+  id is its key. Each index has a strict mapping: int, ref and bool are
+  `long`, float `double`, the rest `keyword`, so texts compare and sort
+  byte by byte, as in SQLite (a text holds at most 32766 bytes there). A
+  field is added to the mapping when its type gets it; a type that
+  changes is not.
+- `where` is the query DSL (term, range, exists, wildcard, bool), none
+  values sort first ascending and last descending as in SQLite, and the
+  rows are read in pages of 1000 with search_after.
+- Elasticsearch has no unique keys: a `@unique` value is a document of
+  `nexo_unique` whose id is a hash of the table, column and value,
+  created only when it does not exist, before the row; ids come from a
+  counter document updated by a script. Every write asks for a refresh,
+  so that a program reads what it wrote, which costs time on a large
+  index.
+- `key:` is the password of the user in the address (Basic), or, with
+  no user, an API key. HTTPS for any host but this machine.
+- Transactions, `db.sql`, `nexo db` and the logs (`elastic: METHOD path
+  body`) are those of D171; tests/es_server.py is an Elasticsearch
+  written from its documentation for the tests.
+
+**D173. More AI providers.** Section 8 names anthropic, openai and ollama
+in its examples ("provider:model"); D106 took those three. Four more are
+providers now, in both phases (nexo/stdlib/ai.py, compiler/runtime/src/
+ai.rs), each through its own API, with `ask`, `stream: true`, typed
+answers, agents and their tools, usage and budgets as the others:
+- `mistral`: Mistral's chat completions, which are OpenAI's
+  (https://api.mistral.ai, a bearer key); it sends the usage of a
+  streamed answer in its last event, so no `stream_options` is sent.
+- `azure`: Azure OpenAI, `"azure:<deployment>"`. Its address is the
+  resource's, so `url = "https://NAME.openai.azure.com"` is needed
+  (AIError.url without it); the API version is 2024-10-21. `key:` is the
+  resource's api-key; without one, a token of Azure AD from the
+  credentials of D120 (AZURE_TENANT_ID, AZURE_CLIENT_ID,
+  AZURE_CLIENT_SECRET, AZURE_AUTHORITY_HOST) is sent as a bearer token.
+- `gemini`: Google's generateContent and streamGenerateContent (server-
+  sent events), the key in `x-goog-api-key`; the system text is
+  `systemInstruction`, tools are `functionDeclarations`, and the results
+  of tools go back as `functionResponse` parts.
+- `bedrock`: AWS's Converse API (`/model/<id>/converse` and
+  `converse-stream`, whose answer is AWS's binary event stream, read with
+  its CRCs). `key:` is a Bedrock API key, sent as a bearer token; without
+  one the request is signed with SigV4 and the AWS credentials of D120,
+  in AWS_REGION (or AWS_DEFAULT_REGION, else us-east-1). A Bedrock model
+  id holds colons (`anthropic.claude-3-haiku-20240307-v1:0`), so a model
+  is read as "provider:name" only when the part before its first colon is
+  a provider, or when no provider is configured; `nexo ai setup` accepts
+  colons in a Bedrock model.
+- Bedrock and Azure without a key and without those variables fail with
+  AIError.cloud_key, which names them.
+- A server that speaks OpenAI's API (Groq, DeepSeek, OpenRouter,
+  Together, vLLM, LM Studio) needs no provider of its own: `provider =
+  "openai"` with its `url` (D106).
+- tests/test_ai_providers.py runs each against a local server that
+  answers as the provider's documentation says, and checks Bedrock's
+  signature with its own implementation of SigV4.

@@ -4,10 +4,16 @@ Manager, the REST APIs of Google Cloud (with long-running operations) and
 the Kubernetes API (server-side apply). It keeps what is created in memory
 and records every request; `GET /__log` returns them.
 
+For nexo.stream (D168) it also answers the data planes of SQS (JSON
+protocol), Kinesis, Service Bus (REST, at /HOST/... as nexo maps it) and
+Pub/Sub; `POST /__streams` creates queues, streams and topics, and `GET
+/__streams` shows the messages they still hold.
+
     python tests/cloud_emulator.py 8765
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -89,6 +95,11 @@ class State:
         self.k8s: dict = {}  # path -> object
         self.n = 0
         self.tokens: dict = {}
+        self.sqs: dict = {}  # queue -> [message]
+        self.kinesis: dict = {}  # stream -> [[record] per shard]
+        self.servicebus: dict = {}  # namespace/queue -> [message]
+        self.topics: dict = {}  # projects/p/topics/t -> [subscription path]
+        self.subs: dict = {}  # projects/p/subscriptions/s -> [message]
 
 
 STATE = State()
@@ -145,6 +156,16 @@ class Handler(BaseHTTPRequestHandler):
                               "target": h.get("x-amz-target", ""), "body": data.decode("utf-8", "replace")})
         if u.path == "/__log":
             return self.reply(200, STATE.log)
+        if u.path == "/__streams":
+            return self.streams_admin(method, data)
+        if h.get("x-amz-target", "").startswith("AmazonSQS."):
+            return self.sqs(h, method, u, data)
+        if h.get("x-amz-target", "").startswith("Kinesis_20131202."):
+            return self.kinesis(h, method, u, data)
+        if u.path.split("/")[1].endswith(".servicebus.windows.net"):
+            return self.servicebus(h, method, u, data)
+        if u.path.startswith("/pubsub/v1/") and self.streams_pubsub(method, u, data):
+            return self.pubsub(h, method, u, data)
         if "x-amz-target" in h:
             return self.aws(h, method, u, data)
         if h.get("authorization", "").startswith("AWS4-HMAC-SHA256"):
@@ -207,6 +228,202 @@ class Handler(BaseHTTPRequestHandler):
 
     def ident_of(self, token):
         return STATE.tokens.get(token, token)
+
+    # -- streams (D168) ----------------------------------------------------
+    def streams_admin(self, method, data):
+        with STATE.lock:
+            if method == "POST":
+                want = json.loads(data.decode() or "{}")
+                for q in want.get("sqs", []):
+                    STATE.sqs.setdefault(q, [])
+                for name, shards in want.get("kinesis", {}).items():
+                    STATE.kinesis.setdefault(name, [[] for _ in range(shards)])
+                for ns, queues in want.get("servicebus", {}).items():
+                    for q in queues:
+                        STATE.servicebus.setdefault(f"{ns}/{q}", [])
+                for project, topics in want.get("pubsub", {}).items():
+                    for t in topics:
+                        STATE.topics.setdefault(f"projects/{project}/topics/{t}", [])
+                return self.reply(200, {})
+            return self.reply(200, {
+                "sqs": {q: [m["Body"] for m in ms] for q, ms in STATE.sqs.items()},
+                "kinesis": {n: [[r["data"] for r in shard] for shard in shards] for n, shards in STATE.kinesis.items()},
+                "servicebus": {q: [m["body"] for m in ms] for q, ms in STATE.servicebus.items()},
+                "pubsub": {s: [m["data"] for m in ms] for s, ms in STATE.subs.items()}})
+
+    def sqs(self, h, method, u, data):
+        import time
+        if not check_sigv4(h, method, u.path, u.query, data):
+            return self.reply(403, {"message": "The request signature we calculated does not match"})
+        op = h["x-amz-target"].split(".")[-1]
+        req = json.loads(data.decode() or "{}")
+        base = f"http://{h.get('host')}/123456789012"
+        missing = {"__type": "com.amazonaws.sqs#QueueDoesNotExist", "message": "The specified queue does not exist."}
+        with STATE.lock:
+            if op == "GetQueueUrl":
+                if req.get("QueueName") not in STATE.sqs:
+                    return self.reply(400, missing)
+                return self.reply(200, {"QueueUrl": f"{base}/{req['QueueName']}"})
+            name = req.get("QueueUrl", "").rsplit("/", 1)[-1]
+            if name not in STATE.sqs:
+                return self.reply(400, missing)
+            queue = STATE.sqs[name]
+            if op == "SendMessage":
+                STATE.n += 1
+                queue.append({"MessageId": f"msg-{STATE.n}", "Body": req["MessageBody"],
+                              "MessageAttributes": req.get("MessageAttributes", {}),
+                              "SentTimestamp": str(int(time.time() * 1000)), "visible": 0.0, "receipt": None})
+                return self.reply(200, {"MessageId": f"msg-{STATE.n}",
+                                        "MD5OfMessageBody": hashlib.md5(req["MessageBody"].encode()).hexdigest()})
+            if op == "ReceiveMessage":
+                now, out = time.time(), []
+                for m in queue:
+                    if m["visible"] <= now and len(out) < req.get("MaxNumberOfMessages", 1):
+                        STATE.n += 1
+                        m["visible"], m["receipt"] = now + req.get("VisibilityTimeout", 30), f"rcpt-{STATE.n}"
+                        out.append({"MessageId": m["MessageId"], "ReceiptHandle": m["receipt"], "Body": m["Body"],
+                                    "Attributes": {"SentTimestamp": m["SentTimestamp"]},
+                                    "MessageAttributes": m["MessageAttributes"]})
+                return self.reply(200, {"Messages": out} if out else {})
+            if op == "DeleteMessage":
+                STATE.sqs[name] = [m for m in queue if m["receipt"] != req.get("ReceiptHandle")]
+                return self.reply(200, {})
+        return self.reply(400, {"message": "unknown operation " + op})
+
+    def kinesis(self, h, method, u, data):
+        import time
+        if not check_sigv4(h, method, u.path, u.query, data):
+            return self.reply(403, {"message": "The request signature we calculated does not match"})
+        op = h["x-amz-target"].split(".")[-1]
+        req = json.loads(data.decode() or "{}")
+        with STATE.lock:
+            if op == "GetRecords":
+                name, shard, pos = req["ShardIterator"].split("|")
+            else:
+                name = req.get("StreamName")
+            if name not in STATE.kinesis:
+                return self.reply(400, {"__type": "ResourceNotFoundException", "message": f"Stream {name} not found."})
+            shards = STATE.kinesis[name]
+            ids = [f"shardId-{i:012d}" for i in range(len(shards))]
+            if op == "ListShards":
+                return self.reply(200, {"Shards": [{"ShardId": i} for i in ids]})
+            if op == "PutRecord":
+                # the shard of a partition key: its MD5 as a number, in ranges
+                n = int(hashlib.md5(req["PartitionKey"].encode()).hexdigest(), 16) * len(shards) >> 128
+                STATE.n += 1
+                seq = str(10 ** 20 + STATE.n)
+                shards[n].append({"seq": seq, "data": base64.b64decode(req["Data"]).decode(), "raw": req["Data"],
+                                  "key": req["PartitionKey"], "time": time.time()})
+                return self.reply(200, {"ShardId": ids[n], "SequenceNumber": seq})
+            if op == "GetShardIterator":
+                start = req.get("StartingSequenceNumber", "") if req["ShardIteratorType"] == "AFTER_SEQUENCE_NUMBER" else ""
+                return self.reply(200, {"ShardIterator": f"{name}|{ids.index(req['ShardId'])}|{start}"})
+            if op == "GetRecords":
+                records = [r for r in shards[int(shard)] if not pos or int(r["seq"]) > int(pos)][:req.get("Limit", 100)]
+                last = records[-1]["seq"] if records else pos
+                return self.reply(200, {"Records": [{"SequenceNumber": r["seq"], "Data": r["raw"], "PartitionKey": r["key"],
+                                                     "ApproximateArrivalTimestamp": r["time"]} for r in records],
+                                        "NextShardIterator": f"{name}|{shard}|{last}", "MillisBehindLatest": 0})
+        return self.reply(400, {"message": "unknown operation " + op})
+
+    def servicebus(self, h, method, u, data):
+        import time
+        if h.get("authorization") != f"Bearer {AZURE_TOKEN}":
+            return self.reply(401, {"error": {"message": "InvalidSignature"}})
+        parts = u.path.split("/")
+        ns, queue = parts[1].split(".")[0], parts[2]
+        key = f"{ns}/{queue}"
+        with STATE.lock:
+            if key not in STATE.servicebus:
+                return self.reply(404, {"error": {"message": f"The messaging entity '{queue}' could not be found."}})
+            messages = STATE.servicebus[key]
+            if method == "POST" and parts[3:] == ["messages"]:
+                STATE.n += 1
+                messages.append({"id": f"sb-{STATE.n}", "seq": STATE.n, "body": data.decode(), "lock": None,
+                                 "until": 0.0, "props": {k: v for k, v in h.items() if k.startswith("nexo-")}})
+                return self.reply(201)
+            if method == "POST" and parts[3:] == ["messages", "head"]:
+                now = time.time()
+                for m in messages:
+                    if m["until"] <= now:
+                        STATE.n += 1
+                        m["lock"], m["until"] = f"lock-{STATE.n}", now + 60
+                        props = {"MessageId": m["id"], "LockToken": m["lock"], "SequenceNumber": m["seq"]}
+                        body = m["body"].encode()
+                        self.send_response(201)
+                        self.send_header("BrokerProperties", json.dumps(props))
+                        for k, v in m["props"].items():
+                            self.send_header(k, v)
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                        return None
+                return self.reply(204)
+            if method == "DELETE" and len(parts) == 6:
+                before = len(messages)
+                STATE.servicebus[key] = [m for m in messages if not (m["id"] == parts[4] and m["lock"] == parts[5])]
+                return self.reply(200 if len(STATE.servicebus[key]) < before else 410)
+        return self.reply(400, {"error": {"message": "unknown request"}})
+
+    def streams_pubsub(self, method, u, data) -> bool:
+        """Whether a Pub/Sub request is of the data plane of the topics
+        /__streams made; the others are infra's, answered by gcp()."""
+        path = u.path[len("/pubsub/v1/"):]
+        with STATE.lock:
+            if method == "PUT" and "/subscriptions/" in path:
+                try:
+                    return json.loads(data.decode() or "{}").get("topic") in STATE.topics
+                except ValueError:
+                    return False
+            if path.endswith(":publish"):
+                return path[:-len(":publish")] in STATE.topics
+            return path.partition(":")[0] in STATE.subs or path.partition(":")[2] in ("pull", "acknowledge")
+
+    def pubsub(self, h, method, u, data):
+        import time
+        if h.get("authorization") != f"Bearer {GCP_TOKEN}":
+            return self.reply(401, {"error": {"message": "Request had invalid authentication credentials."}})
+        path = u.path[len("/pubsub/v1/"):]
+        req = json.loads(data.decode() or "{}")
+        with STATE.lock:
+            if method == "PUT" and "/subscriptions/" in path:
+                if req.get("topic") not in STATE.topics:
+                    return self.reply(404, {"error": {"message": "Resource not found (resource=topic)."}})
+                if path in STATE.subs:
+                    return self.reply(409, {"error": {"message": "Resource already exists in the project."}})
+                STATE.subs[path] = []
+                STATE.topics[req["topic"]].append(path)
+                return self.reply(200, {"name": path, "topic": req["topic"]})
+            if path.endswith(":publish"):
+                topic = path[:-len(":publish")]
+                if topic not in STATE.topics:
+                    return self.reply(404, {"error": {"message": "Resource not found (resource=topic)."}})
+                ids = []
+                for m in req.get("messages", []):
+                    STATE.n += 1
+                    ids.append(str(STATE.n))
+                    for sub in STATE.topics[topic]:
+                        STATE.subs[sub].append({"id": str(STATE.n), "raw": m.get("data", ""),
+                                                "data": base64.b64decode(m.get("data", "")).decode(),
+                                                "attributes": m.get("attributes", {}), "ack": None, "until": 0.0})
+                return self.reply(200, {"messageIds": ids})
+            sub, _, verb = path.partition(":")
+            if sub not in STATE.subs:
+                return self.reply(404, {"error": {"message": "Resource not found (resource=subscription)."}})
+            if verb == "pull":
+                now, out = time.time(), []
+                for m in STATE.subs[sub]:
+                    if m["until"] <= now and len(out) < req.get("maxMessages", 100):
+                        STATE.n += 1
+                        m["ack"], m["until"] = f"ack-{STATE.n}", now + 60
+                        out.append({"ackId": m["ack"], "message": {"data": m["raw"], "attributes": m["attributes"],
+                                                                    "messageId": m["id"]}})
+                return self.reply(200, {"receivedMessages": out} if out else {})
+            if verb == "acknowledge":
+                acks = set(req.get("ackIds", []))
+                STATE.subs[sub] = [m for m in STATE.subs[sub] if m["ack"] not in acks]
+                return self.reply(200, {})
+        return self.reply(400, {"error": {"message": "unknown request"}})
 
     def s3(self, h, method, u, data):
         if not check_sigv4(h, method, u.path, u.query, data):

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use nexo_diag::{msg, render, suggest, Diagnostic};
 
-const PROVIDERS: &[&str] = &["anthropic", "openai", "ollama"];
+const PROVIDERS: &[&str] = &["anthropic", "openai", "ollama", "mistral", "gemini", "azure", "bedrock"];
 
 fn config_dir() -> PathBuf {
     match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
@@ -54,18 +54,22 @@ pub fn setup() -> u8 {
         });
     }
     let model = ask_line("info.ai_setup_model");
-    if model.is_empty() || model.contains(':') {
+    // (Bedrock's model ids hold colons, D173)
+    if model.is_empty() || (model.contains(':') && provider != "bedrock") {
         return fail(Diagnostic::new_spanless("ai_model").arg("model", model));
     }
     let mut lines = vec!["[ai]".to_string(), format!("provider = {}", quote(&provider)), format!("model = {}", quote(&model))];
     if provider != "ollama" {
         let var = ask_line("info.ai_setup_key");
-        let ok = var.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-            && var.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        if !ok {
-            return fail(Diagnostic::new_spanless("ai_setup_var").arg("name", var));
+        // Bedrock and Azure can do with the credentials of the environment
+        if !(var.is_empty() && (provider == "bedrock" || provider == "azure")) {
+            let ok = var.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && var.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !ok {
+                return fail(Diagnostic::new_spanless("ai_setup_var").arg("name", var));
+            }
+            lines.push(format!("key = {}", quote(&var)));
         }
-        lines.push(format!("key = {}", quote(&var)));
     }
     let url = ask_line("info.ai_setup_url");
     if !url.is_empty() {
@@ -103,6 +107,14 @@ pub fn usage() -> u8 {
         return 0;
     }
     for ((day, model), [calls, input, output]) in totals {
+        // the spend, when the price of the model is known (D165)
+        let spent = match nexo_runtime::ai::usage_spent(&model, input as i64, output as i64) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return 1;
+            }
+        };
         let args = [
             ("day", day),
             ("model", model),
@@ -110,7 +122,11 @@ pub fn usage() -> u8 {
             ("input", input.to_string()),
             ("output", output.to_string()),
         ];
-        println!("{}", msg("info.ai_usage_row", &args));
+        let mut row = msg("info.ai_usage_row", &args);
+        if let Some(s) = spent {
+            row.push_str(&msg("info.ai_usage_spent", &[("spent", s)]));
+        }
+        println!("{row}");
     }
     0
 }

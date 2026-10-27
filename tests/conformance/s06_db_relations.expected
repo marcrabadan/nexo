@@ -1,0 +1,11 @@
+1 Ana
+4 Ana
+2
+["Luis", "Luis"]
+2
+["Ana", "Luis", "Eva", "Ana", "Luis"]
+Ana 2
+Error in s06_db_relations.nexo, line 32:
+  print(db.Customer |> where boss.name == "Ana" |> count)
+                                  ^^^^
+The value is none and has no "name". If it may be missing, give it a default with ?? before using it.

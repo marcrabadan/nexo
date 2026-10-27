@@ -48,9 +48,13 @@ nexo/
   types.py        runtime values: decimal/money/units, records, enums, errors
   errors.py       error type + section 14 renderer + message catalog (English, D125)
   stdlib/         builtins, io, data (JSON/CSV), sync (nexo.sync); phase 4:
-                  clock, text, crypto, http, db, web, ai, clib (use c),
-                  pylib (use python); phase 5: cfg (the blocks of D114),
-                  flags, privacy, stream, infra (model and plan),
+                  clock, text, crypto, http, db, pg (PostgreSQL, D163),
+                  mysql (D170), docdb (document stores: mongo D171,
+                  elastic D172),
+                  web, ai, clib (use c), pylib (use python); phase 5: cfg (the blocks of D114),
+                  flags, privacy, stream, stream_cloud (SQS, Kinesis,
+                  Service Bus, Pub/Sub, D168), stream_net (D169: kafka,
+                  amqp, websocket), infra (model and plan),
                   infra_cloud (the clients and commands),
                   infra_providers.json (shared by both phases), ci,
                   ci_export; phase 6: api.json (what a program can use,
@@ -78,6 +82,9 @@ tests/
   infra/          NAME.nexo + NAME.expected (nexo plan; tests/test_infra.py)
   ci/             pipelines and the files nexo ci export writes
   cloud_emulator.py  local stand-in for the AWS, Azure, GCP and k8s APIs
+                  (and the data planes of the cloud streams, D168)
+  kafka_broker.py, amqp_broker.py, ws_server.py  brokers for the tests of
+                  D169, each written from its protocol's specification
   fmt/            NAME.nexo + NAME.formatted (nexo fmt)
   lint/           NAME.nexo + NAME.expected (nexo lint) + NAME.fixed (nexo fix)
   unit/           pytest unit tests per layer
@@ -95,8 +102,10 @@ compiler/
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
-                  http, db, web, ai, clib, pylib; phase 5: cfg, flags,
-                  privacy, stream, infra, infra_cloud, ci, ci_export;
+                  http, db, pg, mysql, docdb, mongo, elastic, web, ai, clib,
+                  pylib; phase 5: cfg, flags,
+                  privacy, stream, stream_cloud, stream_net, kafka, amqp,
+                  websocket, infra, infra_cloud, ci, ci_export;
                   policy.rs: the checks of the program policy, D142;
                   patterns.rs: single, states, protect, action and
                   workflow, D143-D145, D150-D151)
@@ -195,10 +204,18 @@ runtimes (D92). Standard library: time, text (`find`, `regex`, `render`),
 `move_file`, `log` (hides `@private`), `convert(to: json|csv)`, crypto
 and secrets, the `http` client and `fake` (D92-D99, D105, D112).
 `nexo.db` on SQLite with pipelines translated to SQL and migrations
-(D100-D101); `nexo.web` servers (D102-D104); `nexo.ai`: `ask`, blocks,
-tools and agents (D106-D109); `use c` and `use python` (D110-D111).
+(D100-D101), `pick`, `group by` and relations in SQL (D161-D162), and
+PostgreSQL (D163) and MySQL (D170) through their own protocols, and the
+document stores MongoDB (D171) and Elasticsearch (D172); `nexo.web` servers
+(D102-D104); `nexo.ai`: `ask`, blocks, tools and agents (D106-D109),
+`stream: true` as the answer arrives (D164), budgets (D165),
+`mcp("name")` tools (D166) and the providers mistral, gemini, azure and
+bedrock (D173, tests/test_ai_providers.py); `use c` and `use python` (D110-D111).
 Tests that need a network use local servers: tests/test_http.py,
-test_web.py, test_db.py, test_ai.py, test_interop.py,
+test_web.py, test_db.py, test_postgres.py (a local PostgreSQL started
+by the test, skipped without initdb), test_mysql.py (likewise, without
+mysqld), test_docdb.py (on tests/mongo_server.py and es_server.py),
+test_ai.py, test_interop.py,
 test_exit_criterion.py.
 
 Phase 5: the blocks of D114 (`infra`, `stage`, `pipeline`, `flags`) are
@@ -208,9 +225,12 @@ k8s from one provider table, plan/apply/destroy/drift/cost/import
 through each cloud's own API, state in `.nexo/state` or S3, references
 between infra blocks. `nexo.ci` (D122-D123): pipelines, `nexo ci run`,
 `nexo ci export github|gitlab|azure|jenkins`. `nexo.stream` on a local
-broker (D117), flags (D115), privacy (D116). Tests that talk to clouds
-use tests/cloud_emulator.py: tests/test_infra.py, test_ci.py,
-test_exit_criterion_5.py.
+broker (D117) with partitions handled in parallel (D167), on the clouds'
+queues (D168) and on brokers on the network: Kafka, Event Hubs, RabbitMQ
+and WebSocket (D169); flags (D115), privacy (D116). Tests that talk to
+clouds use tests/cloud_emulator.py: tests/test_infra.py, test_ci.py,
+test_stream_cloud.py, test_exit_criterion_5.py; tests/test_stream_net.py
+uses the test brokers.
 
 Phase 6: the fast paths of D126 (records of known types, fields inside
 the object, counted range loops, counts without atomics until a second
@@ -254,9 +274,9 @@ the resume after a stop is in tests/test_phase6.py).
 (tests/test_mcp.py); `nexo new` and `nexo docs` are in tests/test_project.py.
 
 Excluded (do not implement yet): ml, ui, notify, per-package
-permissions (the registry), every/lifecycle, canary and blue/green releases, chaos, AI budgets and
-MCP, vault and cloud secret managers, brokers on the network,
-PostgreSQL, use rust/wasm, YAML/XML/Parquet (D89, D112, D113).
+permissions (the registry), every/lifecycle, canary and blue/green releases, chaos,
+vault and cloud secret managers, use rust/wasm, YAML/XML/Parquet (D89,
+D112, D113).
 
 ## Rules
 

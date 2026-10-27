@@ -137,12 +137,14 @@ fn run_db(args: &[String]) -> u8 {
         }
     };
     let fail = |d: Diagnostic| render(&file, &source, d.span, &d.text());
+    let mut key_name = None;
     let compiled = (|| {
         let mut program = linked(&file, &source).map_err(fail)?;
         resolve::resolve(&program).map_err(fail)?;
         if db_path.is_none() {
             db_path = connect_literal(&program);
         }
+        key_name = connect_call(&program).and_then(|c| c.1);
         retain_tree(&mut program.body, &|s| match &s.kind {
             ast::StmtKind::Type(_) | ast::StmtKind::Trait { .. } | ast::StmtKind::Use { .. } => true,
             ast::StmtKind::Expr(ast::Expr { kind: ast::ExprKind::Call { func, .. }, .. }) => {
@@ -179,6 +181,9 @@ fn run_db(args: &[String]) -> u8 {
     cmd.env("NEXO_DB_COMMAND", &command).env("NEXO_DB_FILE", &file);
     if let Some(p) = &db_path {
         cmd.env("NEXO_DB_PATH", p);
+    }
+    if let Some(k) = &key_name {
+        cmd.env("NEXO_DB_KEY_NAME", k);
     }
     if allow_drop {
         cmd.env("NEXO_DB_ALLOW_DROP", "1");
@@ -288,17 +293,40 @@ pub fn module_command(file: &str, env: &[(&str, String)], keep: &[&str], literal
 
 /// The database of a program: the first connect("...") it writes.
 fn connect_literal(program: &ast::Program) -> Option<String> {
+    connect_call(program).map(|c| c.0)
+}
+
+/// (address, the NAME of its `key: secret("NAME")`) of the first
+/// connect("..."): `nexo db` gives that variable to a server as its
+/// password (D163).
+fn connect_call(program: &ast::Program) -> Option<(String, Option<String>)> {
     use ast::{ExprKind, StrPiece};
-    fn find(e: &ast::Expr) -> Option<String> {
+    fn literal(e: &ast::Expr) -> Option<String> {
+        if let ExprKind::Str(parts) = &e.kind {
+            if let [StrPiece::Lit(s)] = parts.as_slice() {
+                return Some(s.clone());
+            }
+            if parts.is_empty() {
+                return Some(String::new());
+            }
+        }
+        None
+    }
+    fn find(e: &ast::Expr) -> Option<(String, Option<String>)> {
         if let ExprKind::Call { func, args } = &e.kind {
             if matches!(&func.kind, ExprKind::Name(n) if n == "connect") {
-                if let Some(ExprKind::Str(parts)) = args.first().map(|a| &a.value.kind) {
-                    if let [StrPiece::Lit(s)] = parts.as_slice() {
-                        return Some(s.clone());
+                if let Some(url) = args.first().and_then(|a| literal(&a.value)) {
+                    let mut key = None;
+                    for a in &args[1..] {
+                        if a.name.as_deref() == Some("key") {
+                            if let ExprKind::Call { func, args } = &a.value.kind {
+                                if matches!(&func.kind, ExprKind::Name(n) if n == "secret") {
+                                    key = args.first().and_then(|x| literal(&x.value));
+                                }
+                            }
+                        }
                     }
-                    if parts.is_empty() {
-                        return Some(String::new());
-                    }
+                    return Some((url, key));
                 }
             }
             if let Some(r) = find(func) {

@@ -1,0 +1,17 @@
+# a where on ref.field before the table the ref points to is used: that
+# table is made first, so the query finds nothing (D162)
+use nexo.db
+
+@table
+type Customer:
+    id: id
+    name: str
+
+@table
+type Order:
+    id: id
+    customer: ref Customer
+    amount: int
+
+db = connect(":memory:")
+print(db.Order |> where customer.name == "Ana" |> count)

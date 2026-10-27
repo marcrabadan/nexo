@@ -451,13 +451,13 @@
       <tr><td><a href="#policy">The program <code>policy</code></a></td><td><code>allow</code> and <code>deny</code> of <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>, <code>shell</code>, <code>c</code> and <code>python</code></td><td>implicit</td></tr>
     </tbody>
   </table></div>
-  <p>Not implemented yet: <code>nexo.ml</code>, <code>nexo.ui</code>, <code>nexo.notify</code>, <code>every</code> and <code>lifecycle</code>, canary and blue/green releases, AI budgets and MCP, brokers on the network, PostgreSQL, YAML, XML and Parquet. Using one is an error that says so, never a silent no-op.</p>
+  <p>Not implemented yet: <code>nexo.ml</code>, <code>nexo.ui</code>, <code>nexo.notify</code>, <code>every</code> and <code>lifecycle</code>, canary and blue/green releases, YAML, XML and Parquet. Using one is an error that says so, never a silent no-op.</p>
 
   <h3 id="mod-db"><code>nexo.db</code>: databases</h3>
   <ul class="ref-list">
-    <li><code>db = connect("shop.db", key: secret(...)?)</code> opens or creates an SQLite file. Each <code>@table</code> type is a table: <code>id: id</code> is the automatic key, <code>@unique</code> a unique column, <code>ref T</code> a foreign key and <code>many T</code> the rows that point back.</li>
+    <li><code>db = connect("shop.db", key: secret(...)?)</code> opens or creates an SQLite file; <code>connect("postgres://user@host/shop", key: secret("DB_PASS"))</code> opens a PostgreSQL server and <code>connect("mysql://user@host/shop", ...)</code> a MySQL one (TLS for any host but this machine), with the same tables, queries and migrations. <code>connect("mongodb://user@host/shop", ...)</code> and <code>connect("elasticsearch://user@host:9200/shop", ...)</code> keep the same tables in MongoDB and Elasticsearch, with the same queries and results; there <code>db.sql</code> is an error, there is no schema to migrate, and <code>db.transaction</code> undoes its writes when it fails but does not hide them from other programs before it ends. Each <code>@table</code> type is a table: <code>id: id</code> is the automatic key, <code>@unique</code> a unique column, <code>ref T</code> a foreign key and <code>many T</code> the rows that point back.</li>
     <li><code>db.T.add(field: value...)</code> inserts and returns the record; <code>db.T.find(field: value) -&gt; T!</code> fails with <code>NotFound</code>; <code>db.T.update(record, field: value)</code>, <code>db.T.remove(id)</code>, <code>db.T.all()</code> and <code>db.T.count()</code>.</li>
-    <li>A pipeline on <code>db.T</code> becomes one parameterised SQL query: <code>where</code> comparing columns with values, <code>sort by</code>, <code>take</code> and <code>count</code> run in the database; from the first step that cannot be translated, the rest runs in memory with the same result. <code>NEXO_SQL_LOG=1</code> shows the SQL.</li>
+    <li>A pipeline on <code>db.T</code> becomes one parameterised SQL query: <code>where</code> comparing columns with values (also through a <code>ref</code>: <code>where customer.city == "Rome"</code>), <code>sort by</code>, <code>take</code>, <code>count</code>, <code>pick</code> of columns and <code>group by</code> followed by <code>count</code>, <code>sum</code> or <code>avg</code> run in the database, and the rows of <code>ref</code> fields are read with one query per field; from the first step that cannot be translated, the rest runs in memory with the same result. <code>NEXO_SQL_LOG=1</code> shows the SQL.</li>
     <li><code>db.transaction:</code> keeps or undoes everything inside together; a failure in it is a <code>DatabaseError</code>.</li>
     <li><code>db.sql("... {value}")</code> runs raw SQL written in the call; the values in braces are always parameters, so a query built from text is an error.</li>
     <li><code>nexo db diff file.nexo</code> compares the types with the database and writes a migration; <code>nexo db migrate</code> applies it in a transaction, and dropping a column needs <code>--allow-drop</code>.</li>
@@ -490,16 +490,38 @@
       <tr><td><code>creativity</code></td><td><code>low</code>, <code>medium</code>, <code>high</code></td><td><code>medium</code></td></tr>
       <tr><td><code>max</code></td><td><code>20 words</code>, <code>500 tokens</code></td><td>no limit</td></tr>
       <tr><td><code>timeout</code>, <code>retries</code></td><td>a duration; a number</td><td><code>60s</code>; 3 with a type, 1 without</td></tr>
-      <tr><td><code>stream</code></td><td><code>true</code> gives the answer in pieces for a <code>for</code></td><td><code>false</code></td></tr>
+      <tr><td><code>stream</code></td><td><code>true</code> gives the answer in pieces for a <code>for</code>, each as it arrives</td><td><code>false</code></td></tr>
       <tr><td><code>profile</code></td><td>the name of an <code>ai profile</code> block</td><td>none</td></tr>
     </tbody>
   </table></div>
-  <p>A tool is a function marked <code>@tool "what it does"</code>; an <code>agent name:</code> block takes <code>model</code>, <code>tools</code>, <code>goal</code>, <code>max_steps</code> and <code>confirm</code> (tools that need a person's approval), and runs with <code>name.handle(input)</code>. Its tools obey the program's policy. <code>nexo ai usage</code> shows the calls and tokens per model and day.</p>
+  <p>A model is <code>"provider:model"</code>, and each provider is reached through its own API. <code>key</code> takes a <code>secret(...)</code>; <code>url</code> changes the address.</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Provider</th><th>Model</th><th>Key and address</th></tr></thead>
+    <tbody>
+      <tr><td><code>anthropic</code></td><td><code>"anthropic:claude-opus"</code></td><td>its API key</td></tr>
+      <tr><td><code>openai</code></td><td><code>"openai:gpt-mini"</code></td><td>its API key</td></tr>
+      <tr><td><code>ollama</code></td><td><code>"ollama:llama"</code></td><td>no key; <code>http://localhost:11434</code> unless <code>url</code> says otherwise</td></tr>
+      <tr><td><code>mistral</code></td><td><code>"mistral:mistral-small"</code></td><td>its API key</td></tr>
+      <tr><td><code>gemini</code></td><td><code>"gemini:gemini-2.0-flash"</code></td><td>its API key</td></tr>
+      <tr><td><code>azure</code></td><td><code>"azure:my-deployment"</code></td><td><code>url = "https://NAME.openai.azure.com"</code> (needed); the resource's api-key, or without a key the Azure AD credentials of <code>nexo.infra</code> (<code>AZURE_TENANT_ID</code>, <code>AZURE_CLIENT_ID</code>, <code>AZURE_CLIENT_SECRET</code>)</td></tr>
+      <tr><td><code>bedrock</code></td><td><code>"bedrock:anthropic.claude-3-haiku-20240307-v1:0"</code></td><td>a Bedrock API key, or without a key the AWS credentials of <code>nexo.infra</code>, signed with SigV4 in <code>AWS_REGION</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Any server that speaks OpenAI's API, such as Groq, DeepSeek, OpenRouter, Together, vLLM or LM Studio, needs no provider of its own: use <code>provider = "openai"</code> with its address in <code>url</code> and its key, and name its models as the server does.</p>
+<div class="code"><div class="code-bar"><span>an OpenAI-compatible server</span></div><pre><code>ai:
+    provider = "openai"
+    model = "llama-3.3-70b-versatile"
+    url = "https://api.groq.com/openai"
+    key = secret("GROQ_KEY")
+
+ai models:
+    fast = "openai:llama-3.1-8b-instant"</code></pre></div>
+  <p>A tool is a function marked <code>@tool "what it does"</code>; an <code>agent name:</code> block takes <code>model</code>, <code>tools</code>, <code>goal</code>, <code>max_steps</code> and <code>confirm</code> (tools that need a person's approval), and runs with <code>name.handle(input)</code>. Its tools obey the program's policy; <code>tools = [mcp("files")]</code> adds the tools of the MCP server of <code>[mcp.files]</code> in <code>nexo.toml</code>. <code>budget = 5 EUR per day</code> with the prices of <code>[ai.prices]</code> stops the calls once the day's spend reaches it, or sends them to <code>when_over_budget</code>. <code>nexo ai usage</code> shows the calls, tokens and spend per model and day.</p>
 {{src:lib/ai.nexo}}
 {{test:lib/ai.nexo}}
 
   <h3 id="mod-stream"><code>nexo.stream</code>: real-time data</h3>
-  <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when kafka("orders") as msg:</code> handles one message at a time: a message that fails is tried 4 times and then goes to <code>orders.dead</code>, and <code>key:</code> makes a repeated key run once. <code>|&gt; window 1m</code>, <code>sliding 5m</code> and <code>session 30s</code> group messages by time for the usual steps. <code>kafka("t").send(value, at: time?)</code> publishes. This edition runs on a local broker, which <code>nexo test</code> drives.</p>
+  <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when kafka("orders") as msg:</code> handles one message at a time: a message that fails is tried 4 times and then goes to <code>orders.dead</code>, and <code>key:</code> makes a repeated key run once. <code>|&gt; window 1m</code>, <code>sliding 5m</code> and <code>session 30s</code> group messages by time for the usual steps. <code>kafka("t").send(value, key: k?, at: time?)</code> publishes. Without a broker a stream is on a local one, with <code>partitions: n</code> handled in parallel, each in order; <code>servers:</code> (Kafka), <code>url:</code> (RabbitMQ), <code>namespace:</code> (Event Hubs, Service Bus), <code>region:</code> (SQS, Kinesis) and <code>project:</code> (Pub/Sub) put it on its broker or cloud, with <code>key: secret(...)</code> as the broker's password, and <code>websocket("wss://host/path")</code> reads a WebSocket server. <code>nexo test</code> runs every stream on an in-memory broker.</p>
 {{src:lib/stream.nexo}}
 {{test:lib/stream.nexo}}
 

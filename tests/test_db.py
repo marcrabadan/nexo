@@ -11,11 +11,11 @@ from phases import commands, run
 CONFORMANCE = Path(__file__).resolve().parent / "conformance"
 
 
-def sql_log(phase, tmp_path):
+def sql_log(phase, tmp_path, name="s06_db.nexo"):
     work = tmp_path / "work"
     work.mkdir(parents=True)
-    shutil.copy(CONFORMANCE / "s06_db.nexo", work)
-    proc = run(phase[1], ["s06_db.nexo"], work, env={"NEXO_SQL_LOG": "1"})
+    shutil.copy(CONFORMANCE / name, work)
+    proc = run(phase[1], [name], work, env={"NEXO_SQL_LOG": "1"})
     return [line for line in proc.stdout.decode().splitlines() if line.startswith("sql: ")]
 
 
@@ -28,6 +28,19 @@ def test_both_phases_send_the_same_sql(tmp_path):
     # the pipeline of section 6 runs in the database
     assert ('sql: SELECT "id", "customer_id", "amount", "date" FROM "order" WHERE ("amount" > ?) '
             'ORDER BY "date" DESC, "id" LIMIT 20 [100]') in logs[0]
+
+
+def test_group_and_pick_run_in_sql(tmp_path):
+    phases = commands()
+    logs = [sql_log(p, tmp_path / p[0], "s06_db_group.nexo") for p in phases]
+    if len(logs) == 2:
+        assert logs[0] == logs[1]
+    log = logs[0]
+    assert ('sql: SELECT "region", COUNT(*), SUM("units"), MIN("units"), MAX("units") FROM "sale" '
+            'WHERE ("units" > ?) GROUP BY "region" ORDER BY MIN("id") [1]') in log
+    assert 'sql: SELECT "region", "units" FROM "sale" ORDER BY "id" LIMIT 2 []' in log
+    # a sum that may overflow reads the rows and adds them in memory
+    assert log[-1] == 'sql: SELECT "id", "region", "units", "price", "kind", "note", "extra" FROM "sale" ORDER BY "id" []'
 
 
 APP = """use nexo.db
@@ -68,3 +81,19 @@ def test_diff_and_migrate(phase, tmp_path):
     with sqlite3.connect(tmp_path / "shop.db") as c:
         assert list(c.execute("SELECT * FROM customer")) == [(1, "Ana", None)]
         assert [r[0] for r in c.execute("SELECT name FROM nexo_migrations")] == ["0001.sql", "0002.sql"]
+
+
+def test_relations_run_in_sql(tmp_path):
+    phases = commands()
+    logs = [sql_log(p, tmp_path / p[0], "s06_db_relations.nexo") for p in phases]
+    if len(logs) == 2:
+        assert logs[0] == logs[1]
+    log = logs[0]
+    assert ('sql: SELECT "id", "customer_id", "amount" FROM "order" WHERE ("customer_id" IN '
+            '(SELECT "id" FROM "customer" WHERE "name" = ?)) ORDER BY "id" [\'Ana\']') in log
+    # the customers of the five orders, and their bosses (among them): one
+    # statement, not one per order
+    i = log.index('sql: SELECT "id", "customer_id", "amount" FROM "order" ORDER BY "id" []')
+    assert log[i + 1] == ('sql: SELECT "id", "name", "vip", "boss_id" FROM "customer" WHERE ("id" IN (?, ?, ?)) '
+                          'ORDER BY "id" [1, 2, 3]')
+    assert log[i + 2].startswith("sql: SELECT COUNT(*)")
