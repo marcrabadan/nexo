@@ -79,21 +79,62 @@
     el.innerHTML = highlight(el.textContent);
   });
 
+  // Scrollable examples and tables need their own keyboard focus target.
+  // Recheck after layout changes; hidden tab panels cannot be measured yet.
+  function updateScrollRegions() {
+    document.querySelectorAll("pre, .table-wrap").forEach(function (region) {
+      var overflows = region.getClientRects().length &&
+        (region.scrollWidth > region.clientWidth || region.scrollHeight > region.clientHeight);
+      if (overflows) region.tabIndex = 0;
+      else region.removeAttribute("tabindex");
+    });
+  }
+  var scrollFrame = 0;
+  function scheduleScrollRegions() {
+    if (scrollFrame) return;
+    scrollFrame = window.requestAnimationFrame(function () {
+      scrollFrame = 0;
+      updateScrollRegions();
+    });
+  }
+  scheduleScrollRegions();
+  window.addEventListener("resize", scheduleScrollRegions);
+  if (document.fonts) document.fonts.ready.then(scheduleScrollRegions);
+
   document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.setAttribute("aria-live", "polite");
+    function feedback(message) {
+      btn.textContent = message;
+      setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+    }
     btn.addEventListener("click", function () {
       var code = btn.closest(".code").querySelector("pre code");
-      if (!navigator.clipboard) return;
+      if (!navigator.clipboard) {
+        feedback("Copy unavailable");
+        return;
+      }
       navigator.clipboard.writeText(code.textContent).then(function () {
-        btn.textContent = "Copied";
-        setTimeout(function () { btn.textContent = "Copy"; }, 1500);
-      }).catch(function () {});
+        feedback("Copied");
+      }).catch(function () { feedback("Copy failed"); });
     });
   });
 
-  // Each tablist switches its own panels; arrows move between its tabs.
+  // Keep each panel in the tab order so keyboard users can scroll its code.
+  document.querySelectorAll('[role="tabpanel"]').forEach(function (panel) {
+    panel.tabIndex = 0;
+  });
+
+  // Each tablist switches its own panels; arrows follow the visible layout.
   document.querySelectorAll('[role="tablist"]').forEach(function (list) {
     var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
-    var vertical = list.getAttribute("aria-orientation") === "vertical";
+    if (list.classList.contains("explorer-list")) {
+      var narrow = window.matchMedia("(max-width: 1040px)");
+      function orient() {
+        list.setAttribute("aria-orientation", narrow.matches ? "horizontal" : "vertical");
+      }
+      orient();
+      narrow.addEventListener("change", orient);
+    }
     function select(tab) {
       tabs.forEach(function (t) {
         var on = t === tab;
@@ -102,32 +143,39 @@
         document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
       });
       tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+      scheduleScrollRegions();
     }
     tabs.forEach(function (tab, i) {
       tab.addEventListener("click", function () { select(tab); });
       tab.addEventListener("keydown", function (e) {
-        var k = e.key, d = 0;
-        if (k === "ArrowRight" || (vertical && k === "ArrowDown")) d = 1;
-        else if (k === "ArrowLeft" || (vertical && k === "ArrowUp")) d = -1;
-        if (!d) return;
+        var k = e.key, next;
+        var vertical = list.getAttribute("aria-orientation") === "vertical";
+        if (k === "Home") next = tabs[0];
+        else if (k === "End") next = tabs[tabs.length - 1];
+        else if (k === (vertical ? "ArrowDown" : "ArrowRight")) next = tabs[(i + 1) % tabs.length];
+        else if (k === (vertical ? "ArrowUp" : "ArrowLeft")) next = tabs[(i - 1 + tabs.length) % tabs.length];
+        else return;
         e.preventDefault();
-        var next = tabs[(i + d + tabs.length) % tabs.length];
         select(next);
         next.focus();
       });
     });
   });
 
-  // Theme: follows the system until the button picks one, then remembers it.
+  // Dark by default; an explicit choice is remembered across pages.
   var root = document.documentElement;
   var theme = document.getElementById("theme");
   if (theme) {
+    function describeTheme() {
+      var label = "Switch to " + (root.dataset.theme === "light" ? "dark" : "light") + " theme";
+      theme.setAttribute("aria-label", label);
+      theme.title = label;
+    }
+    describeTheme();
     theme.addEventListener("click", function () {
-      var dark = root.dataset.theme
-        ? root.dataset.theme === "dark"
-        : window.matchMedia("(prefers-color-scheme: dark)").matches;
-      root.dataset.theme = dark ? "light" : "dark";
+      root.dataset.theme = root.dataset.theme === "light" ? "dark" : "light";
       try { localStorage.setItem("nexo-theme", root.dataset.theme); } catch (e) {}
+      describeTheme();
     });
   }
 
@@ -140,7 +188,15 @@
     }
     menu.addEventListener("click", function () { setOpen(!nav.classList.contains("open")); });
     nav.addEventListener("click", function (e) { if (e.target.closest("a")) setOpen(false); });
-    document.addEventListener("keydown", function (e) { if (e.key === "Escape") setOpen(false); });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && nav.classList.contains("open")) {
+        setOpen(false);
+        menu.focus();
+      }
+    });
+    document.addEventListener("click", function (e) {
+      if (!menu.contains(e.target) && !nav.contains(e.target)) setOpen(false);
+    });
   }
 
   // Reference: the contents start closed on narrow screens and mark the

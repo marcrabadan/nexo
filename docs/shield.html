@@ -7,24 +7,25 @@
 <meta name="description" content="Nexo Shield combines strict API permissions, synchronous dependency ceilings, hardened Docker execution and an explicit offline Linux worker with Landlock, seccomp and resource limits.">
 <meta property="og:title" content="Nexo Shield — native execution with explicit permissions">
 <meta property="og:description" content="Explore Shield's architecture, Docker deployment, Linux isolation, security boundaries and tested guarantees.">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark light">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="assets/style.css">
 <link rel="stylesheet" href="assets/shield.css">
 <script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
-<body>
+<body class="shield-page">
 <a class="skip" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="#architecture">Architecture</a>
-      <a href="#features">Features</a>
-      <a href="#docker">Docker</a>
-      <a href="#boundaries">Boundaries</a>
-      <a href="#validation">Validation</a>
+      <a href="index.html#features">Language</a>
+      <a href="index.html#modules">Modules</a>
+      <a href="index.html#examples">Examples</a>
+      <a href="shield.html" aria-current="page">Shield</a>
       <a href="reference.html">Reference</a>
+      <a class="nav-start" href="index.html#start">Get started <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a>
     </nav>
     <div class="header-tools">
       <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
@@ -41,33 +42,44 @@
 <main id="main">
 <div class="hero shield-hero" id="top"><div class="wrap">
   <div class="hero-copy">
-    <p class="eyebrow">Nexo Shield</p>
-    <h1>Native execution.<br><em>Explicit permissions.</em></h1>
-    <p class="lede">Declare what your program may do. Shield enforces those permissions, narrows them across dependencies and can run compiled Nexo inside a hardened Docker container with an offline Linux worker.</p>
-    <div class="actions"><a class="btn btn-primary" href="#docker">Run with Docker</a><a class="btn btn-ghost" href="#architecture">Explore the architecture</a></div>
-    <p class="shield-note">Strict API checks in both implementations. A native Rust compiler/runtime and worker in the production image. Kernel isolation is requested explicitly.</p>
+    <p class="eyebrow"><span class="shield-status" aria-hidden="true"></span>Nexo Shield / Native security runtime</p>
+    <h1>Native code.<br><em>Clear boundaries.</em></h1>
+    <p class="lede">Give your program exactly the access it needs. Shield enforces explicit permissions, narrows them across dependencies and runs native Nexo inside hardened Docker.</p>
+    <div class="actions"><a class="btn btn-primary" href="#docker">Run with Docker <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a class="btn btn-ghost" href="#architecture">See the architecture <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v16m-6-6 6 6 6-6"/></svg></span></a></div>
+    <p class="shield-note">Strict API checks in both implementations. Request the offline Linux worker explicitly for kernel-enforced isolation.</p>
   </div>
-  <div class="hero-code"><div class="code"><div class="code-bar"><span>docker/shield/example/main.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
+  <div class="hero-code shield-policy">
+    <div class="shield-policy-label"><span>01 / Declare your permissions</span><span class="shield-policy-tag">main.nexo</span></div>
+    <div class="code"><div class="code-bar"><span>docker/shield/example/main.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
     allow read &quot;input.txt&quot;
     allow write &quot;/out&quot;
     deny shell
 
 text = read(&quot;input.txt&quot;)
 write(&quot;/out/result.txt&quot;, text)
-print(&quot;Shield Docker: {text}&quot;)</code></pre></div></div>
-</div></div>
+print(&quot;Shield Docker: {text}&quot;)</code></pre></div>
+    <div class="shield-decisions" aria-label="Policy decisions for this example">
+      <div><span class="shield-decision-dot" aria-hidden="true"></span><code>read input.txt</code><span>allowed</span></div>
+      <div><span class="shield-decision-dot" aria-hidden="true"></span><code>write /out</code><span>allowed</span></div>
+      <div class="shield-decision-denied"><span aria-hidden="true">×</span><code>shell</code><span>denied</span></div>
+    </div>
+  </div>
+</div>
+<div class="wrap"><nav class="shield-jump" aria-label="Shield sections"><span>Inside Shield</span><a href="#architecture">Architecture <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#features">Capabilities <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#docker">Deployment <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#boundaries">Boundaries <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#validation">Validation <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a></nav></div>
+</div>
 
 <section class="alt" id="architecture"><div class="wrap">
-  <div class="section-head"><p class="eyebrow">Architecture</p><h2>From declared intent to kernel enforcement</h2><p class="section-intro">The operator supplies trusted policy and configuration. Docker surrounds compilation and execution; requesting the Linux profile adds a dedicated worker boundary around the compiled program.</p></div>
+  <div class="section-head"><p class="eyebrow">01 / Architecture</p><h2>Permission at every layer.</h2><p class="section-intro">The operator supplies trusted policy and configuration. Docker surrounds compilation and execution; requesting the Linux profile adds a dedicated worker boundary around the compiled program.</p></div>
   <figure class="shield-boundary">
-    <div class="shield-boundary-head"><h3>Docker container</h3><p>Non-root · read-only root · no external network · zero capabilities · cgroup limits</p></div>
+    <div class="shield-boundary-head"><div><span class="shield-layer">Execution boundary</span><h3>Hardened Docker container</h3></div><span class="shield-container-tag">Linux x86_64 / cgroup v2</span></div>
+    <ul class="shield-controls" aria-label="Container controls"><li>Non-root</li><li>Read-only root</li><li>No external network</li><li>Zero capabilities</li><li>Resource limits</li></ul>
     <ol class="shield-flow">
-      <li><span class="shield-number" aria-hidden="true">01</span><h3>Source &amp; permissions</h3><p>The application declares <code>policy:</code>. An optional dependency manifest sets immutable ceilings for individual file modules.</p></li>
-      <li><span class="shield-number" aria-hidden="true">02</span><h3>Native compiler &amp; runtime</h3><p>Rust generates LLVM IR and links the runtime. Typed capability decisions authorize checked API calls; dependency guards intersect caller permissions.</p></li>
-      <li><span class="shield-number" aria-hidden="true">03</span><h3>Dedicated supervisor</h3><p>For the Linux profile, a separate launcher pins the process with a pidfd, supervises its wall deadline and reaps the worker on failure.</p></li>
-      <li><span class="shield-number" aria-hidden="true">04</span><h3>Linux worker</h3><p>Landlock restricts filesystem access. Seccomp restricts syscalls. Hard limits bound CPU, address space, file size and descriptors. Sockets and child processes are denied.</p></li>
+      <li><span class="shield-number" aria-hidden="true">01 / POLICY</span><h3>Source &amp; permissions</h3><p>The application declares <code>policy:</code>. An optional dependency manifest sets immutable ceilings for individual file modules.</p></li>
+      <li><span class="shield-number" aria-hidden="true">02 / NATIVE</span><h3>Compiler &amp; runtime</h3><p>Rust generates LLVM IR and links the runtime. Typed capability decisions authorize checked API calls; dependency guards intersect caller permissions.</p></li>
+      <li class="shield-worker-step"><span class="shield-number" aria-hidden="true">03 / SUPERVISION</span><h3>Dedicated supervisor</h3><p>For the Linux profile, a separate launcher pins the process with a pidfd, supervises its wall deadline and reaps the worker on failure.</p></li>
+      <li class="shield-worker-step"><span class="shield-number" aria-hidden="true">04 / KERNEL</span><h3>Linux worker</h3><p>Landlock restricts filesystem access. Seccomp restricts syscalls. Hard limits bound CPU, address space, file size and descriptors. Sockets and child processes are denied.</p></li>
     </ol>
-    <figcaption>Steps 3–4 apply to explicit Linux execution, such as <code>run-linux</code>. The default Docker command uses the container boundary and strict API checks.</figcaption>
+    <figcaption><span class="shield-caption-label">Explicit Linux profile</span> Steps 3–4 apply to explicit Linux execution, such as <code>run-linux</code>. The default Docker command uses the container boundary and strict API checks.</figcaption>
   </figure>
   <div class="table-wrap"><table class="ref-table"><caption>Choose the execution boundary your host can provide</caption><thead><tr><th>Mode</th><th>API authorization</th><th>Container isolation</th><th>Worker kernel isolation</th></tr></thead><tbody>
     <tr><td><code>nexo security run</code></td><td>Strict, in both CLIs</td><td>Only if launched in a container</td><td>Not requested</td></tr>
@@ -78,45 +90,46 @@ print(&quot;Shield Docker: {text}&quot;)</code></pre></div></div>
 </div></section>
 
 <section id="features"><div class="wrap">
-  <div class="section-head"><p class="eyebrow">Features</p><h2>Permissions that stay explicit</h2><p class="section-intro">Shield builds on Nexo’s existing policy syntax, with strict decisions and additional boundaries selected by the operator.</p></div>
-  <div class="grid">
-    <article class="card"><h3>Strict API decisions</h3><p>A policy is required. Undeclared checked accesses stop execution, <code>deny</code> overrides <code>allow</code>, and policy violations cannot be caught with <code>try</code>.</p></article>
-    <article class="card"><h3>Dependency ceilings</h3><p><code>--dependencies permissions.json</code> intersects application, lexical module and active caller permissions. The current profile supports synchronous code and bounded plain-data returns.</p></article>
-    <article class="card"><h3>Offline kernel confinement</h3><p>The Linux worker pins filesystem grants with <code>openat2</code>, enforces them with Landlock and installs a seccomp allowlist. It cannot create sockets, threads or child processes.</p></article>
-    <article class="card"><h3>Resource budgets</h3><p>Docker bounds container memory, CPU and process count. The worker adds hard CPU, address-space, file-size and descriptor limits plus a supervised wall deadline.</p></article>
-    <article class="card"><h3>Local decision traces</h3><p><code>security trace</code> emits JSON events on stderr with operation, decision and reason. Every target is redacted. Program output and ordinary diagnostics are not sanitized by this event format.</p></article>
-    <article class="card"><h3>Inspect before running</h3><p><code>security check</code> validates code and displays policy without executing the program. <code>security audit</code> also shows the existing C inventory; it is not a vulnerability scanner.</p></article>
+  <div class="section-head"><p class="eyebrow">02 / Capabilities</p><h2>Small permissions.<br>Deliberate enforcement.</h2><p class="section-intro">Shield builds on Nexo’s existing policy syntax, with strict decisions and additional boundaries selected by the operator.</p></div>
+  <div class="grid shield-capabilities">
+    <article class="card"><p class="shield-card-label">01 / Authorization</p><h3>Strict API decisions</h3><p>A policy is required. Undeclared checked accesses stop execution, <code>deny</code> overrides <code>allow</code>, and policy violations cannot be caught with <code>try</code>.</p></article>
+    <article class="card"><p class="shield-card-label">02 / Dependencies</p><h3>Dependency ceilings</h3><p><code>--dependencies permissions.json</code> intersects application, lexical module and active caller permissions. The current profile supports synchronous code and bounded plain-data returns.</p></article>
+    <article class="card"><p class="shield-card-label">03 / Isolation</p><h3>Offline kernel confinement</h3><p>The Linux worker pins filesystem grants with <code>openat2</code>, enforces them with Landlock and installs a seccomp allowlist. It cannot create sockets, threads or child processes.</p></article>
+    <article class="card"><p class="shield-card-label">04 / Limits</p><h3>Resource budgets</h3><p>Docker bounds container memory, CPU and process count. The worker adds hard CPU, address-space, file-size and descriptor limits plus a supervised wall deadline.</p></article>
+    <article class="card"><p class="shield-card-label">05 / Visibility</p><h3>Local decision traces</h3><p><code>security trace</code> emits JSON events on stderr with operation, decision and reason. Every target is redacted. Program output and ordinary diagnostics are not sanitized by this event format.</p></article>
+    <article class="card"><p class="shield-card-label">06 / Inspection</p><h3>Inspect before running</h3><p><code>security check</code> validates code and displays policy without executing the program. <code>security audit</code> also shows the existing C inventory; it is not a vulnerability scanner.</p></article>
   </div>
 </div></section>
 
 <section class="alt" id="docker"><div class="wrap">
-  <div class="section-head"><p class="eyebrow">Docker deployment</p><h2>Build the checkout. Run the native runtime.</h2><p class="section-intro">Use Docker Engine on Linux x86_64 with cgroup v2. The image packages the compiler, static runtime and worker; production execution needs neither Python nor a Rust toolchain.</p></div>
-  <div class="shield-columns"><div><h3>1. Try the packaged example</h3><p>From a checkout containing Shield, build the production image and run its demo. It reads <code>/app/input.txt</code> and writes <code>/out/result.txt</code>.</p><div class="code"><div class="code-bar"><span>From the repository root</span><button class="copy" type="button">Copy</button></div><pre><code>docker/shield/build.sh runtime
+  <div class="section-head"><p class="eyebrow">03 / Deployment</p><h2>From checkout to container.</h2><p class="section-intro">Use Docker Engine on Linux x86_64 with cgroup v2. The image packages the compiler, static runtime and worker; production execution needs neither Python nor a Rust toolchain.</p></div>
+  <div class="shield-columns"><div><p class="shield-card-label">Step 01 / Build &amp; run</p><h3>Try the packaged example</h3><p>From a checkout containing Shield, build the production image and run its demo. It reads <code>/app/input.txt</code> and writes <code>/out/result.txt</code>.</p><div class="code"><div class="code-bar"><span>From the repository root</span><button class="copy" type="button">Copy</button></div><pre><code>docker/shield/build.sh runtime
 docker/shield/run.sh</code></pre></div><p>The demo prints <code>Shield Docker: ok</code>. Output is temporary unless an existing output directory is mounted.</p></div>
-  <div><h3>2. Require the Linux profile</h3><p>Probe the actual deployment host, then run the same example with worker isolation. This requires Landlock ABI 3 or newer, seccomp, openat2, pidfds and a non-root identity.</p><div class="code"><div class="code-bar"><span>Require the Linux offline worker</span><button class="copy" type="button">Copy</button></div><pre><code>docker/shield/run.sh probe --require-linux
+  <div><p class="shield-card-label">Step 02 / Require isolation</p><h3>Enable the Linux profile</h3><p>Probe the actual deployment host, then run the same example with worker isolation. This requires Landlock ABI 3 or newer, seccomp, openat2, pidfds and a non-root identity.</p><div class="code"><div class="code-bar"><span>Require the Linux offline worker</span><button class="copy" type="button">Copy</button></div><pre><code>docker/shield/run.sh probe --require-linux
 docker/shield/run.sh run-linux /app/main.nexo</code></pre></div><p>Exit <code>0</code> means the strict probe passed. Exit <code>125</code> means setup or a requested guarantee is unavailable. Shield does not silently fall back.</p></div></div>
-  <h3>Bring your own project</h3><p>The project and output directories must already exist and be disjoint. The project is mounted read-only; only the output mount is writable. The helper maps the current non-root UID/GID, using 10001 when invoked as root.</p><div class="code"><div class="code-bar"><span>Existing, separate project and output directories</span><button class="copy" type="button">Copy</button></div><pre><code>docker/shield/run.sh --project ./project --output ./results \
+  <div class="shield-own-project"><p class="shield-card-label">Your project / Your output</p><h3>Bring your own project</h3><p>The project and output directories must already exist and be disjoint. The project is mounted read-only; only the output mount is writable. The helper maps the current non-root UID/GID, using 10001 when invoked as root.</p><div class="code"><div class="code-bar"><span>Existing, separate project and output directories</span><button class="copy" type="button">Copy</button></div><pre><code>docker/shield/run.sh --project ./project --output ./results \
     run-linux /app/main.nexo</code></pre></div>
-  <p>Defaults: 512 MiB RAM, one CPU, 64 processes, no swap, a read-only root, no external network, and temporary storage for compilation and output. The entrypoint refuses execution when required effective guarantees are absent. Builds need network access; execution is offline.</p>
-  <p><a href="https://github.com/marcrabadan/nexo/blob/c36b5b6398e6c4ab29e36e277a53162dad18ce28/docs/shield-docker.md">Docker and Compose deployment guide</a> · <a href="https://github.com/marcrabadan/nexo/tree/c36b5b6398e6c4ab29e36e277a53162dad18ce28/docker/shield">Dockerfiles, launcher and seccomp profile</a></p>
+  </div>
+  <p class="shield-runtime-defaults">Defaults: 512 MiB RAM, one CPU, 64 processes, no swap, a read-only root, no external network, and temporary storage for compilation and output. The entrypoint refuses execution when required effective guarantees are absent. Builds need network access; execution is offline.</p>
+  <p><a href="https://github.com/marcrabadan/nexo/blob/16a581f59a7f41f8aa7a1c103cd117a912131bca/docs/shield-docker.md">Docker and Compose deployment guide</a> · <a href="https://github.com/marcrabadan/nexo/tree/16a581f59a7f41f8aa7a1c103cd117a912131bca/docker/shield">Dockerfiles, launcher and seccomp profile</a></p>
 </div></section>
 
 <section id="boundaries"><div class="wrap">
-  <div class="section-head"><p class="eyebrow">Security boundaries</p><h2>Know exactly what you are enabling</h2><p class="section-intro">The operator, policy, compiler and host configuration are trusted. Container isolation shares the host kernel. Each deployment host must pass its own strict probe.</p></div>
-  <div class="grid">
-    <article class="card"><h3>Offline by design</h3><p>The Linux profile denies all sockets, including localhost and DNS. Network grants are rejected. An online isolated profile with DNS/IP pinning and reviewed proxy handling is still future work.</p></article>
-    <article class="card"><h3>Native integrations stay closed</h3><p>In-process C, Python and shell integrations are rejected under Shield, even if allowed by policy. An independent native worker exists; a typed RPC bridge into Nexo is not implemented.</p></article>
-    <article class="card"><h3>Conservative contexts</h3><p>Async execution is rejected in the worker/dependency profiles until contexts can follow queued work. Persistent workflows are rejected before state loading or steps because their state operations bypass ordinary API policy.</p></article>
+  <div class="section-head"><p class="eyebrow">04 / Boundaries</p><h2>Clear about the limits, too.</h2><p class="section-intro">The operator, policy, compiler and host configuration are trusted. Container isolation shares the host kernel. Each deployment host must pass its own strict probe.</p></div>
+  <div class="grid shield-limitations">
+    <article class="card"><p class="shield-card-label">Network</p><h3>Offline by design</h3><p>The Linux profile denies all sockets, including localhost and DNS. Network grants are rejected. An online isolated profile with DNS/IP pinning and reviewed proxy handling is still future work.</p></article>
+    <article class="card"><p class="shield-card-label">Native integrations</p><h3>Integrations stay closed</h3><p>In-process C, Python and shell integrations are rejected under Shield, even if allowed by policy. An independent native worker exists; a typed RPC bridge into Nexo is not implemented.</p></article>
+    <article class="card"><p class="shield-card-label">Execution contexts</p><h3>Conservative contexts</h3><p>Async execution is rejected in the worker/dependency profiles until contexts can follow queued work. Persistent workflows are rejected before state loading or steps because their state operations bypass ordinary API policy.</p></article>
   </div>
-  <p>API checks alone do not prevent filesystem races or DNS rebinding. Docker alone does not enforce per-policy filesystem grants. The Linux worker requires existing, disjoint positive filesystem grants and rejects deny exceptions it cannot represent faithfully. Full information-flow tracking, agent/tool authorization and package-registry permissions are not implemented.</p>
-  <p><a href="https://github.com/marcrabadan/nexo/blob/c36b5b6398e6c4ab29e36e277a53162dad18ce28/docs/shield.md">API threat model</a> · <a href="https://github.com/marcrabadan/nexo/blob/c36b5b6398e6c4ab29e36e277a53162dad18ce28/docs/shield-isolation.md">Worker isolation contract</a></p>
+  <p class="shield-boundary-note">API checks alone do not prevent filesystem races or DNS rebinding. Docker alone does not enforce per-policy filesystem grants. The Linux worker requires existing, disjoint positive filesystem grants and rejects deny exceptions it cannot represent faithfully. Full information-flow tracking, agent/tool authorization and package-registry permissions are not implemented.</p>
+  <p><a href="https://github.com/marcrabadan/nexo/blob/16a581f59a7f41f8aa7a1c103cd117a912131bca/docs/shield.md">API threat model</a> · <a href="https://github.com/marcrabadan/nexo/blob/16a581f59a7f41f8aa7a1c103cd117a912131bca/docs/shield-isolation.md">Worker isolation contract</a></p>
 </div></section>
 
 <section class="alt" id="validation"><div class="wrap">
-  <div class="section-head"><p class="eyebrow">Validation</p><h2>Tested against the real kernel</h2><p class="section-intro">On revision <code>c36b5b6</code>, GitHub CI passed with Landlock ABI 7 and actual filesystem enforcement enabled. The 13 positive Landlock cases ran successfully, including symlink escape and race attempts, syscall denial and resource limits.</p></div>
-  <dl class="facts"><div><dt>14</dt><dd>Docker integration tests passed</dd></div><div><dt>49</dt><dd>Rust tests passed inside Docker; one optional benchmark ignored</dd></div><div><dt>156</dt><dd>Python security/policy tests passed inside Docker; three skipped</dd></div><div><dt>139/139</dt><dd>compiler conformance cases passed</dd></div></dl>
-  <p>The full suite passed 1,216 tests with 20 skips; its 14 opt-in Docker cases ran in the separate Docker job. Differential checks found 218 of 228 outputs identical, 10 documented differences and no unexpected differences. Both normal and mandatory strict container validation passed.</p>
-  <p><a href="https://github.com/marcrabadan/nexo/actions/runs/40402735444">Read the CI results</a> · <a href="https://github.com/marcrabadan/nexo/pull/18">Implementation and review in PR #18</a></p>
+  <div class="section-head"><p class="eyebrow">05 / Validation</p><h2>Real tests. Real kernel.</h2><p class="section-intro">On revision <code>16a581f</code>, GitHub CI passed with Landlock ABI 7 and actual filesystem enforcement enabled. The 13 positive Landlock cases ran successfully, including symlink escape and race attempts, syscall denial and resource limits.</p></div>
+  <dl class="facts"><div><dt>14</dt><dd>Docker integration tests passed</dd></div><div><dt>49</dt><dd>Rust tests passed inside Docker; one optional benchmark ignored</dd></div><div><dt>170</dt><dd>Python security/policy tests passed inside Docker; three skipped</dd></div><div><dt>139/139</dt><dd>compiler conformance cases passed</dd></div></dl>
+  <p>The full suite passed 1,230 tests with 20 skips; its 14 opt-in Docker cases ran in the separate Docker job. Differential checks found 218 of 228 outputs identical, 10 documented differences and no unexpected differences. Both normal and mandatory strict container validation passed.</p>
+  <p><a href="https://github.com/marcrabadan/nexo/actions/runs/40459236154">Read the CI results</a> · <a href="https://github.com/marcrabadan/nexo/pull/18">Implementation and review in PR #18</a></p>
   <p class="shield-note">These are results for the tested revision and runner, not a guarantee that every Docker host exposes the same kernel facilities. The implementation and its review are linked above. Commands require a checkout containing Shield; no published package or completed external security audit is claimed.</p>
 </div></section>
 </main>
@@ -127,12 +140,13 @@ docker/shield/run.sh run-linux /app/main.nexo</code></pre></div><p>Exit <code>0<
       <p>One way to do each thing. Edition 0.1.</p>
     </div>
     <nav aria-label="Footer">
-      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
       <a href="reference.html">Reference</a>
       <a href="shield.html">Nexo Shield</a>
       <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
       <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">Design decisions</a>
-      <a href="https://github.com/marcrabadan/nexo/tree/main/examples">Examples</a>
+      <a href="index.html#performance">Benchmarks</a>
+      <a href="index.html#roadmap">Roadmap</a>
+      <a href="https://github.com/marcrabadan/nexo">GitHub <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a>
     </nav>
   </div>
 </footer>

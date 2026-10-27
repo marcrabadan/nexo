@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexo reference</title>
 <meta name="description" content="The Nexo language reference: syntax, types, operators, errors, pipelines, contracts, modules, concurrency, the standard library, the command line and the reserved words. Every example runs with both implementations.">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark light">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="assets/style.css">
 <script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
-<body>
+<body class="reference-page">
 
 <a class="skip" href="#main">Skip to content</a>
 
@@ -18,12 +19,12 @@
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="index.html#features">Features</a>
+      <a href="index.html#features">Language</a>
+      <a href="index.html#modules">Modules</a>
       <a href="index.html#examples">Examples</a>
-      <a href="index.html#start">Get started</a>
       <a href="shield.html">Shield</a>
       <a href="reference.html" aria-current="page">Reference</a>
-      <a href="index.html#roadmap">Roadmap</a>
+      <a class="nav-start" href="index.html#start">Get started <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a>
     </nav>
     <div class="header-tools">
       <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
@@ -587,11 +588,13 @@
       <p>One way to do each thing. Edition 0.1.</p>
     </div>
     <nav aria-label="Footer">
-      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
       <a href="reference.html">Reference</a>
+      <a href="shield.html">Nexo Shield</a>
       <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
       <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">Design decisions</a>
-      <a href="https://github.com/marcrabadan/nexo/tree/main/examples">Examples</a>
+      <a href="index.html#performance">Benchmarks</a>
+      <a href="index.html#roadmap">Roadmap</a>
+      <a href="https://github.com/marcrabadan/nexo">GitHub <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a>
     </nav>
   </div>
 </footer>
