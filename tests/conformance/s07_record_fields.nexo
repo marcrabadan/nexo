@@ -44,3 +44,17 @@ try:
 else e is Overflow:
     print(e.message)
 print(big(3))
+
+# a failing argument leaves the record as it was
+fn square(n: int) -> int:
+    return n * n
+
+fn keep(big: int) -> int:
+    var p = P(1, 2)
+    try:
+        p = P(3, square(big))
+    else e:
+        print(e.message)
+    return p.x * 10 + p.y
+
+print(keep(5_000_000_000))

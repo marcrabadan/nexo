@@ -2195,7 +2195,11 @@ ints that do not read it), only read as `name.field` and used to call
 methods that read `self` only through its fields, take ints and return
 an int, and that no other function can see, is replaced by one int per
 field; each of those methods becomes a top-level function that takes the
-fields (compiler/nexoc/src/unbox.rs). Such a record can never be
+fields (compiler/nexoc/src/unbox.rs). Every argument is evaluated before
+any field changes, as the record is built before it is assigned, so a
+failure in a later argument leaves the fields as they were; a method
+call that a test fakes (`fake p.norm returns 99`) keeps its record,
+since fakes are found by the text of the call. Such a record can never be
 printed, compared, stored or shared, so nothing can tell the difference,
 and every expression keeps its span, so errors read the same. Any other
 record is an object as before. The `records` benchmark builds such a

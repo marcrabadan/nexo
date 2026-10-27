@@ -357,6 +357,19 @@ fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
         return None;
     }
     let ints = Ints::new(program, res, &fns, &types);
+    // the calls `fake` replaces in tests
+    let mut fakes: HashSet<String> = HashSet::new();
+    crate::checker::walk_stmts(&program.body, true, &mut |s| {
+        if let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind {
+            if matches!(&func.kind, ExprKind::Name(n) if n == "__fake") {
+                if let Some(Arg { value: Expr { kind: ExprKind::Str(parts), .. }, .. }) = args.first() {
+                    if let [StrPiece::Lit(n)] = parts.as_slice() {
+                        fakes.insert(n.clone());
+                    }
+                }
+            }
+        }
+    });
     let methods_ok: HashMap<(BindingId, String), bool> = eligible
         .iter()
         .flat_map(|(tb, t)| t.methods.iter().map(move |m| ((*tb, m.name.clone()), m)))
@@ -467,7 +480,10 @@ fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
                         if let Some(b) = single(res, obj).filter(|b| var_type.contains_key(b)) {
                             let tb = var_type[&b];
                             let t = eligible[&tb];
-                            let fits = methods_ok.get(&(tb, name.clone())) == Some(&true)
+                            // a call a test fakes keeps its name (fakes are
+                            // found by the text of the call)
+                            let fits = !fakes.contains(&crate::checker::callee_name(func))
+                                && methods_ok.get(&(tb, name.clone())) == Some(&true)
                                 && t.methods.iter().find(|m| &m.name == name).is_some_and(|m| m.params.len() == args.len() + 1)
                                 && args.iter().all(|a| a.name.is_none() && ints.certain(&a.value));
                             if fits {
@@ -720,12 +736,29 @@ fn rewrite_block(body: &mut Vec<Stmt>, plan: &Plan, ids: &mut Ids) {
                 StmtKind::VarDecl { value: Expr { kind: ExprKind::Call { args, .. }, .. }, .. } => (args, true),
                 _ => unreachable!(),
             };
+            // every argument is evaluated before any field changes, as the
+            // record would be built before it is assigned: a failure in a
+            // later argument leaves the fields as they were
+            let mut values = Vec::new();
             for (f, a) in fields.iter().zip(args) {
+                let value = if fields.len() > 1 {
+                    let tmp = format!("__urt{}_{f}", s.id);
+                    let kind = StmtKind::Assign { target: name(ids, a.span, &tmp), op: "=", value: a.value, ty: None };
+                    let mut st = Stmt { id: ids.next(), span: s.span, kind };
+                    rewrite_exprs(&mut st, plan, ids);
+                    body.push(st);
+                    name(ids, a.span, &tmp)
+                } else {
+                    a.value
+                };
+                values.push((f, a.span, value));
+            }
+            for (f, span, value) in values {
                 let n = field_var(*b, f);
                 let kind = if var {
-                    StmtKind::VarDecl { name: n, name_span: a.span, ty: None, value: a.value }
+                    StmtKind::VarDecl { name: n, name_span: span, ty: None, value }
                 } else {
-                    StmtKind::Assign { target: name(ids, a.span, &n), op: "=", value: a.value, ty: None }
+                    StmtKind::Assign { target: name(ids, span, &n), op: "=", value, ty: None }
                 };
                 let mut st = Stmt { id: ids.next(), span: s.span, kind };
                 rewrite_exprs(&mut st, plan, ids);
