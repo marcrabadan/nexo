@@ -28,8 +28,14 @@ from ..types import Builtin, Native, NexoFailure, Quantity, failure
 KINDS = ("kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket")
 # options that name a broker on the network: not available in phase 5 (D113)
 REMOTE = ("servers", "url", "region", "namespace", "project", "endpoint")
-# the option that puts a source in its cloud (D168)
-CLOUD = {"sqs": "region", "kinesis": "region", "servicebus": "namespace", "pubsub": "project"}
+# the option that puts a source in its cloud (D168) or on a broker on the
+# network (D169)
+CLOUD = {"sqs": "region", "kinesis": "region", "servicebus": "namespace", "pubsub": "project",
+         "kafka": "servers", "eventhub": "namespace", "rabbit": "url"}
+# the sources whose broker takes a password: key:
+SECRET = ("kafka", "rabbit")
+# the attributes (or headers) that keep a message's time and key (D168)
+TIME, KEY = "nexo-time", "nexo-key"
 ROOT = Path(".nexo") / "streams"
 BACKOFF = (0.1, 0.2, 0.4)
 
@@ -141,22 +147,29 @@ class Stream(Native):
     """A source: `kafka("orders")` and the others (section 19)."""
 
     type_name = "stream"
-    __slots__ = ("kind", "name", "wanted", "where")
+    __slots__ = ("kind", "name", "wanted", "where", "secret")
 
-    def __init__(self, kind: str, name: str, wanted: int | None = None, where: str | None = None):
+    def __init__(self, kind: str, name: str, wanted: int | None = None, where: str | None = None, secret=None):
         self.kind, self.name = kind, name
         # partitions: n of the source, if given (D167)
         self.wanted = wanted
-        # the region, namespace or project of a source in its cloud (D168)
+        # the region, namespace or project of a source in its cloud (D168),
+        # the address of its broker (D169)
         self.where = where
+        # key: the password of its broker (a text or a secret)
+        self.secret = secret
 
     def ident(self) -> str:
         return f"{self.kind}:{self.name}" + (f"@{self.where}" if self.where else "")
 
     def backend(self):
-        """The broker of the stream: the local one, or its cloud's."""
+        """The broker of the stream: the local one, its cloud's, or one on
+        the network."""
         if self.where is None:
             return LOCAL
+        if self.kind in ("kafka", "eventhub", "rabbit", "websocket"):
+            from .stream_net import backend
+            return backend(self)
         from .stream_cloud import backend
         return backend(self)
 
@@ -250,9 +263,9 @@ def make_source(kind: str):
         from .core import expects
         if not isinstance(name, str):
             raise expects(call, kind, "str", name)
-        wanted = where = None
+        wanted = where = secret = None
         for k, v in options.items():
-            if k == "partitions":
+            if k == "partitions" and kind != "websocket":
                 if not isinstance(v, int) or isinstance(v, bool) or v < 1:
                     raise expects(call, "partitions", "int", v)
                 wanted = v
@@ -262,16 +275,28 @@ def make_source(kind: str):
                     raise expects(call, k, "str", v)
                 where = v
                 continue
+            if k == "key" and kind in SECRET:
+                from .crypto import Secret
+                if not isinstance(v, (str, Secret)):
+                    raise expects(call, "key", "str, secret", v)
+                secret = v
+                continue
             if k in REMOTE:
                 raise NexoError("not_supported", call.span, what=f'"{kind}(..., {k}: ...)"')
-            known = "partitions" + (f", {CLOUD[kind]}" if kind in CLOUD else "")
-            raise NexoError("arg_unknown", call.span, fn=kind, param=k, params=known)
+            known = ", ".join(x for x in ("partitions" if kind != "websocket" else "", CLOUD.get(kind, ""),
+                                          "key" if kind in SECRET else "") if x)
+            raise NexoError("arg_unknown", call.span, fn=kind, param=k, params=known or "none")
         if kind == "websocket":
-            raise NexoError("not_supported", call.span, what='"websocket(...)"')
+            # the source is the address itself (D169)
+            if not name.startswith(("ws://", "wss://")):
+                raise NexoError("stream_websocket", call.span, url=name)
+            where = name
         if where is not None and wanted is not None:
-            # the cloud says how many partitions (shards) a stream has
+            # the broker says how many partitions a stream has
             raise NexoError("arg_unknown", call.span, fn=kind, param="partitions", params=CLOUD[kind])
-        return Stream(kind, name, wanted, where)
+        if secret is not None and where is None:
+            raise NexoError("arg_unknown", call.span, fn=kind, param="key", params="partitions")
+        return Stream(kind, name, wanted, where, secret)
     return b_source
 
 

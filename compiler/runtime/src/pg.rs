@@ -36,7 +36,7 @@ pub struct Target {
 }
 
 /// An error of the system as Python's strerror writes it.
-fn os_text(e: &std::io::Error) -> String {
+pub fn os_text(e: &std::io::Error) -> String {
     if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock {
         return "timed out".into();
     }
@@ -49,7 +49,7 @@ fn os_text(e: &std::io::Error) -> String {
 }
 
 /// A TLS failure, in the words of both phases.
-fn tls_text(host: &str, e: &std::io::Error) -> PgError {
+pub fn tls_text(host: &str, e: &std::io::Error) -> PgError {
     let untrusted = e.get_ref().and_then(|x| x.downcast_ref::<rustls::Error>()).is_some_and(|x| matches!(x, rustls::Error::InvalidCertificate(_)));
     let what = if untrusted { "the certificate is not trusted" } else { "the TLS handshake failed" };
     PgError::new(format!("TLS with {host}: {what}"))
@@ -118,7 +118,7 @@ pub struct Answer {
     pub rows: Vec<Vec<Sql>>,
 }
 
-fn tls_config() -> Arc<rustls::ClientConfig> {
+pub fn tls_config() -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     for cert in rustls_native_certs::load_native_certs().into_iter().flatten() {
         let _ = roots.add(cert);

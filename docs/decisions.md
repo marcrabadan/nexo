@@ -2547,3 +2547,55 @@ Kafka's protocol, so it comes with the brokers on the network (D169).
 - tests/cloud_emulator.py answers these data planes, and
   tests/test_stream_cloud.py runs producers and consumers of each in
   both phases.
+
+**D169. Streams on brokers on the network.** D113 left out brokers on
+the network; section 19 writes `kafka("orders", servers: ...)` and lists
+`rabbit`, `eventhub` and `websocket`. A source is now on a broker on the
+network when it has its option, and on the local broker otherwise:
+`kafka("orders", servers: "user@host:9092,host2:9092")`, `rabbit("orders",
+url: "amqp://user@host/")`, `eventhub("clicks", namespace: "shop")`, and
+`websocket("wss://host/path")`, whose source is the address itself.
+- Both phases speak each protocol themselves, with no library: Kafka's
+  binary protocol (the requests of the versions that Kafka 1.0 to 4.x
+  answer, record batches of format 2), AMQP 0-9-1 with publisher
+  confirms, WebSocket (RFC 6455). Compressed Kafka batches are not read:
+  one is a NetworkError that names its codec. The specification asks for
+  no codec, and the producers of Nexo do not compress.
+- A broker on another machine is reached with TLS only (`amqps://`,
+  `wss://`, Kafka on any host but this machine), checked against the
+  system's certificates; plain sockets only to this machine.
+- `key:` is the broker's password, a text or a `secret` (Kafka's SASL
+  PLAIN with the user of `servers:`, RabbitMQ's PLAIN with the user of
+  the url); `key:` without the broker's option is an unknown parameter.
+  Event Hubs is read through its Kafka endpoint
+  (`<namespace>.servicebus.windows.net:9093`, or NEXO_EVENTHUB_SERVERS)
+  with a token of Azure AD (OAUTHBEARER), the credentials of D120.
+- A broker says how many partitions a topic has, so `partitions:` goes
+  with the local broker only. Kafka's partitions are handled as D167
+  says; `send` picks the partition with Kafka's own hash of the key. The
+  consumer group (the program's file name) commits the offset after the
+  last message handled (before an open window, as D117), and a new group
+  starts from the first message. One consumer of a group reads every
+  partition: Nexo does not join Kafka's group protocol, so two consumers
+  of one group would each read everything.
+- RabbitMQ: a queue has one partition. A consumer takes messages with
+  Basic.Get and acknowledges each once its handlers ended or once it went
+  to the dead letters; a message not acknowledged comes back when the
+  connection closes (at least once). The time and the key are the headers
+  `nexo-time` and `nexo-key`, as D168's attributes. A connection the
+  broker closed while it was idle is made again once.
+- WebSocket: each text or binary message the server sends is a message
+  (`msg.id` counts them from 1); `send` writes a text message on the same
+  connection. A WebSocket keeps nothing, so a consumer saves no position
+  and its dead letters go to the local broker, to the stream named by
+  the address (`host_port_path.dead`).
+- The dead letters of Kafka, Event Hubs and RabbitMQ go to `<name>.dead`
+  on the same broker. A failure of a broker is a NetworkError that names
+  the source and the reason (`err.NetworkError.broker`); a consumer that
+  cannot reach its broker tries again every second.
+- The policy checks `net` to the broker's host (D142). Under `nexo test`
+  every source is on the in-memory broker, as before.
+- tests/kafka_broker.py, tests/amqp_broker.py and tests/ws_server.py are
+  written from each protocol's specification, sharing no code with the
+  clients; tests/test_stream_net.py runs producers and consumers on them
+  in both phases. A check against a real Kafka is not part of the suite.

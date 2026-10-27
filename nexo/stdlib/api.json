@@ -79,9 +79,10 @@
     {
       "title": "nexo.stream",
       "entries": [
-        ["kafka(name: str, partitions: int?) -> stream", "A stream of the local broker (.nexo/streams); `when kafka(...) as msg:` handles each message, `kafka(...).send(value, key?, at?)` adds one."],
-        ["rabbit(name: str) -> stream", "A stream of the local broker, as kafka."],
-        ["eventhub(name: str) -> stream", "A stream of the local broker, as kafka."],
+        ["kafka(name: str, partitions: int?, servers: str?, key: str|secret?) -> stream", "A stream of the local broker (.nexo/streams), or a topic of the Kafka brokers of servers: (\"user@host:9092,host2:9092\", key: their password); `when kafka(...) as msg:` handles each message, `kafka(...).send(value, key?, at?)` adds one."],
+        ["rabbit(name: str, url: str?, key: str|secret?) -> stream", "A stream of the local broker, as kafka, or a queue of the RabbitMQ of url: (\"amqp://user@host/\", key: its password)."],
+        ["eventhub(name: str, namespace: str?) -> stream", "A stream of the local broker, as kafka, or an event hub of an Azure namespace (through its Kafka endpoint, with a token of Azure AD)."],
+        ["websocket(url: str) -> stream", "The messages a WebSocket server sends (wss://, or ws:// on this machine); `send(text)` writes one on the same connection."],
         ["sqs(name: str, region: str?) -> stream", "An Amazon SQS queue with region:, otherwise a stream of the local broker."],
         ["kinesis(name: str, region: str?) -> stream", "An Amazon Kinesis stream (its shards are partitions) with region:, otherwise local."],
         ["servicebus(name: str, namespace: str?) -> stream", "An Azure Service Bus queue with namespace:, otherwise local."],
@@ -131,7 +132,7 @@
     ["channel", "send(value) receive() close()"]
   ],
   "unavailable": [
-    "gcs", "blob", "websocket",
+    "gcs", "blob",
     "audit", "scan", "slack"
   ]
 }

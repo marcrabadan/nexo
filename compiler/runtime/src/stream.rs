@@ -20,14 +20,32 @@ use crate::value::*;
 pub const KINDS: &[&str] = &["kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket"];
 const REMOTE: &[&str] = &["servers", "url", "region", "namespace", "project", "endpoint"];
 
-/// The option that puts a source in its cloud (D168).
+/// The option that puts a source in its cloud (D168) or on a broker on the
+/// network (D169).
 pub fn cloud_option(kind: &str) -> Option<&'static str> {
     match kind {
         "sqs" | "kinesis" => Some("region"),
-        "servicebus" => Some("namespace"),
+        "servicebus" | "eventhub" => Some("namespace"),
         "pubsub" => Some("project"),
+        "kafka" => Some("servers"),
+        "rabbit" => Some("url"),
         _ => None,
     }
+}
+
+/// The sources whose broker takes a password: key:
+const SECRET: &[&str] = &["kafka", "rabbit"];
+/// The attributes (or headers) that keep a message's time and key (D168).
+pub const TIME: &str = "nexo-time";
+pub const KEY: &str = "nexo-key";
+
+/// The host a source on the network or in its cloud talks to (for the
+/// policy's `net`).
+fn host_of(kind: &str, place: &str) -> String {
+    if crate::stream_net::KINDS.contains(&kind) {
+        return crate::stream_net::host(kind, place);
+    }
+    crate::stream_cloud::host(kind, place)
 }
 const ROOT: &str = ".nexo/streams";
 const BACKOFF: [u64; 3] = [100, 200, 400];
@@ -86,7 +104,7 @@ pub fn reset_memory() {
     });
 }
 
-fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
@@ -146,8 +164,12 @@ impl Native for Stream {
         let key = if a[2].is_none() || a[2].tag == T_MISSING { None } else { Some(text(a[2])?) };
         let message = match &self.place {
             Some(place) if !test_mode() => {
-                crate::policy::check("net", &crate::stream_cloud::host(&self.kind, place), span)?;
-                crate::stream_cloud::send(&self.pair(), place, &data, ms, key.as_deref(), None, span)?
+                crate::policy::check("net", &host_of(&self.kind, place), span)?;
+                if crate::stream_net::KINDS.contains(&self.kind.as_str()) {
+                    crate::stream_net::send(&self.pair(), place, &data, ms, key.as_deref(), None, span)?
+                } else {
+                    crate::stream_cloud::send(&self.pair(), place, &data, ms, key.as_deref(), None, span)?
+                }
             }
             _ => append(&self.pair(), data, ms, key, self.wanted, Some(span))?,
         };
@@ -254,9 +276,10 @@ impl Native for Message {
 pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let mut wanted = None;
     let mut place = None;
+    let mut secret = None;
     for (i, n) in names.iter().enumerate() {
         let Some(n) = n else { continue };
-        if *n == "partitions" {
+        if *n == "partitions" && kind != "websocket" {
             match args[i].as_int() {
                 Some(c) if c >= 1 && args[i].tag == T_INT => wanted = Some(c),
                 _ => return Err(crate::stdlib::expects("partitions", "int", args[i], span)),
@@ -270,13 +293,19 @@ pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Va
             }
             continue;
         }
+        if *n == "key" && SECRET.contains(&kind) {
+            if args[i].as_str().is_none() && args[i].native::<crate::crypto::Secret>().is_none() {
+                return Err(crate::stdlib::expects("key", "str, secret", args[i], span));
+            }
+            secret = Some(args[i]);
+            continue;
+        }
         if REMOTE.contains(n) {
             return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", format!("\"{kind}(..., {n}: ...)\"")), span));
         }
-        let known = match cloud_option(kind) {
-            Some(o) => format!("partitions, {o}"),
-            None => "partitions".into(),
-        };
+        let parts = [if kind != "websocket" { "partitions" } else { "" }, cloud_option(kind).unwrap_or(""), if SECRET.contains(&kind) { "key" } else { "" }];
+        let known = parts.iter().filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(", ");
+        let known = if known.is_empty() { "none".to_string() } else { known };
         return Err(diag(Diagnostic::new_spanless("arg_unknown").arg("fn", kind.to_string()).arg("param", *n).arg("params", known), span));
     }
     let positional: Vec<V> = args.iter().zip(names).filter(|(_, n)| n.is_none()).map(|(a, _)| *a).collect();
@@ -284,12 +313,22 @@ pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Va
     let a = crate::stdlib::method_args(kind, &["name"], 1, &positional, &nones, span)?;
     let Some(name) = a[0].as_str() else { return Err(crate::stdlib::expects(kind, "str", a[0], span)) };
     if kind == "websocket" {
-        return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", "\"websocket(...)\""), span));
+        // the source is the address itself (D169)
+        if !name.starts_with("ws://") && !name.starts_with("wss://") {
+            return Err(diag(Diagnostic::new_spanless("stream_websocket").arg("url", name.to_string()), span));
+        }
+        place = Some(name.to_string());
     }
     if let (Some(_), Some(_)) = (&place, wanted) {
-        // the cloud says how many partitions (shards) a stream has
+        // the broker says how many partitions a stream has
         let o = cloud_option(kind).unwrap_or("");
         return Err(diag(Diagnostic::new_spanless("arg_unknown").arg("fn", kind.to_string()).arg("param", "partitions").arg("params", o), span));
+    }
+    if let Some(v) = secret {
+        let Some(p) = &place else {
+            return Err(diag(Diagnostic::new_spanless("arg_unknown").arg("fn", kind.to_string()).arg("param", "key").arg("params", "partitions"), span));
+        };
+        crate::stream_net::keep_secret(&(kind.to_string(), name.to_string()), p, v);
     }
     Ok(native(Stream { kind: kind.to_string(), name: name.to_string(), wanted, place }))
 }
@@ -427,6 +466,12 @@ fn append(s: &(String, String), data: String, ms: i64, key: Option<String>, want
     Ok(message)
 }
 
+/// A message on the local broker, outside test mode (the dead letters of
+/// a WebSocket, D169).
+pub fn append_local(s: &(String, String), data: &str, ms: i64, key: Option<String>) {
+    let _ = append(s, data.to_string(), ms, key, None, None);
+}
+
 // -------------------------------------------------------------- handlers
 
 pub fn when(src: V, func: V, key: Option<V>, span: u32) -> R<Val> {
@@ -560,7 +605,11 @@ fn finish(func: &Val, mv: &Val, m: &Message, n: usize, k: Option<String>, span: 
 
 fn dead(m: &Message, error: &str) {
     let target = match &m.place {
-        Some(place) if !test_mode() => match crate::stream_cloud::dead(m, place) {
+        Some(place) if !test_mode() => match if crate::stream_net::KINDS.contains(&m.stream.0.as_str()) {
+            crate::stream_net::dead(m, place)
+        } else {
+            crate::stream_cloud::dead(m, place)
+        } {
             Ok(t) => t,
             Err(_) => {
                 // the dead letter cannot be kept: the consumer stops, and
@@ -859,11 +908,14 @@ fn new_messages(s: &(String, String), partition: i64, count: i64, after: i64) ->
 enum Backend {
     Local,
     Cloud(String),
+    /// a broker on the network (D169)
+    Net(String),
 }
 
 impl Backend {
-    fn of(place: &Option<String>) -> Backend {
+    fn of(kind: &str, place: &Option<String>) -> Backend {
         match place {
+            Some(p) if crate::stream_net::KINDS.contains(&kind) => Backend::Net(p.clone()),
             Some(p) => Backend::Cloud(p.clone()),
             None => Backend::Local,
         }
@@ -875,6 +927,7 @@ impl Backend {
         match self {
             Backend::Local => true,
             Backend::Cloud(_) => s.0 == "kinesis",
+            Backend::Net(_) => crate::stream_net::log(&s.0),
         }
     }
 
@@ -882,16 +935,18 @@ impl Backend {
         match self {
             Backend::Local => partitions(s, wanted, Some(0)),
             Backend::Cloud(place) => crate::stream_cloud::partitions(s, place, 0),
+            Backend::Net(place) => crate::stream_net::partitions(s, place, 0),
         }
     }
 
-    fn start(&self, s: &(String, String), p: i64, count: i64) -> Option<String> {
+    fn start(&self, s: &(String, String), p: i64, count: i64) -> R<Option<String>> {
         match self {
             Backend::Local => {
                 let n: i64 = std::fs::read_to_string(offset_path(s, p, count)).ok().and_then(|t| t.trim().parse().ok()).unwrap_or(0);
-                Some(n.to_string())
+                Ok(Some(n.to_string()))
             }
-            Backend::Cloud(_) => crate::stream_cloud::start(s, p),
+            Backend::Cloud(_) => Ok(crate::stream_cloud::start(s, p)),
+            Backend::Net(place) => crate::stream_net::start(s, place, p, 0),
         }
     }
 
@@ -902,6 +957,7 @@ impl Backend {
                 Ok(new_messages(s, p, count, after))
             }
             Backend::Cloud(place) => crate::stream_cloud::poll(s, place, p, position, 0),
+            Backend::Net(place) => crate::stream_net::poll(s, place, p, position, 0),
         }
     }
 
@@ -913,6 +969,7 @@ impl Backend {
                 Ok(())
             }
             Backend::Cloud(place) => crate::stream_cloud::done(s, place, p, messages, position, 0),
+            Backend::Net(place) => crate::stream_net::done(s, place, p, messages, position, 0),
         }
     }
 }
@@ -989,9 +1046,9 @@ pub fn listen_forever(program: &str) {
     };
     let mut sources = Vec::new();
     for (stream, place, wanted) in found {
-        let backend = Backend::of(&place);
+        let backend = Backend::of(&stream.0, &place);
         if let Some(p) = &place {
-            if crate::policy::check("net", &crate::stream_cloud::host(&stream.0, p), 0).is_err() {
+            if crate::policy::check("net", &host_of(&stream.0, p), 0).is_err() {
                 stop();
             }
         }
@@ -999,7 +1056,10 @@ pub fn listen_forever(program: &str) {
             Ok(c) => c,
             Err(_) => stop(),
         };
-        let read = (0..count).map(|p| backend.start(&stream, p, count)).collect();
+        let read = match (0..count).map(|p| backend.start(&stream, p, count)).collect::<R<Vec<_>>>() {
+            Ok(r) => r,
+            Err(_) => stop(),
+        };
         sources.push(Source { stream, place, backend, count, read });
     }
     loop {

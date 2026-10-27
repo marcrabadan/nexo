@@ -1,1 +1,1 @@
-orders = kafka("orders", servers: "broker-1:9092")
+orders = kafka("orders", servers: "broker-1:9092", partitions: 3)

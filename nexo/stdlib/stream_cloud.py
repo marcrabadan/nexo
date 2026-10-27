@@ -219,13 +219,28 @@ def azure_url(url: str) -> str:
     return url
 
 
+TOKENS: dict = {}  # scope -> token of Azure AD
+
+
+def azure_token(call, stream, scope: str) -> str:
+    """A token of Azure AD for a service (client credentials)."""
+    if scope not in TOKENS:
+        tenant, client, secret = need_env("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET")
+        host = (os.environ.get("AZURE_AUTHORITY_HOST") or "https://login.microsoftonline.com").rstrip("/")
+        url = f"{host}/{tenant}/oauth2/v2.0/token"
+        form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client,
+                                       "client_secret": secret, "scope": scope}).encode()
+        status, _, data = request(call, stream, "POST", url, {"Content-Type": "application/x-www-form-urlencoded"}, form)
+        if status >= 400:
+            raise refused(call, stream, status, data)
+        TOKENS[scope] = json.loads(data.decode())["access_token"]
+    return TOKENS[scope]
+
+
 class ServiceBus:
     """Azure Service Bus queues through REST: a message is read with a
     lock (peek-lock) and completed once it is handled."""
     log = False
-
-    def __init__(self):
-        self.tokens: dict = {}
 
     def base(self, stream, name: str | None = None) -> str:
         return azure_url(f"https://{stream.where}.servicebus.windows.net/{name or stream.name}")
@@ -234,18 +249,7 @@ class ServiceBus:
         return urllib.parse.urlsplit(self.base(stream)).hostname or ""
 
     def token(self, call, stream) -> str:
-        if "t" not in self.tokens:
-            tenant, client, secret = need_env("AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET")
-            host = (os.environ.get("AZURE_AUTHORITY_HOST") or "https://login.microsoftonline.com").rstrip("/")
-            url = f"{host}/{tenant}/oauth2/v2.0/token"
-            form = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": client,
-                                           "client_secret": secret,
-                                           "scope": "https://servicebus.azure.net/.default"}).encode()
-            status, _, data = request(call, stream, "POST", url, {"Content-Type": "application/x-www-form-urlencoded"}, form)
-            if status >= 400:
-                raise refused(call, stream, status, data)
-            self.tokens["t"] = json.loads(data.decode())["access_token"]
-        return self.tokens["t"]
+        return azure_token(call, stream, "https://servicebus.azure.net/.default")
 
     def partitions(self, call, stream) -> int:
         return 1

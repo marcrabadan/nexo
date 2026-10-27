@@ -174,11 +174,15 @@ fn sb_base(namespace: &str, name: &str) -> String {
     azure_url(&format!("https://{namespace}.servicebus.windows.net/{name}"))
 }
 
-static AZURE_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+const SB_SCOPE: &str = "https://servicebus.azure.net/.default";
 
-fn azure_token(s: &Pair, span: u32) -> R<String> {
-    if let Some(t) = AZURE_TOKEN.lock().unwrap().clone() {
-        return Ok(t);
+/// The tokens of Azure AD, by scope.
+static AZURE_TOKENS: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+
+/// A token of Azure AD for a service (client credentials).
+pub fn azure_token(s: &Pair, scope: &str, span: u32) -> R<String> {
+    if let Some((_, t)) = AZURE_TOKENS.lock().unwrap().iter().find(|(k, _)| k == scope) {
+        return Ok(t.clone());
     }
     let tenant = need_env("AZURE_TENANT_ID")?;
     let client = need_env("AZURE_CLIENT_ID")?;
@@ -194,12 +198,12 @@ fn azure_token(s: &Pair, span: u32) -> R<String> {
         "grant_type=client_credentials&client_id={}&client_secret={}&scope={}",
         enc(&client),
         enc(&secret),
-        enc("https://servicebus.azure.net/.default")
+        enc(scope)
     );
     let headers = [("Content-Type".to_string(), "application/x-www-form-urlencoded".to_string())];
     let a = checked(s, request("POST", &url, &headers, Some(form.as_bytes()), span)?, span)?;
     let token = a.json().get("access_token").str().unwrap_or("").to_string();
-    *AZURE_TOKEN.lock().unwrap() = Some(token.clone());
+    AZURE_TOKENS.lock().unwrap().push((scope.to_string(), token.clone()));
     Ok(token)
 }
 
@@ -313,7 +317,7 @@ pub fn send(s: &Pair, place: &str, data: &str, ms: i64, key: Option<&str>, name:
         }
         "servicebus" => {
             let mut headers = vec![
-                ("Authorization".to_string(), format!("Bearer {}", azure_token(s, span)?)),
+                ("Authorization".to_string(), format!("Bearer {}", azure_token(s, SB_SCOPE, span)?)),
                 ("Content-Type".to_string(), "text/plain; charset=utf-8".to_string()),
                 (TIME.to_string(), ms.to_string()),
             ];
@@ -413,7 +417,7 @@ pub fn poll(s: &Pair, place: &str, partition: i64, position: &Option<String>, sp
             }
         }
         "servicebus" => {
-            let token = azure_token(s, span)?;
+            let token = azure_token(s, SB_SCOPE, span)?;
             for _ in 0..10 {
                 let headers = [("Authorization".to_string(), format!("Bearer {token}"))];
                 let a = request("POST", &format!("{}/messages/head?timeout=1", sb_base(place, &s.1)), &headers, Some(b""), span)?;
@@ -467,7 +471,7 @@ pub fn done(s: &Pair, place: &str, partition: i64, messages: &[Message], positio
         }
         "servicebus" => {
             for m in messages {
-                let headers = [("Authorization".to_string(), format!("Bearer {}", azure_token(s, span)?))];
+                let headers = [("Authorization".to_string(), format!("Bearer {}", azure_token(s, SB_SCOPE, span)?))];
                 checked(s, request("DELETE", m.receipt.as_deref().unwrap_or(""), &headers, None, span)?, span)?;
             }
         }
