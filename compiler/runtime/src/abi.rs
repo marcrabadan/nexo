@@ -1267,6 +1267,9 @@ pub unsafe extern "C" fn nx_pipe_pick(st_: u64, sb: u64, fns: *const V, nm: *con
     if let Some(q) = stream_op(v(st_, sb), false, move |x| Ok(pipe::pick(x, f2.clone(), c2.clone(), step, expr))) {
         return q;
     }
+    if let Some(q) = crate::db::pipe_pick(v(st_, sb), &cols) {
+        return q.into_raw();
+    }
     pipe::pick(v(st_, sb), fns, cols, step, expr).into_raw()
 }
 
@@ -1296,12 +1299,20 @@ pub unsafe extern "C" fn nx_pipe_group(
     fb: u64,
     key: *const u8,
     len: usize,
+    name: *const u8,
+    nlen: usize,
     step: u32,
     expr: u32,
 ) -> V {
     let (f, k) = (Val::from(v(ft, fb)), text(key, len));
     if let Some(q) = stream_op(v(st_, sb), false, move |x| pipe::group(x, f.v(), k, step, expr)) {
         return q;
+    }
+    // `group by column` on a database query may run in SQL (D161)
+    if nlen > 0 {
+        if let Some(g) = pipe::group_query(v(st_, sb), v(ft, fb), text(key, len), text(name, nlen), step, expr) {
+            return g.into_raw();
+        }
     }
     ret(pipe::group(v(st_, sb), v(ft, fb), text(key, len), step, expr))
 }
@@ -1426,6 +1437,8 @@ pub unsafe extern "C" fn nx_pipe_agg(
     fb: u64,
     col: *const u8,
     len: usize,
+    name: *const u8,
+    nlen: usize,
     span: u32,
     expr: u32,
 ) -> V {
@@ -1435,10 +1448,12 @@ pub unsafe extern "C" fn nx_pipe_agg(
         _ => "avg",
     };
     let (f, c) = (Val::from(v(ft, fb)), text(col, len));
-    if let Some(q) = stream_op(v(gt, gb), false, move |x| pipe::aggregate(x, kind, f.v(), c, span, expr)) {
+    if let Some(q) = stream_op(v(gt, gb), false, move |x| pipe::aggregate(x, kind, f.v(), c, None, span, expr)) {
         return q;
     }
-    ret(pipe::aggregate(v(gt, gb), kind, v(ft, fb), text(col, len), span, expr))
+    // a bare column name: on a grouped query the aggregate may run in SQL (D161)
+    let total = Some(text(name, nlen)).filter(|t| !t.is_empty());
+    ret(pipe::aggregate(v(gt, gb), kind, v(ft, fb), text(col, len), total, span, expr))
 }
 
 /// A bare name inside a pipeline step: the column of the current row.

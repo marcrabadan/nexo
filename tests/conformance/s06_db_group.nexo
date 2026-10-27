@@ -1,0 +1,41 @@
+# group by, count, sum, avg and pick run in the database (D161)
+use nexo.db
+
+type Kind:
+    Retail
+    Online
+
+@table
+type Sale:
+    id: id
+    region: str
+    units: int
+    price: float
+    kind: Kind
+    note: str?
+    extra: int?
+
+db = connect(":memory:")
+db.Sale.add(region: "north", units: 3, price: 1.5, kind: Retail)
+db.Sale.add(region: "south", units: 5, price: 2.25, kind: Online, note: "x", extra: 2)
+db.Sale.add(region: "north", units: 4, price: 0.1, kind: Online)
+db.Sale.add(region: "east", units: 1, price: 0.2, kind: Retail, extra: 7)
+
+print(db.Sale |> group by region |> count)
+print(db.Sale |> where units > 1 |> group by region |> sum units)
+print(db.Sale |> group by kind |> avg units)
+print(db.Sale |> group by note |> count)
+print(db.Sale |> pick region, units |> take 2)
+print(db.Sale |> where units > 2 |> pick units |> count)
+
+# in memory, with the same result: a float column, a sorted query, a
+# column that can be none, a step after pick
+print(db.Sale |> group by region |> sum price)
+print(db.Sale |> sort by units |> group by region |> count)
+print(db.Sale |> group by region |> sum extra ?? 0)
+print(db.Sale |> pick region |> where region == "north")
+
+# a sum that may overflow is added in memory, which reports it
+db.Sale.add(region: "west", units: 9223372036854775807, price: 0.0, kind: Retail)
+db.Sale.add(region: "west", units: 1, price: 0.0, kind: Retail)
+print(db.Sale |> group by region |> sum units)

@@ -3,8 +3,10 @@
 //! named after the type in lowercase, created (and given the columns of
 //! new fields) the first time the program uses it. `db.T` is a query;
 //! pipelines on a query run in SQL while their steps allow it (`where` on
-//! columns, `sort by` a column, `take`, `count`), and in memory from the
-//! first step that does not, with the same result as phase 0.
+//! columns, `sort by` a column, `take`, `count`, `pick` of columns,
+//! `group by` a column followed by `count`, `sum` or `avg`, D161), and in
+//! memory from the first step that does not, with the same result as
+//! phase 0.
 
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
@@ -720,11 +722,31 @@ fn from_sql(db: &Database, me: V, raw: &Sql, c: &Column, cache: &mut Cache, span
 
 #[allow(clippy::too_many_arguments)]
 fn select(db: &Database, me: V, info: &TableInfo, wheres: &[String], params: &[Sql], order: &[String], limit: Option<i64>, cache: &mut Cache, span: u32) -> R<Vec<Val>> {
+    select_pick(db, me, info, wheres, params, order, limit, None, cache, span)
+}
+
+/// The rows of a query: records, or maps of the picked columns (D161).
+#[allow(clippy::too_many_arguments)]
+fn select_pick(
+    db: &Database,
+    me: V,
+    info: &TableInfo,
+    wheres: &[String],
+    params: &[Sql],
+    order: &[String],
+    limit: Option<i64>,
+    pick: Option<&[(String, Column)]>,
+    cache: &mut Cache,
+    span: u32,
+) -> R<Vec<Val>> {
     db.sync(me, info, span)?;
     let mut all = db.guard(me, info, span)?;
     all.extend(wheres.iter().cloned());
     let wheres = &all;
-    let cols: Vec<String> = info.columns.iter().map(|c| quote(&c.name)).collect();
+    let cols: Vec<String> = match pick {
+        Some(p) => p.iter().map(|(_, c)| quote(&c.name)).collect(),
+        None => info.columns.iter().map(|c| quote(&c.name)).collect(),
+    };
     let mut sql = format!("SELECT {} FROM {}", cols.join(", "), quote(&info.name));
     if !wheres.is_empty() {
         let w: Vec<String> = wheres.iter().map(|w| format!("({w})")).collect();
@@ -742,6 +764,16 @@ fn select(db: &Database, me: V, info: &TableInfo, wheres: &[String], params: &[S
     }
     let rows = db.exec(&sql, params, span)?;
     let mut out = Vec::with_capacity(rows.rows.len());
+    if let Some(p) = pick {
+        for row in &rows.rows {
+            let mut pairs = Vec::with_capacity(row.len());
+            for ((name, c), raw) in p.iter().zip(row) {
+                pairs.push((Val::str(name.clone()), from_sql(db, me, raw, c, cache, span)?));
+            }
+            out.push(crate::coll::map_from(pairs));
+        }
+        return Ok(out);
+    }
     for row in &rows.rows {
         let mut vals = Vec::with_capacity(row.len());
         for (c, raw) in info.columns.iter().zip(row) {
@@ -931,10 +963,24 @@ pub struct Query {
     params: Vec<Sql>,
     order: Vec<String>,
     limit: Option<i64>,
+    /// `pick` of columns: rows are maps of these (D161)
+    pick: Option<Vec<(String, Column)>>,
 }
 
 fn query(db: V, info: Arc<TableInfo>, wheres: Vec<String>, params: Vec<Sql>, order: Vec<String>, limit: Option<i64>) -> Val {
-    let q = Arc::new(Query { db: Val::from(db), info, wheres, params, order, limit });
+    query_pick(db, info, wheres, params, order, limit, None)
+}
+
+fn query_pick(
+    db: V,
+    info: Arc<TableInfo>,
+    wheres: Vec<String>,
+    params: Vec<Sql>,
+    order: Vec<String>,
+    limit: Option<i64>,
+    pick: Option<Vec<(String, Column)>>,
+) -> Val {
+    let q = Arc::new(Query { db: Val::from(db), info, wheres, params, order, limit, pick });
     let rows = q.clone();
     let handle = native(QueryRef(q));
     crate::pipe::lazy_query(
@@ -953,11 +999,22 @@ impl Query {
 
     fn rows(&self, span: u32) -> R<Vec<Val>> {
         let mut cache = Cache::new();
-        select(self.database(), self.db.v(), &self.info, &self.wheres, &self.params, &self.order, self.limit, &mut cache, span)
+        select_pick(
+            self.database(),
+            self.db.v(),
+            &self.info,
+            &self.wheres,
+            &self.params,
+            &self.order,
+            self.limit,
+            self.pick.as_deref(),
+            &mut cache,
+            span,
+        )
     }
 
     fn is_table(&self) -> bool {
-        self.wheres.is_empty() && self.order.is_empty() && self.limit.is_none()
+        self.wheres.is_empty() && self.order.is_empty() && self.limit.is_none() && self.pick.is_none()
     }
 
     pub fn count(&self, span: u32) -> R<i64> {
@@ -1391,7 +1448,7 @@ fn sql_where(q: &Query, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, spa
 /// `where` on a query: one more condition in SQL, or None (in memory).
 pub fn pipe_where(src: V, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, span: u32) -> R<Option<Val>> {
     let Some(q) = query_of(src) else { return Ok(None) };
-    if !q.order.is_empty() || q.limit.is_some() {
+    if !q.order.is_empty() || q.limit.is_some() || q.pick.is_some() {
         return Ok(None);
     }
     let Some((sql, params)) = sql_where(&q, plan, value, span)? else { return Ok(None) };
@@ -1405,7 +1462,7 @@ pub fn pipe_where(src: V, plan: &Plan, value: &mut dyn FnMut(usize) -> R<Val>, s
 /// `sort by column [desc]` on a query.
 pub fn pipe_sort(src: V, column: &str, desc: bool) -> Option<Val> {
     let q = query_of(src)?;
-    if q.limit.is_some() {
+    if q.limit.is_some() || q.pick.is_some() {
         return None;
     }
     let col = q.info.column(column)?;
@@ -1420,7 +1477,91 @@ pub fn pipe_sort(src: V, column: &str, desc: bool) -> Option<Val> {
 pub fn pipe_take(src: V, n: i64) -> Option<Val> {
     let q = query_of(src)?;
     let limit = q.limit.map_or(n, |l| l.min(n));
-    Some(query(q.db.v(), q.info.clone(), q.wheres.clone(), q.params.clone(), q.order.clone(), Some(limit)))
+    Some(query_pick(q.db.v(), q.info.clone(), q.wheres.clone(), q.params.clone(), q.order.clone(), Some(limit), q.pick.clone()))
+}
+
+/// `pick a, b` of columns on a query: only those are read (D161).
+pub fn pipe_pick(src: V, names: &[&str]) -> Option<Val> {
+    let q = query_of(src)?;
+    if q.pick.is_some() {
+        return None;
+    }
+    let mut cols = Vec::new();
+    for n in names {
+        cols.push((n.to_string(), q.info.column(n)?.clone()));
+    }
+    Some(query_pick(q.db.v(), q.info.clone(), q.wheres.clone(), q.params.clone(), q.order.clone(), q.limit, Some(cols)))
+}
+
+const GROUP_KINDS: &[&str] = &["int", "str", "bool", "date", "time", "variant"];
+
+/// The column a query can be grouped by in SQL (D161).
+pub fn group_column(src: V, name: &str) -> Option<(Arc<Query>, Column)> {
+    let q = query_of(src)?;
+    if !q.order.is_empty() || q.limit.is_some() || q.pick.is_some() || q.info.key.is_none() {
+        return None;
+    }
+    let col = q.info.column(name)?.clone();
+    if col.private || !GROUP_KINDS.contains(&col.kind) {
+        return None;
+    }
+    Some((q, col))
+}
+
+/// `group by key |> count|sum|avg total` in SQL: the rows, or None to run
+/// in memory. Sums are of required int columns, and only when no order of
+/// adding a group's values can overflow, so the result (or the error) is
+/// the one of memory (D161).
+pub fn group_aggregate(q: &Query, key: &Column, key_name: &str, kind: &str, total: Option<&str>, col: &str, span: u32) -> R<Option<Val>> {
+    let info = &q.info;
+    let tc = if kind == "count" {
+        None
+    } else {
+        match total.and_then(|t| info.column(t)) {
+            Some(c) if c.kind == "int" && !c.optional && !c.private => Some(c),
+            _ => return Ok(None),
+        }
+    };
+    let db = q.database();
+    let me = q.db.v();
+    db.sync(me, info, span)?;
+    let mut wheres = db.guard(me, info, span)?;
+    wheres.extend(q.wheres.iter().cloned());
+    let mut what = format!("{}, COUNT(*)", quote(&key.name));
+    if let Some(c) = tc {
+        let t = quote(&c.name);
+        what.push_str(&format!(", SUM({t}), MIN({t}), MAX({t})"));
+    }
+    let mut sql = format!("SELECT {what} FROM {}", quote(&info.name));
+    if !wheres.is_empty() {
+        let w: Vec<String> = wheres.iter().map(|w| format!("({w})")).collect();
+        sql.push_str(&format!(" WHERE {}", w.join(" AND ")));
+    }
+    sql.push_str(&format!(" GROUP BY {} ORDER BY MIN({})", quote(&key.name), quote(info.key.as_deref().unwrap_or("id"))));
+    let rows = match db.run(&sql, &q.params) {
+        Ok(r) => r,
+        Err(e) if e.contains("integer overflow") => return Ok(None),
+        Err(e) => return Err(db.fail(e, None, None, span)),
+    };
+    let int = |s: &Sql| match s {
+        Sql::Int(i) => *i as i128,
+        _ => 0,
+    };
+    if tc.is_some() && rows.rows.iter().any(|r| int(&r[1]) * int(&r[3]).abs().max(int(&r[4]).abs()) > i64::MAX as i128) {
+        return Ok(None);
+    }
+    let mut cache = Cache::new();
+    let mut out = Vec::with_capacity(rows.rows.len());
+    for r in &rows.rows {
+        let k = from_sql(db, me, &r[0], key, &mut cache, span)?;
+        let result = match kind {
+            "count" => sql_value(&r[1]),
+            "sum" => sql_value(&r[2]),
+            _ => crate::num::arith(crate::num::Op::Div, sql_value(&r[2]).v(), sql_value(&r[1]).v(), span)?,
+        };
+        out.push(crate::coll::map_from(vec![(Val::str(key_name), k), (Val::str(col), result)]));
+    }
+    Ok(Some(list(out)))
 }
 
 // ---------------------------------------------------------- connect

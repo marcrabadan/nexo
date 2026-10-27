@@ -2305,3 +2305,26 @@ a literal no longer goes through the runtime to see whether it named a
 function (D51), and `sum` adds ints in the loop itself while the total
 is an int (an overflow and any other value go to the runtime as
 before). The `lists` benchmark went from 2.1× to about 1.6× Rust's time.
+
+**D161. More pipeline steps in SQL.** Section 6 says queries "use the
+same pipeline; they are translated to SQL", and D100 translated `where`,
+`sort by`, `take` and `count`. Two more steps now run in the database
+when the result cannot differ from memory:
+- `pick a, b` of columns of the table reads only those columns; the rows
+  are maps, as in memory. After it only `take` and `count` stay in SQL
+  (a `where` or `sort by` on the picked rows runs in memory).
+- `group by column` on a query whose steps so far are `where` only, of a
+  table with an `id`, by a column of type int, str, bool, date, time or
+  an enum without data (not `@private`), followed by `count`, `sum
+  column` or `avg column`, is one `SELECT key, COUNT(*) ... GROUP BY key
+  ORDER BY MIN(id)`: groups come in the order their first row comes, as
+  in memory. `sum` and `avg` are of a required `int` column; the
+  statement also asks for its `MIN` and `MAX`, and when a group's count
+  times the largest absolute value does not fit in an int (so some order
+  of adding them could overflow) the rows are read and added in memory,
+  which gives the Overflow error of memory. `avg` is the sum divided by
+  the count as `/` divides them. Float sums stay in memory, since SQLite
+  adds reals with compensated summation and the last digit could
+  differ, and so do decimal and money (stored as text).
+- `group by` with nothing after it reads nothing; any other step after
+  it reads the rows and groups them in memory, as before.

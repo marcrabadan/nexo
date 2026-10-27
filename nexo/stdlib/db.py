@@ -7,8 +7,9 @@ new fields added, the first time a program uses them (development mode).
 
 `db.T` is a query over the table. Pipelines on a query are translated to
 SQL while their steps allow it (`where` on columns, `sort by` a column,
-`take`, `count`); from the first step that is not, the rows are read and
-the rest runs in memory, with the same result.
+`take`, `count`, `pick` of columns, `group by` a column followed by
+`count`, `sum` or `avg`, D161); from the first step that is not, the rows
+are read and the rest runs in memory, with the same result.
 """
 from __future__ import annotations
 
@@ -309,10 +310,11 @@ class Database(Native):
             purge(self, call, info)
         return [hidden_where(info)]
 
-    def select(self, call, info, wheres, params, order, limit, cache=None, count=False):
+    def select(self, call, info, wheres, params, order, limit, cache=None, count=False, pick=None):
         self.sync(call, info)
         wheres = self.guard(call, info) + list(wheres)
-        what = "COUNT(*)" if count else ", ".join(quote(c.name) for c in info.columns)
+        columns = info.columns if pick is None else [c for _, c in pick]
+        what = "COUNT(*)" if count else ", ".join(quote(c.name) for c in columns)
         sql = f"SELECT {what} FROM {quote(info.name)}"
         if wheres:
             sql += " WHERE " + " AND ".join(f"({w})" for w in wheres)
@@ -328,7 +330,33 @@ class Database(Native):
         if count:
             return cur.fetchone()[0]
         cache = {} if cache is None else cache
+        if pick is not None:
+            return [{name: from_sql(call, self, raw, c, cache) for (name, c), raw in zip(pick, row)}
+                    for row in cur.fetchall()]
         return [self.record(call, info, row, cache) for row in cur.fetchall()]
+
+    def group(self, call, info, wheres, params, key: Column, total: Column | None):
+        """The rows of `group by key` with COUNT(*) and, for sum and avg,
+        SUM, MIN and MAX of total; None when SQLite reports an overflow."""
+        self.sync(call, info)
+        wheres = self.guard(call, info) + list(wheres)
+        what = f"{quote(key.name)}, COUNT(*)"
+        if total is not None:
+            t = quote(total.name)
+            what += f", SUM({t}), MIN({t}), MAX({t})"
+        sql = f"SELECT {what} FROM {quote(info.name)}"
+        if wheres:
+            sql += " WHERE " + " AND ".join(f"({w})" for w in wheres)
+        sql += f" GROUP BY {quote(key.name)} ORDER BY MIN({quote(info.key)})"
+        if SQL_LOG:
+            import sys
+            sys.stderr.write(f"sql: {sql} {list(params)!r}\n")
+        try:
+            return self.conn.execute(sql, list(params)).fetchall()
+        except sqlite3.Error as exc:
+            if "integer overflow" in str(exc):
+                return None
+            raise self.fail(call, exc)
 
     def record(self, call, info: TableInfo, row, cache) -> Record:
         fields = {}
@@ -458,16 +486,19 @@ class Query(Lazy, Native):
     """`db.T` and the steps of a pipeline translated to SQL so far."""
     type_name = "list"
 
-    def __init__(self, db: Database, info: TableInfo, call, wheres=(), params=(), order=(), limit=None):
+    def __init__(self, db: Database, info: TableInfo, call, wheres=(), params=(), order=(), limit=None, pick=None):
         self.db, self.info, self.call = db, info, call
         self.wheres, self.params, self.order, self.limit = list(wheres), list(params), list(order), limit
+        # `pick` of columns: [(name, Column)], rows are maps (D161)
+        self.pick = pick
         super().__init__(self.rows)
 
     def rows(self):
-        return iter(self.db.select(self.call, self.info, self.wheres, self.params, self.order, self.limit))
+        return iter(self.db.select(self.call, self.info, self.wheres, self.params, self.order, self.limit,
+                                   pick=self.pick))
 
     def derive(self, **changes) -> "Query":
-        q = Query(self.db, self.info, self.call, self.wheres, self.params, self.order, self.limit)
+        q = Query(self.db, self.info, self.call, self.wheres, self.params, self.order, self.limit, self.pick)
         for k, v in changes.items():
             setattr(q, k, v)
         return q
@@ -476,7 +507,7 @@ class Query(Lazy, Native):
         return repr_value(list(self.rows()))
 
     def is_table(self) -> bool:
-        return not self.wheres and not self.order and self.limit is None
+        return not self.wheres and not self.order and self.limit is None and self.pick is None
 
     def member(self, call, name: str):
         if self.is_table():
@@ -757,7 +788,7 @@ def sql_where(query: Query, plan, leaves, value_of) -> tuple[str, list] | None:
 
 def pipe_where(query: Query, plan, leaves, value_of):
     """A query with one more condition, or None (run in memory)."""
-    if query.order or query.limit is not None:
+    if query.order or query.limit is not None or query.pick is not None:
         return None
     built = sql_where(query, plan, leaves, value_of)
     if built is None:
@@ -767,7 +798,7 @@ def pipe_where(query: Query, plan, leaves, value_of):
 
 
 def pipe_sort(query: Query, e: A.Expr, desc: bool):
-    if query.limit is not None or not isinstance(e, A.Name):
+    if query.limit is not None or query.pick is not None or not isinstance(e, A.Name):
         return None
     col = query.info.column(e.name)
     if col is None or col.kind in ("decimal", "money", "ref", "variant") or col.private:
@@ -779,6 +810,65 @@ def pipe_sort(query: Query, e: A.Expr, desc: bool):
 def pipe_take(query: Query, n: int):
     limit = n if query.limit is None else min(n, query.limit)
     return query.derive(limit=limit)
+
+
+def pipe_pick(query: Query, names: list):
+    """`pick a, b` of columns: only those are read (D161)."""
+    if query.pick is not None:
+        return None
+    cols = []
+    for n in names:
+        col = query.info.column(n)
+        if col is None:
+            return None
+        cols.append((n, col))
+    return query.derive(pick=cols)
+
+
+GROUP_KINDS = ("int", "str", "bool", "date", "time", "variant")
+INT_MAX = (1 << 63) - 1
+
+
+def group_column(query: Query, name: str) -> Column | None:
+    """The column a query can be grouped by in SQL (D161), or None."""
+    if query.order or query.limit is not None or query.pick is not None or query.info.key is None:
+        return None
+    col = query.info.column(name)
+    if col is None or col.private or col.kind not in GROUP_KINDS:
+        return None
+    return col
+
+
+def group_aggregate(call, query: Query, key: Column, key_name: str, kind: str, total: str | None, col_name: str):
+    """`group by key |> count|sum|avg total` in SQL: the rows, or None to run
+    in memory. Sums are of required int columns, and only when no order of
+    adding a group's values can overflow, so the result (or the error) is
+    the one of memory (D161)."""
+    tc = None
+    if kind != "count":
+        tc = query.info.column(total) if total is not None else None
+        if tc is None or tc.kind != "int" or tc.optional or tc.private:
+            return None
+    rows = query.db.group(call, query.info, query.wheres, query.params, key, tc)
+    if rows is None:
+        return None
+    if tc is not None:
+        for row in rows:
+            if row[1] * max(abs(row[3]), abs(row[4])) > INT_MAX:
+                return None
+    out = []
+    cache: dict = {}
+    interp = call.interp
+    for row in rows:
+        k = from_sql(call, query.db, row[0], key, cache)
+        if kind == "count":
+            result = row[1]
+        elif kind == "sum":
+            result = row[2]
+        else:
+            result = interp.binop("/", row[2], row[1], call.span, call.span)
+        out.append({key_name: k, col_name: result})
+    return out
 
 
 # ------------------------------------------------------------------ connect
