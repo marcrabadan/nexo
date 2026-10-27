@@ -406,7 +406,7 @@ footer nav a:hover { color: var(--text); }
   .facts > div:nth-child(3) { border-left: 0; }
   .facts > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
 }
-@media (max-width: 900px) {
+@media (max-width: 1000px) {
   .nav {
     display: none; position: absolute; top: 80px; left: 0; right: 0; flex-direction: column; gap: 0;
     background: var(--bg); border-bottom: 1px solid var(--border); padding: 8px 16px 16px;
@@ -535,12 +535,12 @@ footer .foot-brand p { font-size: 11px; }
 
 .nav .nav-start { color: var(--text); border: 1px solid var(--border-strong); margin-left: 10px; }
 .nav-start span { padding-left: 8px; }
-@media (max-width: 900px) { .nav .nav-start { margin: 6px 0 0; } }
+@media (max-width: 1000px) { .nav .nav-start { margin: 6px 0 0; } }
 
 .arrow { display: inline-block; width: 14px; height: 14px; vertical-align: -3px; flex: none; }
 .hero-announcement { display: flex; width: fit-content; }
 .hero .eyebrow { display: flex; width: fit-content; }
-@media (max-width: 900px) { .header-tools { margin-left: auto; } }
+@media (max-width: 1000px) { .header-tools { margin-left: auto; } }
 
 /* Optional compiler setup stays beside its command reference. */
 .native-setup { border: 1px solid var(--border-strong); border-radius: 8px; padding: 20px; margin: 26px 0; background: var(--bg-alt); }

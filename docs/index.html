@@ -24,6 +24,7 @@
     <nav class="nav" id="nav" aria-label="Main">
       <a href="learn.html">Learn</a>
       <a href="examples.html">Examples</a>
+      <a href="how-it-works.html">How it works</a>
       <a href="reference.html">Reference</a>
       <a href="shield.html">Shield</a>
       <a class="nav-start" href="#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
@@ -68,6 +69,19 @@ print("Hello, {name}!")</code></pre><div class="out"><div class="out-label">Outp
   </ol>
 </div></section>
 
+<section class="home-overview" id="how-it-works"><div class="wrap">
+  <div class="section-head"><p class="eyebrow">How it works</p><h2>See how the pieces fit.</h2><p class="section-intro">One language, two ways to run. Add Shield when your program needs explicit permissions and execution boundaries.</p></div>
+  <figure class="home-map">
+    <ol class="home-map-flow">
+      <li><span class="map-step">Write</span><h3>Your code</h3><code>hello.nexo</code><p>The readable program you create.</p></li>
+      <li class="home-map-routes"><span class="map-step">Run</span><h3>Choose a path</h3><div class="home-map-choices"><span>Run directly</span><span>Build native code</span></div><p>Both use the same Nexo syntax.</p></li>
+      <li><span class="map-step">See</span><h3>Your result</h3><code>Hello, Ada!</code><p>The output of your program.</p></li>
+    </ol>
+    <div class="home-map-shield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m12 3 8 3v5c0 5-4 8-8 10-4-2-8-5-8-10V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg><div><strong>Nexo Shield <span>Optional boundaries</span></strong><p>Permission checks. Hardened Docker. An optional Linux worker for additional isolation.</p></div></div>
+    <figcaption><a class="text-link" href="how-it-works.html">Explore Nexo and Shield visually <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></figcaption>
+  </figure>
+</div></section>
+
 <section id="features"><div class="wrap">
   <div class="section-head"><p class="eyebrow">Get a feel for Nexo</p><h2>Ideas you can read<br>in the code.</h2><p class="section-intro">Start with familiar calculations. As your programs grow, the same language helps you work with data and handle things that can go wrong.</p></div>
   <div class="teaching-examples">
@@ -101,7 +115,7 @@ python3.12 -m venv .venv
     <div><h3>2. Save your first file</h3><p>In your text editor, create <code>hello.nexo</code> inside the <code>nexo</code> folder and paste these two lines.</p><div class="code"><div class="code-bar"><span>hello.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = "Ada"
 print("Hello, {name}!")</code></pre></div><h3 class="run-heading">3. Run it</h3><p>Back in the terminal, enter this command.</p><div class="code"><div class="code-bar"><span>Terminal</span><button class="copy" type="button">Copy</button></div><pre><code>.venv/bin/nexo hello.nexo</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Hello, Ada!</code></pre></div></div><a class="text-link" href="learn.html#hello">Now learn what each line does <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></div>
   </div>
-  <p class="native-note">Nexo can also compile programs to native code. After the basics, see the <a href="reference.html#cli">compiler commands</a> for building and running a compiled program.</p>
+  <p class="native-note">Nexo can also compile programs to native code. <a href="how-it-works.html#your-code">See the two ways to run a program</a>, or explore the <a href="reference.html#cli">compiler commands</a> for building and running a compiled program.</p>
 </div></section>
 
 <section class="alt shield-intro" id="shield"><div class="wrap shield-intro-layout">
@@ -122,6 +136,7 @@ print("Hello, {name}!")</code></pre></div><h3 class="run-heading">3. Run it</h3>
     <nav aria-label="Footer">
       <a href="learn.html">Learn</a>
       <a href="examples.html">Examples</a>
+      <a href="how-it-works.html">How it works</a>
       <a href="reference.html">Reference</a>
       <a href="shield.html">Shield</a>
       <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>

@@ -85,3 +85,30 @@
   .learning-hero .actions { gap: 12px; }
   .learning-hero .btn { font-size: 13px; }
 }
+
+/* A skimmable map links the beginner journey to the visual overview. */
+.home-overview { border-bottom: 1px solid var(--border); }
+.home-map { margin: 0; }
+.home-map-flow { list-style: none; display: grid; grid-template-columns: 1fr 1.2fr 1fr; gap: 32px; padding: 0; margin: 0; }
+.home-map-flow > li { position: relative; min-width: 0; padding: 28px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--bg-alt); }
+.home-map-flow > li:not(:last-child)::after { content: ""; position: absolute; right: -23px; top: 50%; height: 8px; width: 8px; border-right: 1.5px solid var(--accent); border-top: 1.5px solid var(--accent); transform: rotate(45deg); }
+.map-step { display: block; font: 11px var(--mono); color: var(--accent); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 24px; }
+.home-map h3 { font-size: 24px; font-weight: 500; margin-bottom: 18px; }
+.home-map-flow code { font-size: 13px; color: var(--text); }
+.home-map-flow p { font-size: 14px; color: var(--muted); line-height: 1.8; margin: 18px 0 0; }
+.home-map-choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.home-map-choices span { font-size: 12px; border: 1px solid var(--border-strong); padding: 7px 10px; border-radius: 5px; }
+.home-map-shield { display: flex; align-items: center; gap: 20px; padding: 24px 28px; margin-top: 24px; border: 1px dashed var(--border-strong); border-radius: 9px; }
+.home-map-shield > svg { width: 28px; height: 28px; flex: none; color: var(--accent); }
+.home-map-shield strong { display: block; font-size: 15px; font-weight: 600; }
+.home-map-shield strong span { display: inline-block; font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 12px; }
+.home-map-shield p { margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.home-map figcaption { margin-top: 22px; }
+@media (max-width: 1040px) { .home-map-flow { gap: 24px; } .home-map-flow > li { padding: 24px 20px; } .home-map-flow > li:not(:last-child)::after { right: -18px; } }
+@media (max-width: 760px) {
+  .home-map-flow { grid-template-columns: 1fr; gap: 28px; }
+  .home-map-flow > li:not(:last-child)::after { top: auto; bottom: -19px; right: calc(50% - 4px); transform: rotate(135deg); }
+  .map-step { margin-bottom: 16px; }
+  .home-map-shield { align-items: start; padding: 22px 20px; gap: 14px; }
+  .home-map-shield strong span { display: block; margin: 6px 0 0; }
+}
