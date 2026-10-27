@@ -8,6 +8,7 @@ it (RabbitMQ), and a message that keeps failing goes to the dead letters."""
 import os
 import signal
 import subprocess
+import threading
 import time
 
 import pytest
@@ -23,19 +24,28 @@ PHASES = commands()
 
 
 def consume(phase, folder, env, done, timeout=60) -> str:
-    """Run consumer.nexo until done() holds; its output."""
+    """Run consumer.nexo until done() holds, or until `timeout` seconds
+    after it started listening; its output."""
     full = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8", **env)
     proc = subprocess.Popen([*phase[1], "consumer.nexo"], cwd=folder, env=full, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, start_new_session=True)
+    lines: list = []
+    reader = threading.Thread(target=lambda: lines.extend(iter(proc.stdout.readline, b"")), daemon=True)
+    reader.start()
     try:
+        # a compiled consumer is compiled first, which takes longer on a busy machine
+        start = time.time()
+        while not lines and proc.poll() is None and time.time() < start + 120:
+            time.sleep(0.1)
         end = time.time() + timeout
         while not done() and time.time() < end:
             time.sleep(0.2)
         time.sleep(0.5)
     finally:
         os.killpg(proc.pid, signal.SIGTERM)
-        out, _ = proc.communicate(timeout=30)
-    return out.decode()
+        proc.wait(timeout=30)
+        reader.join(timeout=30)
+    return b"".join(lines).decode()
 
 
 FAILS = "fails after 4 tries and goes to {dead}: Unhandled error: no. Handle it with try and else e."
