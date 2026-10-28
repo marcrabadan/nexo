@@ -2820,3 +2820,46 @@ compiler/nexoc/src/packages.rs), with the same files byte for byte:
 - D148's "no dependencies until the registry" no longer holds; the
   registry service itself, its review of `unsafe` and its signing keys,
   still needs people (D133).
+
+**D175. `nexo build --target web`.** Section 14 lists `--target web`,
+`mobile`, `linux-arm` and `arduino` and says no more. This edition has
+`web`, WebAssembly for a page; the others are `build_target`.
+- A program is compiled for wasm32-wasip1 and linked with the runtime
+  built for it (compiler/scripts/web_runtime.sh writes target/web/: the
+  runtime, Rust's WASI C library and the rust-lld that matches it).
+  `-o app` writes `app.wasm`, `app.js` (the WASI functions a page gives
+  it, compiler/nexoc/src/web.js) and `app.html`, which runs it and shows
+  its output; `input()` reads with the browser's prompt. The page is
+  served over HTTP, as any page that fetches a .wasm.
+- WASI, not wasm32-unknown-unknown: the runtime is Rust's std, which
+  needs a C library and a WASI host; a page is that host through
+  web.js, Node through its own WASI.
+- What compiled code and the runtime share is the same on 32 bits: the
+  lengths of NameRef and LitFloat and the counts the runtime's exported
+  functions take are u64 (not usize), and the compiled code reaches the
+  `env` of a closure by the struct's own layout, not by a byte offset.
+  Native programs are unchanged.
+- A page has no threads, processes, sockets or dynamic libraries: `spawn`
+  and `run` stop with `web_unavailable`, `use c` and `use python` find
+  no library; `parallel` runs its tasks one after another, which gives
+  the same output (D79). TLS for HTTP has no system certificates. The
+  time zones are inside the runtime (packed from the build machine's
+  zoneinfo by runtime/build.rs), and files are those the host gives.
+- compiler/scripts/web_conformance.py runs the conformance suite and
+  the examples as WebAssembly under Node: 127 of 131, the other four
+  (spawn and run) listed in compiler/tests/web_skip.txt.
+
+**D176. The playground.** Section 26: "write and run Nexo in the browser,
+compiled to WebAssembly, with a shareable link". A page cannot run clang,
+so the playground (docs/playground.html) runs phase 0, which gives the
+same output as phase 1 (D67-D75), on Pyodide, CPython compiled to
+WebAssembly, in a worker that Stop ends. It runs the program, its tests
+or `nexo fmt`; the link holds the program (`#code=` and base64url of its
+UTF-8), so no server keeps anything. The examples of examples/ and their
+`data/` are there to open. docs/playground/build.py writes the
+interpreter's bundle (nexo.zip) and examples.json, the same bytes for
+the same sources (tests/test_playground.py). Pyodide is the only file the
+site loads from another site (cdn.jsdelivr.net, v0.27.7, Python 3.12),
+which the page says; Pyodide's sqlite3, tzdata and cryptography are
+downloaded the first time a program needs them, so phase 0 imports
+sqlite3 when a database is first used, not at start.

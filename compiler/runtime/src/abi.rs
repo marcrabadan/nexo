@@ -91,13 +91,15 @@ unsafe fn names(ptr: *const NameRef, n: u64) -> std::borrow::Cow<'static, [Optio
 #[no_mangle]
 pub unsafe extern "C" fn nx_init(
     file: *const u8,
-    file_len: usize,
+    file_len: u64,
     src: *const u8,
-    src_len: usize,
+    src_len: u64,
     spans: *const SpanRec,
     nspans: u64,
     cleanup: extern "C" fn(*mut Tls),
 ) {
+    let file_len = file_len as usize;
+    let src_len = src_len as usize;
     if std::env::var("NEXO_LEAKCHECK").is_ok_and(|v| v == "1") {
         enable_leakcheck();
     }
@@ -109,7 +111,9 @@ pub unsafe extern "C" fn nx_init(
 
 /// A module file of the program (D124), for the messages of its lines.
 #[no_mangle]
-pub unsafe extern "C" fn nx_add_file(id: u32, name: *const u8, name_len: usize, src: *const u8, src_len: usize) {
+pub unsafe extern "C" fn nx_add_file(id: u32, name: *const u8, name_len: u64, src: *const u8, src_len: u64) {
+    let name_len = name_len as usize;
+    let src_len = src_len as usize;
     nexo_diag::set_file(id, text(name, name_len), text(src, src_len));
 }
 
@@ -231,7 +235,8 @@ pub extern "C" fn nx_reraise(t: u64, b: u64) {
 
 /// `else e is Kind`: Error matches every error.
 #[no_mangle]
-pub unsafe extern "C" fn nx_error_is(t: u64, b: u64, kind: *const u8, len: usize) -> u8 {
+pub unsafe extern "C" fn nx_error_is(t: u64, b: u64, kind: *const u8, len: u64) -> u8 {
+    let len = len as usize;
     types::is_error_kind(v(t, b), text(kind, len)) as u8
 }
 
@@ -241,7 +246,9 @@ pub extern "C" fn nx_clear() {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_name_error(name: *const u8, len: usize, sug: *const u8, sug_len: usize, span: u32) {
+pub unsafe extern "C" fn nx_name_error(name: *const u8, len: u64, sug: *const u8, sug_len: u64, span: u32) {
+    let len = len as usize;
+    let sug_len = sug_len as usize;
     let name = text(name, len);
     let d = if sug.is_null() {
         Diagnostic::new_spanless("name_not_found").arg("name", name)
@@ -252,17 +259,20 @@ pub unsafe extern "C" fn nx_name_error(name: *const u8, len: usize, sug: *const 
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_immutable(name: *const u8, len: usize, span: u32) {
+pub unsafe extern "C" fn nx_immutable(name: *const u8, len: u64, span: u32) {
+    let len = len as usize;
     diag(Diagnostic::new_spanless("immutable").arg("name", text(name, len)), span);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_already_declared(name: *const u8, len: usize, span: u32) {
+pub unsafe extern "C" fn nx_already_declared(name: *const u8, len: u64, span: u32) {
+    let len = len as usize;
     diag(Diagnostic::new_spanless("already_declared").arg("name", text(name, len)), span);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_not_bool(t: u64, b: u64, what: *const u8, len: usize, span: u32) {
+pub unsafe extern "C" fn nx_not_bool(t: u64, b: u64, what: *const u8, len: u64, span: u32) {
+    let len = len as usize;
     diag(Diagnostic::new_spanless("not_bool").arg("what", text(what, len)).arg("vtype", type_name(v(t, b))), span);
 }
 
@@ -276,7 +286,8 @@ pub unsafe extern "C" fn nx_return_outside(span: u32) {
 // Constants of the program are created when it starts and never freed.
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_str(ptr: *const u8, len: usize) -> V {
+pub unsafe extern "C" fn nx_str(ptr: *const u8, len: u64) -> V {
+    let len = len as usize;
     let s = text(ptr, len);
     if let Some(short) = V::short_str(s) {
         return short;
@@ -285,7 +296,9 @@ pub unsafe extern "C" fn nx_str(ptr: *const u8, len: usize) -> V {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_unit(t: *const u8, tl: usize, u: *const u8, ul: usize) -> V {
+pub unsafe extern "C" fn nx_unit(t: *const u8, tl: u64, u: *const u8, ul: u64) -> V {
+    let tl = tl as usize;
+    let ul = ul as usize;
     let x = num::unit_literal(text(t, tl), text(u, ul));
     make_immortal(x.v());
     x.into_raw()
@@ -298,7 +311,8 @@ pub extern "C" fn nx_builtin(id: u32) -> V {
 
 /// Builtin types, error kinds, currencies, half_up and the json/csv namespaces.
 #[no_mangle]
-pub unsafe extern "C" fn nx_named(ptr: *const u8, len: usize) -> V {
+pub unsafe extern "C" fn nx_named(ptr: *const u8, len: u64) -> V {
+    let len = len as usize;
     match stdlib::named_value(text(ptr, len)) {
         Some(x) => {
             make_immortal(x.v());
@@ -327,13 +341,15 @@ pub extern "C" fn nx_db_command() -> ! {
 
 /// `now` and `today`, read from the clock each time.
 #[no_mangle]
-pub unsafe extern "C" fn nx_clock(ptr: *const u8, len: usize) -> V {
+pub unsafe extern "C" fn nx_clock(ptr: *const u8, len: u64) -> V {
+    let len = len as usize;
     crate::time::clock(text(ptr, len)).into_raw()
 }
 
 /// Decode a type descriptor (when the program starts).
 #[no_mangle]
-pub unsafe extern "C" fn nx_desc(ptr: *const u8, len: usize) -> *const types::TypeDesc {
+pub unsafe extern "C" fn nx_desc(ptr: *const u8, len: u64) -> *const types::TypeDesc {
+    let len = len as usize;
     types::desc(ptr, len)
 }
 
@@ -524,7 +540,8 @@ pub unsafe extern "C" fn nx_unique_slot(slot: *mut V) {
 
 /// `obj.name` as a place.
 #[no_mangle]
-pub unsafe extern "C" fn nx_field_slot(ot: u64, ob: u64, name: *const u8, len: usize, span: u32) -> *mut V {
+pub unsafe extern "C" fn nx_field_slot(ot: u64, ob: u64, name: *const u8, len: u64, span: u32) -> *mut V {
+    let len = len as usize;
     let mut tmp = Val::none();
     match call::field_slot(v(ot, ob), text(name, len), &mut tmp, span) {
         Ok(Some(p)) => p,
@@ -578,13 +595,14 @@ pub unsafe extern "C" fn nx_index_at(slot: *mut V, it: u64, ib: u64, span: u32) 
 pub unsafe extern "C" fn nx_call_method_at(
     slot: *mut V,
     name: *const u8,
-    len: usize,
+    len: u64,
     args: *const V,
     nm: *const NameRef,
     n: u64,
     span: u32,
     name_span: u32,
 ) -> V {
+    let len = len as usize;
     let name = text(name, len);
     if name == "add" {
         crate::cow::make_unique(slot);
@@ -607,7 +625,8 @@ pub unsafe extern "C" fn nx_call_method_at(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_attr(t: u64, b: u64, name: *const u8, len: usize, span: u32) -> V {
+pub unsafe extern "C" fn nx_attr(t: u64, b: u64, name: *const u8, len: u64, span: u32) -> V {
+    let len = len as usize;
     ret(call::get_attr(v(t, b), text(name, len), span))
 }
 
@@ -629,10 +648,11 @@ pub unsafe extern "C" fn nx_attr_ic(
     t: u64,
     b: u64,
     name: *const u8,
-    len: usize,
+    len: u64,
     span: u32,
     cache: &std::sync::atomic::AtomicU64,
 ) -> V {
+    let len = len as usize;
     let obj = v(t, b);
     if let Some(Obj::Record(r)) = obj.get() {
         let i = match cached(cache, r) {
@@ -698,12 +718,13 @@ pub unsafe extern "C" fn nx_set_attr(
     ot: u64,
     ob: u64,
     name: *const u8,
-    len: usize,
+    len: u64,
     t: u64,
     b: u64,
     name_span: u32,
     value_span: u32,
 ) {
+    let len = len as usize;
     let _ = call::set_attr(v(ot, ob), text(name, len), v(t, b), name_span, value_span);
 }
 
@@ -783,11 +804,13 @@ pub unsafe extern "C" fn nx_conform(
     t: u64,
     b: u64,
     desc: *const u8,
-    desc_len: usize,
+    desc_len: u64,
     name: *const u8,
-    name_len: usize,
+    name_len: u64,
     span: u32,
 ) -> V {
+    let desc_len = desc_len as usize;
+    let name_len = name_len as usize;
     let d = types::desc(desc, desc_len);
     ret(types::conform(v(t, b), d, text(name, name_len), span))
 }
@@ -798,11 +821,13 @@ pub unsafe extern "C" fn nx_conform_return(
     t: u64,
     b: u64,
     desc: *const u8,
-    desc_len: usize,
+    desc_len: u64,
     name: *const u8,
-    name_len: usize,
+    name_len: u64,
     span: u32,
 ) -> V {
+    let desc_len = desc_len as usize;
+    let name_len = name_len as usize;
     let d = types::desc(desc, desc_len);
     let value = v(t, b);
     let fname = text(name, name_len);
@@ -838,7 +863,7 @@ pub unsafe extern "C" fn nx_call(t: u64, b: u64, args: *const V, nm: *const Name
 #[no_mangle]
 pub unsafe extern "C" fn nx_call_fake(
     name: *const u8,
-    len: usize,
+    len: u64,
     t: u64,
     b: u64,
     args: *const V,
@@ -846,6 +871,7 @@ pub unsafe extern "C" fn nx_call_fake(
     n: u64,
     span: u32,
 ) -> V {
+    let len = len as usize;
     if let Some(v) = crate::library::fake_value(text(name, len)) {
         return v.into_raw();
     }
@@ -858,13 +884,14 @@ pub unsafe extern "C" fn nx_call_method(
     t: u64,
     b: u64,
     name: *const u8,
-    len: usize,
+    len: u64,
     args: *const V,
     nm: *const NameRef,
     n: u64,
     span: u32,
     name_span: u32,
 ) -> V {
+    let len = len as usize;
     let names = names(nm, n);
     ret(call::call_method(v(t, b), text(name, len), values(args, n), &names, span, name_span))
 }
@@ -916,7 +943,7 @@ pub unsafe extern "C" fn nx_call_method_ic(
     t: u64,
     b: u64,
     name: *const u8,
-    len: usize,
+    len: u64,
     args: *const V,
     nm: *const NameRef,
     n: u64,
@@ -924,6 +951,7 @@ pub unsafe extern "C" fn nx_call_method_ic(
     name_span: u32,
     cache: &std::sync::atomic::AtomicU64,
 ) -> V {
+    let len = len as usize;
     let obj = v(t, b);
     let names = names(nm, n);
     if let Some(Obj::Record(r)) = obj.get() {
@@ -1005,7 +1033,7 @@ unsafe fn fields(decls: *const FieldDecl, n: u64, defaults: *const V) -> Vec<Fie
         .enumerate()
         .map(|(i, f)| FieldInfo {
             name: f.name.get().unwrap_or("").to_string(),
-            ty: if f.desc.ptr.is_null() { None } else { Some(types::desc(f.desc.ptr, f.desc.len)) },
+            ty: if f.desc.ptr.is_null() { None } else { Some(types::desc(f.desc.ptr, f.desc.len as usize)) },
             optional: f.optional & 1 != 0,
             weak: f.optional & 2 != 0,
             private: f.optional & 4 != 0,
@@ -1018,11 +1046,12 @@ unsafe fn fields(decls: *const FieldDecl, n: u64, defaults: *const V) -> Vec<Fie
 pub unsafe extern "C" fn nx_define_record(
     id: u32,
     name: *const u8,
-    len: usize,
+    len: u64,
     n: u64,
     decls: *const FieldDecl,
     defaults: *const V,
 ) -> V {
+    let len = len as usize;
     let rt: &'static RecordType = Box::leak(Box::new(RecordType {
         id,
         name: text(name, len).to_string(),
@@ -1035,7 +1064,8 @@ pub unsafe extern "C" fn nx_define_record(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_define_enum(id: u32, name: *const u8, len: usize, n: u64, decls: *const VariantDecl) -> V {
+pub unsafe extern "C" fn nx_define_enum(id: u32, name: *const u8, len: u64, n: u64, decls: *const VariantDecl) -> V {
+    let len = len as usize;
     let decls: &[VariantDecl] = if n == 0 { &[] } else { std::slice::from_raw_parts(decls, n as usize) };
     let variants: Vec<&'static VariantInfo> = decls
         .iter()
@@ -1074,7 +1104,9 @@ pub extern "C" fn nx_enum_variant(t: u64, b: u64, index: u64) -> V {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_define_alias(id: u32, name: *const u8, len: usize, desc: *const u8, dlen: usize) -> V {
+pub unsafe extern "C" fn nx_define_alias(id: u32, name: *const u8, len: u64, desc: *const u8, dlen: u64) -> V {
+    let len = len as usize;
+    let dlen = dlen as usize;
     let a: &'static AliasType =
         Box::leak(Box::new(AliasType { id, name: text(name, len).to_string(), target: types::desc(desc, dlen) }));
     types::register(id, TypeRef::Alias(a));
@@ -1082,7 +1114,8 @@ pub unsafe extern "C" fn nx_define_alias(id: u32, name: *const u8, len: usize, d
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_define_trait(id: u32, name: *const u8, len: usize, n: u64, methods: *const NameRef) -> V {
+pub unsafe extern "C" fn nx_define_trait(id: u32, name: *const u8, len: u64, n: u64, methods: *const NameRef) -> V {
+    let len = len as usize;
     let methods: Vec<String> = names(methods, n).into_iter().map(|m| m.unwrap_or("").to_string()).collect();
     let tt: &'static TraitType = Box::leak(Box::new(TraitType { id, name: text(name, len).to_string(), methods }));
     types::register(id, TypeRef::Trait(tt));
@@ -1090,7 +1123,8 @@ pub unsafe extern "C" fn nx_define_trait(id: u32, name: *const u8, len: usize, n
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_add_method(tt: u64, tb: u64, name: *const u8, len: usize, ft: u64, fb: u64) {
+pub unsafe extern "C" fn nx_add_method(tt: u64, tb: u64, name: *const u8, len: u64, ft: u64, fb: u64) {
+    let len = len as usize;
     let name = text(name, len).to_string();
     match v(tt, tb).get() {
         Some(Obj::Type(TypeRef::Record(r))) => r.methods.borrow_mut().push((name, Val::from(v(ft, fb)))),
@@ -1133,9 +1167,10 @@ pub unsafe extern "C" fn nx_match_ctor(
     cb: u64,
     nargs: u64,
     name: *const u8,
-    len: usize,
+    len: u64,
     span: u32,
 ) -> u8 {
+    let len = len as usize;
     let (value, ctor) = (v(t, b), v(ct, cb));
     let count = match (ctor.get(), value.get()) {
         (Some(Obj::Variant(var)), Some(Obj::VariantValue(vv))) if std::ptr::eq(*var, vv.variant) => vv.fields.len(),
@@ -1203,12 +1238,13 @@ pub unsafe extern "C" fn nx_pipe_where_sql(
     ft: u64,
     fb: u64,
     plan: *const u8,
-    plen: usize,
+    plen: u64,
     leaves: *const V,
     n: u64,
     step: u32,
     expr: u32,
 ) -> V {
+    let plen = plen as usize;
     let src = v(st_, sb);
     let f = Val::from(v(ft, fb));
     if let Some(q) = stream_op(src, false, move |x| Ok(pipe::where_(x, f.v(), step, expr))) {
@@ -1236,10 +1272,11 @@ pub unsafe extern "C" fn nx_pipe_sort_col(
     fb: u64,
     desc: u32,
     name: *const u8,
-    len: usize,
+    len: u64,
     step: u32,
     expr: u32,
 ) -> V {
+    let len = len as usize;
     let f = Val::from(v(ft, fb));
     if let Some(q) = stream_op(v(st_, sb), false, move |x| Ok(pipe::sort(x, f.v(), desc != 0, step, expr))) {
         return q;
@@ -1298,12 +1335,14 @@ pub unsafe extern "C" fn nx_pipe_group(
     ft: u64,
     fb: u64,
     key: *const u8,
-    len: usize,
+    len: u64,
     name: *const u8,
-    nlen: usize,
+    nlen: u64,
     step: u32,
     expr: u32,
 ) -> V {
+    let len = len as usize;
+    let nlen = nlen as usize;
     let (f, k) = (Val::from(v(ft, fb)), text(key, len));
     if let Some(q) = stream_op(v(st_, sb), false, move |x| pipe::group(x, f.v(), k, step, expr)) {
         return q;
@@ -1436,12 +1475,14 @@ pub unsafe extern "C" fn nx_pipe_agg(
     ft: u64,
     fb: u64,
     col: *const u8,
-    len: usize,
+    len: u64,
     name: *const u8,
-    nlen: usize,
+    nlen: u64,
     span: u32,
     expr: u32,
 ) -> V {
+    let len = len as usize;
+    let nlen = nlen as usize;
     let kind = match kind {
         0 => "sum",
         1 => "count",
@@ -1458,7 +1499,8 @@ pub unsafe extern "C" fn nx_pipe_agg(
 
 /// A bare name inside a pipeline step: the column of the current row.
 #[no_mangle]
-pub unsafe extern "C" fn nx_row_get(t: u64, b: u64, name: *const u8, len: usize, found: *mut u8) -> V {
+pub unsafe extern "C" fn nx_row_get(t: u64, b: u64, name: *const u8, len: u64, found: *mut u8) -> V {
+    let len = len as usize;
     match pipe::row_get(v(t, b), text(name, len)) {
         Some(x) => {
             *found = 1;
@@ -1473,7 +1515,9 @@ pub unsafe extern "C" fn nx_row_get(t: u64, b: u64, name: *const u8, len: usize,
 
 /// A bare name in a step that is neither a column nor a variable.
 #[no_mangle]
-pub unsafe extern "C" fn nx_row_missing(t: u64, b: u64, name: *const u8, len: usize, sug: *const u8, sl: usize, span: u32) {
+pub unsafe extern "C" fn nx_row_missing(t: u64, b: u64, name: *const u8, len: u64, sug: *const u8, sl: u64, span: u32) {
+    let len = len as usize;
+    let sl = sl as usize;
     let name = text(name, len);
     let mut candidates = pipe::row_names(v(t, b));
     if !sug.is_null() {
@@ -1679,13 +1723,15 @@ pub extern "C" fn nx_shared_store(t: u64, b: u64) -> V {
 
 /// A spawned task reads a variable of the program.
 #[no_mangle]
-pub unsafe extern "C" fn nx_isolated_read(t: u64, b: u64, name: *const u8, len: usize, is_var: u32, span: u32) {
+pub unsafe extern "C" fn nx_isolated_read(t: u64, b: u64, name: *const u8, len: u64, is_var: u32, span: u32) {
+    let len = len as usize;
     let _ = crate::sync::isolated_read(v(t, b), text(name, len), is_var != 0, span);
 }
 
 /// A task changed a variable of outside the task (section 5).
 #[no_mangle]
-pub unsafe extern "C" fn nx_task_write(name: *const u8, len: usize, span: u32) {
+pub unsafe extern "C" fn nx_task_write(name: *const u8, len: u64, span: u32) {
+    let len = len as usize;
     diag(Diagnostic::new_spanless("task_write_var").arg("name", text(name, len)), span);
 }
 
@@ -1701,14 +1747,16 @@ pub extern "C" fn nx_deep_copy(t: u64, b: u64) -> V {
 #[no_mangle]
 pub unsafe extern "C" fn nx_contract_broken(
     kw: *const u8,
-    kl: usize,
+    kl: u64,
     expr: *const u8,
-    el: usize,
+    el: u64,
     texts: *const NameRef,
     vals: *const V,
     n: u64,
     span: u32,
 ) {
+    let kl = kl as usize;
+    let el = el as usize;
     let texts = names(texts, n);
     let vals = values(vals, n);
     let mut parts = Vec::new();
@@ -1727,28 +1775,32 @@ pub unsafe extern "C" fn nx_contract_broken(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_assert_failed(expr: *const u8, len: usize, span: u32) {
+pub unsafe extern "C" fn nx_assert_failed(expr: *const u8, len: u64, span: u32) {
+    let len = len as usize;
     diag(Diagnostic::new_spanless("assert_failed").arg("expr", text(expr, len)).arg("detail", ""), span);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn nx_assert_cmp_failed(
     expr: *const u8,
-    len: usize,
+    len: u64,
     op: *const u8,
-    ol: usize,
+    ol: u64,
     lt: u64,
     lb: u64,
     rt: u64,
     rb: u64,
     span: u32,
 ) {
+    let len = len as usize;
+    let ol = ol as usize;
     let detail = format!(" ({} {} {})", repr(v(lt, lb)), text(op, ol), repr(v(rt, rb)));
     diag(Diagnostic::new_spanless("assert_failed").arg("expr", text(expr, len)).arg("detail", detail), span);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_assert_not_failed(expr: *const u8, len: usize, span: u32) {
+pub unsafe extern "C" fn nx_assert_not_failed(expr: *const u8, len: u64, span: u32) {
+    let len = len as usize;
     diag(Diagnostic::new_spanless("assert_not_failed").arg("expr", text(expr, len)), span);
 }
 
@@ -1763,7 +1815,8 @@ pub extern "C" fn nx_test_header() {
 
 /// After a test block: ✓ or ✗ and the failure.
 #[no_mangle]
-pub unsafe extern "C" fn nx_test_result(name: *const u8, len: usize) {
+pub unsafe extern "C" fn nx_test_result(name: *const u8, len: u64) {
+    let len = len as usize;
     let mut counts = TEST_COUNTS.lock().unwrap();
     counts.0 += 1;
     if state::failing() != 0 {
@@ -1794,12 +1847,14 @@ static TEST_COUNTS: Mutex<(u32, u32)> = Mutex::new((0, 0));
 // ------------------------------------------------------------ events, time
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_on(name: *const u8, len: usize, t: u64, b: u64) {
+pub unsafe extern "C" fn nx_on(name: *const u8, len: u64, t: u64, b: u64) {
+    let len = len as usize;
     stdlib::on(text(name, len), v(t, b));
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn nx_emit(name: *const u8, len: usize, args: *const V, n: u64, span: u32) {
+pub unsafe extern "C" fn nx_emit(name: *const u8, len: u64, args: *const V, n: u64, span: u32) {
+    let len = len as usize;
     let _ = stdlib::emit(text(name, len), values(args, n), span);
 }
 
@@ -1855,7 +1910,8 @@ static TESTS: Mutex<Vec<(String, Val)>> = Mutex::new(Vec::new());
 
 /// A `test` block reached while running the top level of the file.
 #[no_mangle]
-pub unsafe extern "C" fn nx_test_register(name: *const u8, len: usize, t: u64, b: u64) {
+pub unsafe extern "C" fn nx_test_register(name: *const u8, len: u64, t: u64, b: u64) {
+    let len = len as usize;
     let name = text(name, len).to_string();
     TESTS.lock().unwrap().push((name, Val::from(v(t, b))));
 }
@@ -1880,7 +1936,7 @@ pub extern "C" fn nx_run_tests() -> ! {
         }
         drop(r);
         crate::library::clear_fakes();
-        unsafe { nx_test_result(name.as_ptr(), name.len()) };
+        unsafe { nx_test_result(name.as_ptr(), name.len() as u64) };
     }
     nx_test_finish()
 }

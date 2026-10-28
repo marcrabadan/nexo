@@ -365,6 +365,10 @@ pub fn spawn(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<()> {
     });
     if started.is_err() {
         finished();
+        // a page has no threads (D175)
+        if cfg!(target_family = "wasm") {
+            return Err(diag(Diagnostic::new_spanless("web_unavailable").arg("what", "spawn".to_string()), span));
+        }
         return Err(diag(Diagnostic::new_spanless("spawn_failed"), span));
     }
     Ok(())

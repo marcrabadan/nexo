@@ -1868,7 +1868,8 @@ impl<'a> Gen<'a> {
         let free = self.res.frames[frame].free.clone();
         if !free.is_empty() {
             let p = self.reg();
-            self.emitf(format_args!("{p} = getelementptr inbounds i8, ptr %clo, i64 16"));
+            // the `env` field of the runtime's Func, at any pointer size (D175)
+            self.emitf(format_args!("{p} = getelementptr inbounds {{ ptr, ptr, ptr, i64 }}, ptr %clo, i32 0, i32 2"));
             let env = self.reg();
             self.emitf(format_args!("{env} = load ptr, ptr {p}"));
             self.f().env = Some(env);

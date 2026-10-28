@@ -19,13 +19,19 @@ argon2 = { version = "0.5", default-features = false, features = ["alloc", "pass
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
 getrandom = "0.2"
-ureq = { version = "2", default-features = false, features = ["tls", "native-certs"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
-rustls-native-certs = "0.7"
 libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 hmac = "0.12"
 sha2 = "0.10"
+
+# a program built for the web (wasm32-wasip1, D175) has no system certificates
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+ureq = { version = "2", default-features = false, features = ["tls", "native-certs"] }
+rustls-native-certs = "0.7"
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [target.'cfg(all(target_os = "linux", target_arch = "x86_64"))'.dependencies]
 libc = "0.2"

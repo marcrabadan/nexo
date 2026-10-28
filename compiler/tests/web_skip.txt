@@ -1,0 +1,6 @@
+# Programs that web_conformance.py does not run as WebAssembly (D175): they
+# need what a page does not have. Each ends with web_unavailable on the web.
+s05_deadlock     # spawn: threads
+s05_spawn_read   # spawn: threads
+s05_sync         # spawn: threads
+s12_run          # run: another process

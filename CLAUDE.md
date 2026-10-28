@@ -130,6 +130,9 @@ docs/guarantees.md the state of each guarantee of the specification (phase 6)
 docs/index.html, reference.html  the GitHub Pages site; reference.html is built from
                   docs/reference/ (page.tmpl + the programs it runs) by
                   docs/reference/build.py
+docs/playground.html  the playground (D176): phase 0 on Pyodide in a worker
+                  (assets/playground*.js); docs/playground/build.py writes
+                  its nexo.zip and examples.json
 ```
 
 ## Running
@@ -159,6 +162,9 @@ Phase 1 (needs cargo and clang):
 cd compiler && cargo build && cargo test
 compiler/target/debug/nexo file.nexo          # compile and run
 compiler/target/debug/nexo build --release file.nexo -o app   # + app.sbom.json
+compiler/scripts/web_runtime.sh                    # the runtime for --target web (target/web)
+compiler/target/debug/nexo build --target web file.nexo -o app # app.wasm, app.js, app.html
+python3 compiler/scripts/web_conformance.py        # the suite as WebAssembly, under Node
 python3 compiler/scripts/conformance.py       # conformance + examples
 .venv/bin/python compiler/scripts/differential.py  # same output as phase 0
 .venv/bin/python compiler/scripts/fuzz.py --count=200 # random programs, both phases
@@ -286,6 +292,13 @@ requirement accepts; nexo.lock pins the version, sha256 and key;
 `[permissions]` are checked against the project's policies and critical
 advisories stop the install. `use pkg` loads .nexo/packages/pkg/lib.nexo.
 Tests in tests/test_packages.py.
+
+WebAssembly (D175, D176): `nexo build --target web` compiles for
+wasm32-wasip1 and writes the program, its WASI code for a page
+(compiler/nexoc/src/web.js) and a page; what compiled code shares with the
+runtime is u64 on every target. The playground runs phase 0 on Pyodide.
+tests/test_playground.py checks both (skipped without node, Pyodide or
+target/web).
 
 Excluded (do not implement yet): ml, ui, notify, the registry service, every/lifecycle, canary and blue/green releases, chaos,
 vault and cloud secret managers, use rust/wasm, YAML/XML/Parquet (D89,

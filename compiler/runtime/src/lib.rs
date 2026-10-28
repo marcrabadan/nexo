@@ -50,3 +50,20 @@ pub mod time;
 pub mod types;
 pub mod value;
 pub mod web;
+
+/// A program built for the web (D175) has no dynamic libraries: `use c`
+/// and `use python` find none and fail as for a library that is missing.
+#[cfg(target_family = "wasm")]
+mod wasm {
+    use std::ffi::{c_char, c_void};
+
+    #[no_mangle]
+    pub extern "C" fn dlopen(_file: *const c_char, _mode: i32) -> *mut c_void {
+        std::ptr::null_mut()
+    }
+
+    #[no_mangle]
+    pub extern "C" fn dlsym(_handle: *mut c_void, _name: *const c_char) -> *mut c_void {
+        std::ptr::null_mut()
+    }
+}

@@ -120,6 +120,7 @@ pub struct Answer {
 
 pub fn tls_config() -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
+    #[cfg(not(target_family = "wasm"))]
     for cert in rustls_native_certs::load_native_certs().into_iter().flatten() {
         let _ = roots.add(cert);
     }

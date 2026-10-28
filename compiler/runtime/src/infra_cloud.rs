@@ -63,6 +63,7 @@ fn tls_with(ca: &str) -> R<std::sync::Arc<rustls::ClientConfig>> {
     let bad = || fail_d(Diagnostic::new_spanless("infra_ca").arg("path", ca));
     let pem = std::fs::read(ca).map_err(|_| bad())?;
     let mut roots = rustls::RootCertStore::empty();
+    #[cfg(not(target_family = "wasm"))]
     for cert in rustls_native_certs::load_native_certs().into_iter().flatten() {
         let _ = roots.add(cert);
     }

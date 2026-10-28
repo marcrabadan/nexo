@@ -16,7 +16,6 @@ are read and the rest runs in memory, with the same result.
 from __future__ import annotations
 
 import re
-import sqlite3
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -32,6 +31,19 @@ KINDS = ("int", "float", "bool", "str", "decimal", "money", "date", "time")
 # NEXO_SQL_LOG=1 writes every statement to stderr (the tests compare the
 # SQL both phases send)
 import os as _os
+
+
+class _Sqlite:
+    """sqlite3, imported the first time a program uses a database: a
+    program without one starts without it (and the playground, D176,
+    downloads it only for such a program)."""
+
+    def __getattr__(self, name):
+        import sqlite3 as module
+        return getattr(module, name)
+
+
+sqlite3 = _Sqlite()
 SQL_LOG = bool(_os.environ.get("NEXO_SQL_LOG"))
 
 
