@@ -152,45 +152,78 @@ fn once(method: &str, url: &str, body: &Option<(Vec<u8>, &str)>, headers: &[(Str
             .user_agent(USER_AGENT);
         // every hop, so a redirect cannot lead outside the policy (D142)
         crate::policy::check_url(&current, span)?;
-        if let Some(p) = proxy_for(&current) {
-            b = b.proxy(p);
-        }
-        let agent = b.build();
-        let mut req = agent.request(method, &current);
-        if let Some((_, ctype)) = body {
-            req = req.set("Content-Type", ctype);
-        }
-        for (k, v) in &headers {
-            req = req.set(k, v);
-        }
-        let result = match body {
-            Some((data, _)) => req.send_bytes(data),
-            None => req.call(),
-        };
-        let resp = match result {
-            Ok(r) => r,
-            Err(ureq::Error::Status(_, r)) => r,
-            Err(ureq::Error::Transport(t)) => return Ok(Outcome::Retry(network(&current, transport_reason(&t), span))),
-        };
-        let status = resp.status() as i64;
-        let mut hs: Vec<(String, String)> = Vec::new();
-        for name in resp.headers_names() {
-            let all: Vec<&str> = resp.all(&name);
-            let key = name.to_lowercase();
-            if hs.iter().any(|(k, _)| *k == key) {
-                continue;
+        let (status, hs, location, data) = if std::env::var("NEXO_SECURITY_SANDBOX").is_ok_and(|s| s == crate::security::online::PROFILE) {
+            let response = match crate::security::online::request(method, &current, body, &headers, limit) {
+                Ok(response) => response,
+                Err(_) => return Ok(Outcome::Retry(network(&current, "detail.no_connection", span))),
+            };
+            let location = response.headers.iter().find(|(k,_)| k.eq_ignore_ascii_case("location")).map(|(_,v)| v.clone());
+            (response.status, response.headers, location, response.body)
+        } else {
+            if let Some(p) = proxy_for(&current) {
+                b = b.proxy(p);
             }
-            hs.push((key, all.join(", ")));
-        }
-        let location = resp.header("location").map(|s| s.to_string());
-        if stream && status < 300 {
-            return Ok(Outcome::Open(resp.into_reader(), current));
-        }
-        let mut data = Vec::new();
-        use std::io::Read;
-        if resp.into_reader().read_to_end(&mut data).is_err() {
-            return Ok(Outcome::Retry(network(&current, "detail.no_connection", span)));
-        }
+            let agent = b.build();
+            let mut req = agent.request(method, &current);
+            if let Some((_, ctype)) = body {
+                req = req.set("Content-Type", ctype);
+            }
+            for (k, v) in &headers {
+                req = req.set(k, v);
+            }
+            let result = match body {
+                Some((data, _)) => req.send_bytes(data),
+                None => req.call(),
+            };
+            let resp = match result {
+                Ok(r) => r,
+                Err(ureq::Error::Status(_, r)) => r,
+                Err(ureq::Error::Transport(t)) => {
+                    let key = match t.kind() {
+                        ureq::ErrorKind::Dns => "detail.unknown_host",
+                        ureq::ErrorKind::ConnectionFailed => {
+                            let text = t.to_string();
+                            if text.contains("refused") {
+                                "detail.refused"
+                            } else if text.contains("timed out") {
+                                "detail.timeout"
+                            } else {
+                                "detail.no_connection"
+                            }
+                        }
+                        ureq::ErrorKind::Io => {
+                            if t.to_string().contains("timed out") {
+                                "detail.timeout"
+                            } else {
+                                "detail.no_connection"
+                            }
+                        }
+                        ureq::ErrorKind::InvalidUrl | ureq::ErrorKind::UnknownScheme => "detail.bad_url",
+                        _ => "detail.no_connection",
+                    };
+                    return Ok(Outcome::Retry(network(&current, key, span)));
+                }
+            };
+            let status = resp.status() as i64;
+            let mut hs: Vec<(String, String)> = Vec::new();
+            for name in resp.headers_names() {
+                let all: Vec<&str> = resp.all(&name);
+                let key = name.to_lowercase();
+                if hs.iter().any(|(k, _)| *k == key) {
+                    continue;
+                }
+                hs.push((key, all.join(", ")));
+            }
+            let location = resp.header("location").map(|s| s.to_string());
+            if stream && status < 300 { return Ok(Outcome::Open(resp.into_reader(), current)); }
+            let mut data = Vec::new();
+            use std::io::Read;
+            if resp.into_reader().read_to_end(&mut data).is_err() {
+                return Ok(Outcome::Retry(network(&current, "detail.no_connection", span)));
+            }
+            (status, hs, location, data)
+        };
+        if stream && status < 300 { return Ok(Outcome::Open(Box::new(std::io::Cursor::new(data)), current)); }
         if matches!(status, 301 | 302 | 303 | 307 | 308) && method == "GET" {
             if let Some(loc) = location {
                 let target = join_url(&current, &loc);
@@ -246,20 +279,7 @@ fn origin(url: &str) -> (String, String, u16) {
 
 /// A Location relative to the address it came from.
 fn join_url(base: &str, loc: &str) -> String {
-    if loc.starts_with("http://") || loc.starts_with("https://") {
-        return loc.to_string();
-    }
-    let (scheme, rest) = base.split_once("://").unwrap_or(("http", base));
-    let host = rest.split('/').next().unwrap_or("");
-    if loc.starts_with('/') {
-        return format!("{scheme}://{host}{loc}");
-    }
-    let path = &rest[host.len()..];
-    let dir = match path.rfind('/') {
-        Some(i) => &path[..=i],
-        None => "/",
-    };
-    format!("{scheme}://{host}{dir}{loc}")
+    url::Url::parse(base).and_then(|base| base.join(loc)).map(|u| u.to_string()).unwrap_or_default()
 }
 
 pub fn seconds(v: V, name: &str, span: u32) -> R<f64> {

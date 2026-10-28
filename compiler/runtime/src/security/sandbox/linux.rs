@@ -61,6 +61,18 @@ pub(super) fn apply_limits(l: &Limits) -> Result<(), String> {
     }
     Ok(())
 }
+
+pub(super) fn broker_parent_lifetime() -> Result<(), String> {
+    // SAFETY: scalar prctl arguments set this dedicated helper's parent-death
+    // signal only. Check both sides of installation to reject reparenting races.
+    unsafe {
+        let parent = libc::getppid();
+        if parent <= 1 || libc::prctl(libc::PR_SET_PDEATHSIG,libc::SIGKILL,0,0,0) != 0 || libc::getppid() != parent {
+            return Err("Cannot bind broker lifetime to its supervisor".into());
+        }
+    }
+    Ok(())
+}
 fn statement(code: u16, k: u32) -> libc::sock_filter { libc::sock_filter { code, jt: 0, jf: 0, k } }
 fn jump(k: u32, jt: u8, jf: u8) -> libc::sock_filter { libc::sock_filter { code: 0x15, jt, jf, k } }
 fn install(mut filter: Vec<libc::sock_filter>) -> Result<(), String> {
@@ -199,9 +211,10 @@ pub(super) fn enter(profile: &Profile, program: &Path, args: &[String], payload_
     if version < 3 { return Err("Linux sandbox unavailable: Landlock ABI >= 3 is required; no weaker fallback was executed.".into()); }
     let control = std::env::current_exe().map_err(|_| "Cannot identify trusted worker")?.canonicalize().map_err(|_| "Cannot pin trusted worker identity")?;
     let library = Path::new("/usr/lib").canonicalize().map_err(|_| "Cannot resolve runtime library directory")?;
-    let config = payload_env.iter().find(|(k,_)| k == "NEXO_SECURITY_DEPENDENCIES").and_then(|(_,v)| Path::new(v).canonicalize().ok());
     let mut protected = vec![control,library];
-    if let Some(config) = config { protected.push(config); }
+    for key in ["NEXO_SECURITY_DEPENDENCIES","NEXO_SECURITY_AUTHORIZATION"] {
+        if let Some(config) = payload_env.iter().find(|(k,_)| k == key).and_then(|(_,v)| Path::new(v).canonicalize().ok()) { protected.push(config); }
+    }
     let executable = pin(program, true, &[])?;
     let handled = (1u64 << if version >= 5 { 16 } else { 15 }) - 1;
     let attr = Ruleset { handled_access_fs: handled };

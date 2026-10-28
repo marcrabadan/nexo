@@ -293,6 +293,8 @@ class DocDatabase(Database):
 
 
 def connect(call, url: str, key):
+    from ..security_context import check_connector
+    check_connector(call.span)
     """connect("mongodb://...") (D171) or connect("elasticsearch://...")
     (D172)."""
     from .policy import check

@@ -2153,6 +2153,7 @@ fn open_server(path: &str, password: Option<&str>) -> Result<Backend, PgError> {
 /// connect("postgres://user@host:port/database", key: password) (D163), or
 /// "mysql://..." (D170).
 fn connect_server(path: String, key: Option<V>, span: u32) -> R<Val> {
+    crate::security::check_connector(span)?;
     let fail = |e: PgError, path: &str| failure("DatabaseError", span, &[("db", path.to_string()), ("reason", e.message)]);
     let mysql = path.starts_with("mysql://");
     let host = if mysql { crate::mysql::parse_url(&path).map(|t| t.host) } else { crate::pg::parse_url(&path).map(|t| t.host) };

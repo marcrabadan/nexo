@@ -95,11 +95,17 @@ pub struct TaskState {
 static PROGRAM: OnceLock<Program> = OnceLock::new();
 static OUT: Mutex<Option<BufWriter<std::io::Stdout>>> = Mutex::new(None);
 
+#[derive(Clone)]
+pub struct EventHandler {
+    pub func: Val,
+    pub security: crate::security::context::Snapshot,
+}
+
 pub struct Registry {
     pub types: HashMap<u32, TypeRef>,
     /// every type ever defined (to release methods and defaults at the end)
     pub all_types: Vec<TypeRef>,
-    pub handlers: HashMap<String, Vec<Val>>,
+    pub handlers: HashMap<String, Vec<EventHandler>>,
 }
 
 static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();

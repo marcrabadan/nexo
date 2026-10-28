@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 import sys
 from datetime import date as _date
 from pathlib import Path
@@ -102,6 +103,9 @@ def check_model_name(call, value: str) -> None:
     provider, sep, name = value.partition(":")
     if not sep or not name:
         raise NexoError("ai_model", call.span, model=value)
+    if provider in ("azure", "bedrock"):
+        from ..security_context import check_connector
+        check_connector(call.span)
     check_provider(call, provider)
 
 
@@ -202,6 +206,9 @@ def toml_value(text: str):
 
 
 def file_layers(call) -> list[tuple[dict, dict, dict, dict]]:
+    from .policy import enforcing
+    if enforcing():
+        return []
     """[(table, models, prices, servers)] of the project's nexo.toml and the user's ai.toml."""
     out = []
     start = Path(call.span.file).resolve().parent if call.span and call.span.file else Path.cwd()
@@ -260,6 +267,9 @@ def resolve(call, options: dict) -> tuple[list[Target], dict]:
     names = [model] + list(first("fallback") or [])
     targets = [target(call, m, provider, layers, aliases) for m in names]
     budget = first("budget")
+    if budget is not None:
+        from ..security_context import check_connector
+        check_connector(call.span)
     if budget is not None:
         amount, period = budget_of(call, budget)
         over = first("when_over_budget")
@@ -352,6 +362,9 @@ def target(call, model, provider, layers, aliases) -> Target:
         provider, _, name = model.partition(":")
     if provider is None or name is None:
         raise NexoError("ai_model", call.span, model=shown if shown is not None else provider)
+    if provider in ("azure", "bedrock"):
+        from ..security_context import check_connector
+        check_connector(call.span)
     check_provider(call, provider)
     # key and url belong to a provider: they come from the first place
     # that configures that provider
@@ -693,6 +706,9 @@ class Live(Lazy):
 
 
 def record_usage(model: str, tokens) -> None:
+    from .policy import enforcing
+    if enforcing():
+        return
     """One line per call in the user's usage.csv (`nexo ai usage`)."""
     try:
         d = config_dir()
@@ -849,6 +865,7 @@ TOOLS: dict = {}
 AGENT_KEYS = ["model", "tools", "goal", "max_steps", "confirm"]
 STEPS = 10
 DENIED = "The user did not allow this call."
+APPROVAL = threading.Lock()
 
 
 def b_ai_tool(call, fn, description, types):
@@ -856,7 +873,8 @@ def b_ai_tool(call, fn, description, types):
     from .core import expects
     if not isinstance(description, str):
         raise expects(call, "@tool", "str", description)
-    TOOLS[id(fn.decl)] = (fn.decl, description, list(types))
+    from .. import authorization
+    TOOLS[id(fn)] = (fn, description, list(types), authorization.seal(call.span.file, fn.decl.name))
     return None
 
 
@@ -907,7 +925,8 @@ def field_schema(te, env, depth: int) -> dict:
 
 
 class Tool:
-    def __init__(self, fn, description, types):
+    def __init__(self, fn, description, types, seal):
+        self.seal = seal
         self.fn, self.description, self.types = fn, description, types
         self.name = fn.decl.name
 
@@ -924,7 +943,8 @@ class Tool:
 class Agent(Native):
     type_name = "agent"
 
-    def __init__(self, name, model, tools, goal, max_steps, confirm, servers=(), confirm_servers=()):
+    def __init__(self, name, model, tools, goal, max_steps, confirm, seal, servers=(), confirm_servers=()):
+        self.seal = seal
         self.name, self.model, self.tools, self.goal = name, model, tools, goal
         self.max_steps, self.confirm = max_steps, confirm
         # MCP servers whose tools the agent also has, and those whose tools
@@ -974,9 +994,12 @@ def b_ai_agent(call, name, **pairs):
             servers.append(fn)
             continue
         decl = getattr(fn, "decl", None)
-        if id(decl) not in TOOLS or TOOLS[id(decl)][0] is not decl:
+        if id(fn) not in TOOLS or TOOLS[id(fn)][0] is not fn:
             raise NexoError("ai_not_tool", call.span, name=getattr(fn, "name", show(fn)))
-        tools.append(Tool(fn, *TOOLS[id(decl)][1:]))
+        from .policy import enforcing
+        if enforcing() and any(t.name == decl.name for t in tools):
+            raise NexoError("security_dispatch", call.span)
+        tools.append(Tool(fn, *TOOLS[id(fn)][1:]))
     confirm, confirm_servers = [], []
     for fn in pairs.get("confirm", []):
         if isinstance(fn, McpServer):
@@ -988,7 +1011,8 @@ def b_ai_agent(call, name, **pairs):
         if not any(t.name == n for t in tools):
             raise NexoError("agent_confirm", call.span, name=n)
         confirm.append(n)
-    return Agent(name, model, tools, goal, steps, confirm, servers, confirm_servers)
+    from .. import authorization
+    return Agent(name, model, tools, goal, steps, confirm, authorization.seal(call.span.file, name), servers, confirm_servers)
 
 
 def tools_json(t: Target, tools: list):
@@ -1081,22 +1105,46 @@ def use_tool(call, agent: Agent, tools: list, name: str, args: dict) -> tuple[st
             if not confirmed(call, name, values):
                 return DENIED, False
         return tool.server.call_tool(call, name, args)
-    values = []
-    try:
-        for p, t in zip(tool.fn.decl.params, tool.types + [None] * len(tool.fn.decl.params)):
-            if p.name in args:
-                values.append((p.name, b_json_parse(call, json.dumps(args[p.name]), as_=t)))
-            elif p.default is None and not getattr(p.type, "optional", False):
-                return f"Error: {errors.msg('detail.need_param', name=p.name)}", True
-    except NexoFailure as f:
-        return f"Error: {f.error.message}", True
-    if name in agent.confirm and not confirmed(call, name, values):
-        return DENIED, False
-    try:
-        result = interp.bind_value(interp.call(tool.fn, values, tool.fn.decl))
-    except NexoFailure as f:
-        return f"Error: {f.error.message}", True
-    return (result if isinstance(result, str) else show_hidden(result)), False
+    from .. import authorization
+    scope, required = authorization.enter_tool(agent.seal, tool.seal, call.span)
+    needs_confirmation = required or name in agent.confirm
+    authorization.check_confirmation(needs_confirmation, call.span)
+    early = needs_confirmation and authorization.STATE is not None
+    if early:
+        shown = f"{name}(" + ", ".join(f"{p.name}: {json.dumps(args[p.name], ensure_ascii=False)}" for p in tool.fn.decl.params if p.name in args) + ")"
+        if not confirm_call(call, shown):
+            return DENIED, False
+    with scope:
+        interp = call.interp
+        values = []
+        try:
+            for p, t in zip(tool.fn.decl.params, tool.types + [None] * len(tool.fn.decl.params)):
+                if p.name in args:
+                    values.append((p.name, b_json_parse(call, json.dumps(args[p.name]), as_=t)))
+                elif p.default is None and not getattr(p.type, "optional", False):
+                    return f"Error: {errors.msg('detail.need_param', name=p.name)}", True
+        except NexoFailure as f:
+            return f"Error: {f.error.message}", True
+        if needs_confirmation and not early:
+            shown = f"{name}(" + ", ".join(f"{n}: {repr_value(v)}" for n, v in values) + ")"
+            if not confirm_call(call, shown):
+                return DENIED, False
+        try:
+            result = interp.bind_value(interp.call(tool.fn, values, tool.fn.decl))
+        except NexoFailure as f:
+            return f"Error: {f.error.message}", True
+        return (result if isinstance(result, str) else show_hidden(result)), False
+
+
+def confirm_call(call, shown):
+    import sys
+    with APPROVAL:
+        call.interp.write(errors.msg("info.ai_confirm", call=shown))
+        try:
+            call.interp.out.flush()
+        except Exception:
+            pass
+        return sys.stdin.readline().strip().lower() in ("y", "yes")
 
 
 def confirmed(call, name: str, values: list) -> bool:
@@ -1128,43 +1176,47 @@ def agent_tools(call, agent: Agent) -> list:
 def run_agent(call, agent: Agent, input):
     """`agent.handle(input)` (D109): the conversation with the model, using
     its tools, until it answers without asking for one."""
-    targets, _ = resolve(call, {"model": agent.model})
-    t = targets[0]
-    tools = agent_tools(call, agent)
-    system = "\n\n".join(x for x in (agent.goal, GUARD if input is not None else "") if x)
-    content = "" if input is None else f"<input>\n{show_hidden(call.interp.bind_value(input))}\n</input>"
-    messages: list = [{"role": "user", "content": content}]
-    for _ in range(agent.max_steps):
-        text, calls, message = agent_step(call, t, system, messages, tools)
-        if not calls:
-            return text
-        messages.append(message)
-        results = []
-        for cid, name, args in calls:
-            out, is_error = use_tool(call, agent, tools, name, args)
-            if t.provider == "anthropic":
-                r = {"type": "tool_result", "tool_use_id": cid, "content": out}
-                if is_error:
-                    r["is_error"] = True
-                results.append(r)
-            elif t.provider == "gemini":
-                results.append({"functionResponse": {"name": name, "response": {"error" if is_error else "content": out}}})
-            elif t.provider == "bedrock":
-                r = {"toolUseId": cid, "content": [{"text": out}]}
-                if is_error:
-                    r["status"] = "error"
-                results.append({"toolResult": r})
-            elif t.provider in OPENAI_LIKE:
-                messages.append({"role": "tool", "tool_call_id": cid, "content": out})
-            else:
-                messages.append({"role": "tool", "content": out})
-        if results:
-            messages.append({"role": "user", "parts": results} if t.provider == "gemini"
-                            else {"role": "user", "content": results})
-    raise failure("AIError", call.span, key="AIError.steps", agent=agent.name, n=agent.max_steps)
+    from .. import authorization
+    with authorization.enter_agent(agent.seal, call.span):
+        targets, _ = resolve(call, {"model": agent.model})
+        t = targets[0]
+        tools = agent_tools(call, agent)
+        system = "\n\n".join(x for x in (agent.goal, GUARD if input is not None else "") if x)
+        content = "" if input is None else f"<input>\n{show_hidden(call.interp.bind_value(input))}\n</input>"
+        messages: list = [{"role": "user", "content": content}]
+        for _ in range(agent.max_steps):
+            text, calls, message = agent_step(call, t, system, messages, tools)
+            if not calls:
+                return text
+            messages.append(message)
+            results = []
+            for cid, name, args in calls:
+                out, is_error = use_tool(call, agent, tools, name, args)
+                if t.provider == "anthropic":
+                    r = {"type": "tool_result", "tool_use_id": cid, "content": out}
+                    if is_error:
+                        r["is_error"] = True
+                    results.append(r)
+                elif t.provider == "gemini":
+                    results.append({"functionResponse": {"name": name, "response": {"error" if is_error else "content": out}}})
+                elif t.provider == "bedrock":
+                    r = {"toolUseId": cid, "content": [{"text": out}]}
+                    if is_error:
+                        r["status"] = "error"
+                    results.append({"toolResult": r})
+                elif t.provider in OPENAI_LIKE:
+                    messages.append({"role": "tool", "tool_call_id": cid, "content": out})
+                else:
+                    messages.append({"role": "tool", "content": out})
+            if results:
+                messages.append({"role": "user", "parts": results} if t.provider == "gemini"
+                                else {"role": "user", "content": results})
+        raise failure("AIError", call.span, key="AIError.steps", agent=agent.name, n=agent.max_steps)
 
 
 def b_mcp(call, name):
+    from ..security_context import check_connector
+    check_connector(call.span)
     """`mcp("name")`: the MCP server of [mcp.name] in nexo.toml (D166)."""
     from .core import expects
     if not isinstance(name, str):

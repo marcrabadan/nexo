@@ -87,3 +87,13 @@ pub(super) fn matches(kind: &str, value: &str, target: &str) -> bool {
         _ => value == target,
     }
 }
+
+
+/// The launcher already canonicalized grant roots. Do not re-resolve them
+/// after application code has run; a replaced symlink must not widen a grant.
+pub(super) fn matches_resolved(kind: &str, value: &str, target: &str) -> bool {
+    if kind == "read" || kind == "write" {
+        let value = resolve(value);
+        value == target || target == "/" || value.starts_with(&format!("{target}/"))
+    } else { matches(kind, value, target) }
+}

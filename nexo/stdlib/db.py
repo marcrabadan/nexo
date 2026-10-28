@@ -1214,6 +1214,8 @@ def server_module(dialect: str):
 
 
 def connect_server(call, url: str, key):
+    from ..security_context import check_connector
+    check_connector(call.span)
     """connect("postgres://user@host:port/database", key: password) (D163),
     or "mysql://..." (D170)."""
     dialect = dialect_of(url)

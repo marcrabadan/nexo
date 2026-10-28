@@ -1908,7 +1908,15 @@ does not change.
 
 ## The program policy (section 9)
 
-**D142. Capability-based permissions: the program `policy`.** Section 9
+**D142. Capability-based permissions: the program `policy`.**
+
+Scope clarification: this term describes explicit grants at checked runtime API
+boundaries, not an OS sandbox or system-wide object-capability isolation. Policy
+alone does not prevent DNS rebinding, mediate direct native syscalls, or impose
+process resource limits. Explicit worker/container profiles and broker address
+pinning provide separate defenses; see [the security model](shield.md).
+
+Section 9
 gives the block, the rule that a release build does nothing the policy
 does not allow, that development mode allows everything except `shell`
 and reports what is undeclared, and `nexo policy show` and `suggest`; it

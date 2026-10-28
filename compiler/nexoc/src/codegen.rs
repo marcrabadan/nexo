@@ -1993,7 +1993,10 @@ impl<'a> Gen<'a> {
                 result = r;
             }
         }
-        if security_scope.is_some() {
+        // Internal step thunks may return the callable which pipe::apply
+        // immediately invokes under the same captured query context. User
+        // functions and lambdas still enforce the data-only return boundary.
+        if security_scope.is_some() && !matches!(src, FrameSrc::Step(_) | FrameSrc::Leaf(_)) {
             let tb = self.tb(&result);
             self.call_void("nx_security_result", &format!("{tb}, i32 %span"));
             self.check();
@@ -2474,6 +2477,7 @@ impl<'a> Gen<'a> {
                 let v = self.bind(v, value);
                 let tv = self.tb(&v);
                 let c = self.call_v("nx_shared_store", &tv);
+                self.check();
                 self.drop_val(&v);
                 let c = self.owned(c);
                 let target = self.res.assigns[&s.id].target;
@@ -2490,6 +2494,7 @@ impl<'a> Gen<'a> {
                 let n = self.strarg(name);
                 let tb = self.tb(&clo);
                 self.call_void("nx_on", &format!("{n}, {tb}"));
+                self.check();
                 self.drop_val(&clo);
             }
             StmtKind::Emit { name, args, call_span } => {
@@ -2879,6 +2884,7 @@ impl<'a> Gen<'a> {
                     // a shared variable keeps a copy of its own
                     let tv = self.tb(&v);
                     let c = self.call_v("nx_shared_store", &tv);
+                    self.check();
                     self.drop_val(&v);
                     v = self.owned(c);
                 }
@@ -3117,6 +3123,7 @@ impl<'a> Gen<'a> {
         }
         let tv = self.tb(&v);
         let c = self.call_v("nx_shared_store", &tv);
+        self.check();
         self.drop_val(&v);
         self.owned(c)
     }
@@ -4312,6 +4319,7 @@ impl<'a> Gen<'a> {
             // a shared variable is read as a copy (nexo.sync)
             let tv = self.tb(&v);
             let c = self.call_v("nx_shared_read", &tv);
+            self.check();
             self.drop_val(&v);
             return Ok(self.owned(c));
         }

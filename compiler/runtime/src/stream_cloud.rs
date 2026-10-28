@@ -267,6 +267,7 @@ pub fn start(s: &Pair, partition: i64) -> Option<String> {
 
 fn sent(s: &Pair, place: &str, id: Id, ms: i64, data: &str, key: Option<&str>) -> Message {
     Message {
+        security: crate::security::context::capture(),
         stream: s.clone(),
         place: Some(place.to_string()),
         id,
@@ -353,6 +354,7 @@ fn unb64(t: &str) -> String {
 pub fn poll(s: &Pair, place: &str, partition: i64, position: &Option<String>, span: u32) -> R<Vec<Message>> {
     let mut out = Vec::new();
     let message = |id: Id, ms: i64, data: String, key: Option<String>, before: Option<String>, receipt: Option<String>| Message {
+        security: crate::security::context::capture(),
         stream: s.clone(),
         place: Some(place.to_string()),
         id,

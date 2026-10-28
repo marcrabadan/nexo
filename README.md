@@ -116,7 +116,10 @@ Two environment variables adjust the build: `NEXO_CC` picks the C compiler
 `nexo security check|run|trace|audit app.nexo` adds strict policy execution and
 structured security decisions in both implementations. Shield rejects native
 C, Python and shell integrations until they can be isolated. It enforces Nexo
-API permissions; it is not an OS sandbox. See [the security model](docs/shield.md)
+API permissions; it is not an OS sandbox. The policy alone does not prevent DNS
+rebinding, mediate direct native syscalls or impose process resource limits.
+Capability-based API permissions do not imply confinement of arbitrary native code.
+See [the security model](docs/shield.md)
 for trust boundaries and tests. [Phase 2](docs/shield-isolation.md) adds
 `security probe`, opt-in Linux offline workers, hard limits and synchronous
 dependency ceilings with `--dependencies permissions.json`. OS execution fails

@@ -440,6 +440,7 @@ fn tag_version(t: &str) -> Option<(u64, u64, u64)> {
 /// The last tag vX.Y.Z raised by the commits after it: fix -> patch,
 /// feat -> minor, `!` or BREAKING CHANGE -> major (D122).
 fn auto_version() -> R<String> {
+    if crate::security::ingress::port().is_some() { crate::policy::check("shell", "git", 0)?; }
     if !git(&["rev-parse", "--git-dir"]).0 {
         return Err(err(Diagnostic::new_spanless("ci_git"), 0));
     }

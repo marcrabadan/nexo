@@ -88,12 +88,12 @@ def test_explicit_dependency_deny_wins(tmp_path, backend):
     assert "active dependency context" in proc.stdout.decode()
 
 
-@pytest.mark.parametrize("source", ['parallel:\n    print("bad")\n', 'use nexo.sync\n',
-                                    'on changed:\n    print("bad")\n'])
+@pytest.mark.parametrize("source", ['pipeline flow:\n    pass\n', 'use nexo.stream\n',
+                                    'server api:\n    pass\n'])
 def test_async_contexts_fail_closed_instead_of_dropping_permissions(tmp_path, backend, source):
     proc = app(tmp_path, backend, source, {}, {})
     assert proc.returncode == 1
-    assert "synchronous Nexo execution only" in proc.stdout.decode()
+    assert "does not support event loops" in proc.stdout.decode()
 
 
 @pytest.mark.parametrize("doc", [{"version":2,"modules":{}}, {"version":1,"modules":{"missing.nexo":[]}},

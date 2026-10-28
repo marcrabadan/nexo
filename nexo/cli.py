@@ -67,6 +67,9 @@ def run_file(path: str) -> int:
         # stopped (D102, D117)
         from .stdlib import stream
         from .stdlib.web import SERVERS, serve_forever
+        if stream.memory_profile():
+            stream.drain(interp)
+            wait_all()
         if stream.listening():
             if not SERVERS:
                 stream.listen_forever(interp, path)
@@ -153,6 +156,7 @@ def run_tests(paths: list[str], coverage: bool = False) -> int:
             interp.fakes = {}
             stream.MEMORY.clear()
             stream.SEEN_KEYS.clear()
+            stream.RETAINED.update(messages=0, bytes=0)
             try:
                 interp.exec_block(test.body, Env(interp.globals))
                 stream.drain(interp)

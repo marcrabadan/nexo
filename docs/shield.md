@@ -4,6 +4,12 @@ Shield phase 1 centralizes the existing D142 application policy. It adds
 strict execution, typed Rust decisions and opt-in structured decision events.
 It is **application API enforcement, not an operating system sandbox**.
 
+The `policy` is an allow/deny boundary for checked Nexo runtime APIs. It does not mediate direct native syscalls, prevent DNS rebinding, or impose process-wide CPU, memory or descriptor limits. Resource budgets for selected runtime operations are separate and do not bound arbitrary native code. Kernel isolation and hard process limits require an explicitly selected, supported worker/container profile. The online broker's validated, pinned addresses are a separate defense; a hostname policy alone does not provide it.
+
+Here, capability-based permissions means explicit API grants and attenuation within
+these checked boundaries; it is not a claim of system-wide object-capability
+isolation or confinement of arbitrary native code.
+
 ## Use
 
 ```
@@ -186,7 +192,26 @@ from this environment.
 [Execution isolation and dependency ceilings](shield-isolation.md) are now
 implemented as explicit opt-in profiles. The phase-1 commands above retain their
 API-only contract; the linked guide describes the Linux requirements, limits,
-synchronous context restriction and current-host validation blocker.
+context restrictions and current-host validation blocker.
+
+The opt-in [online HTTP(S) profile](shield-online.md) adds a separate broker
+with address pinning; proxy configuration is rejected. Its deployment validation
+status and restrictions are documented separately.
+
+[Joined task contexts and agent/tool authorization](shield-dispatch.md) add
+operator-owned grants and dispatch checks for agents. [Process-scoped spawned
+tasks](shield-spawn.md) preserve caller ceilings across asynchronous launches.
+[Synchronous event handlers](shield-events.md) retain registration and emitter
+ceilings. [Memory streams](shield-streams.md) provide explicit process-local
+publication and deferred windows with publisher and callback scopes.
+[In-memory HTTP routes](shield-web.md) retain constructor, registration and caller
+ceilings without listening sockets. [Bounded loopback ingress](shield-ingress.md) adds an explicitly granted local
+listener with a hard process lifetime. Its empty default request ceiling can be
+configured through [frozen ingress permissions](shield-ingress-permissions.md), including version-2 ceilings per registered route.
+[Process resource budgets](shield-budgets.md) cap runtime admission across tasks,
+registries, channels and deduplication state. Persistent listeners, external
+event loops, per-task cancellation and full information-flow propagation remain
+future work.
 
 ## Original roadmap and remaining work
 
@@ -215,10 +240,14 @@ through calls, serialization, FFI, logs, network and all other sinks is covered,
 do not advertise complete taint tracking. Agent/tool invocations should receive
 attenuated contexts outside the model, checked before dispatch, with approval
 required for named privileged capabilities; model output and retrieved content
-never grant capabilities. Existing tools inherit the application ceiling and
-existing human confirmation remains; per-agent/per-tool grants, new approval
-protocols and exported observability remain future work.
+never grant capabilities. The [dispatch guide](shield-dispatch.md) describes
+implemented agent/tool grants and operator-required human confirmation. New
+approval protocols and exported observability remain future work.
 
 Persistent workflows are rejected before loading state or running steps in
 Shield execution. Their ordinary runtime state persistence bypasses API policy
 checks (D151); support requires explicit state-operation authorization.
+
+See the [targeted adversarial review](shield-security-review.md) for reproduced parser failures, fixes, validation scope and remaining deployment blockers.
+
+See [connector integration boundaries](shield-connectors.md) for databases, remote streams, MCP and cloud AI providers imported from main.
