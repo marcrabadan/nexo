@@ -1,15 +1,31 @@
 // Talks to `nexo lsp` with vscode-jsonrpc, the protocol library of the VS
-// Code client. NEXO picks the command (default: the compiler's debug build).
+// Code client. NEXO picks the command; without it, the compiler's debug
+// build, or phase 0 in .venv, whichever exists.
 const assert = require("assert");
+const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const rpc = require("vscode-jsonrpc/node");
 
-const command = process.env.NEXO || path.resolve(__dirname, "..", "..", "..", "compiler", "target", "debug", "nexo");
+const root = path.resolve(__dirname, "..", "..", "..");
+const candidates = [
+  path.join(root, "compiler", "target", "debug", "nexo"),
+  path.join(root, ".venv", "bin", "nexo"),
+];
+const command = process.env.NEXO || candidates.find((c) => fs.existsSync(c));
 const args = process.env.NEXO_ARGS ? process.env.NEXO_ARGS.split(" ") : [];
+
+if (!command) {
+  console.log("server: skipped, no nexo found (cargo build, or set NEXO)");
+  process.exit(0);
+}
 
 (async () => {
   const child = spawn(command, [...args, "lsp"]);
+  child.on("error", (e) => {
+    console.error(`server: cannot start ${command}: ${e.message}`);
+    process.exit(1);
+  });
   const connection = rpc.createMessageConnection(
     new rpc.StreamMessageReader(child.stdout),
     new rpc.StreamMessageWriter(child.stdin)
