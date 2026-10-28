@@ -1,0 +1,8 @@
+# a closure made in a comprehension over a list of ints, or of others:
+# what the copy for ints knows does not reach the closure (D178)
+fs = [unused -> x for x in ["hello"]]
+print(fs[0](0))
+gs = [unused -> x + 1 for x in [1, 2]]
+print(gs[1](0))
+hs = [unused -> x for x in [1, "two"]]
+print(hs[1](0))

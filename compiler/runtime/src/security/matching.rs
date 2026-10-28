@@ -80,7 +80,7 @@ fn host_matches(host: &str, target: &str) -> bool {
     }
 }
 
-pub(super) fn matches(kind: &str, value: &str, target: &str) -> bool {
+pub fn matches(kind: &str, value: &str, target: &str) -> bool {
     match kind {
         "read" | "write" => path_matches(value, target),
         "net" => host_matches(value, target),

@@ -44,6 +44,8 @@ nexo/
   interpreter.py  tree-walking evaluator (scopes, calls, pipelines, contracts)
   checker.py      static pre-pass ("compile errors": ignored T!, misplaced ?)
   modules.py      `use shop.payments`: the modules of the program's files (D124)
+                  and of the packages in .nexo/packages (D174)
+  packages.py     `nexo add` / `nexo publish`, nexo.lock, the registry (D174)
   numbers.py      section 17 arithmetic: int overflow, float/decimal, money, units
   types.py        runtime values: decimal/money/units, records, enums, errors
   errors.py       error type + section 14 renderer + message catalog (English, D125)
@@ -75,7 +77,7 @@ nexo/
                   `nexo db diff|migrate`, `nexo ai setup|usage`; phase 5:
                   `nexo plan|apply|destroy|drift|cost|import`, `nexo ci run|export`,
                   `nexo flags set`, `nexo privacy report`; `nexo policy show|suggest`;
-                  `nexo new`, `nexo docs`, `nexo mcp`
+                  `nexo new`, `nexo docs`, `nexo mcp`, `nexo add|publish`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text);
                   a .nexo without .expected is a module the cases use
@@ -98,7 +100,8 @@ compiler/
                   records of known types, D126), sbom, split (parallel
                   development builds, D135), scalar (values as two words
                   in development mode, D141), audit, docs, suggest, intent,
-                  cover (`nexo test --coverage`, D155), policy (`nexo policy`, D142), mcp (`nexo mcp`, D146)
+                  cover (`nexo test --coverage`, D155), policy (`nexo policy`, D142), mcp (`nexo mcp`, D146),
+                  packages (`nexo add|publish`, D174)
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
@@ -127,6 +130,11 @@ docs/guarantees.md the state of each guarantee of the specification (phase 6)
 docs/index.html, reference.html  the GitHub Pages site; reference.html is built from
                   docs/reference/ (page.tmpl + the programs it runs) by
                   docs/reference/build.py
+docs/libraries.html  nexo.ai, nexo.db and nexo.stream: setup and examples, built from
+                  docs/libraries/ by docs/libraries/build.py (tests/test_libraries_page.py)
+docs/playground.html  the playground (D176): phase 0 on Pyodide in a worker
+                  (assets/playground*.js); docs/playground/build.py writes
+                  its nexo.zip and examples.json
 ```
 
 ## Running
@@ -143,6 +151,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/nexo mcp               # MCP server on stdio, for AI assistants
 .venv/bin/nexo new shop          # a project: shop/nexo.toml, shop/src/main.nexo
 .venv/bin/nexo docs [path]       # Markdown from the ## comments
+.venv/bin/nexo add money-format  # a package, signed, into nexo.toml and nexo.lock
+.venv/bin/nexo publish           # the project, signed, into the registry folder of NEXO_REGISTRY
 .venv/bin/nexo plan|apply|drift|destroy [--stage prod] [file]   # nexo.infra
 .venv/bin/nexo ci run [--yes] | ci export github [file]         # nexo.ci
 python3 tests/cloud_emulator.py 8765   # the cloud APIs, locally (prints the env)
@@ -154,6 +164,9 @@ Phase 1 (needs cargo and clang):
 cd compiler && cargo build && cargo test
 compiler/target/debug/nexo file.nexo          # compile and run
 compiler/target/debug/nexo build --release file.nexo -o app   # + app.sbom.json
+compiler/scripts/web_runtime.sh                    # the runtime for --target web (target/web)
+compiler/target/debug/nexo build --target web file.nexo -o app # app.wasm, app.js, app.html
+python3 compiler/scripts/web_conformance.py        # the suite as WebAssembly, under Node
 python3 compiler/scripts/conformance.py       # conformance + examples
 .venv/bin/python compiler/scripts/differential.py  # same output as phase 0
 .venv/bin/python compiler/scripts/fuzz.py --count=200 # random programs, both phases
@@ -239,7 +252,12 @@ in place, int-key map index, a per-thread pool of heap objects); short
 texts inside their object (D136); linear name resolution and `-O0` in
 development mode (D127); development builds that call the count helpers,
 compile large programs in parallel parts (compiler/nexoc/src/split.rs)
-and skip checks for names certainly defined (D135); release builds that are the same byte for byte, with
+and skip checks for names certainly defined (D135); pure int functions
+that skip the failure check after each call and never read the thread
+state (D177, D179); loops over lists of ints (D178); development builds
+that make the usual entry of an int-only function only when needed and
+read the environment once (D180, nexoc/src/fast.rs; NEXO_TIMES=1 prints
+each step of a build); release builds that are the same byte for byte, with
 `<program>.sbom.json` (D128); `nexo audit` (D129), `nexo docs --for-ai`
 from nexo/stdlib/api.json (D130), `nexo test --suggest` (D131), `nexo test
 --coverage` (branch coverage, D155: nexo/cover.py and
@@ -273,8 +291,23 @@ the resume after a stop is in tests/test_phase6.py).
 `format` over stdio by running the same binary's commands
 (tests/test_mcp.py); `nexo new` and `nexo docs` are in tests/test_project.py.
 
-Excluded (do not implement yet): ml, ui, notify, per-package
-permissions (the registry), every/lifecycle, canary and blue/green releases, chaos,
+Packages (D174): `nexo add [name] [--accept-risk]` and `nexo publish`
+in both phases, with the same files byte for byte. A registry is static
+files (a folder, or HTTPS) with Ed25519-signed archives; requirements
+are `^MAJOR.MINOR`; one version of each package, the highest every
+requirement accepts; nexo.lock pins the version, sha256 and key;
+`[permissions]` are checked against the project's policies and critical
+advisories stop the install. `use pkg` loads .nexo/packages/pkg/lib.nexo.
+Tests in tests/test_packages.py.
+
+WebAssembly (D175, D176): `nexo build --target web` compiles for
+wasm32-wasip1 and writes the program, its WASI code for a page
+(compiler/nexoc/src/web.js) and a page; what compiled code shares with the
+runtime is u64 on every target. The playground runs phase 0 on Pyodide.
+tests/test_playground.py checks both (skipped without node, Pyodide or
+target/web).
+
+Excluded (do not implement yet): ml, ui, notify, the registry service, every/lifecycle, canary and blue/green releases, chaos,
 vault and cloud secret managers, use rust/wasm, YAML/XML/Parquet (D89,
 D112, D113).
 

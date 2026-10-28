@@ -1,7 +1,7 @@
 //! The software bill of materials that `nexo build --release` writes next
 //! to the program (section "Goals and guarantees", D128): a CycloneDX 1.5
 //! document listing the program, its source files, the runtime and the
-//! crates it is built from, the C libraries and Python modules the program
+//! crates it is built from, the packages of nexo.lock, the C libraries and Python modules the program
 //! uses, and the compiler that turned it into machine code. It has no
 //! dates or random serial number, so two builds of the same code write the
 //! same file.
@@ -121,6 +121,21 @@ pub fn document(out: &Path, files: &[(String, String)], body: &[Stmt], cc_versio
             ("version", s(v.clone())),
             ("purl", s(format!("pkg:cargo/{n}@{v}"))),
         ]));
+    }
+    // the packages of nexo.lock (D174), with the sha256 of each archive
+    if let Some((main, _)) = files.first() {
+        let root = crate::modules::project_root(main);
+        for (n, entry) in crate::packages::read_lock(&root) {
+            let v = entry.get("version").cloned().unwrap_or_default();
+            components.push(obj(vec![
+                ("type", s("library")),
+                ("bom-ref", s(format!("pkg:nexo/{n}@{v}"))),
+                ("name", s(n.clone())),
+                ("version", s(v.clone())),
+                ("hashes", hash(entry.get("sha256").map(String::as_str).unwrap_or(""))),
+                ("purl", s(format!("pkg:nexo/{n}@{v}"))),
+            ]));
+        }
     }
     let mut foreign = Vec::new();
     uses(body, &mut foreign);

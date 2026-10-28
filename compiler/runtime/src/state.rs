@@ -140,7 +140,28 @@ pub fn failing() -> u8 {
 }
 
 pub fn set_failing(f: u8) {
-    t().failing = f;
+    let t = t();
+    let was = t.failing;
+    t.failing = f;
+    if (was == 0) != (f == 0) {
+        busy(if f != 0 { 1 } else { -1 });
+    }
+}
+
+/// The depth an int-only function compares its own with at its entry
+/// (D156, D177): MAX_DEPTH, or 0 while some thread has a failure on its
+/// way or runs a `try within`; its slow path tells the cases apart, so
+/// a failing function returns at its next call and the others go on.
+#[no_mangle]
+pub static nx_limit: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(MAX_DEPTH);
+
+/// How many threads have a failure on its way or a deadline.
+static BUSY: std::sync::Mutex<i64> = std::sync::Mutex::new(0);
+
+fn busy(delta: i64) {
+    let mut b = BUSY.lock().unwrap_or_else(|e| e.into_inner());
+    *b += delta;
+    nx_limit.store(if *b > 0 { 0 } else { MAX_DEPTH }, std::sync::atomic::Ordering::Relaxed);
 }
 
 #[inline]
@@ -182,8 +203,10 @@ pub fn set_deadline_active(on: bool) {
     let was = t().deadline_active != 0;
     if on && !was {
         nx_any_deadline.fetch_add(1, Ordering::Relaxed);
+        busy(1);
     } else if !on && was {
         nx_any_deadline.fetch_sub(1, Ordering::Relaxed);
+        busy(-1);
     }
     t().deadline_active = on as u8;
     t().limit = if on { 0 } else { MAX_DEPTH };
@@ -231,6 +254,12 @@ pub fn raise_error_with(kind: &str, message: String, cause: Val, span_id: u32, f
 
 /// Raise an error value (`fail(e)`, an unmatched handler).
 pub fn raise_value(err: Val) -> Fail {
+    // the first failure is the one reported: a pure int function (D177)
+    // may go on computing after one until it returns
+    if failing() != 0 {
+        drop(err);
+        return Fail;
+    }
     let old = with_task(|s| s.error.replace(err));
     drop(old);
     set_failing(ERROR);
@@ -239,6 +268,9 @@ pub fn raise_value(err: Val) -> Fail {
 
 /// Record a diagnostic. It ends the program (or the current test).
 pub fn diag(d: Diagnostic, span_id: u32) -> Fail {
+    if failing() != 0 {
+        return Fail;
+    }
     let old = with_task(|s| {
         if s.diag.is_none() {
             s.diag = Some((d, span_id));

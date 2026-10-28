@@ -20,6 +20,7 @@ mod checker;
 mod codegen;
 mod cover;
 mod docs;
+mod fast;
 mod fmt;
 mod intent;
 mod json;
@@ -29,6 +30,7 @@ mod lsp;
 mod mcp;
 mod modules;
 mod narrow;
+mod packages;
 mod parser;
 mod phase5;
 mod policy;
@@ -48,7 +50,22 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--authorization file.json] [--streams=memory] [--web=memory|loopback:PORT] [--ingress file.json] [--sandbox=linux|linux-online] file.nexo | security probe [--sandbox=linux-online] | security worker [options] -- executable [args...]]"
+    "Usage: nexo [file.nexo | new name | add [name] [--accept-risk] | publish | build [--release [--trust-ensure]] [--target web] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--authorization file.json] [--streams=memory] [--web=memory|loopback:PORT] [--ingress file.json] [--sandbox=linux|linux-online] file.nexo | security probe [--sandbox=linux-online] | security worker [options] -- executable [args...]]"
+}
+
+/// NEXO_TIMES=1 writes how long each step of a build took to stderr.
+pub fn step(label: &str) {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("NEXO_TIMES").is_some()) {
+        return;
+    }
+    let mut last = LAST.lock().unwrap();
+    let now = std::time::Instant::now();
+    if let Some(t) = *last {
+        eprintln!("{label:<12} {:>8.1} ms", (now - t).as_secs_f64() * 1000.0);
+    }
+    *last = Some(now);
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -62,7 +79,9 @@ fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Resul
 /// The IR and the program it was made from, with its modules linked in.
 fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, release: bool) -> Result<(String, ast::Program), CompileError> {
     let fail = |d: Diagnostic| CompileError(render(name, source, d.span, &d.text()));
+    step("start");
     let (mut program, mut next_id) = parser::parse_file(source, 0, 0).map_err(fail)?;
+    step("parse");
     // a release build does only what its policy allows (section 9, D142)
     if release {
         next_id += 1;
@@ -74,20 +93,25 @@ fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, 
     let folder = Path::new(name).parent().map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p }).unwrap_or(Path::new("."));
     cheader::embed(&mut program, folder);
     checker::check(&program).map_err(fail)?;
+    step("check");
     // the modules of the program's files (D124)
     let mut linker = modules::Linker::new(name, next_id);
     linker.link(&mut program).map_err(fail)?;
+    step("modules");
     let mut next_id = linker.next_id();
     if cover::enabled() {
         next_id = cover::instrument(&mut program, name, next_id);
     }
     program.files = linker.files;
     let mut res = resolve::resolve(&program).map_err(fail)?;
+    step("resolve");
     typecheck::check(&program, &res).map_err(fail)?;
+    step("typecheck");
     // records that never leave their function become ints (D157)
     if unbox::unbox(&mut program, &res, &mut next_id) {
         res = resolve::resolve(&program).map_err(fail)?;
         typecheck::check(&program, &res).map_err(fail)?;
+        step("unbox");
     }
     let opts = codegen::Options {
         file: name.to_string(),
@@ -98,6 +122,7 @@ fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, 
         db_command: false,
     };
     let ir = codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)?;
+    step("codegen");
     Ok((ir, program))
 }
 
@@ -572,6 +597,111 @@ fn fast_linker() -> &'static [&'static str] {
     }
 }
 
+/// The folder of the runtime for the web (compiler/scripts/web_runtime.sh):
+/// NEXO_WEB_RUNTIME, or `web` next to this executable or next to its folder
+/// (target/debug/nexo uses target/web).
+fn web_runtime() -> PathBuf {
+    if let Ok(p) = std::env::var("NEXO_WEB_RUNTIME") {
+        return PathBuf::from(p);
+    }
+    let exe = std::env::current_exe().unwrap_or_default();
+    let dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
+    let near = dir.join("web");
+    if near.join("libnexo_runtime.a").is_file() {
+        return near;
+    }
+    dir.parent().map(|d| d.join("web")).unwrap_or(near)
+}
+
+const WEB_JS: &str = include_str!("web.js");
+
+const WEB_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NAME</title>
+<style>
+  body { margin: 0; padding: 16px; font: 15px/1.5 ui-monospace, Menlo, Consolas, monospace; background: #fff; color: #111; }
+  pre { white-space: pre-wrap; margin: 0; }
+  .err { color: #b00020; }
+  @media (prefers-color-scheme: dark) { body { background: #111; color: #eee; } .err { color: #ff6b81; } }
+</style>
+</head>
+<body>
+<pre id="out"></pre>
+<script src="NAME.js"></script>
+<script>
+const out = document.getElementById("out");
+const write = (text, fd) => {
+  const span = document.createElement("span");
+  if (fd === 2) span.className = "err";
+  span.textContent = text;
+  out.appendChild(span);
+};
+fetch("NAME.wasm")
+  .then((r) => r.arrayBuffer())
+  .then((b) => NexoWeb.run(b, { args: ["NAME"], write }))
+  .catch((e) => write(String(e) + "\n", 2));
+</script>
+</body>
+</html>
+"#;
+
+/// Compile IR for WebAssembly (wasm32-wasip1) and link it with the runtime
+/// built for it: `base.wasm`, and `base.js` and `base.html`, the page that
+/// runs it (D175).
+fn link_web(ir: &str, base: &Path, release: bool) -> Result<(), String> {
+    let rt = web_runtime();
+    if !rt.join("libnexo_runtime.a").is_file() {
+        let d = Diagnostic::new_spanless("web_runtime").arg("path", rt.to_string_lossy().into_owned());
+        return Err(render("", "", None, &d.text()));
+    }
+    let dir = work_dir().join("web");
+    let _ = std::fs::create_dir_all(&dir);
+    let ll = dir.join("program.ll");
+    let obj = dir.join("program.o");
+    // WASI's C library calls a main with arguments by this name
+    let ir = ir.replacen("define i32 @main(i32 %argc, ptr %argv)", "define i32 @__main_argc_argv(i32 %argc, ptr %argv)", 1);
+    std::fs::write(&ll, ir).map_err(|e| format!("Error: {e}\n"))?;
+    let cc = std::env::var("NEXO_CC").unwrap_or_else(|_| "clang".into());
+    let fail = |o: std::process::Output| format!("Error: {}\n", String::from_utf8_lossy(&o.stderr).trim_end());
+    let output = Command::new(&cc)
+        .args(["--target=wasm32-wasi", if release { "-O2" } else { "-O1" }, "-Wno-override-module", "-c"])
+        .arg(&ll)
+        .arg("-o")
+        .arg(&obj)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Error: {cc}: {e}\n"))?;
+    if !output.status.success() {
+        return Err(fail(output));
+    }
+    let wasm = base.with_extension("wasm");
+    let output = Command::new(rt.join("rust-lld"))
+        .args(["-flavor", "wasm", "-z", "stack-size=8388608", "--gc-sections"])
+        .arg(rt.join("crt1-command.o"))
+        .arg(&obj)
+        .arg(rt.join("libnexo_runtime.a"))
+        .arg("-L")
+        .arg(&rt)
+        .args(["-lwasi-emulated-mman", "-lwasi-emulated-getpid", "-lwasi-emulated-signal", "-lwasi-emulated-process-clocks", "-lc"])
+        .arg(rt.join("libclang_rt.builtins-wasm32.a"))
+        .arg("-o")
+        .arg(&wasm)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Error: rust-lld: {e}\n"))?;
+    if !output.status.success() {
+        return Err(fail(output));
+    }
+    let name = base.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    std::fs::write(base.with_extension("js"), WEB_JS).map_err(|e| format!("Error: {e}\n"))?;
+    std::fs::write(base.with_extension("html"), WEB_HTML.replace("NAME", &name)).map_err(|e| format!("Error: {e}\n"))?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// Compile IR and link it with the runtime into a native executable.
 /// Development mode does not optimise: it compiles several times faster
 /// (D127).
@@ -632,6 +762,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     } else {
         // each part is made ready for clang by a thread of its own
         let modules = split::split(ir, parts);
+        step("split");
         let objects: Vec<PathBuf> = (0..modules.len()).map(|k| dir.join(format!("program.{k}.o"))).collect();
         // each part goes to its clang through a pipe, not a file
         let results: Vec<Result<std::process::Output, String>> = std::thread::scope(|sc| {
@@ -641,6 +772,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
                 .map(|(obj, m)| {
                     let cc = cc.clone();
                     sc.spawn(move || {
+                        let started = std::time::Instant::now();
                         let m = dev_ir(m);
                         let mut child = Command::new(&cc)
                             .arg(opt)
@@ -661,7 +793,11 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
                                 let _ = stdin.write_all(m.as_bytes());
                                 drop(stdin);
                             });
-                            child.wait_with_output().map_err(|e| format!("{cc}: {e}"))
+                            let out = child.wait_with_output().map_err(|e| format!("{cc}: {e}"));
+                            if std::env::var_os("NEXO_TIMES").is_some() {
+                                eprintln!("  part {:>6.1} MB {:>8.1} ms", m.len() as f64 / 1e6, started.elapsed().as_secs_f64() * 1000.0);
+                            }
+                            out
                         })
                     })
                 })
@@ -675,6 +811,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
             }
         }
         drop(modules);
+        step("clang");
         let output = Command::new(&cc)
             .args(fast_linker())
             .args(&objects)
@@ -688,6 +825,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
         if !output.status.success() {
             return Err(fail(output));
         }
+        step("link");
         if std::env::var("NEXO_KEEP_IR").is_ok() {
             let _ = std::fs::write(&ll, ir);
         }
@@ -762,10 +900,22 @@ fn build(args: &[String]) -> u8 {
     let mut trust_ensure = false;
     let mut out: Option<String> = None;
     let mut file: Option<String> = None;
+    let mut web = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--release" => release = true,
+            // WebAssembly for a page (section 14, D175); the other targets
+            // of section 14 are not in this edition
+            "--target" if i + 1 < args.len() => {
+                if args[i + 1] != "web" {
+                    let d = Diagnostic::new_spanless("build_target").arg("target", args[i + 1].clone());
+                    eprint!("{}", render("", "", None, &d.text()));
+                    return 1;
+                }
+                web = true;
+                i += 1;
+            }
             // unproven `ensure` checks are left out (Goals and guarantees)
             "--trust-ensure" => trust_ensure = true,
             "-o" if i + 1 < args.len() => {
@@ -813,10 +963,20 @@ fn build(args: &[String]) -> u8 {
         }
     }
     let out = out.unwrap_or_else(|| Path::new(&file).with_extension("").to_string_lossy().into_owned());
-    if let Err(e) = link(&ir, Path::new(&out), release) {
-        eprintln!("Error: {e}");
-        return 1;
-    }
+    let out = if web {
+        let base = out.strip_suffix(".wasm").unwrap_or(&out).to_string();
+        if let Err(e) = link_web(&ir, Path::new(&base), release) {
+            eprint!("{e}");
+            return 1;
+        }
+        format!("{base}.wasm")
+    } else {
+        if let Err(e) = link(&ir, Path::new(&out), release) {
+            eprintln!("Error: {e}");
+            return 1;
+        }
+        out
+    };
     let _ = std::fs::remove_dir_all(work_dir());
     if release {
         // the bill of materials, next to the program (D128)
@@ -1223,6 +1383,41 @@ fn run_new(args: &[String]) -> u8 {
     0
 }
 
+/// `nexo add [name] [--accept-risk]`: a package and the packages it needs,
+/// or every package of nexo.lock (section 13, D174).
+fn run_add(args: &[String]) -> u8 {
+    let accept = args.iter().any(|a| a == "--accept-risk");
+    let names: Vec<&String> = args.iter().filter(|a| *a != "--accept-risk").collect();
+    if names.len() > 1 || names.iter().any(|a| a.starts_with('-')) {
+        eprintln!("{}", usage());
+        return 2;
+    }
+    match packages::add(names.first().map(|s| s.as_str()), accept) {
+        Ok(lines) => {
+            println!("{}", lines.join("\n"));
+            0
+        }
+        Err(d) => {
+            eprint!("{}", render("", "", None, &d.text()));
+            1
+        }
+    }
+}
+
+/// `nexo publish`: the project, signed, in the registry's folder (D174).
+fn run_publish() -> u8 {
+    match packages::publish() {
+        Ok(line) => {
+            println!("{line}");
+            0
+        }
+        Err(d) => {
+            eprint!("{}", render("", "", None, &d.text()));
+            1
+        }
+    }
+}
+
 /// `nexo docs [paths]` (D147) and `nexo docs --for-ai [file]` (D130).
 fn run_docs(args: &[String]) -> u8 {
     if args.first().map(String::as_str) != Some("--for-ai") {
@@ -1367,6 +1562,8 @@ fn main() -> ExitCode {
             "audit" => run_audit(&rest[1..]),
             "docs" => run_docs(&rest[1..]),
             "new" => run_new(&rest[1..]),
+            "add" => run_add(&rest[1..]),
+            "publish" if rest.len() == 1 => run_publish(),
             "db" => run_db(&rest[1..]),
             "flags" => phase5::run_flags(&rest[1..]),
             "privacy" => phase5::privacy_report(&rest[1..]),

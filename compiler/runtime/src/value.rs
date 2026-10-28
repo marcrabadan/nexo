@@ -51,12 +51,13 @@ pub struct V {
 pub struct LitFloat {
     pub value: f64,
     pub text: *const u8,
-    pub len: usize,
+    /// u64, not usize: the compiler writes it as an i64 on every target
+    pub len: u64,
 }
 
 impl LitFloat {
     pub fn text(&self) -> &str {
-        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.text, self.len)) }
+        unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.text, self.len as usize)) }
     }
 }
 
@@ -667,7 +668,8 @@ pub type Code = unsafe extern "C" fn(*mut crate::state::Tls, *const Func, *const
 #[repr(C)]
 pub struct NameRef {
     pub ptr: *const u8,
-    pub len: usize,
+    /// u64, not usize: the compiler writes it as an i64 on every target
+    pub len: u64,
 }
 
 impl NameRef {
@@ -675,7 +677,7 @@ impl NameRef {
         if self.ptr.is_null() {
             None
         } else {
-            Some(unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.ptr, self.len)) })
+            Some(unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.ptr, self.len as usize)) })
         }
     }
 }

@@ -1,0 +1,17 @@
+# The project's settings, for every program in this folder and below.
+[ai]
+provider = "anthropic"
+model = "claude-opus"
+key = "ANTHROPIC_KEY"   # the name of the variable, never the key itself
+budget = "5 EUR per day"
+
+[ai.models]
+fast = "anthropic:claude-haiku"
+local = "ollama:llama3.2"
+
+[ai.prices]   # EUR per million input and output tokens, from your provider's page
+"anthropic:claude-opus" = ["14.00 EUR", "70.00 EUR"]
+"anthropic:claude-haiku" = ["0.90 EUR", "4.50 EUR"]
+
+[mcp.files]   # an MCP server an agent can use with tools = [mcp("files")]
+command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."]

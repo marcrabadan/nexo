@@ -1,0 +1,50 @@
+## Group the messages of a stream by time.
+use nexo.stream
+
+fn per_minute(row):
+    print("minute     ", row)
+
+fn last_five(total):
+    print("last 5 min ", total)
+
+fn visit(pages):
+    print("visit       pages:", pages)
+
+# tumbling: one result per minute and page
+kafka("clicks")
+  |> window 1m
+  |> group by page
+  |> count
+  |> each per_minute
+
+# sliding: on every message, over the messages of the last 5 minutes
+kafka("sales")
+  |> sliding 5m
+  |> map amount
+  |> sum
+  |> each last_five
+
+# session: the pages of a visit, which ends after 30 seconds without a click
+kafka("visits")
+  |> session 30s
+  |> count
+  |> each visit
+
+test "windows":
+    t = time(2026, 10, 28, 9, 0, zone: "UTC")
+    clicks = kafka("clicks")
+    clicks.send({"page": "/home"}, at: t)
+    clicks.send({"page": "/cart"}, at: t + 15s)
+    clicks.send({"page": "/home"}, at: t + 40s)
+    clicks.send({"page": "/home"}, at: t + 65s)
+
+    sales = kafka("sales")
+    sales.send({"amount": 10}, at: t)
+    sales.send({"amount": 25}, at: t + 2m)
+    sales.send({"amount": 5}, at: t + 6m)
+
+    visits = kafka("visits")
+    visits.send({"page": "/home"}, at: t)
+    visits.send({"page": "/shoes"}, at: t + 10s)
+    visits.send({"page": "/pay"}, at: t + 20s)
+    visits.send({"page": "/home"}, at: t + 5m)

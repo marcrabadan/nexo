@@ -212,6 +212,9 @@ fn gap(prev: Option<&Piece>, a: &Piece, b: &Piece, cfg: bool) -> &'static str {
         return ""; // unary minus
     }
     if op_in(&b.tok, &["(", "["]) {
+        if matches!(&a.tok, Tok::Name(n) if n == "returns") && prev.is_some_and(|p| matches!(p.tok, Tok::Name(_))) {
+            return " "; // `fake ask returns [...]` is not an index
+        }
         if matches!(a.tok, Tok::Name(_)) && prev.is_some_and(|p| is_op(&p.tok, "|>")) {
             // a pipeline step: `|> save(...)` is a call, `|> map [..]` is not
             let same_place = a.end_line == b.line && a.end == b.col;

@@ -1,0 +1,28 @@
+## Sort support tickets with a typed answer from the model.
+type Triage:
+    team: "billing" | "shipping" | "tech"
+    urgency: 1..5
+    summary: str
+
+type Ticket:
+    id: int
+    text: str
+
+fn triage(t: Ticket) -> Triage!:
+    answer: Triage = ask("Route this support ticket to a team", t.text, creativity: low)?
+    return answer
+
+fn route(t: Ticket) -> str!:
+    r = triage(t)?
+    var queue = r.team
+    if r.urgency >= 4:
+        queue = "{r.team}-now"
+    return "#{t.id} -> {queue}: {r.summary}"
+
+test "an urgent billing ticket goes to the front":
+    fake ask returns Triage(team: "billing", urgency: 5, summary: "charged twice")
+    print(route(Ticket(id: 7, text: "You charged my card twice!")))
+
+test "a question waits in its queue":
+    fake ask returns Triage(team: "tech", urgency: 2, summary: "how to export")
+    print(route(Ticket(id: 8, text: "How do I export my data?")))

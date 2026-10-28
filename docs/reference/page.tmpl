@@ -20,7 +20,9 @@
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
     <nav class="nav" id="nav" aria-label="Main">
       <a href="learn.html">Learn</a>
+      <a href="playground.html">Playground</a>
       <a href="examples.html">Examples</a>
+      <a href="libraries.html">Libraries</a>
       <a href="how-it-works.html">How it works</a>
       <a href="reference.html" aria-current="page">Reference</a>
       <a href="shield.html">Shield</a>
@@ -463,6 +465,7 @@
     <li><code>nexo db diff file.nexo</code> compares the types with the database and writes a migration; <code>nexo db migrate</code> applies it in a transaction, and dropping a column needs <code>--allow-drop</code>.</li>
   </ul>
 {{run:lib/db.nexo}}
+  <p>More examples, and how to set it up: <a href="libraries.html#db">AI, data and streams</a>.</p>
 
   <h3 id="mod-sync"><code>nexo.sync</code>: workers and channels</h3>
   <ul class="ref-list">
@@ -519,11 +522,13 @@ ai models:
   <p>A tool is a function marked <code>@tool "what it does"</code>; an <code>agent name:</code> block takes <code>model</code>, <code>tools</code>, <code>goal</code>, <code>max_steps</code> and <code>confirm</code> (tools that need a person's approval), and runs with <code>name.handle(input)</code>. Its tools obey the program's policy; <code>tools = [mcp("files")]</code> adds the tools of the MCP server of <code>[mcp.files]</code> in <code>nexo.toml</code>. <code>budget = 5 EUR per day</code> with the prices of <code>[ai.prices]</code> stops the calls once the day's spend reaches it, or sends them to <code>when_over_budget</code>. <code>nexo ai usage</code> shows the calls, tokens and spend per model and day.</p>
 {{src:lib/ai.nexo}}
 {{test:lib/ai.nexo}}
+  <p>More examples, and how to set it up: <a href="libraries.html#ai">AI, data and streams</a>.</p>
 
   <h3 id="mod-stream"><code>nexo.stream</code>: real-time data</h3>
   <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when kafka("orders") as msg:</code> handles one message at a time: a message that fails is tried 4 times and then goes to <code>orders.dead</code>, and <code>key:</code> makes a repeated key run once. <code>|&gt; window 1m</code>, <code>sliding 5m</code> and <code>session 30s</code> group messages by time for the usual steps. <code>kafka("t").send(value, key: k?, at: time?)</code> publishes. Without a broker a stream is on a local one, with <code>partitions: n</code> handled in parallel, each in order; <code>servers:</code> (Kafka), <code>url:</code> (RabbitMQ), <code>namespace:</code> (Event Hubs, Service Bus), <code>region:</code> (SQS, Kinesis) and <code>project:</code> (Pub/Sub) put it on its broker or cloud, with <code>key: secret(...)</code> as the broker's password, and <code>websocket("wss://host/path")</code> reads a WebSocket server. <code>nexo test</code> runs every stream on an in-memory broker.</p>
 {{src:lib/stream.nexo}}
 {{test:lib/stream.nexo}}
+  <p>More examples, and how to set it up: <a href="libraries.html#stream">AI, data and streams</a>.</p>
 
   <h3 id="mod-flags">Flags and privacy</h3>
   <p>A <code>flags:</code> block declares each flag once: <code>on</code>, <code>off</code>, a percentage of users (stable per user), or <code>users where condition</code>; <code>nexo lint</code> warns about a flag whose <code>expires:</code> day has passed. <code>flag(name, user?)</code> reads it, and <code>nexo flags set name value --stage prod</code> changes it without a deploy.</p>
@@ -621,7 +626,9 @@ compiler/target/release/nexo hello.nexo</code></pre></div>
     </div>
     <nav aria-label="Footer">
       <a href="learn.html">Learn</a>
+      <a href="playground.html">Playground</a>
       <a href="examples.html">Examples</a>
+      <a href="libraries.html">Libraries</a>
       <a href="how-it-works.html">How it works</a>
       <a href="reference.html">Reference</a>
       <a href="shield.html">Shield</a>

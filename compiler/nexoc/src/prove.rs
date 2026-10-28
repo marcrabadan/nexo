@@ -12,7 +12,8 @@
 //! (D83). Anything else (calls, loops, conditions, floats) is left to the
 //! check at run time.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+use crate::fast::HashMap;
 
 use crate::ast::*;
 
@@ -84,9 +85,9 @@ pub struct Types {
 
 impl Types {
     pub fn new(program: &Program) -> Types {
-        let mut int_fields = HashMap::new();
+        let mut int_fields = HashMap::default();
         // a name two files give to different types proves nothing (D124)
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = crate::fast::HashSet::default();
         let mut twice = Vec::new();
         crate::checker::walk_stmts(&program.body, true, &mut |s| {
             if let StmtKind::Type(t) = &s.kind {
@@ -158,7 +159,7 @@ pub fn ensures(f: &FnDef, self_type: Option<&str>, types: &Types) -> Vec<bool> {
     let groupings = groupings(&roots);
     let mut proven = vec![true; ens.len()];
     for g in &groupings {
-        let mut run = Run { params: &params, types, rep: g, locals: HashMap::new(), fields: HashMap::new() };
+        let mut run = Run { params: &params, types, rep: g, locals: HashMap::default(), fields: HashMap::default() };
         let ok = run.body(&f.body);
         for (i, e) in ens.iter().enumerate() {
             if !ok || !run.holds(e) {
@@ -172,7 +173,7 @@ pub fn ensures(f: &FnDef, self_type: Option<&str>, types: &Types) -> Vec<bool> {
 /// Every way of telling which record parameters are the same record: a
 /// representative for each one (parameters of different types never are).
 fn groupings(roots: &[(String, String)]) -> Vec<HashMap<String, String>> {
-    let mut out: Vec<HashMap<String, String>> = vec![HashMap::new()];
+    let mut out: Vec<HashMap<String, String>> = vec![HashMap::default()];
     for (i, (name, ty)) in roots.iter().enumerate() {
         let mut next = Vec::new();
         for g in &out {
@@ -376,8 +377,8 @@ impl Run<'_> {
 /// An `expect` that holds whatever the arguments are (a constant
 /// condition).
 pub fn expect_holds(e: &Expr) -> bool {
-    let types = Types { int_fields: HashMap::new() };
-    let run = Run { params: &[], types: &types, rep: &HashMap::new(), locals: HashMap::new(), fields: HashMap::new() };
+    let types = Types { int_fields: HashMap::default() };
+    let run = Run { params: &[], types: &types, rep: &HashMap::default(), locals: HashMap::default(), fields: HashMap::default() };
     run.holds(e)
 }
 

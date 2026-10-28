@@ -263,16 +263,12 @@ impl Lexer {
                 self.i = self.word_end(self.i);
                 let word = self.text(start, self.i);
                 let span = self.span_from(start);
-                let os_isolated = std::env::var("NEXO_SECURITY_SANDBOX").is_ok_and(|s| matches!(s.as_str(), "linux-offline-v1" | "linux-online-v1"));
-                let memory = std::env::var("NEXO_SECURITY_STREAMS").is_ok_and(|s| s == "memory-v1");
-                let web = std::env::var("NEXO_SECURITY_WEB").is_ok_and(|s| s == "memory-v1" || s.starts_with("loopback-v1:"));
-                let protected = std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some()
-                    || std::env::var_os("NEXO_SECURITY_AUTHORIZATION").is_some()
-                    || std::env::var_os("NEXO_SECURITY_STREAMS").is_some() || std::env::var_os("NEXO_SECURITY_WEB").is_some() || os_isolated;
-                if (protected && ["pipeline", "every", "lifecycle", "__pipeline"].contains(&word.as_str()))
-                    || (protected && !web && ["server", "__web_server", "__web_route"].contains(&word.as_str()))
-                    || (protected && !memory && ["stream", "when", "__stream_when"].contains(&word.as_str()))
-                    || (os_isolated && ["parallel", "spawn", "sync"].contains(&word.as_str())) {
+                // Shield's settings are read once (D180), not at every word
+                let sh = crate::fast::shield();
+                if (sh.protected && ["pipeline", "every", "lifecycle", "__pipeline"].contains(&word.as_str()))
+                    || (sh.protected && !sh.web && ["server", "__web_server", "__web_route"].contains(&word.as_str()))
+                    || (sh.protected && !sh.memory && ["stream", "when", "__stream_when"].contains(&word.as_str()))
+                    || (sh.os_isolated && ["parallel", "spawn", "sync"].contains(&word.as_str())) {
                     return Err(Diagnostic::new("security_context_async", span));
                 }
                 if word == "__policy" {

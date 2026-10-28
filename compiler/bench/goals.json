@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-27",
+  "date": "2026-10-28",
   "machine": "x86_64, 4 cores, Linux",
   "runs": 10,
   "goals": {
@@ -10,81 +10,81 @@
   },
   "benchmarks": {
     "fib": {
-      "nexo_s": 0.0198,
-      "rust_s": 0.0116,
-      "time": 1.7,
-      "nexo_kb": 13476,
-      "rust_kb": 13620,
+      "nexo_s": 0.0215,
+      "rust_s": 0.0132,
+      "time": 1.63,
+      "nexo_kb": 13292,
+      "rust_kb": 13420,
       "memory": 0.99
     },
     "hello": {
-      "nexo_s": 0.0021,
-      "rust_s": 0.0016,
-      "time": 1.26,
-      "nexo_kb": 13620,
-      "rust_kb": 13620,
+      "nexo_s": 0.0019,
+      "rust_s": 0.0014,
+      "time": 1.39,
+      "nexo_kb": 13588,
+      "rust_kb": 13588,
       "memory": 1.0
     },
     "lists": {
-      "nexo_s": 0.0318,
-      "rust_s": 0.0203,
-      "time": 1.57,
-      "nexo_kb": 24224,
+      "nexo_s": 0.0273,
+      "rust_s": 0.0211,
+      "time": 1.3,
+      "nexo_kb": 24836,
       "rust_kb": 22820,
-      "memory": 1.06
+      "memory": 1.09
     },
     "loop": {
-      "nexo_s": 0.0807,
-      "rust_s": 0.0625,
-      "time": 1.29,
-      "nexo_kb": 13620,
-      "rust_kb": 13748,
-      "memory": 0.99
+      "nexo_s": 0.0809,
+      "rust_s": 0.0532,
+      "time": 1.52,
+      "nexo_kb": 13588,
+      "rust_kb": 13588,
+      "memory": 1.0
     },
     "maps": {
-      "nexo_s": 0.0215,
-      "rust_s": 0.0148,
-      "time": 1.45,
-      "nexo_kb": 13748,
-      "rust_kb": 13748,
+      "nexo_s": 0.0218,
+      "rust_s": 0.0151,
+      "time": 1.44,
+      "nexo_kb": 13588,
+      "rust_kb": 13588,
       "memory": 1.0
     },
     "parallel": {
-      "nexo_s": 0.0487,
-      "rust_s": 0.0352,
-      "time": 1.39,
-      "nexo_kb": 13748,
-      "rust_kb": 13748,
+      "nexo_s": 0.0494,
+      "rust_s": 0.0365,
+      "time": 1.35,
+      "nexo_kb": 13588,
+      "rust_kb": 13588,
       "memory": 1.0
     },
     "records": {
-      "nexo_s": 0.0114,
-      "rust_s": 0.0269,
-      "time": 0.42,
-      "nexo_kb": 13748,
-      "rust_kb": 13748,
+      "nexo_s": 0.0077,
+      "rust_s": 0.0286,
+      "time": 0.27,
+      "nexo_kb": 13588,
+      "rust_kb": 13588,
       "memory": 1.0
     },
     "strings": {
-      "nexo_s": 0.0702,
-      "rust_s": 0.061,
-      "time": 1.15,
-      "nexo_kb": 13748,
-      "rust_kb": 18344,
+      "nexo_s": 0.075,
+      "rust_s": 0.0627,
+      "time": 1.2,
+      "nexo_kb": 13716,
+      "rust_kb": 18324,
       "memory": 0.75
     }
   },
-  "worst_time": 1.7,
-  "worst_memory": 1.06,
+  "worst_time": 1.63,
+  "worst_memory": 1.09,
   "compile": {
     "lines": 100000,
-    "seconds": 10.59
+    "seconds": 9.36
   },
-  "startup_ms": 1.9,
+  "startup_ms": 1.8,
   "met": {
     "time": false,
     "memory": true,
-    "compile": false,
+    "compile": true,
     "startup": true
   }
 }

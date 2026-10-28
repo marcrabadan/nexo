@@ -262,6 +262,11 @@ fn var_text(name: &str) -> String {
 /// stderr together) and returned.
 fn shell(command: &str, span: u32) -> R<(i32, String)> {
     crate::policy::check("shell", command, span)?;
+    // a page has no other processes (D175)
+    if cfg!(target_family = "wasm") {
+        let d = Diagnostic::new_spanless("web_unavailable").arg("what", "A shell command".to_string());
+        return Err(crate::state::diag(d, span));
+    }
     crate::state::flush();
     let _ = std::io::stdout().flush();
     let out = std::process::Command::new("sh").arg("-c").arg(format!("exec 2>&1\n{command}")).stdin(std::process::Stdio::inherit()).output();

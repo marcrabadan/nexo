@@ -134,9 +134,30 @@ fn zone(name: &str) -> Option<Zone> {
     if let Some(z) = cache.get(name) {
         return z.clone();
     }
-    let z = TZPATH.iter().find_map(|dir| std::fs::read(format!("{dir}/{name}")).ok()).and_then(|b| parse_tzif(&b)).map(|d| Zone::Tz(Arc::new(d)));
+    let z = TZPATH
+        .iter()
+        .find_map(|dir| std::fs::read(format!("{dir}/{name}")).ok())
+        .or_else(|| packed_zone(name))
+        .and_then(|b| parse_tzif(&b))
+        .map(|d| Zone::Tz(Arc::new(d)));
     cache.insert(name.to_string(), z.clone());
     z
+}
+
+/// The zones packed into a runtime built for the web (build.rs, D175);
+/// none in a native one, which reads the system's.
+fn packed_zone(name: &str) -> Option<Vec<u8>> {
+    static ZONES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/zones.bin"));
+    let mut rest = ZONES;
+    while let Some(end) = rest.iter().position(|b| *b == 0) {
+        let len = u32::from_le_bytes(rest.get(end + 1..end + 5)?.try_into().ok()?) as usize;
+        let data = rest.get(end + 5..end + 5 + len)?;
+        if &rest[..end] == name.as_bytes() {
+            return Some(data.to_vec());
+        }
+        rest = &rest[end + 5 + len..];
+    }
+    None
 }
 
 pub fn valid_zone(name: &str) -> bool {

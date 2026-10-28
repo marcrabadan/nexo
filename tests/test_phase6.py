@@ -378,3 +378,14 @@ def test_suggested_cases_raise_branch_coverage(phase, tmp_path):
     (tmp_path / "grade.nexo").write_text(GRADE + "\n" + suggested)
     after = run(phase[1], ["test", "--coverage", "grade.nexo"], tmp_path).stdout.decode()
     assert after.splitlines()[4:] == ["4 tests: 4 passed, 0 failed", "Branch coverage: 10 of 10 (100%)."]
+
+
+@pytest.mark.parametrize("phase", PHASES, ids=IDS)
+def test_an_endless_pure_recursion_stops_at_once(phase, tmp_path):
+    # each call makes two: after the depth limit, the rest of the tree is
+    # never computed (D177)
+    (tmp_path / "forever.nexo").write_text(
+        "fn forever(n: int) -> int:\n    return forever(n + 1) + forever(n + 2)\n\nprint(forever(0))\n")
+    out = run(phase[1], ["forever.nexo"], tmp_path, timeout=60)
+    assert (out.returncode, out.stdout.decode()) == (1, "Error: Too many nested calls (infinite recursion). Check "
+                                                        "that the recursion has a base case that stops it.\n")

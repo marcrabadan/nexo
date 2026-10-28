@@ -1,0 +1,31 @@
+## Read the fields of an invoice out of an email.
+type Line:
+    item: str
+    quantity: int
+    price: money
+
+type Invoice:
+    number: str
+    due: date
+    lines: list[Line]
+
+fn read_invoice(mail: str) -> Invoice!:
+    invoice: Invoice = ask("Extract the invoice in this email", mail)?
+    return invoice
+
+fn total(i: Invoice) -> money:
+    return i.lines |> map it.price * it.quantity |> sum
+
+mail = """
+Hi, attached is invoice F-2041, due on 15 November.
+2 keyboards at 49.90 EUR and 1 monitor at 189.00 EUR.
+"""
+
+test "the fields come back typed":
+    fake ask returns Invoice(number: "F-2041", due: date(2026, 11, 15), lines: [
+        Line(item: "keyboard", quantity: 2, price: 49.90 EUR),
+        Line(item: "monitor", quantity: 1, price: 189.00 EUR)])
+    i = read_invoice(mail)
+    print(i.number, i.due, len(i.lines), "lines")
+    print("total", total(i))
+    print("to pay in", i.due - date(2026, 10, 28))

@@ -172,6 +172,8 @@ def gap(prev: Piece | None, a: Piece, b: Piece, cfg: bool = False) -> str:
     if ta.kind == "OP" and ta.value == "-" and not ends_operand(prev.tok if prev else None):
         return ""  # unary minus
     if tb.kind == "OP" and tb.value in ("(", "["):
+        if ta.kind == "NAME" and ta.value == "returns" and prev is not None and prev.tok.kind == "NAME":
+            return " "  # `fake ask returns [...]` is not an index
         if ta.kind == "NAME" and prev is not None and prev.tok.is_op("|>"):
             # a pipeline step: `|> save(...)` is a call, `|> map [..]` is not
             same_place = a.end_line == b.line and a.end == b.col

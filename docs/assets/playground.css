@@ -1,0 +1,50 @@
+/* The playground (D176): an editor, its output and a toolbar. */
+.play { padding-top: 32px; padding-bottom: 56px; }
+.play-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 20px; flex-wrap: wrap; }
+.play-head h1 { font-size: 40px; line-height: 1.1; letter-spacing: -0.02em; margin: 0 0 8px; }
+.play-lede { margin: 0; color: var(--muted); }
+.play-examples { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+.play-examples select {
+  font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm); padding: 8px 12px; min-width: 12em;
+}
+
+.play-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+.play-toolbar .btn { padding: 9px 16px; gap: 8px; cursor: pointer; font-family: inherit; }
+.play-toolbar .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.play-toolbar .btn:focus-visible, .play textarea:focus-visible, .play select:focus-visible, .play pre:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.play-status { margin: 0 0 0 auto; color: var(--muted); font-size: 14px; }
+
+.play-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: stretch; }
+.play-editor, .play-output { display: flex; flex-direction: column; min-height: 520px; }
+.play textarea {
+  display: block; width: 100%; margin: 0; border: 0; resize: none; flex: 1;
+  background: var(--code-bg); color: var(--code-text);
+  font-family: var(--mono); font-size: 14px; line-height: 1.65; padding: 18px 20px; tab-size: 4;
+  font-variant-ligatures: none;
+}
+.play .play-output pre {
+  flex: 1; margin: 0; padding: 18px 20px; background: var(--out-bg); color: #c9c5bd;
+  font-family: var(--mono); font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow: auto; max-height: 640px;
+}
+.play-output .err { color: #ff8f8f; }
+.play-output .meta { color: var(--code-muted); }
+.play-stdin { border-top: 1px solid var(--code-line); background: var(--code-bar); }
+.play-stdin summary { cursor: pointer; padding: 10px 16px; font-family: var(--mono); font-size: 12px; color: var(--code-muted); }
+.play-stdin summary code { background: none; border: 0; padding: 0; color: inherit; }
+.play-stdin textarea { flex: none; min-height: 72px; border-top: 1px solid var(--code-line); }
+.play-note { margin: 20px 0 0; color: var(--muted); font-size: 14px; line-height: 1.7; max-width: 60em; }
+
+@media (max-width: 900px) {
+  .play-grid { grid-template-columns: minmax(0, 1fr); }
+  .play-editor { min-height: 360px; }
+  .play-output { min-height: 240px; }
+  .play-status { margin-left: 0; width: 100%; }
+}
+@media (max-width: 640px) {
+  .play { padding-left: 16px; padding-right: 16px; }
+  .play-head h1 { font-size: 30px; }
+  .play-toolbar .btn { flex: 1 1 auto; }
+}

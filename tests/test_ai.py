@@ -180,7 +180,7 @@ def test_ai_setup_and_usage(phase, tmp_path):
     proc = run(phase[1], ["ai", "setup"], tmp_path, b"anthropic\nclaude-opus\nANTHROPIC_KEY\n\n", env)
     path = tmp_path / "nexo" / "ai.toml"
     assert proc.stdout.decode() == (
-        "Provider (anthropic, openai or ollama): Model (for example claude-opus): "
+        "Provider (anthropic, openai, ollama, mistral, gemini, azure or bedrock): Model (for example claude-opus): "
         "Environment variable that holds the key (for example ANTHROPIC_KEY): Address (Enter for the usual one): "
         f"Configuration saved in {path}\n")
     assert path.read_text() == '[ai]\nprovider = "anthropic"\nmodel = "claude-opus"\nkey = "ANTHROPIC_KEY"\n'
@@ -439,7 +439,7 @@ for word in {words}:
 def test_budget(phase, server, tmp_path):
     # each call of the fake openai is 3 + 2 tokens: 0.50 EUR at these prices
     (tmp_path / "nexo.toml").write_text(
-        f'[ai]\nprovider = "ollama"\nurl = "{server}"\n\n[ai.prices]\n"openai:gpt-mini" = ["100000 EUR", "100000 EUR"]\n',
+        f'[ai]\nprovider = "ollama"\nurl = "{server}"\n\n[ai.prices]  # per million tokens\n"openai:gpt-mini" = ["100000 EUR", "100000 EUR"]\n',
         encoding="utf-8")
     env = {"NEXO_AI_KEY": "k3y", "XDG_CONFIG_HOME": str(tmp_path / "config")}
 

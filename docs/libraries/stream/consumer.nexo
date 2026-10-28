@@ -1,0 +1,10 @@
+## Read the orders, in another process, until it is stopped (Ctrl+C).
+use nexo.stream
+
+type Order:
+    id: int
+    total: int
+
+when kafka("orders") as msg:
+    o: Order = validate(msg.json(), as: Order)?
+    print("order {o.id}: {o.total} EUR (message {msg.id})")

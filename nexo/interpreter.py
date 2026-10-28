@@ -601,11 +601,12 @@ class Interpreter:
         if is_file_module(s):
             # the module's code runs once, at its first use; its tests only
             # run when it is the file tested
-            value = self.module_values.get(s.name)
+            key = self.linker.use_keys.get(id(s), s.name)
+            value = self.module_values.get(key)
             if value is None:
-                info = self.linker.modules[s.name]
+                info = self.linker.modules[key]
                 module_env = Env(self.builtins)
-                value = self.module_values[s.name] = ModuleValue(s.name, module_env)
+                value = self.module_values[key] = ModuleValue(s.name, module_env)
                 body = self.module_filter(info.program) if self.module_filter else info.program.body
                 with security_context.scope(info.file):
                     self.exec_block([x for x in body if not isinstance(x, A.TestDef)], module_env)

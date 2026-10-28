@@ -14,7 +14,7 @@
 //! temporaries of the expression being computed are kept in `live`, and a
 //! failure releases them on its way to the handler.
 
-use std::collections::HashMap;
+use crate::fast::HashMap;
 use std::fmt::Write as _;
 
 use nexo_diag::{source_text, Diagnostic, Span};
@@ -108,6 +108,19 @@ enum Live {
     Security(String),
 }
 
+/// An int-only function whose usual entry (`name`, which takes values and
+/// calls `worker`) and value wait for the end of the program (D180).
+struct Deferred<'a> {
+    f: &'a FnDef,
+    frame: FrameId,
+    name: String,
+    worker: String,
+    /// something calls the usual entry
+    entry: bool,
+    /// something reads the function as a value
+    value: bool,
+}
+
 struct FnState {
     frame: FrameId,
     allocas: String,
@@ -143,11 +156,14 @@ struct FnState {
     /// the last number of a name local to this function (D158)
     local: usize,
     /// registers that certainly hold an int: no counts, no tag checks
-    int_regs: std::collections::HashSet<String>,
+    int_regs: crate::fast::HashSet<String>,
     /// registers that certainly hold a bool, and the i1 it was made from
     bool_regs: HashMap<String, String>,
     /// every `return` so far gave a value known to be an int
     ret_ints: bool,
+    /// the body of a pure int function (D177): calls to other int-only
+    /// functions need no check of the failure flag
+    pure: bool,
 }
 
 /// What a frame compiles from.
@@ -197,6 +213,9 @@ pub struct Gen<'a> {
     leaf_fns: HashMap<u32, (String, String)>,
     /// functions on ints only: the version that takes the numbers directly
     int_workers: HashMap<FrameId, String>,
+    /// int-only functions that only compute with ints and call other
+    /// int-only functions (D177), by their id
+    pure_fns: crate::fast::HashSet<u32>,
     /// the steps of fused pipelines compiled to take an int element (D160)
     step_workers: HashMap<FrameId, String>,
     /// set while compiling such a version
@@ -207,14 +226,20 @@ pub struct Gen<'a> {
     /// functions defined exactly once (called directly, without binding
     /// their arguments at run time)
     known_fns: HashMap<BindingId, &'a FnDef>,
+    /// int-only functions of the top level whose usual entry and value are
+    /// made at the end, and only when something needs them (D180)
+    deferred: HashMap<BindingId, Deferred<'a>>,
+    deferred_frames: HashMap<FrameId, BindingId>,
+    /// the binding of each function in known_fns, by the function's id
+    known_fn_binding: HashMap<u32, BindingId>,
     /// record types defined once (D84)
     known_types: HashMap<BindingId, &'a TypeDef>,
     /// names bound by assignments that an outer `var` always takes, so
     /// they are never defined (D140)
-    never: std::collections::HashSet<BindingId>,
+    never: crate::fast::HashSet<BindingId>,
     /// variables a single `var` statement declares (D140)
-    single_var: std::collections::HashSet<BindingId>,
-    var_decls: std::collections::HashSet<u32>,
+    single_var: crate::fast::HashSet<BindingId>,
+    var_decls: crate::fast::HashSet<u32>,
     /// the bindings of each frame, in order
     frame_bindings: HashMap<FrameId, Vec<BindingId>>,
     /// what the contract prover knows, and the type each method belongs to
@@ -456,34 +481,38 @@ impl<'a> Gen<'a> {
             globals: String::new(),
             funcs: String::new(),
             init: String::new(),
-            cstr: HashMap::new(),
+            cstr: HashMap::default(),
             counter: 0,
-            str_slots: HashMap::new(),
-            unit_slots: HashMap::new(),
-            named_slots: HashMap::new(),
-            lit_floats: HashMap::new(),
-            descs: HashMap::new(),
+            str_slots: HashMap::default(),
+            unit_slots: HashMap::default(),
+            named_slots: HashMap::default(),
+            lit_floats: HashMap::default(),
+            descs: HashMap::default(),
             spans: Vec::new(),
-            span_ids: HashMap::new(),
-            frame_fns: HashMap::new(),
-            leaf_fns: HashMap::new(),
-            int_workers: HashMap::new(),
-            step_workers: HashMap::new(),
+            span_ids: HashMap::default(),
+            frame_fns: HashMap::default(),
+            leaf_fns: HashMap::default(),
+            int_workers: HashMap::default(),
+            pure_fns: crate::fast::HashSet::default(),
+            step_workers: HashMap::default(),
             int_params: false,
             branch_body: false,
             fs: Vec::new(),
-            known_fns: HashMap::new(),
-            known_types: HashMap::new(),
+            known_fns: HashMap::default(),
+            deferred: HashMap::default(),
+            deferred_frames: HashMap::default(),
+            known_fn_binding: HashMap::default(),
+            known_types: HashMap::default(),
             never: Default::default(),
             single_var: Default::default(),
             var_decls: Default::default(),
-            frame_bindings: HashMap::new(),
+            frame_bindings: HashMap::default(),
             prover: None,
-            method_of: HashMap::new(),
+            method_of: HashMap::default(),
             ints: None,
-            top_defs: HashMap::new(),
-            frame_top: HashMap::new(),
-            top_index: HashMap::new(),
+            top_defs: HashMap::default(),
+            frame_top: HashMap::default(),
+            top_index: HashMap::default(),
             cur_top: 0,
             line_buf: String::new(),
             fakes: Vec::new(),
@@ -497,14 +526,14 @@ impl<'a> Gen<'a> {
         if self.opts.repl_line != 0 {
             return;
         }
-        let mut taken = std::collections::HashSet::new();
+        let mut taken = crate::fast::HashSet::default();
         sure_walk(&program.body, self.res, &mut Vec::new(), &mut taken);
         crate::checker::walk_stmts(&program.body, true, &mut |s| {
             if let StmtKind::VarDecl { .. } = &s.kind {
                 self.var_decls.insert(s.id);
             }
         });
-        let mut maybe = std::collections::HashSet::new();
+        let mut maybe = crate::fast::HashSet::default();
         for (sid, a) in &self.res.assigns {
             if !taken.contains(sid) {
                 maybe.insert(a.target);
@@ -515,7 +544,7 @@ impl<'a> Gen<'a> {
             .collect();
         // a variable only one `var` statement binds is not defined yet when
         // it runs: its scope starts again each time it is entered
-        let mut defs: HashMap<BindingId, (usize, bool)> = HashMap::new();
+        let mut defs: HashMap<BindingId, (usize, bool)> = HashMap::default();
         for (sid, a) in &self.res.assigns {
             let e = defs.entry(a.target).or_insert((0, true));
             e.0 += 1;
@@ -536,9 +565,9 @@ impl<'a> Gen<'a> {
     }
 
     fn find_known_fns(&mut self, program: &'a Program) {
-        let mut defs: HashMap<BindingId, usize> = HashMap::new();
-        let mut fns: HashMap<BindingId, &'a FnDef> = HashMap::new();
-        let mut types: HashMap<BindingId, &'a TypeDef> = HashMap::new();
+        let mut defs: HashMap<BindingId, usize> = HashMap::default();
+        let mut fns: HashMap<BindingId, &'a FnDef> = HashMap::default();
+        let mut types: HashMap<BindingId, &'a TypeDef> = HashMap::default();
         let res = self.res;
         crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
             StmtKind::Fn(f) => {
@@ -590,8 +619,51 @@ impl<'a> Gen<'a> {
                 _ => {}
             }
         }
+        self.known_fn_binding = fns.iter().map(|(b, f)| (f.id, *b)).collect();
         self.known_fns = fns;
         self.known_types = types;
+    }
+
+    /// The int-only functions of the top level that only compute (D177):
+    /// their body has no loop, `try` or other statement that keeps going,
+    /// writes only its own variables, and calls only int-only functions
+    /// of the top level. After a failure every such call returns at its
+    /// entry (the runtime sets the depth limit to 0), so such a body may
+    /// go on to its end without checking the failure flag after each call:
+    /// nothing it does after the failure can be seen.
+    fn find_pure_fns(&mut self, program: &'a Program) {
+        if !self.fakes.is_empty() {
+            return;
+        }
+        let known: crate::fast::HashSet<u32> = self.known_fns.values().map(|f| f.id).collect();
+        let mut globals = crate::fast::HashSet::default();
+        let mut ints: HashMap<&'a str, &'a FnDef> = HashMap::default();
+        for st in &program.body {
+            match &st.kind {
+                StmtKind::Fn(f) => {
+                    globals.insert(f.name.as_str());
+                    if known.contains(&f.id) && self.int_only(f) {
+                        ints.insert(f.name.as_str(), f);
+                    }
+                }
+                StmtKind::Assign { target: Expr { kind: ExprKind::Name(n), .. }, .. } => {
+                    globals.insert(n.as_str());
+                }
+                StmtKind::VarDecl { name, .. } | StmtKind::Shared { name, .. } => {
+                    globals.insert(name.as_str());
+                }
+                StmtKind::Type(t) => {
+                    globals.insert(t.name.as_str());
+                }
+                _ => {}
+            }
+        }
+        for f in ints.values() {
+            let mut locals: crate::fast::HashSet<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+            if pure_block(&f.body, &ints, &globals, &mut locals) {
+                self.pure_fns.insert(f.id);
+            }
+        }
     }
 
     /// Does this register of the function being written certainly hold an int?
@@ -925,7 +997,9 @@ impl<'a> Gen<'a> {
         }
         // an int-only function keeps its depth in a register: the thread
         // state gets it before any call that may run other code (D84)
-        if self.f().int_params && is_foreign_call(line) {
+        // (a pure function only calls the runtime to fail, which runs no
+        // other code: it leaves the depth alone, D179)
+        if self.f().int_params && !self.f().pure && is_foreign_call(line) {
             let f = self.f();
             let d = f.depth.as_deref().unwrap();
             let _ = writeln!(f.body, "  store i64 {d}, ptr {}", f.depth_ptr);
@@ -1648,14 +1722,87 @@ impl<'a> Gen<'a> {
                 // checks the arguments and calls it
                 let worker = format!("@fw.{n}");
                 self.int_workers.insert(frame, worker.clone());
+                let defer = self.deferrable(f);
+                if let Some(b) = defer {
+                    self.deferred_frames.insert(frame, b);
+                    self.deferred.insert(
+                        b,
+                        Deferred { f, frame, name: name.clone(), worker: worker.clone(), entry: false, value: false },
+                    );
+                }
                 self.int_params = true;
                 self.compile_frame(frame, src, &worker)?;
-                self.int_wrapper(frame, f, &name, &worker);
+                if defer.is_none() {
+                    self.int_wrapper(frame, f, &name, &worker);
+                }
                 return Ok((name, info));
             }
         }
         self.compile_frame(frame, src, &name)?;
         Ok((name, info))
+    }
+
+    /// The binding of an int-only function of the top level whose usual
+    /// entry and value can wait (D180): a program, not a test run or the
+    /// REPL, with no fakes.
+    fn deferrable(&self, f: &FnDef) -> Option<BindingId> {
+        if self.opts.test_mode || self.opts.repl_line > 0 || !self.fakes.is_empty() {
+            return None;
+        }
+        self.known_fn_binding.get(&f.id).copied().filter(|b| self.top_defs.contains_key(b))
+    }
+
+    /// The usual entry of a deferred function is needed.
+    fn need_entry(&mut self, frame: FrameId) {
+        if let Some(b) = self.deferred_frames.get(&frame) {
+            self.deferred.get_mut(b).unwrap().entry = true;
+        }
+    }
+
+    /// The end of the program: the usual entries something calls, and at
+    /// each definition either the function's value or, when nothing reads
+    /// it, a mark that it is defined (D180).
+    fn finish_deferred(&mut self) -> GResult<()> {
+        let mut bs: Vec<BindingId> = self.deferred.keys().copied().collect();
+        bs.sort();
+        let mut texts: HashMap<BindingId, String> = HashMap::default();
+        for b in bs {
+            let (f, frame, name, worker, entry, value) = {
+                let d = &self.deferred[&b];
+                (d.f, d.frame, d.name.clone(), d.worker.clone(), d.entry, d.value)
+            };
+            if entry || value {
+                self.int_wrapper(frame, f, &name, &worker);
+            }
+            let saved = std::mem::take(&mut self.f().body);
+            if value {
+                let clo = self.closure(frame, FrameSrc::Fn(f))?;
+                self.store_binding(b, &clo);
+            } else {
+                let p = self.binding_ptr(b);
+                self.emitf(format_args!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {p}"));
+            }
+            let text = std::mem::replace(&mut self.f().body, saved);
+            texts.insert(b, text);
+        }
+        if texts.is_empty() {
+            return Ok(());
+        }
+        let body = std::mem::take(&mut self.f().body);
+        let mut out = String::with_capacity(body.len());
+        let mut rest = body.as_str();
+        while let Some(i) = rest.find("  ;@defer ") {
+            out.push_str(&rest[..i]);
+            let after = &rest[i + 10..];
+            let end = after.find('\n').unwrap_or(after.len());
+            if let Some(t) = after[..end].parse::<BindingId>().ok().and_then(|b| texts.get(&b)) {
+                out.push_str(t);
+            }
+            rest = &after[(end + 1).min(after.len())..];
+        }
+        out.push_str(rest);
+        self.f().body = out;
+        Ok(())
     }
 
     /// A function whose parameters and result are all `int`.
@@ -1757,10 +1904,10 @@ impl<'a> Gen<'a> {
             owned_slots: Vec::new(),
             pads: String::new(),
             returns: vec![RetCtx::Function],
-            slots: HashMap::new(),
+            slots: HashMap::default(),
             env: None,
-            free_index: HashMap::new(),
-            old_slots: HashMap::new(),
+            free_index: HashMap::default(),
+            old_slots: HashMap::default(),
             ret_slot: String::new(),
             ret_label: format!("RET{n}"),
             depth: None,
@@ -1768,10 +1915,11 @@ impl<'a> Gen<'a> {
             entry_checked: false,
             local: 0,
             int_regs: Default::default(),
-            bool_regs: HashMap::new(),
+            bool_regs: HashMap::default(),
             sure: Vec::new(),
             depth_ptr: String::new(),
             ret_ints: true,
+            pure: false,
         }
     }
 
@@ -1799,15 +1947,27 @@ impl<'a> Gen<'a> {
     }
 
     fn compile_frame(&mut self, frame: FrameId, src: FrameSrc<'a>, name: &str) -> GResult<()> {
+        // what a loop copy knows about its element holds only in that copy:
+        // a frame is compiled once and shared by every copy (D178)
+        let local_ints = self.ints.as_mut().map(|i| std::mem::take(&mut i.local_ints));
+        let r = self.compile_frame_inner(frame, src, name);
+        if let (Some(i), Some(l)) = (self.ints.as_mut(), local_ints) {
+            i.local_ints = l;
+        }
+        r
+    }
+
+    fn compile_frame_inner(&mut self, frame: FrameId, src: FrameSrc<'a>, name: &str) -> GResult<()> {
         let int_params = std::mem::take(&mut self.int_params);
-        let st = self.new_fn_state(frame);
+        let mut st = self.new_fn_state(frame);
+        st.pure = int_params && matches!(src, FrameSrc::Fn(f) if self.pure_fns.contains(&f.id));
         self.fs.push(st);
         self.frame_slots(frame);
         self.init_frame_slots();
         let ret_slot = self.alloca("%V");
         self.emitf(format_args!("store %V {{ i64 0, i64 0 }}, ptr {ret_slot}"));
         self.f().ret_slot = ret_slot.clone();
-        let security_scope = if std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() {
+        let security_scope = if crate::fast::security_dependencies() {
             let file = match src {
                 FrameSrc::Fn(f) => f.name_span.file,
                 FrameSrc::Lambda(e) | FrameSrc::Step(e) | FrameSrc::Default(e) | FrameSrc::Leaf(e) => e.span.file,
@@ -1838,20 +1998,30 @@ impl<'a> Gen<'a> {
         }
         if int_params {
             // one comparison checks the depth and, while a `try within`
-            // runs, the clock (the limit is then 0, D156)
-            let lp = self.reg();
-            self.emitf(format_args!("{lp} = getelementptr inbounds i8, ptr %tls, i64 32"));
+            // runs or a failure is on its way, the clock or the failure
+            // (the limit is then 0, D156, D177)
             let lim = self.reg();
-            self.emitf(format_args!("{lim} = load i64, ptr {lp}"));
+            self.emitf(format_args!("{lim} = load atomic i64, ptr @nx_limit unordered, align 8"));
             let over = self.reg();
             self.emitf(format_args!("{over} = icmp ugt i64 {d1}, {lim}"));
             let slow = self.label();
             let fine = self.label();
             self.cond_br(&over, &slow, &fine);
             self.place(&slow);
-            self.call_void("nx_enter_slow", &format!("i64 {d1}"));
-            self.check();
-            self.br(&fine);
+            if self.f().pure {
+                // the runtime writes the depth and says whether it failed:
+                // a pure function never reads the thread state (D179)
+                let failed = self.reg();
+                self.emitf(format_args!("{failed} = call i8 @nx_enter_slow_pure(i64 {d1})"));
+                let c = self.reg();
+                self.emitf(format_args!("{c} = icmp ne i8 {failed}, 0"));
+                let unwind = self.unwind_label();
+                self.cond_br(&c, &unwind, &fine);
+            } else {
+                self.call_void("nx_enter_slow", &format!("i64 {d1}"));
+                self.check();
+                self.br(&fine);
+            }
             self.place(&fine);
             self.f().entry_checked = true;
         } else {
@@ -1868,7 +2038,8 @@ impl<'a> Gen<'a> {
         let free = self.res.frames[frame].free.clone();
         if !free.is_empty() {
             let p = self.reg();
-            self.emitf(format_args!("{p} = getelementptr inbounds i8, ptr %clo, i64 16"));
+            // the `env` field of the runtime's Func, at any pointer size (D175)
+            self.emitf(format_args!("{p} = getelementptr inbounds {{ ptr, ptr, ptr, i64 }}, ptr %clo, i32 0, i32 2"));
             let env = self.reg();
             self.emitf(format_args!("{env} = load ptr, ptr {p}"));
             self.f().env = Some(env);
@@ -2108,6 +2279,7 @@ impl<'a> Gen<'a> {
     /// A closure value for a frame: its code and the cells it captures.
     fn closure(&mut self, frame: FrameId, src: FrameSrc<'a>) -> GResult<Val> {
         let (name, info) = self.frame_fn(frame, src)?;
+        self.need_entry(frame);
         let free = self.res.frames[frame].free.clone();
         let cells = if free.is_empty() {
             "null".to_string()
@@ -2151,6 +2323,7 @@ impl<'a> Gen<'a> {
                 }
             }
         });
+        self.find_pure_fns(program);
         let mut st = self.new_fn_state(GLOBAL_FRAME);
         st.unwind = vec![("UNHANDLED".into(), 0)];
         self.fs.push(st);
@@ -2164,7 +2337,7 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!(
             "call void @nx_init(ptr {file_c}, i64 {file_len}, ptr {src_c}, i64 {src_len}, ptr @nx_spans, i64 SPANS_COUNT, ptr @nexo_cleanup)"
         ));
-        if std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() { self.call_void("nx_security_contexts_ready", ""); }
+        if crate::fast::security_dependencies() { self.call_void("nx_security_contexts_ready", ""); }
         // the files of the modules the program uses (D124)
         for id in self.program_files.clone() {
             if let Some((name, source)) = nexo_diag::file_of(id) {
@@ -2192,6 +2365,7 @@ impl<'a> Gen<'a> {
             self.emit("call void @nx_stream_test_mode()");
         }
         self.block(&program.body)?;
+        self.finish_deferred()?;
         // the program's own loop variables and cells
         let release = self.frame_release_text();
         for line in release.lines() {
@@ -2374,7 +2548,7 @@ impl<'a> Gen<'a> {
             // the module's code runs at its first use (D124)
             StmtKind::Module { body, .. } => {
                 if let Some(b) = body {
-                    let scope = if std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() {
+                    let scope = if crate::fast::security_dependencies() {
                         let file = b.first().map(|s| s.span.file).unwrap_or(0);
                         let token = self.reg();
                         self.emitf(format_args!("{token} = call i64 @nx_security_enter(i32 {file})"));
@@ -2530,9 +2704,15 @@ impl<'a> Gen<'a> {
                     return Err(not_supported(format!("\"@{}\"", a.name), a.span));
                 }
                 let frame = self.res.frame_of[&Node::Fn(f.id)];
-                let clo = self.closure(frame, FrameSrc::Fn(f))?;
                 let b = self.res.decl[&Node::Stmt(s.id)];
-                self.store_binding(b, &clo);
+                self.frame_fn(frame, FrameSrc::Fn(f))?;
+                if self.deferred.contains_key(&b) {
+                    // decided at the end of the program (D180)
+                    self.emitf(format_args!(";@defer {b}"));
+                } else {
+                    let clo = self.closure(frame, FrameSrc::Fn(f))?;
+                    self.store_binding(b, &clo);
+                }
             }
             StmtKind::Type(t) => self.type_def(s, t)?,
             StmtKind::Trait { name, sigs } => {
@@ -2730,6 +2910,85 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// `for_each`, with a second copy of the body for a list of ints read in
+    /// place (D137), in which the element `var` is certainly an int: its
+    /// arithmetic and comparisons need no type checks (D178).
+    fn for_each_versioned(
+        &mut self,
+        iterable: &Val,
+        span: Span,
+        var: BindingId,
+        mut body: impl FnMut(&mut Self, &Val) -> GResult<()>,
+    ) -> GResult<()> {
+        let tb = self.tb(iterable);
+        let sp = self.span_id(span);
+        let it = self.reg();
+        self.emitf(format_args!("{it} = call ptr @nx_iter({tb}, i32 {sp})"));
+        self.check();
+        self.drop_val(iterable);
+        self.f().live.push(Live::Iter(it.clone()));
+        let item = self.alloca("%V");
+        let view = self.iter_view(&it);
+        let (ptr, len, _, ints) = view.clone();
+        let isview = self.reg();
+        self.emitf(format_args!("{isview} = icmp ne ptr {ptr}, null"));
+        let both = self.reg();
+        self.emitf(format_args!("{both} = and i1 {isview}, {ints}"));
+        let int_loop = self.label();
+        let general = self.label();
+        let end = self.label();
+        self.cond_br(&both, &int_loop, &general);
+        // the copy for ints: a counted loop over the numbers
+        self.place(&int_loop);
+        let i = self.alloca("i64");
+        self.emitf(format_args!("store i64 0, ptr {i}"));
+        let ihead = self.label();
+        let ibody = self.label();
+        self.br(&ihead);
+        self.place(&ihead);
+        let cur = self.reg();
+        self.emitf(format_args!("{cur} = load i64, ptr {i}"));
+        let more = self.reg();
+        self.emitf(format_args!("{more} = icmp ult i64 {cur}, {len}"));
+        self.cond_br(&more, &ibody, &end);
+        self.place(&ibody);
+        let pi = self.reg();
+        self.emitf(format_args!("{pi} = getelementptr inbounds i64, ptr {ptr}, i64 {cur}"));
+        let n = self.reg();
+        self.emitf(format_args!("{n} = load i64, ptr {pi}"));
+        let next = self.reg();
+        self.emitf(format_args!("{next} = add i64 {cur}, 1"));
+        self.emitf(format_args!("store i64 {next}, ptr {i}"));
+        let x = self.reg();
+        self.emitf(format_args!("{x} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {n}, 1"));
+        self.f().int_regs.insert(x.clone());
+        let added = self.ints.as_mut().is_some_and(|i| i.local_ints.insert(var));
+        let r = body(self, &Val::Reg(x));
+        if added {
+            self.ints.as_mut().unwrap().local_ints.remove(&var);
+        }
+        r?;
+        self.br(&ihead);
+        // any other iterable: as for_each
+        self.place(&general);
+        let head = self.label();
+        let yes = self.label();
+        self.br(&head);
+        self.place(&head);
+        let ok = self.iter_next(&it, &view, &item);
+        self.cond_br(&ok, &yes, &end);
+        self.place(&yes);
+        let v = self.load(&item);
+        let v = self.owned(v);
+        body(self, &v)?;
+        self.drop_val(&v);
+        self.br(&head);
+        self.place(&end);
+        self.unlive(&Live::Iter(it.clone()));
+        self.emitf(format_args!("call void @nx_iter_free(ptr {it})"));
+        Ok(())
+    }
+
     /// The elements of a list being iterated stay where they are (the
     /// iterator holds the list, so a change through a variable copies it):
     /// the loop reads them in place (D134). (pointer or null, length, index)
@@ -2745,7 +3004,11 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("{k} = load i8, ptr {kind}"));
         let ints = self.reg();
         self.emitf(format_args!("{ints} = icmp ne i8 {k}, 0"));
-        (view, len, idx, ints)
+        // the list cannot change while it is iterated: its length is read
+        // once, into a register (D178)
+        let n = self.reg();
+        self.emitf(format_args!("{n} = load i64, ptr {len}"));
+        (view, n, idx, ints)
     }
 
     /// The next element in `item` (owned); an i1 that is false at the end.
@@ -2763,10 +3026,8 @@ impl<'a> Gen<'a> {
         self.place(&fast);
         let i = self.reg();
         self.emitf(format_args!("{i} = load i64, ptr {idx}"));
-        let n = self.reg();
-        self.emitf(format_args!("{n} = load i64, ptr {len}"));
         let lt = self.reg();
-        self.emitf(format_args!("{lt} = icmp ult i64 {i}, {n}"));
+        self.emitf(format_args!("{lt} = icmp ult i64 {i}, {len}"));
         self.cond_br(&lt, &more, &done);
         self.place(&more);
         let int_l = self.label();
@@ -2803,10 +3064,16 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("store i8 0, ptr {ok}"));
         self.br(&join);
         self.place(&general);
+        // the element comes back through a slot of its own, so `item`
+        // never has its address taken and stays in registers (D178)
+        let out = self.alloca("%V");
         let r = self.reg();
-        self.emitf(format_args!("{r} = call i8 @nx_iter_next(ptr {it}, ptr {item})"));
+        self.emitf(format_args!("{r} = call i8 @nx_iter_next(ptr {it}, ptr {out})"));
         self.emitf(format_args!("store i8 {r}, ptr {ok}"));
         self.check();
+        let got_v = self.reg();
+        self.emitf(format_args!("{got_v} = load %V, ptr {out}"));
+        self.emitf(format_args!("store %V {got_v}, ptr {item}"));
         self.br(&join);
         self.place(&join);
         let o = self.reg();
@@ -3736,7 +4003,7 @@ impl<'a> Gen<'a> {
                 let scope = self.res.scope_of[&Node::Expr(e.id)];
                 let var = self.res.decl[&Node::Expr(e.id)];
                 let it = self.expr(iterable, false)?;
-                self.for_each(&it, iterable.span, |g, item| {
+                self.for_each_versioned(&it, iterable.span, var, |g, item| {
                     g.enter_scope(scope);
                     g.store_binding(var, item);
                     let skip = g.label();
@@ -3750,8 +4017,13 @@ impl<'a> Gen<'a> {
                     let v = g.expr(element, false)?;
                     let l = g.load(&slot);
                     let tl = g.tb(&l);
-                    let tv = g.tb(&v);
-                    g.call_void("nx_list_push", &format!("{tl}, {tv}"));
+                    if g.certain_int(element) {
+                        let b = g.bits_of(&v);
+                        g.call_void("nx_list_push_int", &format!("{tl}, i64 {b}"));
+                    } else {
+                        let tv = g.tb(&v);
+                        g.call_void("nx_list_push", &format!("{tl}, {tv}"));
+                    }
                     g.check();
                     g.drop_val(&v);
                     g.br(&skip);
@@ -4562,6 +4834,12 @@ impl<'a> Gen<'a> {
             NameRes::Bindings { cands, row, builtin, suggestion } => (cands.clone(), *row, *builtin, suggestion.clone()),
         };
         let cands: Vec<BindingId> = cands.into_iter().filter(|b| !self.never_defined(*b)).collect();
+        // a deferred function read as a value gets its value (D180)
+        for b in &cands {
+            if let Some(d) = self.deferred.get_mut(b) {
+                d.value = true;
+            }
+        }
         if row.is_none() && !cands.is_empty() && self.is_sure(cands[0]) {
             let v = self.load_binding(cands[0]);
             if let Val::Reg(r) = &v {
@@ -4811,16 +5089,25 @@ impl<'a> Gen<'a> {
                     Some(p) => p.clone(),
                     None => self.place_ptr(&place)?,
                 };
-                let arr = self.values_array(&vals);
                 let nm = self.names_array(&names);
                 let na = self.strarg(&name);
                 let nsp = self.span_id(name_span);
                 let r = if fast_add {
                     // a list this place alone owns takes the value here (D134)
                     let res = self.alloca("%V");
-                    let tv = self.tb(&vals[0]);
+                    let is_int = match &vals[0] {
+                        Val::Lit(t, _) => *t == T_INT,
+                        Val::Reg(r) => self.is_int_reg(r),
+                    };
                     let done = self.reg();
-                    self.emitf(format_args!("{done} = call i8 @nx_list_add(ptr {ptr}, {tv})"));
+                    if is_int {
+                        // an int onto a list: the shortest path (D178)
+                        let b = self.bits_of(&vals[0]);
+                        self.emitf(format_args!("{done} = call i8 @nx_list_add_int(ptr {ptr}, i64 {b})"));
+                    } else {
+                        let tv = self.tb(&vals[0]);
+                        self.emitf(format_args!("{done} = call i8 @nx_list_add(ptr {ptr}, {tv})"));
+                    }
                     let isdone = self.reg();
                     self.emitf(format_args!("{isdone} = icmp ne i8 {done}, 0"));
                     let fast = self.label();
@@ -4831,6 +5118,8 @@ impl<'a> Gen<'a> {
                     self.emitf(format_args!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {res}"));
                     self.br(&merge);
                     self.place(&slow);
+                    // the arguments are written only on this path (D178)
+                    let arr = self.values_array(&vals);
                     if var_ptr.is_some() {
                         self.emitf(format_args!("call void @nx_unique_slot(ptr {ptr})"));
                     }
@@ -4841,6 +5130,7 @@ impl<'a> Gen<'a> {
                     self.place(&merge);
                     self.load(&res)
                 } else {
+                    let arr = self.values_array(&vals);
                     let r = self.call_v("nx_call_method_at", &format!("ptr {ptr}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
                     self.check();
                     r
@@ -5118,10 +5408,13 @@ impl<'a> Gen<'a> {
                     self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
                     self.emitf(format_args!("store i64 {d}, ptr {dp}"));
                 }
-                self.check();
+                if !self.f().pure {
+                    self.check();
+                }
                 self.emitf(format_args!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {x}, 1"));
             }
             _ => {
+                self.need_entry(frame);
                 let arr = self.values_array(&vals);
                 self.emitf(format_args!("{r} = call %V {fname}(ptr %tls, ptr {clo}, ptr {arr}, i32 {sp})"));
                 self.check();
@@ -5813,6 +6106,7 @@ declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
 declare void @nx_enter_slow(i64)
+declare i8 @nx_enter_slow_pure(i64)
 declare void @nx_too_deep()
 declare void @nx_security_result(i64, i64, i32)
 declare void @nx_security_contexts_ready()
@@ -5871,6 +6165,8 @@ declare %V @nx_attr_ic(i64, i64, ptr, i64, i32, ptr)
 declare %V @nx_record_get(i64, i64)
 declare i8 @nx_pipe_plain(i64, i64)
 declare i8 @nx_list_add(ptr, i64, i64)
+declare i8 @nx_list_add_int(ptr, i64)
+declare void @nx_list_push_int(i64, i64, i64)
 declare %V @nx_pipe_step(i64, i64, i64, i64, i32)
 declare void @nx_sum_push(ptr, ptr, i64, i64)
 declare %V @nx_sum_end(ptr, ptr, i32)
@@ -5919,6 +6215,7 @@ declare void @nx_deadline_push(i64, i64, i32, i32)
 declare void @nx_deadline_pop()
 declare void @nx_check_deadline()
 @nx_any_deadline = external global i32
+@nx_limit = external global i64
 declare void @nx_fail_overflow(i32)
 declare void @nx_test_register(ptr, i64, i64, i64)
 "#;
@@ -5938,7 +6235,7 @@ fn is_foreign_call(line: &str) -> bool {
 /// certainly declared, and note each assignment one of them takes (D140).
 /// A nested frame starts with none; statements it does not know (a module,
 /// `select`) are not looked into, so their assignments count as defining.
-fn sure_walk(body: &[Stmt], res: &Resolution, sure: &mut Vec<BindingId>, taken: &mut std::collections::HashSet<u32>) {
+fn sure_walk(body: &[Stmt], res: &Resolution, sure: &mut Vec<BindingId>, taken: &mut crate::fast::HashSet<u32>) {
     let len = sure.len();
     for s in body {
         match &s.kind {
@@ -5993,4 +6290,50 @@ fn sure_walk(body: &[Stmt], res: &Resolution, sure: &mut Vec<BindingId>, taken: 
         }
     }
     sure.truncate(len);
+}
+
+/// A body of a pure int function (D177): see `Gen::find_pure_fns`.
+fn pure_block<'a>(
+    body: &'a [Stmt],
+    ints: &HashMap<&'a str, &'a FnDef>,
+    globals: &crate::fast::HashSet<&'a str>,
+    locals: &mut crate::fast::HashSet<&'a str>,
+) -> bool {
+    body.iter().all(|st| match &st.kind {
+        StmtKind::Expr(e) | StmtKind::Expect(e) | StmtKind::Ensure(e) | StmtKind::Return(Some(e)) => pure_expr(e, ints),
+        StmtKind::Return(None) | StmtKind::Pass => true,
+        StmtKind::Assign { target: Expr { kind: ExprKind::Name(n), .. }, value, .. } => {
+            let own = !globals.contains(n.as_str()) && !ints.contains_key(n.as_str());
+            own && pure_expr(value, ints) && locals.insert(n.as_str()) | true
+        }
+        StmtKind::VarDecl { name, value, .. } => {
+            let own = !globals.contains(name.as_str()) && !ints.contains_key(name.as_str());
+            own && pure_expr(value, ints) && locals.insert(name.as_str()) | true
+        }
+        StmtKind::If { branches, orelse } => {
+            branches.iter().all(|(c, b)| pure_expr(c, ints) && pure_block(b, ints, globals, locals))
+                && orelse.as_ref().is_none_or(|b| pure_block(b, ints, globals, locals))
+        }
+        _ => false,
+    })
+}
+
+fn pure_expr(e: &Expr, ints: &HashMap<&str, &FnDef>) -> bool {
+    match &e.kind {
+        ExprKind::Num { is_float, .. } => !is_float,
+        ExprKind::Bool(_) | ExprKind::Name(_) => true,
+        ExprKind::Unary { operand, .. } => pure_expr(operand, ints),
+        ExprKind::BinOp { left, right, .. } | ExprKind::BoolOp { left, right, .. } => {
+            pure_expr(left, ints) && pure_expr(right, ints)
+        }
+        ExprKind::Compare { ops, operands } => {
+            ops.iter().all(|o| matches!(*o, "==" | "!=" | "<" | ">" | "<=" | ">="))
+                && operands.iter().all(|o| pure_expr(o, ints))
+        }
+        ExprKind::Call { func, args } => {
+            matches!(&func.kind, ExprKind::Name(n) if ints.contains_key(n.as_str()))
+                && args.iter().all(|a| pure_expr(&a.value, ints))
+        }
+        _ => false,
+    }
 }

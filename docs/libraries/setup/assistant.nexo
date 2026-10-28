@@ -1,0 +1,27 @@
+## The settings of nexo.ai inside a program: they win over nexo.toml.
+policy:
+    allow net "api.anthropic.com"
+    allow net "localhost"
+    allow env "ANTHROPIC_KEY"
+
+ai:
+    provider = "anthropic"
+    model = "claude-opus"
+    key = secret("ANTHROPIC_KEY")
+    fallback = ["ollama:llama3.2"]
+    budget = 5 EUR per day
+    when_over_budget = "ollama:llama3.2"
+
+ai models:
+    fast = "anthropic:claude-haiku"
+    local = "ollama:llama3.2"
+
+ai profile "drafts":
+    model = "fast"
+
+fn title(text: str) -> str!:
+    return ask("Write a title of at most six words", text, profile: "drafts")?
+
+test "the title":
+    fake ask returns "Nexo on the web"
+    print(title("A long article about WebAssembly"))

@@ -1,0 +1,30 @@
+## Handle each payment once, even when the broker delivers it twice.
+use nexo.stream
+
+type Payment:
+    id: str
+    account: str
+    cents: int
+
+var balances: map[str, int] = {}
+
+# key: a payment id already handled is acknowledged without running again
+when kafka("payments") as msg, key: msg.json()["id"]:
+    p: Payment = validate(msg.json(), as: Payment)?
+    if p.cents <= 0:
+        fail("payment {p.id} has {p.cents} cents")
+    if not (p.account in balances):
+        balances[p.account] = 0
+    balances[p.account] += p.cents
+    print("applied", p.id, "to", p.account)
+
+test "a repeated payment is applied once":
+    payments = kafka("payments")
+    payments.send({"id": "p1", "account": "ana", "cents": 2000})
+    payments.send({"id": "p2", "account": "ana", "cents": 550})
+    payments.send({"id": "p1", "account": "ana", "cents": 2000})
+    print(balances)
+
+test "a bad message goes to the dead letters":
+    kafka("payments").send({"id": "p3", "account": "luis", "cents": -100})
+    kafka("payments").send({"id": "p4", "account": "luis"})

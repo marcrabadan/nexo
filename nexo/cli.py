@@ -22,7 +22,7 @@ from .errors import NexoError
 from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
-USAGE = ("Usage: nexo [file.nexo | new name | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp"
+USAGE = ("Usage: nexo [file.nexo | new name | add [name] [--accept-risk] | publish | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp"
          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
          " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]")
 BANNER = "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit."
@@ -796,6 +796,35 @@ def run_new(args: list[str]) -> int:
     return 0
 
 
+def run_add(args: list[str]) -> int:
+    """`nexo add [name] [--accept-risk]`: a package and the packages it
+    needs, or every package of nexo.lock (section 13, D174)."""
+    from . import packages
+    accept = "--accept-risk" in args
+    names = [a for a in args if a != "--accept-risk"]
+    if len(names) > 1 or any(a.startswith("-") for a in names):
+        print(USAGE, file=sys.stderr)
+        return 2
+    try:
+        lines = packages.add(names[0] if names else None, accept)
+    except NexoError as e:
+        report(e)
+        return 1
+    print("\n".join(lines))
+    return 0
+
+
+def run_publish() -> int:
+    """`nexo publish`: the project, signed, in the registry's folder (D174)."""
+    from . import packages
+    try:
+        print(packages.publish())
+    except NexoError as e:
+        report(e)
+        return 1
+    return 0
+
+
 def run_docs(args: list[str]) -> int:
     """`nexo docs [paths]` (D147) and `nexo docs --for-ai [file]` (D130)."""
     from .docs import for_ai, markdown
@@ -845,6 +874,10 @@ def main(argv: list[str] | None = None) -> int:
         return run_docs(rest[1:])
     if rest[:1] == ["new"]:
         return run_new(rest[1:])
+    if rest[:1] == ["add"]:
+        return run_add(rest[1:])
+    if rest == ["publish"]:
+        return run_publish()
     if rest[:2] == ["test", "--suggest"]:
         return run_suggest(rest[2:])
     if rest[:2] == ["test", "--coverage"]:

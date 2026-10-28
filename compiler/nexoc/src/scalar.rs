@@ -7,7 +7,9 @@
 //! chooses each word, and the helpers that take a `%V` (rc_inc, rc_dec,
 //! nx_plainv) take its two words. A value returned by a call is split
 //! right after it; `ret` builds the value again. A function with a form
-//! this pass does not know is kept as it was.
+//! this pass does not know is kept as it was. A slot (`alloca %V`) whose
+//! address is only loaded from and stored to becomes two slots of one
+//! word, so neither needs an address computed (D180).
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
@@ -87,8 +89,55 @@ fn token(s: &str) -> Option<&str> {
     ok.then_some(s)
 }
 
+/// The `alloca %V` slots of a function that are only loaded from and
+/// stored to: they can be two slots of one word.
+fn split_slots<'a>(body: &[&'a str]) -> HashSet<&'a str> {
+    let mut slots: HashMap<&'a str, bool> = HashMap::new();
+    for line in body {
+        if let Some((x, "alloca %V")) = line.trim().split_once(" = ") {
+            slots.insert(x, true);
+        }
+    }
+    if slots.is_empty() {
+        return HashSet::new();
+    }
+    for line in &body[1..] {
+        let s = line.trim();
+        if s.ends_with(" = alloca %V") {
+            continue;
+        }
+        // where a slot may appear: the target of a store, the source of a load
+        let target = if let Some(rest) = s.strip_prefix("store %V ") {
+            rest.rfind(", ptr ").map(|i| (&rest[..i], &rest[i + 6..]))
+        } else {
+            s.split_once(" = load %V, ptr ").map(|(_, p)| ("", p))
+        };
+        let b = s.as_bytes();
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] != b'%' {
+                i += 1;
+                continue;
+            }
+            let mut j = i + 1;
+            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'.' || b[j] == b'_') {
+                j += 1;
+            }
+            let t = &s[i..j];
+            if let Some(ok) = slots.get_mut(t) {
+                let fine = matches!(target, Some((v, p)) if p == t && !v.contains(t));
+                *ok &= fine;
+            }
+            i = j;
+        }
+    }
+    slots.into_iter().filter(|(_, ok)| *ok).map(|(x, _)| x).collect()
+}
+
 #[derive(Default)]
 struct Func<'a> {
+    /// slots kept as two slots of one word (`%a` and `%a.hi`)
+    split: HashSet<&'a str>,
     /// the two words of each `%V` register
     pair: HashMap<&'a str, (String, String)>,
     /// registers that are one word of a `%V`
@@ -98,6 +147,7 @@ struct Func<'a> {
 
 impl<'a> Func<'a> {
     fn clear(&mut self) {
+        self.split.clear();
         self.pair.clear();
         self.alias.clear();
         self.temps = 0;
@@ -177,6 +227,7 @@ impl<'a> Func<'a> {
         }
         out.push_str(&head[close..]);
         out.push('\n');
+        self.split = split_slots(body);
         for &line in &body[1..] {
             let s = line.trim();
             if s.ends_with(':') || !s.contains("%V") {
@@ -197,8 +248,13 @@ impl<'a> Func<'a> {
     fn line(&mut self, s: &'a str, pair_fns: &HashSet<&str>, out: &mut String) -> Option<()> {
         if let Some(rest) = s.strip_prefix("store %V ") {
             let i = rest.rfind(", ptr ")?;
-            let p = self.word(token(&rest[i + 6..])?);
+            let target = token(&rest[i + 6..])?;
+            let p = self.word(target);
             let (t, b) = self.val(&rest[..i])?;
+            if self.split.contains(target) {
+                let _ = writeln!(out, "  store i64 {t}, ptr {p}\n  store i64 {b}, ptr {p}.hi");
+                return Some(());
+            }
             let q = self.temp();
             let _ = writeln!(out, "  store i64 {t}, ptr {p}\n  {q} = getelementptr inbounds i8, ptr {p}, i64 8\n  store i64 {b}, ptr {q}");
             return Some(());
@@ -213,6 +269,12 @@ impl<'a> Func<'a> {
         if s.starts_with("call ") {
             return self.call(None, &s[5..], pair_fns, out);
         }
+        if let Some((x, "alloca %V")) = s.split_once(" = ") {
+            if self.split.contains(x) {
+                let _ = writeln!(out, "  {x} = alloca i64\n  {x}.hi = alloca i64");
+                return Some(());
+            }
+        }
         if s.contains("alloca ") || s.contains("getelementptr ") {
             out.push_str("  ");
             self.sub(s, out);
@@ -222,7 +284,13 @@ impl<'a> Func<'a> {
         let (x, rhs) = s.split_once(" = ")?;
         let x = token(x)?;
         if let Some(p) = rhs.strip_prefix("load %V, ptr ") {
-            let p = self.word(token(p)?);
+            let source = token(p)?;
+            let p = self.word(source);
+            if self.split.contains(source) {
+                let _ = writeln!(out, "  {x}.t = load i64, ptr {p}\n  {x}.b = load i64, ptr {p}.hi");
+                self.pair.insert(x, (format!("{x}.t"), format!("{x}.b")));
+                return Some(());
+            }
             let _ = writeln!(out, "  {x}.t = load i64, ptr {p}\n  {x}.q = getelementptr inbounds i8, ptr {p}, i64 8\n  {x}.b = load i64, ptr {x}.q");
             self.pair.insert(x, (format!("{x}.t"), format!("{x}.b")));
             return Some(());
@@ -339,6 +407,20 @@ mod tests {
                   %r = call %V @nx_binop(i32 2, i64 5, i64 ptrtoint (ptr @lf.1 to i64), i64 %t, i32 2)\n  ret %V %r\n}\n";
         let out = scalarize(ir);
         assert!(out.contains("@nx_binop(i32 2, i64 5, i64 ptrtoint (ptr @lf.1 to i64), i64 %a.t, i32 2)"), "{out}");
+    }
+
+    #[test]
+    fn slots_only_loaded_and_stored_become_two() {
+        let ir = "define internal %V @f(ptr %tls) {\nentry:\n  %a = alloca %V\n  %b = alloca %V\n  \
+                  store %V { i64 2, i64 5 }, ptr %a\n  %r = load %V, ptr %a\n  store %V %r, ptr %b\n  \
+                  call void @g(ptr %b)\n  ret %V %r\n}\n";
+        let out = scalarize(ir);
+        assert!(out.contains("%a = alloca i64\n  %a.hi = alloca i64"), "{out}");
+        assert!(out.contains("store i64 2, ptr %a\n  store i64 5, ptr %a.hi"), "{out}");
+        assert!(out.contains("%r.t = load i64, ptr %a\n  %r.b = load i64, ptr %a.hi"), "{out}");
+        // %b is passed to a call: kept as one slot of two words
+        assert!(out.contains("%b = alloca %V"), "{out}");
+        assert!(out.contains("getelementptr inbounds i8, ptr %b, i64 8"), "{out}");
     }
 
     #[test]

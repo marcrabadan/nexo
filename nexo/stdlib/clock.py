@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import sys
 import re
 import time as _time
 from decimal import ROUND_HALF_EVEN, Decimal
@@ -69,6 +70,10 @@ def zone_info(zone: str):
     try:
         return zoneinfo.ZoneInfo(zone)
     except (zoneinfo.ZoneInfoNotFoundError, ValueError, OSError):
+        if sys.platform == "emscripten":
+            # in the playground (D176) the zones are the tzdata package,
+            # loaded the first time a program needs one
+            import tzdata  # noqa: F401
         return None
 
 

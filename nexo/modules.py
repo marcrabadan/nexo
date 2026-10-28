@@ -80,12 +80,24 @@ class ModuleValue:
         self.env = env
 
 
+@dataclasses.dataclass
+class Scope:
+    """Where the `use` lines of one file look: the folder of its modules,
+    the packages it may use ({import name: package}) and, for a file of a
+    package, the package's own import name (D174)."""
+    root: Path
+    packages: dict[str, str]
+    own: str | None = None
+
+
 class Linker:
     """Loads the modules a program uses, once each, and checks the names it
     takes from them."""
 
     def __init__(self, main_file: str):
+        from .packages import scope
         self.root = project_root(main_file)
+        self.scopes: list[Scope] = [Scope(self.root, scope(self.root, self.root / "nexo.toml"))]
         self.modules: dict[str, ModuleInfo] = {}
         # the modules being loaded, outermost first (the program is the first)
         main = Path(main_file).resolve()
@@ -94,6 +106,12 @@ class Linker:
         except ValueError:
             first = main.stem
         self.stack: list[str] = [first]
+        # the same modules by what they are, the file each one is: two
+        # modules may share a name, a module of the project and one of a
+        # package (D174)
+        self.stack_keys: list[str] = [str(main)]
+        # the key of the module each `use` line loads
+        self.use_keys: dict[int, str] = {}
         # the modules of the program itself, kept between the inputs of the
         # REPL (the compiler's REPL compiles the whole session)
         self.main_aliases: dict[str, ModuleInfo] = {}
@@ -122,12 +140,14 @@ class Linker:
         from .checker import Checker
         from .parser import parse
         name = s.name
-        if name in self.stack:
-            chain = self.stack[self.stack.index(name):] + [name]
+        path, scope = self.place(s)
+        key = str(path.resolve())
+        self.use_keys[id(s)] = key
+        if key in self.stack_keys:
+            chain = self.stack[self.stack_keys.index(key):] + [name]
             raise NexoError("module_cycle", s.span, chain=" -> ".join(chain))
-        if name in self.modules:
-            return self.modules[name]
-        path = self.root.joinpath(*name.split(".")).with_suffix(".nexo")
+        if key in self.modules:
+            return self.modules[key]
         file = shown_path(path)
         try:
             source = path.read_text(encoding="utf-8")
@@ -141,12 +161,38 @@ class Linker:
                 raise NexoError("policy_module", st.span, module=name)
         Checker().check(program)
         self.stack.append(name)
+        self.stack_keys.append(key)
+        self.scopes.append(scope)
         self.link(program)
+        self.scopes.pop()
+        self.stack_keys.pop()
         self.stack.pop()
         exports, private = exported(program)
         info = ModuleInfo(name, file, program, exports, private)
-        self.modules[name] = info
+        self.modules[key] = info
         return info
+
+
+    def place(self, s: A.Use) -> tuple[Path, Scope]:
+        """The file of a module and the scope of its own `use` lines: a
+        module of the project, or `pkg` (its lib.nexo) and `pkg.a.b` (its
+        a/b.nexo) of a package in .nexo/packages."""
+        from .packages import installed_dir, read_lock, scope
+        here = self.scopes[-1]
+        first, _, rest = s.name.partition(".")
+        if here.own is not None and first == here.own:
+            package = next(p for p in read_lock(self.root) if p.replace("-", "_") == first)
+        elif first in here.packages:
+            package = here.packages[first]
+            if package not in read_lock(self.root) or not installed_dir(self.root, package).is_dir():
+                raise NexoError("package_not_installed", s.span, name=package)
+        elif here.own is not None:
+            raise NexoError("package_use", s.span, name=s.name, package=here.own.replace("_", "-"), first=first)
+        else:
+            return self.root.joinpath(*s.name.split(".")).with_suffix(".nexo"), here
+        folder = installed_dir(self.root, package)
+        path = folder.joinpath(*(rest.split(".") if rest else ["lib"])).with_suffix(".nexo")
+        return path, Scope(folder, scope(self.root, folder / "nexo.toml"), first)
 
 
 class References:

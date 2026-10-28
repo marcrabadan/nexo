@@ -9,7 +9,7 @@
 //! each `payments.add` a name `"payments.add"` that the resolver looks up
 //! in the module's scope.
 
-use std::collections::{HashMap, HashSet};
+use crate::fast::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use nexo_diag::{suggest, Diagnostic, Span};
@@ -26,7 +26,7 @@ fn bound_name(name: &str, alias: &Option<String>) -> String {
     alias.clone().unwrap_or_else(|| name.rsplit('.').next().unwrap().to_string())
 }
 
-fn project_root(file: &str) -> PathBuf {
+pub fn project_root(file: &str) -> PathBuf {
     let path = Path::new(file);
     let start = path
         .canonicalize()
@@ -62,8 +62,8 @@ struct Info {
 
 /// (pub names, other top-level names) of a module.
 fn exported(program: &Program) -> (HashSet<String>, HashSet<String>) {
-    let mut exports = HashSet::new();
-    let mut private = HashSet::new();
+    let mut exports = HashSet::default();
+    let mut private = HashSet::default();
     for s in &program.body {
         match &s.kind {
             StmtKind::Fn(f) => {
@@ -90,11 +90,25 @@ fn exported(program: &Program) -> (HashSet<String>, HashSet<String>) {
     (exports, private)
 }
 
+/// Where the `use` lines of one file look: the folder of its modules, the
+/// packages it may use ({import name: package}) and, for a file of a
+/// package, the package's own import name (D174).
+struct Scope {
+    root: PathBuf,
+    packages: std::collections::BTreeMap<String, String>,
+    own: Option<String>,
+}
+
 pub struct Linker {
     root: PathBuf,
+    scopes: Vec<Scope>,
     modules: HashMap<String, Info>,
     /// the modules being loaded, outermost first (the program is the first)
     stack: Vec<String>,
+    /// the same modules by what they are, the file each one is: two
+    /// modules may share a name, one of the project and one of a package
+    /// (D174); `modules` and `Module` statements use this key
+    stack_keys: Vec<String>,
     next_id: u32,
     /// ids of the module files, in the order they were loaded
     pub files: Vec<u32>,
@@ -113,7 +127,17 @@ impl Linker {
             Ok(rel) => rel.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("."),
             Err(_) => main.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
         };
-        Linker { root, modules: HashMap::new(), stack: vec![first], next_id, files: Vec::new() }
+        let scope = Scope { root: root.clone(), packages: crate::packages::scope(&root.join("nexo.toml")), own: None };
+        let main_key = main.to_string_lossy().into_owned();
+        Linker {
+            root,
+            scopes: vec![scope],
+            modules: HashMap::default(),
+            stack: vec![first],
+            stack_keys: vec![main_key],
+            next_id,
+            files: Vec::new(),
+        }
     }
 
     /// Load the modules a file uses, check the names it takes from them
@@ -131,20 +155,21 @@ impl Linker {
         if let Some(d) = nested {
             return Err(d);
         }
-        let mut aliases: HashMap<String, (String, String)> = HashMap::new();
+        let mut aliases: HashMap<String, (String, String)> = HashMap::default();
         for s in program.body.iter_mut() {
             let StmtKind::Use { lang, name, alias, .. } = &s.kind else { continue };
             if !is_file_module(lang, name) {
                 continue;
             }
             let (name, alias) = (name.clone(), bound_name(name, alias));
-            self.load(&name, s.span)?;
+            let key = self.load(&name, s.span)?;
             if let Some((other, _)) = aliases.get(&alias) {
-                return Err(Diagnostic::new("module_name_taken", s.span).arg("name", alias).arg("module", other.clone()));
+                let other = self.modules[other].name.clone();
+                return Err(Diagnostic::new("module_name_taken", s.span).arg("name", alias).arg("module", other));
             }
-            let info = self.modules.get_mut(&name).unwrap();
-            aliases.insert(alias.clone(), (name.clone(), info.file.clone()));
-            s.kind = StmtKind::Module { name, alias, body: info.body.take() };
+            let info = self.modules.get_mut(&key).unwrap();
+            aliases.insert(alias.clone(), (key.clone(), info.file.clone()));
+            s.kind = StmtKind::Module { name: key, alias, body: info.body.take() };
         }
         if !aliases.is_empty() {
             let refs = References { aliases: &aliases, modules: &self.modules };
@@ -155,20 +180,18 @@ impl Linker {
         Ok(())
     }
 
-    fn load(&mut self, name: &str, span: Span) -> LResult<()> {
-        if let Some(i) = self.stack.iter().position(|m| m == name) {
+    /// Load a module (once) and give its key: the file it is.
+    fn load(&mut self, name: &str, span: Span) -> LResult<String> {
+        let (path, scope) = self.place(name, span)?;
+        let key = path.canonicalize().unwrap_or_else(|_| path.clone()).to_string_lossy().into_owned();
+        if let Some(i) = self.stack_keys.iter().position(|m| *m == key) {
             let mut chain = self.stack[i..].to_vec();
             chain.push(name.to_string());
             return Err(Diagnostic::new("module_cycle", span).arg("chain", chain.join(" -> ")));
         }
-        if self.modules.contains_key(name) {
-            return Ok(());
+        if self.modules.contains_key(&key) {
+            return Ok(key);
         }
-        let mut path = self.root.clone();
-        for part in name.split('.') {
-            path.push(part);
-        }
-        path.set_extension("nexo");
         let file = shown_path(&path);
         let Ok(source) = std::fs::read_to_string(&path) else {
             return Err(Diagnostic::new("module_not_found", span).arg("name", name.to_string()).arg("path", file));
@@ -184,13 +207,61 @@ impl Linker {
         crate::cheader::embed(&mut program, &folder);
         crate::checker::check(&program)?;
         self.stack.push(name.to_string());
+        self.stack_keys.push(key.clone());
+        self.scopes.push(scope);
         self.link(&mut program)?;
+        self.scopes.pop();
+        self.stack_keys.pop();
         self.stack.pop();
         let (exports, private) = exported(&program);
         // its tests only run when it is the file tested
         let body = program.body.into_iter().filter(|s| !matches!(s.kind, StmtKind::Test { .. })).collect();
-        self.modules.insert(name.to_string(), Info { name: name.to_string(), file, exports, private, body: Some(body) });
-        Ok(())
+        self.modules.insert(key.clone(), Info { name: name.to_string(), file, exports, private, body: Some(body) });
+        Ok(key)
+    }
+}
+
+impl Linker {
+    /// The file of a module and the scope of its own `use` lines: a module
+    /// of the project, or `pkg` (its lib.nexo) and `pkg.a.b` (its a/b.nexo)
+    /// of a package in .nexo/packages.
+    fn place(&self, name: &str, span: Span) -> LResult<(PathBuf, Scope)> {
+        use crate::packages::{import_name, installed_dir, read_lock, scope};
+        let here = self.scopes.last().unwrap();
+        let (first, rest) = match name.split_once('.') {
+            Some((f, r)) => (f, Some(r)),
+            None => (name, None),
+        };
+        let package = if here.own.as_deref() == Some(first) {
+            read_lock(&self.root).into_keys().find(|p| import_name(p) == first).unwrap_or_default()
+        } else if let Some(package) = here.packages.get(first) {
+            if !read_lock(&self.root).contains_key(package) || !installed_dir(&self.root, package).is_dir() {
+                return Err(Diagnostic::new("package_not_installed", span).arg("name", package.clone()));
+            }
+            package.clone()
+        } else if let Some(own) = &here.own {
+            return Err(Diagnostic::new("package_use", span)
+                .arg("name", name.to_string())
+                .arg("package", own.replace('_', "-"))
+                .arg("first", first.to_string()));
+        } else {
+            let mut path = here.root.clone();
+            for part in name.split('.') {
+                path.push(part);
+            }
+            path.set_extension("nexo");
+            let scope = Scope { root: here.root.clone(), packages: here.packages.clone(), own: None };
+            return Ok((path, scope));
+        };
+        let folder = installed_dir(&self.root, &package);
+        let mut path = folder.clone();
+        match rest {
+            Some(r) => r.split('.').for_each(|p| path.push(p)),
+            None => path.push("lib"),
+        }
+        path.set_extension("nexo");
+        let packages = scope(&folder.join("nexo.toml"));
+        Ok((path, Scope { root: folder, packages, own: Some(first.to_string()) }))
     }
 }
 
@@ -237,7 +308,7 @@ impl References<'_> {
     fn bind(&self, name: &str, span: Span) -> LResult<()> {
         match self.aliases.get(name) {
             Some((module, _)) => {
-                Err(Diagnostic::new("module_name_taken", span).arg("name", name.to_string()).arg("module", module.clone()))
+                Err(Diagnostic::new("module_name_taken", span).arg("name", name.to_string()).arg("module", self.modules[module].name.clone()))
             }
             None => Ok(()),
         }
@@ -333,7 +404,7 @@ impl References<'_> {
                             self.member(a, name, target.span)?;
                             return Err(Diagnostic::new("module_assign", target.span)
                                 .arg("name", format!("{a}.{name}"))
-                                .arg("module", module.clone())
+                                .arg("module", self.modules[module].name.clone())
                                 .arg("path", file.clone()));
                         }
                     }

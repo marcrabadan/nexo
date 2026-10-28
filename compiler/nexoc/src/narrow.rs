@@ -17,7 +17,7 @@
 //! field of such a record is certainly an int: storing a field checks its
 //! type.
 
-use std::collections::{HashMap, HashSet};
+use crate::fast::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::resolve::*;
@@ -25,6 +25,9 @@ use crate::resolve::*;
 pub struct Ints<'a> {
     res: &'a Resolution,
     int_bindings: HashSet<BindingId>,
+    /// variables certainly ints in the code being written now: the
+    /// element of a list of ints in the copy of a loop for such lists (D178)
+    pub local_ints: HashSet<BindingId>,
     /// functions defined once whose declared return type is int
     int_fns: HashSet<BindingId>,
     /// record types defined once (D84)
@@ -111,9 +114,9 @@ impl<'a> Ints<'a> {
             }
         }
         let mut ints =
-            Ints { res, int_bindings: HashSet::new(), int_fns, types: known_types.clone(), rec_bindings: HashMap::new() };
+            Ints { res, int_bindings: HashSet::default(), local_ints: HashSet::default(), int_fns, types: known_types.clone(), rec_bindings: HashMap::default() };
         // parameters declared int; plain variables assigned only ints
-        let mut candidates: HashSet<BindingId> = HashSet::new();
+        let mut candidates: HashSet<BindingId> = HashSet::default();
         for (b, binding) in res.bindings.iter().enumerate() {
             if binding.shared || binding.origin != Origin::Plain || defs[b].is_empty() {
                 continue;
@@ -127,7 +130,7 @@ impl<'a> Ints<'a> {
             candidates.insert(b);
         }
         // parameters: from their declaration
-        let mut params: HashSet<BindingId> = HashSet::new();
+        let mut params: HashSet<BindingId> = HashSet::default();
         let mut fns: Vec<&'a FnDef> = Vec::new();
         crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
             StmtKind::Fn(f) => fns.push(f),
@@ -295,7 +298,7 @@ impl<'a> Ints<'a> {
     fn int_name(&self, e: &Expr) -> bool {
         match self.res.names.get(&e.id) {
             Some(NameRes::Bindings { cands, row: None, .. }) if !cands.is_empty() => {
-                cands.iter().all(|b| self.int_bindings.contains(b))
+                cands.iter().all(|b| self.int_bindings.contains(b) || self.local_ints.contains(b))
             }
             _ => false,
         }

@@ -19,8 +19,8 @@ come from the scripts named, on the machine in `compiler/bench/goals.json`
 | --- | --- | --- |
 | No memory errors or data races | Met for the test suite | Every suite runs with the leak checker (`NEXO_LEAKCHECK=1`); the race rules of D80-D81 are compile errors. `compiler/scripts/fuzz.py` runs random programs in both phases and requires the same output with no crash or leak: 310 programs on three seeds, all identical, after it found and fixed one bug (an outer `var` assigned twice in a loop). `.github/workflows/fuzz.yml` runs 500 more every night. |
 | `unsafe` under control | Met (the tool); the registry needs people | `nexo audit` lists every use of C, the only unsafe code of this edition (D129). The public registry of reviewed packages does not exist yet. |
-| Explicit API permissions (`policy`) | Met for checked runtime APIs; OS isolation is separate | Both phases enforce allow/deny rules at instrumented Nexo API boundaries (D142). `tests/test_policy.py` checks path traversal, symlinks, modules, redirects and denied API operations; these are policy-boundary regressions, not proof of sandbox escape resistance. The policy alone does not stop DNS rebinding or direct native syscalls, and does not impose process-wide resource limits. Native integrations admitted in ordinary execution remain trusted. Optional Shield dependency/dispatch ceilings narrow checked API authority; worker/container isolation, hard limits and broker address pinning are separate, explicit mechanisms. Per-package registry enforcement remains pending. See [the security model](shield.md). |
-| Hardened supply chain | Met for builds; signing needs people | Two `nexo build --release` of the same code give the same binary byte for byte, from any directory, and the same CycloneDX SBOM (D128, `tests/test_phase6.py`). Signed packages need the registry. |
+| Explicit API permissions (`policy`) | Met for checked runtime APIs; OS isolation is separate | Both phases enforce allow/deny rules at instrumented Nexo API boundaries (D142). `tests/test_policy.py` checks path traversal, symlinks, modules, redirects and denied API operations; these are policy-boundary regressions, not proof of sandbox escape resistance. The policy alone does not stop DNS rebinding or direct native syscalls, and does not impose process-wide resource limits. Native integrations admitted in ordinary execution remain trusted. Optional Shield dependency/dispatch ceilings narrow checked API authority; worker/container isolation, hard limits and broker address pinning are separate, explicit mechanisms. Each package declares its permissions in `[permissions]` and `nexo add` rejects one that a policy of the project does not allow (D174, `tests/test_packages.py`); the registry that would enforce them for every published package is still to come. See [the security model](shield.md). |
+| Hardened supply chain | Met for builds and packages; the registry service needs people | Two `nexo build --release` of the same code give the same binary byte for byte, from any directory, and the same CycloneDX SBOM (D128, `tests/test_phase6.py`), which lists each package with its sha256. Packages are signed with Ed25519, their key and sha256 pinned in nexo.lock, and a package with a bad signature, changed bytes or another key is never installed; a critical advisory stops `nexo add` (D174, `tests/test_packages.py`). The official registry, and who may sign under a name, need people. |
 | Verifiable contracts | Met | `expect`, `ensure` and `old()` in both phases; the compiler proves what it can and checks the rest (D83). |
 | Cryptography without dangerous choices | Algorithms fixed; the audit needs people | Argon2id, AES-256-GCM and Ed25519 are fixed for edition 0.1 (D97). No external audit of `crypto` has been made. |
 
@@ -60,9 +60,9 @@ checks, since Nexo checks int overflow).
 
 | Goal | Value | Today | State |
 | --- | --- | --- | --- |
-| Performance on typical code | under 1.5× Rust's time | records 0.42×, strings 1.15×, hello 1.26×, loop 1.29×, parallel 1.39×, maps 1.45×, lists 1.57×, fib 1.70× | Not met (two of eight) |
+| Performance on typical code | under 1.5× Rust's time | records 0.27×, strings 1.20×, parallel 1.35×, hello 1.39×, maps 1.44×, lists 1.30×, loop 1.52×, fib 1.63× (goals.json, 2026-10-28) | Not met (two of eight; see below) |
 | Memory | under 1.3× Rust's RAM | 1.0× or less on seven benchmarks (strings 0.75×); lists 1.06× | Met |
-| Compilation | 100,000 lines in under 10 s in development mode | 10.6 s (9.3 to 13 s as the shared machine is loaded; 20% less than before D158, measured side by side) | Not met, by little |
+| Compilation | 100,000 lines in under 10 s in development mode | 9.4 s in goals.json; 7.5 to 9.7 s in repeated runs on the same machine (it was 9.8 to 13 s before D180) | Met, with a thin margin on a loaded machine |
 | Program start-up | under 20 ms | 1.9 ms | Met |
 | First useful program | under 1 hour for someone with no experience | not measured | Needs people (user studies) |
 | From idea to production | one project for code, infrastructure and deployment | `examples/deploy` holds an app, its tests, its infrastructure on four clouds and its pipeline in one file (phase 5) | Met |
@@ -109,6 +109,20 @@ depth and checks for a failure after it returning (Rust's has none of
 the three); lists spends it adding to a list through the runtime, one call
 per element. Compiling stays near 10 s because the compiler writes all
 the IR before clang starts (3.3 s) and clang reads it as text.
+
+**The third round (D177-D180).** A pure int function no longer checks the
+failure flag after its calls nor reads the thread state (fib's code now
+saves as many registers as Rust's); lists of ints are added to and read
+in loops with fewer steps; a development build compiles a third fewer
+functions for the program of goals.py. The time of fib, with the same
+instructions, moves between 1.37× and 1.75× with where its function
+lands in the file: placed 16 bytes after a 64-byte boundary it takes
+1.44×, at the boundary 1.65× (measured by moving it alone). Aligning
+every block that is jumped to, which LLVM can do, made fib 1.44× and
+lists 1.64×, so it is not used. The machine is shared: the same Rust
+program takes from 15 to 19 ms from one run to the next, which moves
+lists between 1.30× and 1.73×. A ratio under 1.5× that holds on any
+layout needs fib to do less per call than counting its depth.
 
 ## What is needed to finish phase 6
 

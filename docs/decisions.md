@@ -2763,3 +2763,185 @@ answers, agents and their tools, usage and budgets as the others:
 - tests/test_ai_providers.py runs each against a local server that
   answers as the provider's documentation says, and checks Bedrock's
   signature with its own implementation of SigV4.
+
+**D174. Packages: `nexo add`, `nexo publish`, nexo.lock.** Section 13
+gives the rules of packages (a `nexo.toml` and a `nexo.lock`, SemVer,
+deterministic resolution, one version of each package, signed packages,
+`nexo audit` on install, declared permissions against the `policy`) and
+one example, `stripe-payments = "^2.1"` used as `use stripe_payments`.
+It does not say how a registry is laid out, how a package is signed or
+named, nor how a package is made. In both phases (nexo/packages.py,
+compiler/nexoc/src/packages.rs), with the same files byte for byte:
+- A registry is static files, a folder or an HTTPS address (HTTP only
+  for this machine, as D172): `NAME/index.json` lists the versions, each
+  with the sha256 of its archive, the Ed25519 key that signed it, the
+  signature of the archive's bytes and the registry's `advisories`;
+  `NAME/NAME-VERSION.json` is the archive, `{"files": {...}}`, JSON with
+  sorted keys and no spaces. The official registry is
+  `https://registry.nexo-lang.org` (provisional, as the playground of
+  section 26); `NEXO_REGISTRY` names another, for mirrors and tests.
+- A package name is lowercase letters and digits in words joined by `-`;
+  `use` writes it with `_`, as section 13 does. The `-`/`_` pair is the
+  only mapping, so `_` is not part of a package name.
+- A requirement is `^MAJOR.MINOR` or `^MAJOR.MINOR.PATCH`, Cargo's caret:
+  `^1.2` is 1.2.0 up to 2.0.0, `^0.3` stays in 0.3. It is the only form
+  (section 1); `nexo add name` writes `^` and the newest version's
+  major and minor.
+- Resolution: each package takes the highest version that every
+  requirement on it in the graph accepts, or its version in nexo.lock
+  while that still does, so a new compatible version never moves a
+  locked project. No version for both requirements is
+  `package_conflict`, which names who asks for what (rule 5).
+- Signatures: the first `nexo add` of a package records its key in
+  nexo.lock; a later version signed by another key is `package_key`,
+  an archive whose bytes are not those signed is `package_signature`,
+  and the locked version published again with other bytes is
+  `package_hash`. Nothing is written when any check fails. Who may
+  publish under a name, and the review of its keys, is the registry's
+  (D133).
+- nexo.lock holds name, version, sha256, key and dependencies of each
+  package, sorted by name. `nexo add` without a name installs exactly
+  what it says, into `.nexo/packages/NAME/` (a clone of the project).
+- `use pkg` loads the package's `lib.nexo` and `use pkg.a.b` its
+  `a/b.nexo`. A file can use the packages its own nexo.toml lists, not
+  the dependencies of those (as Cargo); inside a package, its own
+  modules are named after it (`use money_format.round`), and any other
+  name is `package_use`. Packages follow the program's policy at run
+  time, as modules do (D142).
+- Permissions: `[permissions]` in a package's nexo.toml uses the kinds of
+  D142, `net = ["api.stripe.com"]`, `shell = true`. `nexo add` prints
+  them and rejects the package (`package_permissions`, with the `allow`
+  line that would let it) when a program of the project with a policy
+  does not allow one.
+- Audit on install: an advisory of severity `critical` stops `nexo add`
+  unless `--accept-risk`; others are printed as warnings. Advisories are
+  written by the registry, not signed by the author, so they can only
+  stop an install.
+- `nexo publish` signs the project with the user's key (made on first use
+  in the configuration folder of D106, `publish.key`, mode 0600) and
+  writes it to a registry folder; it takes nexo.toml, README.md and the
+  `.nexo` files, never a hidden folder. A published version never
+  changes (`publish_exists`). Publishing to the official registry is
+  done through it, so an address is `publish_registry`.
+- `nexo build --release` lists each package of nexo.lock in the SBOM of
+  D128 (`pkg:nexo/NAME@VERSION` with its sha256).
+- D148's "no dependencies until the registry" no longer holds; the
+  registry service itself, its review of `unsafe` and its signing keys,
+  still needs people (D133).
+
+**D175. `nexo build --target web`.** Section 14 lists `--target web`,
+`mobile`, `linux-arm` and `arduino` and says no more. This edition has
+`web`, WebAssembly for a page; the others are `build_target`.
+- A program is compiled for wasm32-wasip1 and linked with the runtime
+  built for it (compiler/scripts/web_runtime.sh writes target/web/: the
+  runtime, Rust's WASI C library and the rust-lld that matches it).
+  `-o app` writes `app.wasm`, `app.js` (the WASI functions a page gives
+  it, compiler/nexoc/src/web.js) and `app.html`, which runs it and shows
+  its output; `input()` reads with the browser's prompt. The page is
+  served over HTTP, as any page that fetches a .wasm.
+- WASI, not wasm32-unknown-unknown: the runtime is Rust's std, which
+  needs a C library and a WASI host; a page is that host through
+  web.js, Node through its own WASI.
+- What compiled code and the runtime share is the same on 32 bits: the
+  lengths of NameRef and LitFloat and the counts the runtime's exported
+  functions take are u64 (not usize), and the compiled code reaches the
+  `env` of a closure by the struct's own layout, not by a byte offset.
+  Native programs are unchanged.
+- A page has no threads, processes, sockets or dynamic libraries: `spawn`
+  and `run` stop with `web_unavailable`, `use c` and `use python` find
+  no library; `parallel` runs its tasks one after another, which gives
+  the same output (D79). TLS for HTTP has no system certificates. The
+  time zones are inside the runtime (packed from the build machine's
+  zoneinfo by runtime/build.rs), and files are those the host gives.
+- compiler/scripts/web_conformance.py runs the conformance suite and
+  the examples as WebAssembly under Node: 127 of 131, the other four
+  (spawn and run) listed in compiler/tests/web_skip.txt.
+
+**D176. The playground.** Section 26: "write and run Nexo in the browser,
+compiled to WebAssembly, with a shareable link". A page cannot run clang,
+so the playground (docs/playground.html) runs phase 0, which gives the
+same output as phase 1 (D67-D75), on Pyodide, CPython compiled to
+WebAssembly, in a worker that Stop ends. It runs the program, its tests
+or `nexo fmt`; the link holds the program (`#code=` and base64url of its
+UTF-8), so no server keeps anything. The examples of examples/ and their
+`data/` are there to open. docs/playground/build.py writes the
+interpreter's bundle (nexo.zip) and examples.json, the same bytes for
+the same sources (tests/test_playground.py). Pyodide is the only file the
+site loads from another site (cdn.jsdelivr.net, v0.27.7, Python 3.12),
+which the page says; Pyodide's sqlite3, tzdata and cryptography are
+downloaded the first time a program needs them, so phase 0 imports
+sqlite3 when a database is first used, not at start.
+
+**D177. Pure int functions do not check after each call.** An int-only
+function (D84, D159) looked at the failure flag after every call it
+made, and compared its depth with a limit in its thread's state (D156).
+Two changes, neither of which shows in a program's output:
+- A *pure* int function computes only with ints: its body has no loop,
+  `try` or other statement than `return`, `if`, `expect`, `ensure` and
+  assignments to its own variables, and calls only int-only functions of
+  the top level (no builtins, methods or values), and no test fakes a
+  function of the program. After a call to another int-only function it
+  does not look at the failure flag. While a failure is on its way the
+  limit is 0, so every int-only function goes to its slow path at its
+  entry and returns from there: after a failure such a body runs its
+  remaining statements, whose calls all return at once, and nothing it
+  does can be seen. The first failure is the one reported: a failure
+  raised while another is on its way is dropped (`10 // 0` on the 0 a
+  failed call gave). An endless recursion that calls itself twice still
+  stops at the depth limit at once (tests/test_phase6.py).
+- The limit is one global (`nx_limit`): the largest depth, or 0 while
+  some thread has a failure on its way or runs a `try within`. The slow
+  path tells apart this thread's failure, its depth, its clock and the
+  others', so the code of a thread with nothing to do there goes on.
+  Reading a global does not need the thread state in a register.
+fib(32) went from 2.15× to 1.36× Rust's time on the machine of this
+change (from 28 to 17.6 ms; 1.70× in goals.json on another day).
+NEXO_TIMES=1 writes how long each step of a build takes to stderr.
+
+**D178. Lists of ints in loops.** Four changes to compiled code, none of
+which shows in a program's output:
+- `list.add(n)` with an int the compiler knows calls `nx_list_add_int`,
+  which pushes onto a list of ints this place alone owns in a dozen
+  instructions; growing the list, another kind of list or a shared one
+  take the usual path. The arguments of the method's usual call are
+  written only on that path.
+- A comprehension over a list of ints read in place (D137) runs a
+  second copy of its body in which the element is certainly an int, so
+  its arithmetic and comparisons need no type checks; an element the
+  compiler knows is an int goes onto the result with `nx_list_push_int`.
+  Any other iterable runs the usual copy.
+- The length of a list being iterated is read once (the list cannot
+  change while it is iterated), and the element that `nx_iter_next`
+  writes goes through a slot of its own, so the element itself stays in
+  registers.
+The `lists` benchmark went from about 30 to 24.5 ms (Rust: 16 to 19 ms
+on the machine of this change, which moves the ratio between 1.4× and
+1.6×); its first part, adding 2,000,000 ints, from 17 to 14.6 ms.
+
+**D179. Pure int functions do not read the thread state.** After D177 a
+pure int function (only ints, only calls to int-only functions) still
+read the thread state in its slow path and wrote its depth there before
+calling the runtime, so the state's pointer stayed in a register across
+its calls. Its slow path now calls `nx_enter_slow_pure(depth)`, which
+writes the depth and answers whether the function fails, and it leaves
+the depth alone before the runtime calls it makes, which only record a
+failure and run no other code. The pointer is then unused and LLVM
+removes it: fib(32) saves a register and went from about 1.48× to 1.43×
+Rust's time, the same with the function at any alignment (the layout of
+the code had moved the ratio between 1.37× and 1.50×).
+
+**D180. A development build of a large program does less.** Changes to
+the compiler, none of which changes the program it gives:
+- The usual entry of an int-only function of the top level (the one
+  that takes values, D84) and the function's value are made at the end
+  of the program, and only when something needs them: a call with other
+  arguments, a closure, the function read as a value. Otherwise its
+  definition stores a mark that it is defined, which is all a call
+  checks (D29). A test run, the REPL and a program with fakes keep both
+  as before. In the program of goals.py this leaves out a third of the
+  functions clang compiles.
+- In development mode a slot that is only loaded and stored is two
+  slots of one word (scalar.rs, D141), so no address is computed.
+- The lexer and the code generator read the settings of Shield from the
+  environment once, not at every identifier and function, and the maps
+  of the compiler use a cheaper hasher (nexoc/src/fast.rs).
