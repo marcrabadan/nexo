@@ -16,26 +16,86 @@ one way to do each thing.
 - Commands **Nexo: Run file**, **Nexo: Run tests of file** and **Nexo:
   Restart language server**.
 
-The extension runs `nexo lsp`, the language server built into the `nexo`
-command. Both implementations have it: the compiler
-(`compiler/target/release/nexo`) and the phase 0 interpreter
-(`.venv/bin/nexo`).
+## Installing Nexo
+
+The extension carries no language server of its own. It runs `nexo lsp`,
+the server built into the `nexo` command (D87), and the two run commands
+run that same command in a terminal. **Nothing works until `nexo` is
+installed and `nexo.path` points at it.**
+
+Nexo is not packaged yet, so it is installed from a clone of the
+repository. Either implementation serves: both answer the same requests
+with the same words.
+
+```sh
+git clone https://github.com/marcrabadan/nexo.git
+cd nexo
+```
+
+### Phase 0, the interpreter
+
+Needs Python 3.12 or newer.
+
+```sh
+python3.12 -m venv .venv
+.venv/bin/pip install -e '.[dev]'
+```
+
+The command is then `<clone>/.venv/bin/nexo`.
+
+### Phase 1, the compiler
+
+Needs a Rust toolchain (`cargo`, 1.89 or newer) and `clang`.
+
+```sh
+cd compiler
+cargo build --release
+```
+
+The command is then `<clone>/compiler/target/release/nexo`.
+
+### Pointing the extension at it
+
+Open Settings (`Cmd`/`Ctrl` `,`), search for `nexo.path` and write the
+absolute path of the command, or put its directory on your `PATH` and
+leave the default `nexo`. In `settings.json`:
+
+```json
+{
+  "nexo.path": "/Users/you/nexo/compiler/target/release/nexo"
+}
+```
+
+The value is run as it is written: VS Code does not expand
+`${workspaceFolder}`, `~` or environment variables inside it, so write
+the path in full. Saving the setting restarts the server, so there is
+nothing else to do; **Nexo: Restart language server** restarts it after
+rebuilding the compiler.
+
+If the path is wrong, the extension says so once, naming the command it
+tried: *Nexo: cannot start "... lsp". Set nexo.path to the nexo
+command.* The server's own log is in the **Output** panel, channel
+**Nexo**.
 
 ## Settings
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `nexo.path` | `nexo` | the `nexo` command to run |
+| `nexo.path` | `nexo` | the `nexo` command to run: a name on the `PATH`, or the absolute path of `compiler/target/release/nexo` or `.venv/bin/nexo` |
 
 ## Building the extension
 
 ```sh
 cd editors/vscode
 npm install
-npm test           # grammar and activation tests
-npx vsce package   # nexo-0.3.0.vsix
-code --install-extension nexo-0.3.0.vsix
+npm test           # grammar, activation and language server tests
+npx vsce package   # nexo-0.4.0.vsix
+code --install-extension nexo-0.4.0.vsix
 ```
+
+`npm test` talks to a real server over the protocol. It takes the one in
+`$NEXO`, else the compiler's debug build, else `.venv/bin/nexo`, and says
+which it used; with none of them it skips that test.
 
 Publishing to the Marketplace needs a publisher account and a token:
 `npx vsce publish -p <token>` (see the main README).
