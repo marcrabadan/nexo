@@ -303,3 +303,18 @@ def test_a_release_build_lists_its_packages_in_the_sbom(tmp_path):
     assert package["hashes"] == [{"alg": "SHA-256", "content": sha}]
     files = {c["name"] for c in sbom["components"] if c["type"] == "file"}
     assert {".nexo/packages/money-format/lib.nexo", ".nexo/packages/money-format/round.nexo"} <= files
+
+
+@pytest.mark.parametrize("phase", PHASES, ids=IDS)
+def test_a_package_and_a_module_of_the_project_with_the_same_name(phase, tmp_path):
+    # each `use` loads what its own file means by the name, in any order
+    e = Env(phase, tmp_path)
+    e.package("base", "1.0.0", {"lib.nexo": 'pub fn who() -> str:\n    return "package base"\n'})
+    e.package("tax", "1.0.0", {"lib.nexo": 'use base\npub fn who() -> str:\n    return "tax uses " + base.who()\n'},
+              deps={"base": "^1.0"})
+    root = e.project()
+    assert e.nexo(["add", "tax"], root)[0] == 0
+    (root / "base.nexo").write_text('pub fn who() -> str:\n    return "local base"\n')
+    for order in ("use base\nuse tax\n", "use tax\nuse base\n"):
+        (root / "main.nexo").write_text(order + "print(base.who())\nprint(tax.who())\n")
+        assert e.nexo(["main.nexo"], root) == (0, "local base\ntax uses package base\n"), order

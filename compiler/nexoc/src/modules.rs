@@ -105,6 +105,10 @@ pub struct Linker {
     modules: HashMap<String, Info>,
     /// the modules being loaded, outermost first (the program is the first)
     stack: Vec<String>,
+    /// the same modules by what they are, the file each one is: two
+    /// modules may share a name, one of the project and one of a package
+    /// (D174); `modules` and `Module` statements use this key
+    stack_keys: Vec<String>,
     next_id: u32,
     /// ids of the module files, in the order they were loaded
     pub files: Vec<u32>,
@@ -124,7 +128,16 @@ impl Linker {
             Err(_) => main.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
         };
         let scope = Scope { root: root.clone(), packages: crate::packages::scope(&root.join("nexo.toml")), own: None };
-        Linker { root, scopes: vec![scope], modules: HashMap::default(), stack: vec![first], next_id, files: Vec::new() }
+        let main_key = main.to_string_lossy().into_owned();
+        Linker {
+            root,
+            scopes: vec![scope],
+            modules: HashMap::default(),
+            stack: vec![first],
+            stack_keys: vec![main_key],
+            next_id,
+            files: Vec::new(),
+        }
     }
 
     /// Load the modules a file uses, check the names it takes from them
@@ -149,13 +162,14 @@ impl Linker {
                 continue;
             }
             let (name, alias) = (name.clone(), bound_name(name, alias));
-            self.load(&name, s.span)?;
+            let key = self.load(&name, s.span)?;
             if let Some((other, _)) = aliases.get(&alias) {
-                return Err(Diagnostic::new("module_name_taken", s.span).arg("name", alias).arg("module", other.clone()));
+                let other = self.modules[other].name.clone();
+                return Err(Diagnostic::new("module_name_taken", s.span).arg("name", alias).arg("module", other));
             }
-            let info = self.modules.get_mut(&name).unwrap();
-            aliases.insert(alias.clone(), (name.clone(), info.file.clone()));
-            s.kind = StmtKind::Module { name, alias, body: info.body.take() };
+            let info = self.modules.get_mut(&key).unwrap();
+            aliases.insert(alias.clone(), (key.clone(), info.file.clone()));
+            s.kind = StmtKind::Module { name: key, alias, body: info.body.take() };
         }
         if !aliases.is_empty() {
             let refs = References { aliases: &aliases, modules: &self.modules };
@@ -166,16 +180,18 @@ impl Linker {
         Ok(())
     }
 
-    fn load(&mut self, name: &str, span: Span) -> LResult<()> {
-        if let Some(i) = self.stack.iter().position(|m| m == name) {
+    /// Load a module (once) and give its key: the file it is.
+    fn load(&mut self, name: &str, span: Span) -> LResult<String> {
+        let (path, scope) = self.place(name, span)?;
+        let key = path.canonicalize().unwrap_or_else(|_| path.clone()).to_string_lossy().into_owned();
+        if let Some(i) = self.stack_keys.iter().position(|m| *m == key) {
             let mut chain = self.stack[i..].to_vec();
             chain.push(name.to_string());
             return Err(Diagnostic::new("module_cycle", span).arg("chain", chain.join(" -> ")));
         }
-        if self.modules.contains_key(name) {
-            return Ok(());
+        if self.modules.contains_key(&key) {
+            return Ok(key);
         }
-        let (path, scope) = self.place(name, span)?;
         let file = shown_path(&path);
         let Ok(source) = std::fs::read_to_string(&path) else {
             return Err(Diagnostic::new("module_not_found", span).arg("name", name.to_string()).arg("path", file));
@@ -191,15 +207,17 @@ impl Linker {
         crate::cheader::embed(&mut program, &folder);
         crate::checker::check(&program)?;
         self.stack.push(name.to_string());
+        self.stack_keys.push(key.clone());
         self.scopes.push(scope);
         self.link(&mut program)?;
         self.scopes.pop();
+        self.stack_keys.pop();
         self.stack.pop();
         let (exports, private) = exported(&program);
         // its tests only run when it is the file tested
         let body = program.body.into_iter().filter(|s| !matches!(s.kind, StmtKind::Test { .. })).collect();
-        self.modules.insert(name.to_string(), Info { name: name.to_string(), file, exports, private, body: Some(body) });
-        Ok(())
+        self.modules.insert(key.clone(), Info { name: name.to_string(), file, exports, private, body: Some(body) });
+        Ok(key)
     }
 }
 
@@ -290,7 +308,7 @@ impl References<'_> {
     fn bind(&self, name: &str, span: Span) -> LResult<()> {
         match self.aliases.get(name) {
             Some((module, _)) => {
-                Err(Diagnostic::new("module_name_taken", span).arg("name", name.to_string()).arg("module", module.clone()))
+                Err(Diagnostic::new("module_name_taken", span).arg("name", name.to_string()).arg("module", self.modules[module].name.clone()))
             }
             None => Ok(()),
         }
@@ -386,7 +404,7 @@ impl References<'_> {
                             self.member(a, name, target.span)?;
                             return Err(Diagnostic::new("module_assign", target.span)
                                 .arg("name", format!("{a}.{name}"))
-                                .arg("module", module.clone())
+                                .arg("module", self.modules[module].name.clone())
                                 .arg("path", file.clone()));
                         }
                     }

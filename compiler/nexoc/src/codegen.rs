@@ -1947,6 +1947,17 @@ impl<'a> Gen<'a> {
     }
 
     fn compile_frame(&mut self, frame: FrameId, src: FrameSrc<'a>, name: &str) -> GResult<()> {
+        // what a loop copy knows about its element holds only in that copy:
+        // a frame is compiled once and shared by every copy (D178)
+        let local_ints = self.ints.as_mut().map(|i| std::mem::take(&mut i.local_ints));
+        let r = self.compile_frame_inner(frame, src, name);
+        if let (Some(i), Some(l)) = (self.ints.as_mut(), local_ints) {
+            i.local_ints = l;
+        }
+        r
+    }
+
+    fn compile_frame_inner(&mut self, frame: FrameId, src: FrameSrc<'a>, name: &str) -> GResult<()> {
         let int_params = std::mem::take(&mut self.int_params);
         let mut st = self.new_fn_state(frame);
         st.pure = int_params && matches!(src, FrameSrc::Fn(f) if self.pure_fns.contains(&f.id));
