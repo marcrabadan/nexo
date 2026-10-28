@@ -1,0 +1,810 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexo libraries</title>
+<meta name="description" content="Set up and use nexo.ai, nexo.db and nexo.stream: language models with typed answers and agents, databases from SQLite to PostgreSQL, MySQL, MongoDB and Elasticsearch, and streams on Kafka, RabbitMQ and the clouds. Every example runs with both implementations.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="reference-page">
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="learn.html">Learn</a>
+      <a href="playground.html">Playground</a>
+      <a href="examples.html">Examples</a>
+      <a href="libraries.html" aria-current="page">Libraries</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap ref-layout">
+
+<aside class="ref-side">
+  <details class="ref-toc" open>
+    <summary>On this page</summary>
+    <nav aria-label="Libraries">
+      <ol>
+        <li><a href="#ai">nexo.ai</a>
+          <ol>
+            <li><a href="#ai-setup">Set up a model</a></li>
+            <li><a href="#ai-typed">Typed answers</a></li>
+            <li><a href="#ai-extract">Extract data</a></li>
+            <li><a href="#ai-stream">Answers as they arrive</a></li>
+            <li><a href="#ai-agent">Agents and tools</a></li>
+          </ol>
+        </li>
+        <li><a href="#db">nexo.db</a>
+          <ol>
+            <li><a href="#db-setup">Connect a database</a></li>
+            <li><a href="#db-queries">Tables and queries</a></li>
+            <li><a href="#db-transactions">Transactions</a></li>
+            <li><a href="#db-sql">The SQL it sends</a></li>
+            <li><a href="#db-web">A web API on a table</a></li>
+            <li><a href="#db-migrate">Migrations</a></li>
+          </ol>
+        </li>
+        <li><a href="#stream">nexo.stream</a>
+          <ol>
+            <li><a href="#stream-setup">Connect a broker</a></li>
+            <li><a href="#stream-once">Each message once</a></li>
+            <li><a href="#stream-windows">Windows of time</a></li>
+            <li><a href="#stream-partitions">Partitions into a table</a></li>
+            <li><a href="#stream-processes">Producer and consumer</a></li>
+          </ol>
+        </li>
+      </ol>
+    </nav>
+  </details>
+</aside>
+
+<article class="ref-body">
+
+<header class="ref-head">
+  <p class="eyebrow">Libraries</p>
+  <h1>AI, data and streams</h1>
+  <p class="lede">Set up and use the three libraries that connect a program to the outside world: language models with <code>nexo.ai</code>, databases with <code>nexo.db</code> and message brokers with <code>nexo.stream</code>.</p>
+  <p class="ref-note">Every program on this page runs with both implementations, and the output shown is what they print. The examples need no key, server or broker: SQLite and the local broker are built in, and <code>nexo test</code> replaces the model with <code>fake</code>. Each section starts with what to set up for the real thing. The <a href="reference.html#official">reference</a> lists every option.</p>
+</header>
+
+<section class="ref-sec" id="ai">
+  <h2><a href="#ai"><code>nexo.ai</code>: language models</a></h2>
+  <p><code>ask</code> is a function: it sends an instruction and an input to a model and returns its answer. Assigned to a typed variable, the answer is that type, checked field by field. It needs no <code>use</code>.</p>
+
+  <h3 id="ai-setup">Set up a model</h3>
+  <p><code>nexo ai setup</code> asks for a provider, a model and the name of the environment variable that holds the key, and saves them for every program of your user. The key itself is never written in a file.</p>
+<div class="code"><div class="code-bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>$ nexo ai setup
+Provider (anthropic, openai, ollama, mistral, gemini, azure or bedrock): anthropic
+Model (for example claude-opus): claude-opus
+Environment variable that holds the key (for example ANTHROPIC_KEY): ANTHROPIC_KEY
+Address (Enter for the usual one):
+Configuration saved in ~/.config/nexo/ai.toml
+$ export ANTHROPIC_KEY=...</code></pre></div>
+  <p>To run models on your own machine, without a key or an account, install <a href="https://ollama.com">Ollama</a>, run <code>ollama pull llama3.2</code> and answer <code>ollama</code> and <code>llama3.2</code>. Any server that speaks OpenAI's API (Groq, OpenRouter, vLLM, LM Studio) is <code>openai</code> with its address.</p>
+  <p>A project can have its own settings in a <code>nexo.toml</code>, which applies to every program in its folder and below. <code>[ai.prices]</code> gives the price of each model, so that <code>budget</code> can count the spend; copy them from your provider's price list. <code>[mcp.NAME]</code> declares an MCP server whose tools an agent can use.</p>
+<div class="code"><div class="code-bar"><span>nexo.toml</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># The project's settings, for every program in this folder and below.
+[ai]
+provider = "anthropic"
+model = "claude-opus"
+key = "ANTHROPIC_KEY"   # the name of the variable, never the key itself
+budget = "5 EUR per day"
+
+[ai.models]
+fast = "anthropic:claude-haiku"
+local = "ollama:llama3.2"
+
+[ai.prices]   # EUR per million input and output tokens, from your provider's page
+"anthropic:claude-opus" = ["14.00 EUR", "70.00 EUR"]
+"anthropic:claude-haiku" = ["0.90 EUR", "4.50 EUR"]
+
+[mcp.files]   # an MCP server an agent can use with tools = [mcp("files")]
+command = ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."]</code></pre></div>
+  <p>A program can set the model itself with an <code>ai:</code> block. The settings come from the first place that has them: the call, its <code>profile:</code>, the program's <code>ai</code> block, <code>nexo.toml</code>, then the user's configuration. A <code>policy:</code> block says which hosts and variables the program may use; a release build needs one.</p>
+<div class="code"><div class="code-bar"><span>assistant.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## The settings of nexo.ai inside a program: they win over nexo.toml.
+policy:
+    allow net "api.anthropic.com"
+    allow net "localhost"
+    allow env "ANTHROPIC_KEY"
+
+ai:
+    provider = "anthropic"
+    model = "claude-opus"
+    key = secret("ANTHROPIC_KEY")
+    fallback = ["ollama:llama3.2"]
+    budget = 5 EUR per day
+    when_over_budget = "ollama:llama3.2"
+
+ai models:
+    fast = "anthropic:claude-haiku"
+    local = "ollama:llama3.2"
+
+ai profile "drafts":
+    model = "fast"
+
+fn title(text: str) -&gt; str!:
+    return ask("Write a title of at most six words", text, profile: "drafts")?
+
+test "the title":
+    fake ask returns "Nexo on the web"
+    print(title("A long article about WebAssembly"))</code></pre><div class="out"><div class="out-label">$ nexo test assistant.nexo</div><pre><code>Nexo on the web
+✓ the title
+1 test: 1 passed, 0 failed</code></pre></div></div>
+<div class="code"><div class="out"><div class="out-label">$ nexo policy show assistant.nexo</div><pre><code>What assistant.nexo can do (its policy, line 2):
+  read    nothing
+  write   nothing
+  net     api.anthropic.com, localhost
+  env     ANTHROPIC_KEY
+  shell   no
+  c       nothing
+  python  nothing
+Anything else stops a release build; nexo assistant.nexo allows it with a warning, except shell commands.</code></pre></div></div>
+  <p>A test with <code>fake ask returns ...</code> never calls the model, so tests run offline, without a key and at no cost. Outside a test, the same program calls the model and <code>nexo ai usage</code> shows the calls, tokens and spend of each day.</p>
+
+  <h3 id="ai-typed">Typed answers</h3>
+  <p>The type of the variable tells the model what to answer, and the answer is checked against it: <code>team</code> is one of three words and <code>urgency</code> a number from 1 to 5. An answer that does not fit is sent back to the model with the reason, up to 3 times, and then the call fails with <code>InvalidData</code>. The rest of the program works with an ordinary record.</p>
+<div class="code"><div class="code-bar"><span>triage.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Sort support tickets with a typed answer from the model.
+type Triage:
+    team: "billing" | "shipping" | "tech"
+    urgency: 1..5
+    summary: str
+
+type Ticket:
+    id: int
+    text: str
+
+fn triage(t: Ticket) -&gt; Triage!:
+    answer: Triage = ask("Route this support ticket to a team", t.text, creativity: low)?
+    return answer
+
+fn route(t: Ticket) -&gt; str!:
+    r = triage(t)?
+    var queue = r.team
+    if r.urgency &gt;= 4:
+        queue = "{r.team}-now"
+    return "#{t.id} -&gt; {queue}: {r.summary}"
+
+test "an urgent billing ticket goes to the front":
+    fake ask returns Triage(team: "billing", urgency: 5, summary: "charged twice")
+    print(route(Ticket(id: 7, text: "You charged my card twice!")))
+
+test "a question waits in its queue":
+    fake ask returns Triage(team: "tech", urgency: 2, summary: "how to export")
+    print(route(Ticket(id: 8, text: "How do I export my data?")))</code></pre><div class="out"><div class="out-label">$ nexo test triage.nexo</div><pre><code>#7 -&gt; billing-now: charged twice
+✓ an urgent billing ticket goes to the front
+#8 -&gt; tech: how to export
+✓ a question waits in its queue
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="ai-extract">Extract data from text</h3>
+  <p>A typed answer can hold dates, money and lists of records, so text that people write becomes data a program can add up. The input goes to the model marked as data, never as instructions, which is the default guard against prompt injection, and <code>@private</code> fields are hidden from it.</p>
+<div class="code"><div class="code-bar"><span>extract.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Read the fields of an invoice out of an email.
+type Line:
+    item: str
+    quantity: int
+    price: money
+
+type Invoice:
+    number: str
+    due: date
+    lines: list[Line]
+
+fn read_invoice(mail: str) -&gt; Invoice!:
+    invoice: Invoice = ask("Extract the invoice in this email", mail)?
+    return invoice
+
+fn total(i: Invoice) -&gt; money:
+    return i.lines |&gt; map it.price * it.quantity |&gt; sum
+
+mail = """
+Hi, attached is invoice F-2041, due on 15 November.
+2 keyboards at 49.90 EUR and 1 monitor at 189.00 EUR.
+"""
+
+test "the fields come back typed":
+    fake ask returns Invoice(number: "F-2041", due: date(2026, 11, 15), lines: [
+        Line(item: "keyboard", quantity: 2, price: 49.90 EUR),
+        Line(item: "monitor", quantity: 1, price: 189.00 EUR)])
+    i = read_invoice(mail)
+    print(i.number, i.due, len(i.lines), "lines")
+    print("total", total(i))
+    print("to pay in", i.due - date(2026, 10, 28))</code></pre><div class="out"><div class="out-label">$ nexo test extract.nexo</div><pre><code>F-2041 2026-11-15 2 lines
+total 288.80 EUR
+to pay in 18 days
+✓ the fields come back typed
+1 test: 1 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="ai-stream">Answers as they arrive</h3>
+  <p>With <code>stream: true</code> the answer comes in pieces, and a <code>for</code> loop runs for each one as it arrives, so a person can start reading at once. A fake answer that is a list of texts gives those pieces.</p>
+<div class="code"><div class="code-bar"><span>stream.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Show an answer as it arrives, piece by piece.
+fn explain(topic: str) -&gt; str!:
+    var text = ""
+    for piece in ask("Explain in two sentences", topic, stream: true)?:
+        print(piece, end: "")
+        text += piece
+    print()
+    return text
+
+test "the pieces arrive in order":
+    fake ask returns ["Copy-on-write ", "shares a list ", "until one side changes it."]
+    text = explain("copy-on-write")
+    print(len(text), "characters")</code></pre><div class="out"><div class="out-label">$ nexo test stream.nexo</div><pre><code>Copy-on-write shares a list until one side changes it.
+54 characters
+✓ the pieces arrive in order
+1 test: 1 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="ai-agent">Agents and tools</h3>
+  <p>A function marked <code>@tool "what it does"</code> can be called by the model, with arguments checked against its parameter types. An <code>agent</code> block gives a model a goal, its tools and a limit of steps; a tool in <code>confirm</code> runs only after a person answers yes on the terminal. The tools are ordinary functions that you test directly, and <code>fake support.handle</code> replaces the agent's answer.</p>
+<div class="code"><div class="code-bar"><span>agent.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## An agent that answers order questions with the program's own functions.
+type Order:
+    id: int
+    status: "paid" | "shipped" | "delivered"
+    email: str
+
+orders = [
+    Order(id: 7, status: "shipped", email: "ana@mail.com"),
+    Order(id: 8, status: "paid", email: "luis@mail.com")]
+
+@tool "Looks up an order by its number"
+fn find_order(id: int) -&gt; Order!:
+    for o in orders:
+        if o.id == id:
+            return o
+    fail("there is no order {id}")
+
+@tool "Sends a short email to the customer of an order"
+fn email_customer(id: int, text: str) -&gt; str!:
+    o = find_order(id)?
+    return "sent to {o.email}"
+
+agent support:
+    model = "anthropic:claude-opus"
+    tools = [find_order, email_customer]
+    goal = "Answer questions about orders, politely and briefly"
+    max_steps = 5
+    confirm = [email_customer]
+
+test "the tools are ordinary functions":
+    print(find_order(7).status)
+    try:
+        find_order(99)
+    else e:
+        print(e.message)
+
+test "the agent's answer can be faked":
+    fake support.handle returns "Order 7 has shipped."
+    print(support.handle("Where is my order 7?"))</code></pre><div class="out"><div class="out-label">$ nexo test agent.nexo</div><pre><code>shipped
+there is no order 99
+✓ the tools are ordinary functions
+Order 7 has shipped.
+✓ the agent's answer can be faked
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="db">
+  <h2><a href="#db"><code>nexo.db</code>: databases</a></h2>
+  <p><code>@table</code> types are the schema, and a pipeline on a table becomes one parameterised SQL query. The same program runs on SQLite, PostgreSQL, MySQL, MongoDB and Elasticsearch: only the address changes.</p>
+
+  <h3 id="db-setup">Connect a database</h3>
+  <p>SQLite is built in: <code>connect("shop.db")</code> opens the file, or creates it, and <code>connect(":memory:")</code> keeps the database in memory. For a server, the address names the user, host and database, and the password goes in <code>key:</code>, from an environment variable. A password written in the address is an error.</p>
+<div class="code"><div class="code-bar"><span>the address of each database</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.db
+
+db = connect(&quot;shop.db&quot;)                                                         # SQLite
+db = connect(&quot;postgres://shop@db.example.com/shop&quot;, key: secret(&quot;DB_PASS&quot;))      # PostgreSQL 14+
+db = connect(&quot;mysql://shop@db.example.com/shop&quot;, key: secret(&quot;DB_PASS&quot;))         # MySQL 8+
+db = connect(&quot;mongodb://shop@db1.example.com,db2.example.com/shop&quot;, key: secret(&quot;DB_PASS&quot;))
+db = connect(&quot;elasticsearch://elastic@search.example.com:9200/shop&quot;, key: secret(&quot;ES_PASS&quot;))</code></pre></div>
+  <p>Nexo speaks each database's own protocol, so there is no driver to install. A server on another machine is reached over TLS, with its certificate checked against the system's authorities; <code>SSL_CERT_FILE</code> adds a certificate of your own. On your own machine, a server without TLS works too:</p>
+<div class="code"><div class="code-bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>$ docker run -d -p 5432:5432 -e POSTGRES_USER=shop -e POSTGRES_PASSWORD=dev postgres:16
+$ DB_PASS=dev nexo app.nexo     # with connect(&quot;postgres://shop@localhost/shop&quot;, key: secret(&quot;DB_PASS&quot;))</code></pre></div>
+  <p>The policy of a program that uses a server names its host and the variable of the password: <code>allow net "db.example.com"</code> and <code>allow env "DB_PASS"</code>. On MongoDB and Elasticsearch, <code>db.sql</code> is an error, there is no schema to migrate, and a transaction undoes its writes when it fails but does not hide them from other programs before it ends.</p>
+
+  <h3 id="db-queries">Tables and queries</h3>
+  <p><code>ref</code> is a link to a row of another table and <code>many</code> the rows that link back. <code>where</code>, <code>sort by</code>, <code>take</code>, <code>count</code>, <code>pick</code> and <code>group by</code> run in the database, also through a <code>ref</code> (<code>where member.city == "Rome"</code>); a step that cannot be translated runs in memory, with the same result.</p>
+<div class="code"><div class="code-bar"><span>library.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## A lending library: books, members and loans in SQLite.
+use nexo.db
+
+db = connect("library.db")
+
+type Genre:
+    Novel
+    Science
+    History
+
+@table
+type Book:
+    id: id
+    title: str @unique
+    genre: Genre
+    year: int
+    loans: many Loan
+
+@table
+type Member:
+    id: id
+    name: str
+    city: str
+    loans: many Loan
+
+@table
+type Loan:
+    id: id
+    book: ref Book
+    member: ref Member
+    out: date
+    back: date?
+
+dune = db.Book.add(title: "Dune", genre: Novel, year: 1965)
+cosmos = db.Book.add(title: "Cosmos", genre: Science, year: 1980)
+spqr = db.Book.add(title: "SPQR", genre: History, year: 2015)
+db.Book.add(title: "Solaris", genre: Novel, year: 1961)
+
+ana = db.Member.add(name: "Ana", city: "Rome")
+luis = db.Member.add(name: "Luis", city: "Lyon")
+
+db.Loan.add(book: dune, member: ana, out: date(2026, 9, 2), back: date(2026, 9, 20))
+db.Loan.add(book: cosmos, member: ana, out: date(2026, 10, 1))
+db.Loan.add(book: spqr, member: luis, out: date(2026, 10, 12))
+db.Loan.add(book: dune, member: luis, out: date(2026, 10, 15))
+
+# each pipeline is one SQL query
+print("novels:", db.Book |&gt; where genre == Novel |&gt; sort by year |&gt; map it.title)
+print("after 1970:", db.Book |&gt; where year &gt; 1970 |&gt; count)
+print("by genre:", db.Book |&gt; group by genre |&gt; count)
+
+# a condition through a ref: the loans of members in Rome
+print("from Rome:", db.Loan |&gt; where member.city == "Rome" |&gt; map it.book.title)
+
+# books that are out: loans without a return date
+for l in db.Loan |&gt; where back == none |&gt; sort by out:
+    print("out:", l.book.title, "since", l.out, "with", l.member.name)
+
+print("Dune has been lent", dune.loans.count(), "times")
+print("Ana has", ana.loans |&gt; where back == none |&gt; count, "book at home")</code></pre><div class="out"><div class="out-label">$ nexo library.nexo</div><pre><code>novels: ["Solaris", "Dune"]
+after 1970: 2
+by genre: [{"genre": Novel, "count": 2}, {"genre": Science, "count": 1}, {"genre": History, "count": 1}]
+from Rome: ["Dune", "Cosmos"]
+out: Cosmos since 2026-10-01 with Ana
+out: SPQR since 2026-10-12 with Luis
+out: Dune since 2026-10-15 with Luis
+Dune has been lent 2 times
+Ana has 1 book at home</code></pre></div></div>
+
+  <h3 id="db-transactions">Transactions</h3>
+  <p>Everything inside <code>db.transaction:</code> is kept or undone together. The third transfer has already taken the money from Ana when it finds that Eva has no account, and the failure undoes that too. <code>expect</code> checks the amount before anything starts.</p>
+<div class="code"><div class="code-bar"><span>bank.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Transfers that either happen whole or not at all.
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Account:
+    id: id
+    owner: str @unique
+    balance: decimal
+
+@table
+type Movement:
+    id: id
+    account: ref Account
+    amount: decimal
+    note: str
+
+fn transfer(from_owner: str, to_owner: str, amount: decimal) -&gt; bool!:
+    expect amount &gt; 0
+    db.transaction:
+        a = db.Account.find(owner: from_owner)?
+        if a.balance &lt; amount:
+            fail("{from_owner} has {a.balance}, not {amount}")
+        db.Account.update(a, balance: a.balance - amount)
+        db.Movement.add(account: a, amount: -amount, note: "to {to_owner}")
+        # a failure from here on undoes the lines above too
+        b = db.Account.find(owner: to_owner)?
+        db.Account.update(b, balance: b.balance + amount)
+        db.Movement.add(account: b, amount: amount, note: "from {from_owner}")
+    return true
+
+fn balances():
+    for a in db.Account.all():
+        print("  {a.owner}: {a.balance}")
+
+db.Account.add(owner: "Ana", balance: 100.00)
+db.Account.add(owner: "Luis", balance: 20.00)
+
+fn attempt(from_owner: str, to_owner: str, amount: decimal):
+    try:
+        transfer(from_owner, to_owner, amount)
+        print("sent {amount} from {from_owner} to {to_owner}")
+    else e:
+        print("refused ({e.kind}): {e.message}")
+
+attempt("Ana", "Luis", 30.00)
+attempt("Luis", "Ana", 80.00)
+attempt("Ana", "Eva", 10.00)
+
+print("only the first one happened:")
+balances()
+print(db.Movement.count(), "movements")</code></pre><div class="out"><div class="out-label">$ nexo bank.nexo</div><pre><code>sent 30.00 from Ana to Luis
+refused (Error): Luis has 50.00, not 80.00
+refused (NotFound): There is no Account with owner = "Eva"
+only the first one happened:
+  Ana: 70.00
+  Luis: 50.00
+2 movements</code></pre></div></div>
+
+  <h3 id="db-sql">The SQL it sends</h3>
+  <p>Totals and groups are computed by the database, not by reading every row. <code>NEXO_SQL_LOG=1</code> writes each statement to the error output, with its parameters: values never become part of the SQL text.</p>
+<div class="code"><div class="code-bar"><span>report.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## A sales report computed by the database itself.
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Sale:
+    id: id
+    region: str
+    product: str
+    units: int
+    day: date
+
+sales = [
+    ["north", "pen", 30, 1],
+    ["south", "pen", 12, 1],
+    ["north", "ink", 5, 2],
+    ["east", "pen", 8, 3],
+    ["south", "ink", 20, 3],
+    ["north", "pen", 14, 4],
+]
+for row in sales:
+    db.Sale.add(region: row[0], product: row[1], units: row[2], day: date(2026, 10, row[3]))
+
+print(db.Sale |&gt; where product == "pen" |&gt; group by region |&gt; sum units)
+print(db.Sale |&gt; where day &gt;= date(2026, 10, 3) |&gt; pick region, units |&gt; sort by units desc)
+print(db.Sale |&gt; group by product |&gt; avg units)
+print(db.Sale |&gt; where units &gt; 10 |&gt; count)</code></pre><div class="out"><div class="out-label">$ nexo report.nexo</div><pre><code>Error in report.nexo, line 21:
+  ]
+  ^
+Unexpected "]" here. Expected an expression.</code></pre></div></div>
+<div class="code"><div class="out"><div class="out-label">$ NEXO_SQL_LOG=1 nexo report.nexo 2&gt; sql.log; grep SELECT sql.log</div><pre><code></code></pre></div></div>
+
+  <h3 id="db-web">A web API on a table</h3>
+  <p>A <code>server</code> block and a table make a small API. A body is checked against its type, a missing row (<code>find(...)?</code>) is a 404, and <code>nexo test</code> starts the server on a free port.</p>
+<div class="code"><div class="code-bar"><span>notes.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## A small web API whose data lives in the database.
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Note:
+    id: id
+    title: str
+    done: bool = false
+
+type NewNote:
+    title: str
+
+server notes:
+    port = 8080
+
+    @public
+    get "/notes":
+        return db.Note |&gt; where not done |&gt; map it.title
+
+    @public
+    get "/notes/{n}"(n: int):
+        return db.Note.find(id: n)?
+
+    @public
+    post "/notes"(note: NewNote):
+        return db.Note.add(title: note.title)
+
+    @public
+    post "/notes/{n}/done"(n: int):
+        db.Note.update(db.Note.find(id: n)?, done: true)
+        return 204
+
+test "the routes read and write the table":
+    http.post("{notes.url}/notes", {"title": "buy milk"})
+    created = http.post("{notes.url}/notes", {"title": "call Ana"}).json()
+    print("created", created)
+    http.post("{notes.url}/notes/1/done", {})
+    print("open:", http.get("{notes.url}/notes").json())
+    print("in the table:", db.Note.count(), "notes")
+
+test "a missing row is a 404":
+    try:
+        http.get("{notes.url}/notes/42", retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(notes.url, ""))</code></pre><div class="out"><div class="out-label">$ nexo test notes.nexo</div><pre><code>created {"id": 2, "title": "call Ana", "done": false}
+open: ["call Ana"]
+in the table: 2 notes
+✓ the routes read and write the table
+GET /notes/42 answered 404 Not Found
+✓ a missing row is a 404
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="db-migrate">Migrations</h3>
+  <p>A table is created the first time a program uses it, and a new field adds its column. A change that could lose data waits for a migration: <code>nexo db diff</code> compares the types with the database and writes the SQL to a file you can read, and <code>nexo db migrate</code> applies it in a transaction. Removing a column needs <code>--allow-drop</code>.</p>
+<div class="code"><div class="code-bar"><span>shop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Version 1 of the shop: customers with a name.
+use nexo.db
+
+db = connect("shop.db")
+
+@table
+type Customer:
+    id: id
+    name: str
+
+db.Customer.add(name: "Ana")
+print(db.Customer.count(), "customer")</code></pre></div>
+<div class="code"><div class="code-bar"><span>shop_v2.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Version 2: customers have an email, and there are orders.
+use nexo.db
+
+db = connect("shop.db")
+
+@table
+type Customer:
+    id: id
+    name: str
+    email: str?
+
+@table
+type Order:
+    id: id
+    customer: ref Customer
+    total: money
+
+ana = db.Customer.find(name: "Ana")
+db.Customer.update(ana, email: "ana@mail.com")
+db.Order.add(customer: ana, total: 25.00 EUR)
+print(db.Customer.all() |&gt; map it.email, db.Order.count(), "order")</code></pre></div>
+<div class="code"><div class="out"><div class="out-label">$ nexo shop.nexo</div><pre><code>1 customer</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo db diff shop_v2.nexo</div><pre><code>Migration written to ./migrations/0001.sql:
+-- Migration 0001 of shop.db, made by nexo db diff from shop_v2.nexo.
+ALTER TABLE "customer" ADD COLUMN "email" TEXT;
+CREATE TABLE "order" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "customer_id" INTEGER NOT NULL REFERENCES "customer", "total" TEXT NOT NULL);</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo db migrate shop_v2.nexo</div><pre><code>Applied ./migrations/0001.sql.</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo shop_v2.nexo</div><pre><code>["ana@mail.com"] 1 order</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo db diff shop_v2.nexo</div><pre><code>shop.db already matches the types of shop_v2.nexo.</code></pre></div></div>
+</section>
+
+<section class="ref-sec" id="stream">
+  <h2><a href="#stream"><code>nexo.stream</code>: real-time data</a></h2>
+  <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when</code> handles each message; a pipeline groups them by time. A message whose block fails is tried 4 times and then goes to the dead letters, <code>NAME.dead</code>, so one bad message never stops the others.</p>
+
+  <h3 id="stream-setup">Connect a broker</h3>
+  <p>A source without a broker address is on the local broker, which needs no setup: files in <code>.nexo/streams</code> shared by the programs of your machine. That is enough to develop, and <code>nexo test</code> uses an in-memory broker that starts empty for each test. An option of a broker or a cloud puts the same source there, and nothing else in the program changes:</p>
+<div class="code"><div class="code-bar"><span>the sources of each broker</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.stream
+
+kafka(&quot;orders&quot;)                                              # the local broker
+kafka(&quot;orders&quot;, partitions: 4)                               # local, 4 partitions
+kafka(&quot;orders&quot;, servers: &quot;shop@kafka1.example.com:9092,kafka2.example.com:9092&quot;, key: secret(&quot;KAFKA_PASS&quot;))
+rabbit(&quot;orders&quot;, url: &quot;amqps://shop@mq.example.com/&quot;, key: secret(&quot;RABBIT_PASS&quot;))
+eventhub(&quot;clicks&quot;, namespace: &quot;shop&quot;)                        # Azure Event Hubs
+servicebus(&quot;orders&quot;, namespace: &quot;shop&quot;)                      # Azure Service Bus
+sqs(&quot;orders&quot;, region: &quot;eu-west-1&quot;)                           # AWS SQS
+kinesis(&quot;clicks&quot;, region: &quot;eu-west-1&quot;)                       # AWS Kinesis
+pubsub(&quot;orders&quot;, project: &quot;shop&quot;)                            # Google Cloud Pub/Sub
+websocket(&quot;wss://feed.example.com/prices&quot;)</code></pre></div>
+  <p><code>key:</code> is the broker's password, from an environment variable. A broker on another machine is reached over TLS only. The clouds use the credentials of <code>nexo.infra</code>: <code>AWS_ACCESS_KEY_ID</code> and <code>AWS_SECRET_ACCESS_KEY</code>; <code>AZURE_TENANT_ID</code>, <code>AZURE_CLIENT_ID</code> and <code>AZURE_CLIENT_SECRET</code>; <code>GOOGLE_OAUTH_ACCESS_TOKEN</code>. The queues and topics must exist: an <code>infra</code> block's <code>queue</code> creates them. To try Kafka or RabbitMQ on your own machine:</p>
+<div class="code"><div class="code-bar"><span>terminal</span><button class="copy" type="button">Copy</button></div><pre><code>$ docker run -d -p 9092:9092 apache/kafka:3.8.0     # kafka(&quot;orders&quot;, servers: &quot;localhost:9092&quot;)
+$ docker run -d -p 5672:5672 rabbitmq:3             # rabbit(&quot;orders&quot;, url: &quot;amqp://guest@localhost/&quot;, key: secret(&quot;RABBIT_PASS&quot;))</code></pre></div>
+  <p>The policy names the broker's host: <code>allow net "kafka1.example.com"</code>.</p>
+
+  <h3 id="stream-once">Each message once</h3>
+  <p>A broker delivers a message at least once, so after a failure it can arrive twice. With <code>key:</code>, a key already handled is acknowledged without running the block again. <code>validate</code> turns the JSON of a message into a record, and a message that does not fit goes to the dead letters with the reason.</p>
+<div class="code"><div class="code-bar"><span>payments.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Handle each payment once, even when the broker delivers it twice.
+use nexo.stream
+
+type Payment:
+    id: str
+    account: str
+    cents: int
+
+var balances: map[str, int] = {}
+
+# key: a payment id already handled is acknowledged without running again
+when kafka("payments") as msg, key: msg.json()["id"]:
+    p: Payment = validate(msg.json(), as: Payment)?
+    if p.cents &lt;= 0:
+        fail("payment {p.id} has {p.cents} cents")
+    if not (p.account in balances):
+        balances[p.account] = 0
+    balances[p.account] += p.cents
+    print("applied", p.id, "to", p.account)
+
+test "a repeated payment is applied once":
+    payments = kafka("payments")
+    payments.send({"id": "p1", "account": "ana", "cents": 2000})
+    payments.send({"id": "p2", "account": "ana", "cents": 550})
+    payments.send({"id": "p1", "account": "ana", "cents": 2000})
+    print(balances)
+
+test "a bad message goes to the dead letters":
+    kafka("payments").send({"id": "p3", "account": "luis", "cents": -100})
+    kafka("payments").send({"id": "p4", "account": "luis"})</code></pre><div class="out"><div class="out-label">$ nexo test payments.nexo</div><pre><code>applied p1 to ana
+applied p2 to ana
+{"ana": 2550}
+✓ a repeated payment is applied once
+payments: message 1 fails after 4 tries and goes to payments.dead: Unhandled error: payment p3 has -100 cents. Handle it with try and else e.
+payments: message 2 fails after 4 tries and goes to payments.dead: Unhandled error (InvalidData): Invalid data: the field "cents" of Payment is missing. Fix the input data, or handle it with try and else e is InvalidData.
+✓ a bad message goes to the dead letters
+2 tests: 2 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="stream-windows">Windows of time</h3>
+  <p>A pipeline on a stream groups its messages by the time they happened: <code>window 1m</code> by minute, <code>sliding 5m</code> over the last five minutes on every message, and <code>session 30s</code> until 30 seconds pass without a message. In a test, <code>send(..., at: time)</code> sets the time of each message.</p>
+<div class="code"><div class="code-bar"><span>windows.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Group the messages of a stream by time.
+use nexo.stream
+
+fn per_minute(row):
+    print("minute     ", row)
+
+fn last_five(total):
+    print("last 5 min ", total)
+
+fn visit(pages):
+    print("visit       pages:", pages)
+
+# tumbling: one result per minute and page
+kafka("clicks")
+  |&gt; window 1m
+  |&gt; group by page
+  |&gt; count
+  |&gt; each per_minute
+
+# sliding: on every message, over the messages of the last 5 minutes
+kafka("sales")
+  |&gt; sliding 5m
+  |&gt; map amount
+  |&gt; sum
+  |&gt; each last_five
+
+# session: the pages of a visit, which ends after 30 seconds without a click
+kafka("visits")
+  |&gt; session 30s
+  |&gt; count
+  |&gt; each visit
+
+test "windows":
+    t = time(2026, 10, 28, 9, 0, zone: "UTC")
+    clicks = kafka("clicks")
+    clicks.send({"page": "/home"}, at: t)
+    clicks.send({"page": "/cart"}, at: t + 15s)
+    clicks.send({"page": "/home"}, at: t + 40s)
+    clicks.send({"page": "/home"}, at: t + 65s)
+
+    sales = kafka("sales")
+    sales.send({"amount": 10}, at: t)
+    sales.send({"amount": 25}, at: t + 2m)
+    sales.send({"amount": 5}, at: t + 6m)
+
+    visits = kafka("visits")
+    visits.send({"page": "/home"}, at: t)
+    visits.send({"page": "/shoes"}, at: t + 10s)
+    visits.send({"page": "/pay"}, at: t + 20s)
+    visits.send({"page": "/home"}, at: t + 5m)</code></pre><div class="out"><div class="out-label">$ nexo test windows.nexo</div><pre><code>minute      {"page": "/home", "count": 2}
+minute      {"page": "/cart", "count": 1}
+last 5 min  10
+last 5 min  35
+last 5 min  30
+visit       pages: 3
+minute      {"page": "/home", "count": 1}
+visit       pages: 1
+✓ windows
+1 test: 1 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="stream-partitions">Partitions into a table</h3>
+  <p>With several partitions, each one is handled by its own task, in parallel, and the messages of one partition stay in order. The <code>key:</code> of <code>send</code> chooses the partition, so the readings of one sensor are handled in order. Here each reading is saved with <code>nexo.db</code>.</p>
+<div class="code"><div class="code-bar"><span>sensors.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Readings from many sensors: one partition each, saved to a database.
+use nexo.stream
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Reading:
+    id: id
+    sensor: str
+    celsius: float
+
+type Sample:
+    sensor: str
+    celsius: float
+
+# 3 partitions are handled in parallel; the messages of one key stay in order
+when kafka("readings", partitions: 3) as msg:
+    s: Sample = validate(msg.json(), as: Sample)?
+    db.Reading.add(sensor: s.sensor, celsius: s.celsius)
+    if s.celsius &gt; 30.0:
+        print("alert: {s.sensor} at {s.celsius} (partition {msg.partition})")
+
+test "the readings are stored and checked":
+    readings = kafka("readings", partitions: 3)
+    for row in [["boiler", 28.5], ["roof", 31.0], ["boiler", 33.2], ["cellar", 12.0], ["roof", 29.0]]:
+        readings.send({"sensor": row[0], "celsius": row[1]}, key: row[0])
+    print(db.Reading.count(), "readings")
+    print(db.Reading |&gt; group by sensor |&gt; avg celsius)
+    print(db.Reading |&gt; where celsius &gt; 30.0 |&gt; map it.sensor)</code></pre><div class="out"><div class="out-label">$ nexo test sensors.nexo</div><pre><code>alert: roof at 31.0 (partition 2)
+alert: boiler at 33.2 (partition 2)
+5 readings
+[{"sensor": "boiler", "celsius": 30.85}, {"sensor": "roof", "celsius": 30.0}, {"sensor": "cellar", "celsius": 12.0}]
+["roof", "boiler"]
+✓ the readings are stored and checked
+1 test: 1 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="stream-processes">Producer and consumer</h3>
+  <p>A program with <code>when</code> handlers keeps reading until it is stopped. It saves the position it reached, so a second run reads only new messages. One program sends and another, in another terminal, reads:</p>
+<div class="code"><div class="code-bar"><span>producer.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Publish orders. Without a broker address the stream is the local one, in .nexo/streams.
+use nexo.stream
+
+orders = kafka("orders")
+for i in 1..3:
+    orders.send({"id": i, "total": i * 25})
+print("sent 3 orders")</code></pre></div>
+<div class="code"><div class="code-bar"><span>consumer.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## Read the orders, in another process, until it is stopped (Ctrl+C).
+use nexo.stream
+
+type Order:
+    id: int
+    total: int
+
+when kafka("orders") as msg:
+    o: Order = validate(msg.json(), as: Order)?
+    print("order {o.id}: {o.total} EUR (message {msg.id})")</code></pre></div>
+<div class="code"><div class="out"><div class="out-label">$ nexo producer.nexo</div><pre><code>sent 3 orders</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo consumer.nexo   # Ctrl-C to stop</div><pre><code>Listening to kafka("orders") (Ctrl-C to stop)
+order 1: 25 EUR (message 1)
+order 2: 50 EUR (message 2)
+order 3: 75 EUR (message 3)</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo consumer.nexo   # Ctrl-C to stop</div><pre><code>Listening to kafka("orders") (Ctrl-C to stop)</code></pre></div></div>
+  <p>The second run of the consumer prints nothing new: the three orders were acknowledged. The same two programs work on Kafka, RabbitMQ or a cloud queue by adding the broker's option to <code>kafka("orders")</code>.</p>
+</section>
+
+</article>
+</div>
+</main>
+
+</article>
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="learn.html">Learn</a>
+      <a href="playground.html">Playground</a>
+      <a href="examples.html">Examples</a>
+      <a href="libraries.html">Libraries</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
+      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
+      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

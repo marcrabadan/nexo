@@ -1,0 +1,21 @@
+## Version 2: customers have an email, and there are orders.
+use nexo.db
+
+db = connect("shop.db")
+
+@table
+type Customer:
+    id: id
+    name: str
+    email: str?
+
+@table
+type Order:
+    id: id
+    customer: ref Customer
+    total: money
+
+ana = db.Customer.find(name: "Ana")
+db.Customer.update(ana, email: "ana@mail.com")
+db.Order.add(customer: ana, total: 25.00 EUR)
+print(db.Customer.all() |> map it.email, db.Order.count(), "order")

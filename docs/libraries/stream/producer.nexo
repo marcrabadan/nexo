@@ -1,0 +1,7 @@
+## Publish orders. Without a broker address the stream is the local one, in .nexo/streams.
+use nexo.stream
+
+orders = kafka("orders")
+for i in 1..3:
+    orders.send({"id": i, "total": i * 25})
+print("sent 3 orders")

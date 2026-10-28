@@ -1,0 +1,13 @@
+## Show an answer as it arrives, piece by piece.
+fn explain(topic: str) -> str!:
+    var text = ""
+    for piece in ask("Explain in two sentences", topic, stream: true)?:
+        print(piece, end: "")
+        text += piece
+    print()
+    return text
+
+test "the pieces arrive in order":
+    fake ask returns ["Copy-on-write ", "shares a list ", "until one side changes it."]
+    text = explain("copy-on-write")
+    print(len(text), "characters")

@@ -130,6 +130,8 @@ docs/guarantees.md the state of each guarantee of the specification (phase 6)
 docs/index.html, reference.html  the GitHub Pages site; reference.html is built from
                   docs/reference/ (page.tmpl + the programs it runs) by
                   docs/reference/build.py
+docs/libraries.html  nexo.ai, nexo.db and nexo.stream: setup and examples, built from
+                  docs/libraries/ by docs/libraries/build.py (tests/test_libraries_page.py)
 docs/playground.html  the playground (D176): phase 0 on Pyodide in a worker
                   (assets/playground*.js); docs/playground/build.py writes
                   its nexo.zip and examples.json

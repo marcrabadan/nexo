@@ -1,0 +1,12 @@
+## Version 1 of the shop: customers with a name.
+use nexo.db
+
+db = connect("shop.db")
+
+@table
+type Customer:
+    id: id
+    name: str
+
+db.Customer.add(name: "Ana")
+print(db.Customer.count(), "customer")

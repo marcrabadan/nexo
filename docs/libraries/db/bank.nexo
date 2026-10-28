@@ -1,0 +1,53 @@
+## Transfers that either happen whole or not at all.
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Account:
+    id: id
+    owner: str @unique
+    balance: decimal
+
+@table
+type Movement:
+    id: id
+    account: ref Account
+    amount: decimal
+    note: str
+
+fn transfer(from_owner: str, to_owner: str, amount: decimal) -> bool!:
+    expect amount > 0
+    db.transaction:
+        a = db.Account.find(owner: from_owner)?
+        if a.balance < amount:
+            fail("{from_owner} has {a.balance}, not {amount}")
+        db.Account.update(a, balance: a.balance - amount)
+        db.Movement.add(account: a, amount: -amount, note: "to {to_owner}")
+        # a failure from here on undoes the lines above too
+        b = db.Account.find(owner: to_owner)?
+        db.Account.update(b, balance: b.balance + amount)
+        db.Movement.add(account: b, amount: amount, note: "from {from_owner}")
+    return true
+
+fn balances():
+    for a in db.Account.all():
+        print("  {a.owner}: {a.balance}")
+
+db.Account.add(owner: "Ana", balance: 100.00)
+db.Account.add(owner: "Luis", balance: 20.00)
+
+fn attempt(from_owner: str, to_owner: str, amount: decimal):
+    try:
+        transfer(from_owner, to_owner, amount)
+        print("sent {amount} from {from_owner} to {to_owner}")
+    else e:
+        print("refused ({e.kind}): {e.message}")
+
+attempt("Ana", "Luis", 30.00)
+attempt("Luis", "Ana", 80.00)
+attempt("Ana", "Eva", 10.00)
+
+print("only the first one happened:")
+balances()
+print(db.Movement.count(), "movements")

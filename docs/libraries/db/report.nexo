@@ -1,0 +1,28 @@
+## A sales report computed by the database itself.
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Sale:
+    id: id
+    region: str
+    product: str
+    units: int
+    day: date
+
+sales = [
+    ["north", "pen", 30, 1],
+    ["south", "pen", 12, 1],
+    ["north", "ink", 5, 2],
+    ["east", "pen", 8, 3],
+    ["south", "ink", 20, 3],
+    ["north", "pen", 14, 4],
+]
+for row in sales:
+    db.Sale.add(region: row[0], product: row[1], units: row[2], day: date(2026, 10, row[3]))
+
+print(db.Sale |> where product == "pen" |> group by region |> sum units)
+print(db.Sale |> where day >= date(2026, 10, 3) |> pick region, units |> sort by units desc)
+print(db.Sale |> group by product |> avg units)
+print(db.Sale |> where units > 10 |> count)

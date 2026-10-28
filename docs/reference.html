@@ -22,6 +22,7 @@
       <a href="learn.html">Learn</a>
       <a href="playground.html">Playground</a>
       <a href="examples.html">Examples</a>
+      <a href="libraries.html">Libraries</a>
       <a href="how-it-works.html">How it works</a>
       <a href="reference.html" aria-current="page">Reference</a>
       <a href="shield.html">Shield</a>
@@ -1070,6 +1071,7 @@ DatabaseError There is already a Customer with email = "ana@mail.com"
 3
 [{"id": 2, "amount": 150.0}, {"id": 3, "amount": 320.5}]
 ["Ana G.", "Luis"]</code></pre></div></div>
+  <p>More examples, and how to set it up: <a href="libraries.html#db">AI, data and streams</a>.</p>
 
   <h3 id="mod-sync"><code>nexo.sync</code>: workers and channels</h3>
   <ul class="ref-list">
@@ -1210,6 +1212,7 @@ The anthropic key is missing
 No AI provider is configured. Run: nexo ai setup
 ✓ without a provider ask fails
 4 tests: 4 passed, 0 failed</code></pre></div></div>
+  <p>More examples, and how to set it up: <a href="libraries.html#ai">AI, data and streams</a>.</p>
 
   <h3 id="mod-stream"><code>nexo.stream</code>: real-time data</h3>
   <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when kafka("orders") as msg:</code> handles one message at a time: a message that fails is tried 4 times and then goes to <code>orders.dead</code>, and <code>key:</code> makes a repeated key run once. <code>|&gt; window 1m</code>, <code>sliding 5m</code> and <code>session 30s</code> group messages by time for the usual steps. <code>kafka("t").send(value, key: k?, at: time?)</code> publishes. Without a broker a stream is on a local one, with <code>partitions: n</code> handled in parallel, each in order; <code>servers:</code> (Kafka), <code>url:</code> (RabbitMQ), <code>namespace:</code> (Event Hubs, Service Bus), <code>region:</code> (SQS, Kinesis) and <code>project:</code> (Pub/Sub) put it on its broker or cloud, with <code>key: secret(...)</code> as the broker's password, and <code>websocket("wss://host/path")</code> reads a WebSocket server. <code>nexo test</code> runs every stream on an in-memory broker.</p>
@@ -1252,6 +1255,7 @@ clicks {"page": "/b", "count": 1}
 clicks {"page": "/a", "count": 1}
 ✓ clicks per page and minute
 2 tests: 2 passed, 0 failed</code></pre></div></div>
+  <p>More examples, and how to set it up: <a href="libraries.html#stream">AI, data and streams</a>.</p>
 
   <h3 id="mod-flags">Flags and privacy</h3>
   <p>A <code>flags:</code> block declares each flag once: <code>on</code>, <code>off</code>, a percentage of users (stable per user), or <code>users where condition</code>; <code>nexo lint</code> warns about a flag whose <code>expires:</code> day has passed. <code>flag(name, user?)</code> reads it, and <code>nexo flags set name value --stage prod</code> changes it without a deploy.</p>
@@ -1484,6 +1488,7 @@ compiler/target/release/nexo hello.nexo</code></pre></div>
       <a href="learn.html">Learn</a>
       <a href="playground.html">Playground</a>
       <a href="examples.html">Examples</a>
+      <a href="libraries.html">Libraries</a>
       <a href="how-it-works.html">How it works</a>
       <a href="reference.html">Reference</a>
       <a href="shield.html">Shield</a>

@@ -1,0 +1,60 @@
+## A lending library: books, members and loans in SQLite.
+use nexo.db
+
+db = connect("library.db")
+
+type Genre:
+    Novel
+    Science
+    History
+
+@table
+type Book:
+    id: id
+    title: str @unique
+    genre: Genre
+    year: int
+    loans: many Loan
+
+@table
+type Member:
+    id: id
+    name: str
+    city: str
+    loans: many Loan
+
+@table
+type Loan:
+    id: id
+    book: ref Book
+    member: ref Member
+    out: date
+    back: date?
+
+dune = db.Book.add(title: "Dune", genre: Novel, year: 1965)
+cosmos = db.Book.add(title: "Cosmos", genre: Science, year: 1980)
+spqr = db.Book.add(title: "SPQR", genre: History, year: 2015)
+db.Book.add(title: "Solaris", genre: Novel, year: 1961)
+
+ana = db.Member.add(name: "Ana", city: "Rome")
+luis = db.Member.add(name: "Luis", city: "Lyon")
+
+db.Loan.add(book: dune, member: ana, out: date(2026, 9, 2), back: date(2026, 9, 20))
+db.Loan.add(book: cosmos, member: ana, out: date(2026, 10, 1))
+db.Loan.add(book: spqr, member: luis, out: date(2026, 10, 12))
+db.Loan.add(book: dune, member: luis, out: date(2026, 10, 15))
+
+# each pipeline is one SQL query
+print("novels:", db.Book |> where genre == Novel |> sort by year |> map it.title)
+print("after 1970:", db.Book |> where year > 1970 |> count)
+print("by genre:", db.Book |> group by genre |> count)
+
+# a condition through a ref: the loans of members in Rome
+print("from Rome:", db.Loan |> where member.city == "Rome" |> map it.book.title)
+
+# books that are out: loans without a return date
+for l in db.Loan |> where back == none |> sort by out:
+    print("out:", l.book.title, "since", l.out, "with", l.member.name)
+
+print("Dune has been lent", dune.loans.count(), "times")
+print("Ana has", ana.loans |> where back == none |> count, "book at home")

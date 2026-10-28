@@ -1,0 +1,47 @@
+## A small web API whose data lives in the database.
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Note:
+    id: id
+    title: str
+    done: bool = false
+
+type NewNote:
+    title: str
+
+server notes:
+    port = 8080
+
+    @public
+    get "/notes":
+        return db.Note |> where not done |> map it.title
+
+    @public
+    get "/notes/{n}"(n: int):
+        return db.Note.find(id: n)?
+
+    @public
+    post "/notes"(note: NewNote):
+        return db.Note.add(title: note.title)
+
+    @public
+    post "/notes/{n}/done"(n: int):
+        db.Note.update(db.Note.find(id: n)?, done: true)
+        return 204
+
+test "the routes read and write the table":
+    http.post("{notes.url}/notes", {"title": "buy milk"})
+    created = http.post("{notes.url}/notes", {"title": "call Ana"}).json()
+    print("created", created)
+    http.post("{notes.url}/notes/1/done", {})
+    print("open:", http.get("{notes.url}/notes").json())
+    print("in the table:", db.Note.count(), "notes")
+
+test "a missing row is a 404":
+    try:
+        http.get("{notes.url}/notes/42", retries: 0)
+    else e is HTTPError:
+        print(e.message.replace(notes.url, ""))

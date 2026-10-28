@@ -31,7 +31,8 @@ def test_the_bundle_is_built_from_the_interpreter():
 
 
 def test_every_page_links_the_playground():
-    for page in ["index", "learn", "examples", "how-it-works", "reference", "shield", "benchmarks", "playground"]:
+    for page in ["index", "learn", "examples", "libraries", "how-it-works", "reference", "shield", "benchmarks",
+                 "playground"]:
         assert 'href="playground.html"' in (ROOT / "docs" / f"{page}.html").read_text(), page
 
 

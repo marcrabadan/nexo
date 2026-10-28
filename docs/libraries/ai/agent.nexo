@@ -1,0 +1,39 @@
+## An agent that answers order questions with the program's own functions.
+type Order:
+    id: int
+    status: "paid" | "shipped" | "delivered"
+    email: str
+
+orders = [
+    Order(id: 7, status: "shipped", email: "ana@mail.com"),
+    Order(id: 8, status: "paid", email: "luis@mail.com")]
+
+@tool "Looks up an order by its number"
+fn find_order(id: int) -> Order!:
+    for o in orders:
+        if o.id == id:
+            return o
+    fail("there is no order {id}")
+
+@tool "Sends a short email to the customer of an order"
+fn email_customer(id: int, text: str) -> str!:
+    o = find_order(id)?
+    return "sent to {o.email}"
+
+agent support:
+    model = "anthropic:claude-opus"
+    tools = [find_order, email_customer]
+    goal = "Answer questions about orders, politely and briefly"
+    max_steps = 5
+    confirm = [email_customer]
+
+test "the tools are ordinary functions":
+    print(find_order(7).status)
+    try:
+        find_order(99)
+    else e:
+        print(e.message)
+
+test "the agent's answer can be faked":
+    fake support.handle returns "Order 7 has shipped."
+    print(support.handle("Where is my order 7?"))

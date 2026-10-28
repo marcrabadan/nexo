@@ -1,0 +1,30 @@
+## Readings from many sensors: one partition each, saved to a database.
+use nexo.stream
+use nexo.db
+
+db = connect(":memory:")
+
+@table
+type Reading:
+    id: id
+    sensor: str
+    celsius: float
+
+type Sample:
+    sensor: str
+    celsius: float
+
+# 3 partitions are handled in parallel; the messages of one key stay in order
+when kafka("readings", partitions: 3) as msg:
+    s: Sample = validate(msg.json(), as: Sample)?
+    db.Reading.add(sensor: s.sensor, celsius: s.celsius)
+    if s.celsius > 30.0:
+        print("alert: {s.sensor} at {s.celsius} (partition {msg.partition})")
+
+test "the readings are stored and checked":
+    readings = kafka("readings", partitions: 3)
+    for row in [["boiler", 28.5], ["roof", 31.0], ["boiler", 33.2], ["cellar", 12.0], ["roof", 29.0]]:
+        readings.send({"sensor": row[0], "celsius": row[1]}, key: row[0])
+    print(db.Reading.count(), "readings")
+    print(db.Reading |> group by sensor |> avg celsius)
+    print(db.Reading |> where celsius > 30.0 |> map it.sensor)
