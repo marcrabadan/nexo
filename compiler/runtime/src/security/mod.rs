@@ -1,5 +1,5 @@
 //! Shield's application API enforcement. This is not an OS sandbox.
-pub(crate) mod matching;
+pub mod matching;
 pub mod audit;
 pub mod sandbox;
 pub mod context;

@@ -26,7 +26,7 @@ fn bound_name(name: &str, alias: &Option<String>) -> String {
     alias.clone().unwrap_or_else(|| name.rsplit('.').next().unwrap().to_string())
 }
 
-fn project_root(file: &str) -> PathBuf {
+pub fn project_root(file: &str) -> PathBuf {
     let path = Path::new(file);
     let start = path
         .canonicalize()
@@ -90,8 +90,18 @@ fn exported(program: &Program) -> (HashSet<String>, HashSet<String>) {
     (exports, private)
 }
 
+/// Where the `use` lines of one file look: the folder of its modules, the
+/// packages it may use ({import name: package}) and, for a file of a
+/// package, the package's own import name (D174).
+struct Scope {
+    root: PathBuf,
+    packages: std::collections::BTreeMap<String, String>,
+    own: Option<String>,
+}
+
 pub struct Linker {
     root: PathBuf,
+    scopes: Vec<Scope>,
     modules: HashMap<String, Info>,
     /// the modules being loaded, outermost first (the program is the first)
     stack: Vec<String>,
@@ -113,7 +123,8 @@ impl Linker {
             Ok(rel) => rel.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("."),
             Err(_) => main.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
         };
-        Linker { root, modules: HashMap::new(), stack: vec![first], next_id, files: Vec::new() }
+        let scope = Scope { root: root.clone(), packages: crate::packages::scope(&root.join("nexo.toml")), own: None };
+        Linker { root, scopes: vec![scope], modules: HashMap::new(), stack: vec![first], next_id, files: Vec::new() }
     }
 
     /// Load the modules a file uses, check the names it takes from them
@@ -164,11 +175,7 @@ impl Linker {
         if self.modules.contains_key(name) {
             return Ok(());
         }
-        let mut path = self.root.clone();
-        for part in name.split('.') {
-            path.push(part);
-        }
-        path.set_extension("nexo");
+        let (path, scope) = self.place(name, span)?;
         let file = shown_path(&path);
         let Ok(source) = std::fs::read_to_string(&path) else {
             return Err(Diagnostic::new("module_not_found", span).arg("name", name.to_string()).arg("path", file));
@@ -184,13 +191,59 @@ impl Linker {
         crate::cheader::embed(&mut program, &folder);
         crate::checker::check(&program)?;
         self.stack.push(name.to_string());
+        self.scopes.push(scope);
         self.link(&mut program)?;
+        self.scopes.pop();
         self.stack.pop();
         let (exports, private) = exported(&program);
         // its tests only run when it is the file tested
         let body = program.body.into_iter().filter(|s| !matches!(s.kind, StmtKind::Test { .. })).collect();
         self.modules.insert(name.to_string(), Info { name: name.to_string(), file, exports, private, body: Some(body) });
         Ok(())
+    }
+}
+
+impl Linker {
+    /// The file of a module and the scope of its own `use` lines: a module
+    /// of the project, or `pkg` (its lib.nexo) and `pkg.a.b` (its a/b.nexo)
+    /// of a package in .nexo/packages.
+    fn place(&self, name: &str, span: Span) -> LResult<(PathBuf, Scope)> {
+        use crate::packages::{import_name, installed_dir, read_lock, scope};
+        let here = self.scopes.last().unwrap();
+        let (first, rest) = match name.split_once('.') {
+            Some((f, r)) => (f, Some(r)),
+            None => (name, None),
+        };
+        let package = if here.own.as_deref() == Some(first) {
+            read_lock(&self.root).into_keys().find(|p| import_name(p) == first).unwrap_or_default()
+        } else if let Some(package) = here.packages.get(first) {
+            if !read_lock(&self.root).contains_key(package) || !installed_dir(&self.root, package).is_dir() {
+                return Err(Diagnostic::new("package_not_installed", span).arg("name", package.clone()));
+            }
+            package.clone()
+        } else if let Some(own) = &here.own {
+            return Err(Diagnostic::new("package_use", span)
+                .arg("name", name.to_string())
+                .arg("package", own.replace('_', "-"))
+                .arg("first", first.to_string()));
+        } else {
+            let mut path = here.root.clone();
+            for part in name.split('.') {
+                path.push(part);
+            }
+            path.set_extension("nexo");
+            let scope = Scope { root: here.root.clone(), packages: here.packages.clone(), own: None };
+            return Ok((path, scope));
+        };
+        let folder = installed_dir(&self.root, &package);
+        let mut path = folder.clone();
+        match rest {
+            Some(r) => r.split('.').for_each(|p| path.push(p)),
+            None => path.push("lib"),
+        }
+        path.set_extension("nexo");
+        let packages = scope(&folder.join("nexo.toml"));
+        Ok((path, Scope { root: folder, packages, own: Some(first.to_string()) }))
     }
 }
 

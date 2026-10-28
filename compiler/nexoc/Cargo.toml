@@ -13,3 +13,6 @@ path = "src/main.rs"
 nexo-diag = { path = "../diag" }
 nexo-runtime = { path = "../runtime" }
 sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "fast"] }
+getrandom = "0.2"
+ureq = { version = "2", default-features = false, features = ["tls", "native-certs"] }

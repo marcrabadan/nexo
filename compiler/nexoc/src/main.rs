@@ -29,6 +29,7 @@ mod lsp;
 mod mcp;
 mod modules;
 mod narrow;
+mod packages;
 mod parser;
 mod phase5;
 mod policy;
@@ -48,7 +49,7 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | new name | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]"
+    "Usage: nexo [file.nexo | new name | add [name] [--accept-risk] | publish | build [--release [--trust-ensure]] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]"
 }
 
 /// A file that failed to compile, already rendered in the section 14 format.
@@ -1223,6 +1224,41 @@ fn run_new(args: &[String]) -> u8 {
     0
 }
 
+/// `nexo add [name] [--accept-risk]`: a package and the packages it needs,
+/// or every package of nexo.lock (section 13, D174).
+fn run_add(args: &[String]) -> u8 {
+    let accept = args.iter().any(|a| a == "--accept-risk");
+    let names: Vec<&String> = args.iter().filter(|a| *a != "--accept-risk").collect();
+    if names.len() > 1 || names.iter().any(|a| a.starts_with('-')) {
+        eprintln!("{}", usage());
+        return 2;
+    }
+    match packages::add(names.first().map(|s| s.as_str()), accept) {
+        Ok(lines) => {
+            println!("{}", lines.join("\n"));
+            0
+        }
+        Err(d) => {
+            eprint!("{}", render("", "", None, &d.text()));
+            1
+        }
+    }
+}
+
+/// `nexo publish`: the project, signed, in the registry's folder (D174).
+fn run_publish() -> u8 {
+    match packages::publish() {
+        Ok(line) => {
+            println!("{line}");
+            0
+        }
+        Err(d) => {
+            eprint!("{}", render("", "", None, &d.text()));
+            1
+        }
+    }
+}
+
 /// `nexo docs [paths]` (D147) and `nexo docs --for-ai [file]` (D130).
 fn run_docs(args: &[String]) -> u8 {
     if args.first().map(String::as_str) != Some("--for-ai") {
@@ -1367,6 +1403,8 @@ fn main() -> ExitCode {
             "audit" => run_audit(&rest[1..]),
             "docs" => run_docs(&rest[1..]),
             "new" => run_new(&rest[1..]),
+            "add" => run_add(&rest[1..]),
+            "publish" if rest.len() == 1 => run_publish(),
             "db" => run_db(&rest[1..]),
             "flags" => phase5::run_flags(&rest[1..]),
             "privacy" => phase5::privacy_report(&rest[1..]),

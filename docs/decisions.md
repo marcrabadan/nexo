@@ -2755,3 +2755,68 @@ answers, agents and their tools, usage and budgets as the others:
 - tests/test_ai_providers.py runs each against a local server that
   answers as the provider's documentation says, and checks Bedrock's
   signature with its own implementation of SigV4.
+
+**D174. Packages: `nexo add`, `nexo publish`, nexo.lock.** Section 13
+gives the rules of packages (a `nexo.toml` and a `nexo.lock`, SemVer,
+deterministic resolution, one version of each package, signed packages,
+`nexo audit` on install, declared permissions against the `policy`) and
+one example, `stripe-payments = "^2.1"` used as `use stripe_payments`.
+It does not say how a registry is laid out, how a package is signed or
+named, nor how a package is made. In both phases (nexo/packages.py,
+compiler/nexoc/src/packages.rs), with the same files byte for byte:
+- A registry is static files, a folder or an HTTPS address (HTTP only
+  for this machine, as D172): `NAME/index.json` lists the versions, each
+  with the sha256 of its archive, the Ed25519 key that signed it, the
+  signature of the archive's bytes and the registry's `advisories`;
+  `NAME/NAME-VERSION.json` is the archive, `{"files": {...}}`, JSON with
+  sorted keys and no spaces. The official registry is
+  `https://registry.nexo-lang.org` (provisional, as the playground of
+  section 26); `NEXO_REGISTRY` names another, for mirrors and tests.
+- A package name is lowercase letters and digits in words joined by `-`;
+  `use` writes it with `_`, as section 13 does. The `-`/`_` pair is the
+  only mapping, so `_` is not part of a package name.
+- A requirement is `^MAJOR.MINOR` or `^MAJOR.MINOR.PATCH`, Cargo's caret:
+  `^1.2` is 1.2.0 up to 2.0.0, `^0.3` stays in 0.3. It is the only form
+  (section 1); `nexo add name` writes `^` and the newest version's
+  major and minor.
+- Resolution: each package takes the highest version that every
+  requirement on it in the graph accepts, or its version in nexo.lock
+  while that still does, so a new compatible version never moves a
+  locked project. No version for both requirements is
+  `package_conflict`, which names who asks for what (rule 5).
+- Signatures: the first `nexo add` of a package records its key in
+  nexo.lock; a later version signed by another key is `package_key`,
+  an archive whose bytes are not those signed is `package_signature`,
+  and the locked version published again with other bytes is
+  `package_hash`. Nothing is written when any check fails. Who may
+  publish under a name, and the review of its keys, is the registry's
+  (D133).
+- nexo.lock holds name, version, sha256, key and dependencies of each
+  package, sorted by name. `nexo add` without a name installs exactly
+  what it says, into `.nexo/packages/NAME/` (a clone of the project).
+- `use pkg` loads the package's `lib.nexo` and `use pkg.a.b` its
+  `a/b.nexo`. A file can use the packages its own nexo.toml lists, not
+  the dependencies of those (as Cargo); inside a package, its own
+  modules are named after it (`use money_format.round`), and any other
+  name is `package_use`. Packages follow the program's policy at run
+  time, as modules do (D142).
+- Permissions: `[permissions]` in a package's nexo.toml uses the kinds of
+  D142, `net = ["api.stripe.com"]`, `shell = true`. `nexo add` prints
+  them and rejects the package (`package_permissions`, with the `allow`
+  line that would let it) when a program of the project with a policy
+  does not allow one.
+- Audit on install: an advisory of severity `critical` stops `nexo add`
+  unless `--accept-risk`; others are printed as warnings. Advisories are
+  written by the registry, not signed by the author, so they can only
+  stop an install.
+- `nexo publish` signs the project with the user's key (made on first use
+  in the configuration folder of D106, `publish.key`, mode 0600) and
+  writes it to a registry folder; it takes nexo.toml, README.md and the
+  `.nexo` files, never a hidden folder. A published version never
+  changes (`publish_exists`). Publishing to the official registry is
+  done through it, so an address is `publish_registry`.
+- `nexo build --release` lists each package of nexo.lock in the SBOM of
+  D128 (`pkg:nexo/NAME@VERSION` with its sha256).
+- D148's "no dependencies until the registry" no longer holds; the
+  registry service itself, its review of `unsafe` and its signing keys,
+  still needs people (D133).

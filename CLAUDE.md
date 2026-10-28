@@ -44,6 +44,8 @@ nexo/
   interpreter.py  tree-walking evaluator (scopes, calls, pipelines, contracts)
   checker.py      static pre-pass ("compile errors": ignored T!, misplaced ?)
   modules.py      `use shop.payments`: the modules of the program's files (D124)
+                  and of the packages in .nexo/packages (D174)
+  packages.py     `nexo add` / `nexo publish`, nexo.lock, the registry (D174)
   numbers.py      section 17 arithmetic: int overflow, float/decimal, money, units
   types.py        runtime values: decimal/money/units, records, enums, errors
   errors.py       error type + section 14 renderer + message catalog (English, D125)
@@ -75,7 +77,7 @@ nexo/
                   `nexo db diff|migrate`, `nexo ai setup|usage`; phase 5:
                   `nexo plan|apply|destroy|drift|cost|import`, `nexo ci run|export`,
                   `nexo flags set`, `nexo privacy report`; `nexo policy show|suggest`;
-                  `nexo new`, `nexo docs`, `nexo mcp`
+                  `nexo new`, `nexo docs`, `nexo mcp`, `nexo add|publish`
 tests/
   conformance/    .nexo + .expected pairs (stdout, or the full error text);
                   a .nexo without .expected is a module the cases use
@@ -98,7 +100,8 @@ compiler/
                   records of known types, D126), sbom, split (parallel
                   development builds, D135), scalar (values as two words
                   in development mode, D141), audit, docs, suggest, intent,
-                  cover (`nexo test --coverage`, D155), policy (`nexo policy`, D142), mcp (`nexo mcp`, D146)
+                  cover (`nexo test --coverage`, D155), policy (`nexo policy`, D142), mcp (`nexo mcp`, D146),
+                  packages (`nexo add|publish`, D174)
   runtime/        static library linked into every compiled program
                   (repl.rs: the journal the REPL replays; library.rs: the
                   builtins of phase 4, ids from 100; time, text, crypto,
@@ -143,6 +146,8 @@ python3.12 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/nexo mcp               # MCP server on stdio, for AI assistants
 .venv/bin/nexo new shop          # a project: shop/nexo.toml, shop/src/main.nexo
 .venv/bin/nexo docs [path]       # Markdown from the ## comments
+.venv/bin/nexo add money-format  # a package, signed, into nexo.toml and nexo.lock
+.venv/bin/nexo publish           # the project, signed, into the registry folder of NEXO_REGISTRY
 .venv/bin/nexo plan|apply|drift|destroy [--stage prod] [file]   # nexo.infra
 .venv/bin/nexo ci run [--yes] | ci export github [file]         # nexo.ci
 python3 tests/cloud_emulator.py 8765   # the cloud APIs, locally (prints the env)
@@ -273,8 +278,16 @@ the resume after a stop is in tests/test_phase6.py).
 `format` over stdio by running the same binary's commands
 (tests/test_mcp.py); `nexo new` and `nexo docs` are in tests/test_project.py.
 
-Excluded (do not implement yet): ml, ui, notify, per-package
-permissions (the registry), every/lifecycle, canary and blue/green releases, chaos,
+Packages (D174): `nexo add [name] [--accept-risk]` and `nexo publish`
+in both phases, with the same files byte for byte. A registry is static
+files (a folder, or HTTPS) with Ed25519-signed archives; requirements
+are `^MAJOR.MINOR`; one version of each package, the highest every
+requirement accepts; nexo.lock pins the version, sha256 and key;
+`[permissions]` are checked against the project's policies and critical
+advisories stop the install. `use pkg` loads .nexo/packages/pkg/lib.nexo.
+Tests in tests/test_packages.py.
+
+Excluded (do not implement yet): ml, ui, notify, the registry service, every/lifecycle, canary and blue/green releases, chaos,
 vault and cloud secret managers, use rust/wasm, YAML/XML/Parquet (D89,
 D112, D113).
 
