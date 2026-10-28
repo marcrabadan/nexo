@@ -250,7 +250,12 @@ in place, int-key map index, a per-thread pool of heap objects); short
 texts inside their object (D136); linear name resolution and `-O0` in
 development mode (D127); development builds that call the count helpers,
 compile large programs in parallel parts (compiler/nexoc/src/split.rs)
-and skip checks for names certainly defined (D135); release builds that are the same byte for byte, with
+and skip checks for names certainly defined (D135); pure int functions
+that skip the failure check after each call and never read the thread
+state (D177, D179); loops over lists of ints (D178); development builds
+that make the usual entry of an int-only function only when needed and
+read the environment once (D180, nexoc/src/fast.rs; NEXO_TIMES=1 prints
+each step of a build); release builds that are the same byte for byte, with
 `<program>.sbom.json` (D128); `nexo audit` (D129), `nexo docs --for-ai`
 from nexo/stdlib/api.json (D130), `nexo test --suggest` (D131), `nexo test
 --coverage` (branch coverage, D155: nexo/cover.py and
