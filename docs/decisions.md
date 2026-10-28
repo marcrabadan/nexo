@@ -2889,3 +2889,23 @@ Two changes, neither of which shows in a program's output:
 fib(32) went from 2.15× to 1.36× Rust's time on the machine of this
 change (from 28 to 17.6 ms; 1.70× in goals.json on another day).
 NEXO_TIMES=1 writes how long each step of a build takes to stderr.
+
+**D178. Lists of ints in loops.** Four changes to compiled code, none of
+which shows in a program's output:
+- `list.add(n)` with an int the compiler knows calls `nx_list_add_int`,
+  which pushes onto a list of ints this place alone owns in a dozen
+  instructions; growing the list, another kind of list or a shared one
+  take the usual path. The arguments of the method's usual call are
+  written only on that path.
+- A comprehension over a list of ints read in place (D137) runs a
+  second copy of its body in which the element is certainly an int, so
+  its arithmetic and comparisons need no type checks; an element the
+  compiler knows is an int goes onto the result with `nx_list_push_int`.
+  Any other iterable runs the usual copy.
+- The length of a list being iterated is read once (the list cannot
+  change while it is iterated), and the element that `nx_iter_next`
+  writes goes through a slot of its own, so the element itself stays in
+  registers.
+The `lists` benchmark went from about 30 to 24.5 ms (Rust: 16 to 19 ms
+on the machine of this change, which moves the ratio between 1.4× and
+1.6×); its first part, adding 2,000,000 ints, from 17 to 14.6 ms.

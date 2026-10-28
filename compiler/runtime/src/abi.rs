@@ -406,6 +406,26 @@ pub extern "C" fn nx_list_push(lt: u64, lb: u64, t: u64, b: u64) {
     }
 }
 
+/// nx_list_push with an int the compiler knows (D178).
+#[no_mangle]
+pub extern "C" fn nx_list_push_int(lt: u64, lb: u64, n: i64) {
+    if let Some(Obj::List(items)) = v(lt, lb).get() {
+        if let ListItems::Ints(xs) = items.borrow_mut() {
+            if xs.len() < xs.capacity() {
+                xs.push(n);
+                return;
+            }
+        }
+    }
+    list_push_cold(lt, lb, n);
+}
+
+#[cold]
+#[inline(never)]
+fn list_push_cold(lt: u64, lb: u64, n: i64) {
+    nx_list_push(lt, lb, T_INT, n as u64);
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn nx_map(keys: *const V, vals: *const V, spans: *const u32, n: u64) -> V {
     let keys = values(keys, n);
@@ -535,6 +555,33 @@ pub unsafe extern "C" fn nx_list_add(slot: *mut V, t: u64, b: u64) -> u8 {
         }
     }
     0
+}
+
+/// `list.add(n)` with an int the compiler knows (D178): the common case
+/// in a few instructions, anything else through nx_list_add.
+#[no_mangle]
+pub unsafe extern "C" fn nx_list_add_int(slot: *mut V, n: i64) -> u8 {
+    let obj = *slot;
+    if obj.tag == T_OBJ && owners(obj) <= 1 {
+        if let Some(Obj::List(items)) = obj.get() {
+            if let ListItems::Ints(v) = items.borrow_mut() {
+                let len = v.len();
+                if len < v.capacity() {
+                    // SAFETY: within the capacity, and the length counts it
+                    v.as_mut_ptr().add(len).write(n);
+                    v.set_len(len + 1);
+                    return 1;
+                }
+            }
+        }
+    }
+    list_add_cold(slot, n)
+}
+
+#[cold]
+#[inline(never)]
+unsafe fn list_add_cold(slot: *mut V, n: i64) -> u8 {
+    nx_list_add(slot, T_INT, n as u64)
 }
 
 #[no_mangle]

@@ -25,6 +25,9 @@ use crate::resolve::*;
 pub struct Ints<'a> {
     res: &'a Resolution,
     int_bindings: HashSet<BindingId>,
+    /// variables certainly ints in the code being written now: the
+    /// element of a list of ints in the copy of a loop for such lists (D178)
+    pub local_ints: HashSet<BindingId>,
     /// functions defined once whose declared return type is int
     int_fns: HashSet<BindingId>,
     /// record types defined once (D84)
@@ -111,7 +114,7 @@ impl<'a> Ints<'a> {
             }
         }
         let mut ints =
-            Ints { res, int_bindings: HashSet::new(), int_fns, types: known_types.clone(), rec_bindings: HashMap::new() };
+            Ints { res, int_bindings: HashSet::new(), local_ints: HashSet::new(), int_fns, types: known_types.clone(), rec_bindings: HashMap::new() };
         // parameters declared int; plain variables assigned only ints
         let mut candidates: HashSet<BindingId> = HashSet::new();
         for (b, binding) in res.bindings.iter().enumerate() {
@@ -295,7 +298,7 @@ impl<'a> Ints<'a> {
     fn int_name(&self, e: &Expr) -> bool {
         match self.res.names.get(&e.id) {
             Some(NameRes::Bindings { cands, row: None, .. }) if !cands.is_empty() => {
-                cands.iter().all(|b| self.int_bindings.contains(b))
+                cands.iter().all(|b| self.int_bindings.contains(b) || self.local_ints.contains(b))
             }
             _ => false,
         }

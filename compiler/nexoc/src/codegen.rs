@@ -2777,6 +2777,85 @@ impl<'a> Gen<'a> {
         Ok(())
     }
 
+    /// `for_each`, with a second copy of the body for a list of ints read in
+    /// place (D137), in which the element `var` is certainly an int: its
+    /// arithmetic and comparisons need no type checks (D178).
+    fn for_each_versioned(
+        &mut self,
+        iterable: &Val,
+        span: Span,
+        var: BindingId,
+        mut body: impl FnMut(&mut Self, &Val) -> GResult<()>,
+    ) -> GResult<()> {
+        let tb = self.tb(iterable);
+        let sp = self.span_id(span);
+        let it = self.reg();
+        self.emitf(format_args!("{it} = call ptr @nx_iter({tb}, i32 {sp})"));
+        self.check();
+        self.drop_val(iterable);
+        self.f().live.push(Live::Iter(it.clone()));
+        let item = self.alloca("%V");
+        let view = self.iter_view(&it);
+        let (ptr, len, _, ints) = view.clone();
+        let isview = self.reg();
+        self.emitf(format_args!("{isview} = icmp ne ptr {ptr}, null"));
+        let both = self.reg();
+        self.emitf(format_args!("{both} = and i1 {isview}, {ints}"));
+        let int_loop = self.label();
+        let general = self.label();
+        let end = self.label();
+        self.cond_br(&both, &int_loop, &general);
+        // the copy for ints: a counted loop over the numbers
+        self.place(&int_loop);
+        let i = self.alloca("i64");
+        self.emitf(format_args!("store i64 0, ptr {i}"));
+        let ihead = self.label();
+        let ibody = self.label();
+        self.br(&ihead);
+        self.place(&ihead);
+        let cur = self.reg();
+        self.emitf(format_args!("{cur} = load i64, ptr {i}"));
+        let more = self.reg();
+        self.emitf(format_args!("{more} = icmp ult i64 {cur}, {len}"));
+        self.cond_br(&more, &ibody, &end);
+        self.place(&ibody);
+        let pi = self.reg();
+        self.emitf(format_args!("{pi} = getelementptr inbounds i64, ptr {ptr}, i64 {cur}"));
+        let n = self.reg();
+        self.emitf(format_args!("{n} = load i64, ptr {pi}"));
+        let next = self.reg();
+        self.emitf(format_args!("{next} = add i64 {cur}, 1"));
+        self.emitf(format_args!("store i64 {next}, ptr {i}"));
+        let x = self.reg();
+        self.emitf(format_args!("{x} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {n}, 1"));
+        self.f().int_regs.insert(x.clone());
+        let added = self.ints.as_mut().is_some_and(|i| i.local_ints.insert(var));
+        let r = body(self, &Val::Reg(x));
+        if added {
+            self.ints.as_mut().unwrap().local_ints.remove(&var);
+        }
+        r?;
+        self.br(&ihead);
+        // any other iterable: as for_each
+        self.place(&general);
+        let head = self.label();
+        let yes = self.label();
+        self.br(&head);
+        self.place(&head);
+        let ok = self.iter_next(&it, &view, &item);
+        self.cond_br(&ok, &yes, &end);
+        self.place(&yes);
+        let v = self.load(&item);
+        let v = self.owned(v);
+        body(self, &v)?;
+        self.drop_val(&v);
+        self.br(&head);
+        self.place(&end);
+        self.unlive(&Live::Iter(it.clone()));
+        self.emitf(format_args!("call void @nx_iter_free(ptr {it})"));
+        Ok(())
+    }
+
     /// The elements of a list being iterated stay where they are (the
     /// iterator holds the list, so a change through a variable copies it):
     /// the loop reads them in place (D134). (pointer or null, length, index)
@@ -2792,7 +2871,11 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("{k} = load i8, ptr {kind}"));
         let ints = self.reg();
         self.emitf(format_args!("{ints} = icmp ne i8 {k}, 0"));
-        (view, len, idx, ints)
+        // the list cannot change while it is iterated: its length is read
+        // once, into a register (D178)
+        let n = self.reg();
+        self.emitf(format_args!("{n} = load i64, ptr {len}"));
+        (view, n, idx, ints)
     }
 
     /// The next element in `item` (owned); an i1 that is false at the end.
@@ -2810,10 +2893,8 @@ impl<'a> Gen<'a> {
         self.place(&fast);
         let i = self.reg();
         self.emitf(format_args!("{i} = load i64, ptr {idx}"));
-        let n = self.reg();
-        self.emitf(format_args!("{n} = load i64, ptr {len}"));
         let lt = self.reg();
-        self.emitf(format_args!("{lt} = icmp ult i64 {i}, {n}"));
+        self.emitf(format_args!("{lt} = icmp ult i64 {i}, {len}"));
         self.cond_br(&lt, &more, &done);
         self.place(&more);
         let int_l = self.label();
@@ -2850,10 +2931,16 @@ impl<'a> Gen<'a> {
         self.emitf(format_args!("store i8 0, ptr {ok}"));
         self.br(&join);
         self.place(&general);
+        // the element comes back through a slot of its own, so `item`
+        // never has its address taken and stays in registers (D178)
+        let out = self.alloca("%V");
         let r = self.reg();
-        self.emitf(format_args!("{r} = call i8 @nx_iter_next(ptr {it}, ptr {item})"));
+        self.emitf(format_args!("{r} = call i8 @nx_iter_next(ptr {it}, ptr {out})"));
         self.emitf(format_args!("store i8 {r}, ptr {ok}"));
         self.check();
+        let got_v = self.reg();
+        self.emitf(format_args!("{got_v} = load %V, ptr {out}"));
+        self.emitf(format_args!("store %V {got_v}, ptr {item}"));
         self.br(&join);
         self.place(&join);
         let o = self.reg();
@@ -3781,7 +3868,7 @@ impl<'a> Gen<'a> {
                 let scope = self.res.scope_of[&Node::Expr(e.id)];
                 let var = self.res.decl[&Node::Expr(e.id)];
                 let it = self.expr(iterable, false)?;
-                self.for_each(&it, iterable.span, |g, item| {
+                self.for_each_versioned(&it, iterable.span, var, |g, item| {
                     g.enter_scope(scope);
                     g.store_binding(var, item);
                     let skip = g.label();
@@ -3795,8 +3882,13 @@ impl<'a> Gen<'a> {
                     let v = g.expr(element, false)?;
                     let l = g.load(&slot);
                     let tl = g.tb(&l);
-                    let tv = g.tb(&v);
-                    g.call_void("nx_list_push", &format!("{tl}, {tv}"));
+                    if g.certain_int(element) {
+                        let b = g.bits_of(&v);
+                        g.call_void("nx_list_push_int", &format!("{tl}, i64 {b}"));
+                    } else {
+                        let tv = g.tb(&v);
+                        g.call_void("nx_list_push", &format!("{tl}, {tv}"));
+                    }
                     g.check();
                     g.drop_val(&v);
                     g.br(&skip);
@@ -4855,16 +4947,25 @@ impl<'a> Gen<'a> {
                     Some(p) => p.clone(),
                     None => self.place_ptr(&place)?,
                 };
-                let arr = self.values_array(&vals);
                 let nm = self.names_array(&names);
                 let na = self.strarg(&name);
                 let nsp = self.span_id(name_span);
                 let r = if fast_add {
                     // a list this place alone owns takes the value here (D134)
                     let res = self.alloca("%V");
-                    let tv = self.tb(&vals[0]);
+                    let is_int = match &vals[0] {
+                        Val::Lit(t, _) => *t == T_INT,
+                        Val::Reg(r) => self.is_int_reg(r),
+                    };
                     let done = self.reg();
-                    self.emitf(format_args!("{done} = call i8 @nx_list_add(ptr {ptr}, {tv})"));
+                    if is_int {
+                        // an int onto a list: the shortest path (D178)
+                        let b = self.bits_of(&vals[0]);
+                        self.emitf(format_args!("{done} = call i8 @nx_list_add_int(ptr {ptr}, i64 {b})"));
+                    } else {
+                        let tv = self.tb(&vals[0]);
+                        self.emitf(format_args!("{done} = call i8 @nx_list_add(ptr {ptr}, {tv})"));
+                    }
                     let isdone = self.reg();
                     self.emitf(format_args!("{isdone} = icmp ne i8 {done}, 0"));
                     let fast = self.label();
@@ -4875,6 +4976,8 @@ impl<'a> Gen<'a> {
                     self.emitf(format_args!("store %V {{ i64 {T_NONE}, i64 0 }}, ptr {res}"));
                     self.br(&merge);
                     self.place(&slow);
+                    // the arguments are written only on this path (D178)
+                    let arr = self.values_array(&vals);
                     if var_ptr.is_some() {
                         self.emitf(format_args!("call void @nx_unique_slot(ptr {ptr})"));
                     }
@@ -4885,6 +4988,7 @@ impl<'a> Gen<'a> {
                     self.place(&merge);
                     self.load(&res)
                 } else {
+                    let arr = self.values_array(&vals);
                     let r = self.call_v("nx_call_method_at", &format!("ptr {ptr}, {na}, ptr {arr}, ptr {nm}, i64 {n}, i32 {sp}, i32 {nsp}"));
                     self.check();
                     r
@@ -5917,6 +6021,8 @@ declare %V @nx_attr_ic(i64, i64, ptr, i64, i32, ptr)
 declare %V @nx_record_get(i64, i64)
 declare i8 @nx_pipe_plain(i64, i64)
 declare i8 @nx_list_add(ptr, i64, i64)
+declare i8 @nx_list_add_int(ptr, i64)
+declare void @nx_list_push_int(i64, i64, i64)
 declare %V @nx_pipe_step(i64, i64, i64, i64, i32)
 declare void @nx_sum_push(ptr, ptr, i64, i64)
 declare %V @nx_sum_end(ptr, ptr, i32)
