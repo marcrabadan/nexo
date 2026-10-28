@@ -2909,3 +2909,15 @@ which shows in a program's output:
 The `lists` benchmark went from about 30 to 24.5 ms (Rust: 16 to 19 ms
 on the machine of this change, which moves the ratio between 1.4× and
 1.6×); its first part, adding 2,000,000 ints, from 17 to 14.6 ms.
+
+**D179. Pure int functions do not read the thread state.** After D177 a
+pure int function (only ints, only calls to int-only functions) still
+read the thread state in its slow path and wrote its depth there before
+calling the runtime, so the state's pointer stayed in a register across
+its calls. Its slow path now calls `nx_enter_slow_pure(depth)`, which
+writes the depth and answers whether the function fails, and it leaves
+the depth alone before the runtime calls it makes, which only record a
+failure and run no other code. The pointer is then unused and LLVM
+removes it: fib(32) saves a register and went from about 1.48× to 1.43×
+Rust's time, the same with the function at any alignment (the layout of
+the code had moved the ratio between 1.37× and 1.50×).

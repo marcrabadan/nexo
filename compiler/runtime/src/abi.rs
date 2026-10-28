@@ -168,6 +168,15 @@ pub extern "C" fn nx_enter_slow(depth: u64) {
     }
 }
 
+/// The slow path of a pure int function (D179): the depth goes to the
+/// thread state here, and the answer says whether the function fails.
+#[no_mangle]
+pub extern "C" fn nx_enter_slow_pure(depth: u64) -> u8 {
+    state::set_depth(depth);
+    nx_enter_slow(depth);
+    state::failing()
+}
+
 #[no_mangle]
 pub extern "C" fn nx_exit(code: i32) -> ! {
     // the program ends when every spawned task has ended

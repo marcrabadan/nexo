@@ -974,7 +974,9 @@ impl<'a> Gen<'a> {
         }
         // an int-only function keeps its depth in a register: the thread
         // state gets it before any call that may run other code (D84)
-        if self.f().int_params && is_foreign_call(line) {
+        // (a pure function only calls the runtime to fail, which runs no
+        // other code: it leaves the depth alone, D179)
+        if self.f().int_params && !self.f().pure && is_foreign_call(line) {
             let f = self.f();
             let d = f.depth.as_deref().unwrap();
             let _ = writeln!(f.body, "  store i64 {d}, ptr {}", f.depth_ptr);
@@ -1899,9 +1901,20 @@ impl<'a> Gen<'a> {
             let fine = self.label();
             self.cond_br(&over, &slow, &fine);
             self.place(&slow);
-            self.call_void("nx_enter_slow", &format!("i64 {d1}"));
-            self.check();
-            self.br(&fine);
+            if self.f().pure {
+                // the runtime writes the depth and says whether it failed:
+                // a pure function never reads the thread state (D179)
+                let failed = self.reg();
+                self.emitf(format_args!("{failed} = call i8 @nx_enter_slow_pure(i64 {d1})"));
+                let c = self.reg();
+                self.emitf(format_args!("{c} = icmp ne i8 {failed}, 0"));
+                let unwind = self.unwind_label();
+                self.cond_br(&c, &unwind, &fine);
+            } else {
+                self.call_void("nx_enter_slow", &format!("i64 {d1}"));
+                self.check();
+                self.br(&fine);
+            }
             self.place(&fine);
             self.f().entry_checked = true;
         } else {
@@ -5963,6 +5976,7 @@ declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)
 declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)
 declare void @nx_start(ptr) noreturn
 declare void @nx_enter_slow(i64)
+declare i8 @nx_enter_slow_pure(i64)
 declare void @nx_too_deep()
 declare void @nx_security_result(i64, i64, i32)
 declare void @nx_security_contexts_ready()
