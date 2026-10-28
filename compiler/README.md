@@ -5,6 +5,8 @@ the lexer and parser (section 24), the compile errors of section 3, name
 resolution (scopes, closures, D25-D29), gradual type checking (D68) and
 code generation to LLVM IR, which clang links with the runtime library.
 
+Needs `cargo` (Rust 1.89 or newer: the runtime locks files) and `clang`.
+
     cargo build --release
     target/release/nexo app.nexo                     # compile and run
     target/release/nexo build --release app.nexo -o app

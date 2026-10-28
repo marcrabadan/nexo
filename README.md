@@ -96,7 +96,7 @@ python3.12 -m venv .venv
 
 ### Compiler (phase 1)
 
-Needs a Rust toolchain (`cargo`) and `clang`. The compiler emits LLVM IR
+Needs a Rust toolchain (`cargo`, 1.89 or newer) and `clang`. The compiler emits LLVM IR
 and uses clang to build it and link it with the Nexo runtime library.
 
 ```sh
