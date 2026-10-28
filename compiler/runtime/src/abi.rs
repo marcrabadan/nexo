@@ -132,7 +132,15 @@ pub extern "C" fn nx_tls() -> *mut Tls {
 /// programs that make many objects about 15% slower.)
 #[no_mangle]
 pub extern "C" fn nx_start(entry: extern "C" fn(*mut Tls)) -> ! {
-    if std::env::var("NEXO_SECURITY_SANDBOX").is_ok_and(|s| s == "linux-offline-v1") {
+    if crate::security::ingress::port().is_some() || std::env::var("NEXO_SECURITY_SANDBOX").is_ok_and(|s| matches!(s.as_str(), "linux-offline-v1" | "linux-online-v1")) {
+        if crate::security::ingress::port().is_some() && (!crate::security::ingress::supervised() || crate::security::ingress_permissions::initialize().is_err()) {
+            eprintln!("Error: {}", nexo_diag::Diagnostic::new_spanless("security_ingress_config").text());
+            std::process::exit(125);
+        }
+        if crate::security::ingress::port().is_some() && crate::security::ingress::install_limits().is_err() {
+            eprintln!("Error: Cannot install loopback hard process limits.");
+            std::process::exit(125);
+        }
         // No speculative 1-GiB thread stack inside the single-process profile.
         entry(state::tls());
         nx_exit(0);
@@ -184,6 +192,11 @@ pub extern "C" fn nx_exit(code: i32) -> ! {
     // then its servers answer and its streams are read until it is
     // stopped (D102, D117)
     let mut code = code;
+    if code == 0 && crate::stream::memory_profile() {
+        crate::stream::drain();
+        if state::failing() != 0 { state::report_pending(); code = 1; }
+        crate::sync::wait_all();
+    }
     if code == 0 && crate::stream::listening() && !crate::stream::in_test_mode() {
         let file = state::program().file.to_string();
         if !crate::web::has_servers() {
@@ -195,6 +208,7 @@ pub extern "C" fn nx_exit(code: i32) -> ! {
     if code == 0 && !crate::web::serve_forever() {
         code = 1;
     }
+    if crate::security::ingress::port().is_some() { crate::sync::wait_all(); }
     if leakcheck_enabled() {
         check_leaks();
     }
@@ -1773,11 +1787,13 @@ pub extern "C" fn nx_shared_unlock() {
 
 #[no_mangle]
 pub extern "C" fn nx_shared_read(t: u64, b: u64) -> V {
+    if crate::security::context::check_transfer(v(t,b),0).is_err() { return NONE; }
     crate::sync::shared_read(v(t, b)).into_raw()
 }
 
 #[no_mangle]
 pub extern "C" fn nx_shared_store(t: u64, b: u64) -> V {
+    if crate::security::context::check_transfer(v(t,b),0).is_err() { return NONE; }
     crate::sync::shared_store(v(t, b)).into_raw()
 }
 

@@ -14,7 +14,7 @@ Nexo aims to be the safest, smartest and most effective language to use, and eac
 | --- | --- | --- |
 | No memory errors or data races | memory model in section 7 and concurrency in section 5; only `unsafe` can bypass the rules | public test suite and continuous fuzzing of the compiler |
 | `unsafe` under control | forbidden in published packages unless there is a signed review; `nexo audit` lists every use | public registry of packages with reviewed `unsafe` |
-| Capability-based permissions | every function and every dependency receives only the permissions it declares; the `policy` is the ceiling | `nexo policy show` and sandbox escape tests |
+| Explicit API permissions | the program `policy` limits checked Nexo APIs; optional Shield ceilings attenuate dependency and dispatch authority. Policy alone does not prevent DNS rebinding, mediate direct native syscalls or impose process resource limits | `nexo policy show` and policy-boundary regression tests; OS isolation requires a separate supported profile |
 | Hardened supply chain | reproducible builds, signed packages and an SBOM generated on every `nexo build --release` | two builds of the same code produce the same binary byte for byte |
 | Verifiable contracts | `expect`, `ensure` and `old()` in functions (see below) | the compiler proves what it can and checks the rest at runtime |
 | Cryptography without dangerous choices | algorithms fixed per edition (section 9) | external audit of `crypto` before each edition |

@@ -8,6 +8,7 @@ import time
 
 import pytest
 
+from pathlib import Path
 from phases import ROOT, commands
 
 PRODUCER = 'kafka("notices").send({"user": 1, "text": "Order shipped"})\nkafka("notices").send("plain")\n'
@@ -171,4 +172,12 @@ def test_partitions_are_handled_in_parallel_each_in_order(phase, tmp_path):
                             "1 a 1 1 ok\n1 a 2 4 ok\n1 a 3 7 ok\n"
                             "2 b 1 2 ok\n2 b 2 5 ok\n2 b 3 8 ok\n")
     # phase 0 runs the tasks one after the other (D52); phase 1 at once
-    assert slow.most == (1 if phase[0] == "interpreter" else 3)
+    # The native scheduler is capped by available_parallelism, including cgroup
+    # CPU quotas. Three partitions do not imply three available worker threads.
+    cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else (os.cpu_count() or 1)
+    quota = Path("/sys/fs/cgroup/cpu.max")
+    if quota.exists():
+        amount, period = quota.read_text().split()
+        if amount != "max":
+            cpus = min(cpus, max(1, int(amount) // int(period)))
+    assert slow.most == (1 if phase[0] == "interpreter" else min(3, cpus))

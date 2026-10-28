@@ -38,6 +38,8 @@ def b_policy(call, entries, release=False):
         raise NexoError("policy_internal", call.span)
     from .. import security_context
     security_context.initialize(call.span.file)
+    from .. import authorization
+    authorization.initialize(call.span.file)
     STATE["rules"] = [(e[0], e[1], list(e[2:])) for e in entries]
     STATE["release"] = bool(release) or enforcing()
     return None
@@ -129,7 +131,7 @@ def rule_text(rule: str, kind: str, target: str | None) -> str:
 
 
 def enforcing() -> bool:
-    return os.environ.get("NEXO_SECURITY_ENFORCE") == "1"
+    return os.environ.get("NEXO_SECURITY_ENFORCE") == "1" or bool(os.environ.get("NEXO_SECURITY_DEPENDENCIES")) or bool(os.environ.get("NEXO_SECURITY_AUTHORIZATION")) or bool(os.environ.get("NEXO_SECURITY_STREAMS")) or bool(os.environ.get("NEXO_SECURITY_WEB"))
 
 
 def security_event(kind: str, decision: str, reason: str) -> None:

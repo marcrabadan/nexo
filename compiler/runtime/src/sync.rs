@@ -141,6 +141,8 @@ pub fn new_channel(elem: Option<Val>, size: V, span: u32) -> R<Val> {
             }
         },
     };
+    use crate::security::budget::{charge, Resource};
+    charge(&[(Resource::Channels, 1), (Resource::ChannelSlots, size)], span)?;
     Ok(Val::new(Obj::Channel(Channel { elem, size, inner: Mut::new(Inner::default()) })))
 }
 
@@ -169,6 +171,7 @@ fn restamp(v: V) {
 }
 
 pub fn send(c: &Channel, value: V, span: u32) -> R<()> {
+    crate::security::context::check_transfer(value,span)?;
     if let Some(t) = &c.elem {
         if !crate::types::is_value(value, t.v(), span)? {
             return Err(diag(
@@ -327,6 +330,8 @@ const TASK_STACK: usize = 256 << 20;
 /// `spawn f(args)`: run the call on a new thread, on copies of the
 /// arguments. An error nobody handles ends the program.
 pub fn spawn(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<()> {
+    crate::security::budget::charge(&[(crate::security::budget::Resource::Tasks, 1)], span)?;
+    let thread_permit = crate::security::budget::spawn_thread(span)?;
     let f = Val::from(f);
     let mut copies = Vec::with_capacity(args.len());
     for a in args {
@@ -341,27 +346,40 @@ pub fn spawn(f: V, args: &[V], names: &[Option<&str>], span: u32) -> R<()> {
         id
     };
     let deadlines = state::with_task(|s| s.deadlines.clone());
+    let security = crate::security::context::capture();
     crate::value::going_multi();
     let started = std::thread::Builder::new().stack_size(TASK_STACK).spawn(move || {
-        TASK.with(|t| t.set(id));
-        state::set_stamp(crate::par::new_stamp());
-        state::set_isolated(true);
-        state::with_task(|s| s.deadlines = deadlines);
-        state::set_deadline_active(state::with_task(|s| !s.deadlines.is_empty()));
-        let args = copies.iter().map(|c| restamped(c)).collect::<Vec<V>>();
-        let names: Vec<Option<&str>> = names.iter().map(|n| n.as_deref()).collect();
-        let r = crate::call::call(f.v(), &args, &names, span);
-        if state::failing() != 0 {
+        // Publish completion after contexts and captured values have been
+        // released, including unwinds. A worker panic must not strand wait_all.
+        struct Completion(Option<crate::security::budget::Threads>);
+        impl Drop for Completion { fn drop(&mut self) { drop(self.0.take()); finished(); } }
+        let _completion = Completion(Some(thread_permit));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _security = crate::security::context::inherit(&security);
+            TASK.with(|t| t.set(id));
+            state::set_stamp(crate::par::new_stamp());
+            state::set_isolated(true);
+            state::with_task(|s| s.deadlines = deadlines);
+            state::set_deadline_active(state::with_task(|s| !s.deadlines.is_empty()));
+            let args = copies.iter().map(|c| restamped(c)).collect::<Vec<V>>();
+            let names: Vec<Option<&str>> = names.iter().map(|n| n.as_deref()).collect();
+            let r = crate::call::call(f.v(), &args, &names, span);
+            if state::failing() != 0 {
+                state::report_pending();
+                std::process::exit(1);
+            }
+            drop(r);
+            drop(copies);
+            drop(f);
+            state::with_task(|s| s.deadlines.clear());
+            state::set_deadline_active(false);
+            crate::value::flush_pool();
+        }));
+        if outcome.is_err() {
+            diag(Diagnostic::new_spanless("spawn_failed"),span);
             state::report_pending();
             std::process::exit(1);
         }
-        drop(r);
-        drop(copies);
-        drop(f);
-        state::with_task(|s| s.deadlines.clear());
-        state::set_deadline_active(false);
-        crate::value::flush_pool();
-        finished();
     });
     if started.is_err() {
         finished();

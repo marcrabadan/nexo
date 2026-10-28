@@ -22,6 +22,22 @@ use crate::value::*;
 const MAX_HEAD: usize = 64 * 1024;
 const MAX_BODY: usize = 1024 * 1024;
 
+pub fn memory_profile() -> bool {
+    std::env::var("NEXO_SECURITY_WEB").is_ok_and(|v| v == "memory-v1")
+}
+fn protected_profile() -> bool {
+    memory_profile() || (crate::security::ingress::port().is_some() && crate::security::ingress::supervised())
+}
+fn require_mode(span: u32) -> R<()> {
+    if crate::security::enforcing() && !protected_profile() {
+        return Err(diag(Diagnostic::new_spanless("security_web_mode"), span));
+    }
+    Ok(())
+}
+fn invalid_request(span: u32) -> crate::state::Fail {
+    diag(Diagnostic::new_spanless("security_web_request"), span)
+}
+
 pub fn reason(status: i64) -> &'static str {
     match status {
         200 => "OK",
@@ -233,6 +249,7 @@ pub fn jwt(key: V, span: u32) -> R<Val> {
 // ----------------------------------------------------------------- server
 
 struct Route {
+    security: crate::security::context::Snapshot,
     method: String,
     path: String,
     handler: Val,
@@ -263,6 +280,7 @@ impl Route {
 }
 
 pub struct Server {
+    security: crate::security::context::Snapshot,
     name: String,
     port: Mutex<i64>,
     auth: Option<Val>,
@@ -283,21 +301,68 @@ impl Native for Server {
     fn repr(&self) -> String {
         format!("server({})", self.name)
     }
-    fn member(&self, _me: V, name: &str, span: u32) -> R<Val> {
+    fn member(&self, me: V, name: &str, span: u32) -> R<Val> {
         let port = *self.port.lock().unwrap();
         Ok(match name {
-            "url" => Val::str(format!("http://127.0.0.1:{port}")),
+            "url" => Val::str(if memory_profile() { format!("memory://{}", self.name) } else { format!("http://127.0.0.1:{port}") }),
+            "dispatch" => Val::new(Obj::BuiltinMethod(Val::from(me), "dispatch")),
             "port" => Val::int(port),
             "name" => Val::str(self.name.clone()),
             _ => return Err(missing_member("server", name, &["url", "port", "name"], span)),
         })
     }
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
+    fn call_method(&self, _me: V, name: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+        let a = method_args(name, &["method", "target", "headers", "body"], 2, args, names, span)?;
+        self.dispatch(a[0], a[1], a[2], a[3], span)
+    }
+    fn as_any(&self) -> &dyn std::any::Any { self }
+}
+
+impl Server {
+    fn dispatch(&self, method: V, target: V, headers: V, body: V, span: u32) -> R<Val> {
+        if !memory_profile() { return Err(diag(Diagnostic::new_spanless("security_web_mode"), span)); }
+        if headers.tag != T_MISSING { crate::security::context::check_transfer(headers, span)?; }
+        if body.tag != T_MISSING { crate::security::context::check_transfer(body, span)?; }
+        let Some(method) = method.as_str().filter(|v| matches!(*v, "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS")) else { return Err(invalid_request(span)); };
+        let Some(target) = target.as_str().filter(|v| v.starts_with('/') && !v.starts_with("//") && !v.contains('#') && v.len() <= 8192 && !v.chars().any(|c| c <= ' ' || c == '\u{7f}')) else { return Err(invalid_request(span)); };
+        let body = if body.tag == T_MISSING { "" } else { body.as_str().ok_or_else(|| invalid_request(span))? };
+        if body.len() > MAX_BODY { return Err(invalid_request(span)); }
+        let mut normalized = vec![("host".to_string(), "memory.nexo".to_string())];
+        let mut size = 0;
+        if headers.tag != T_MISSING && !headers.is_none() {
+            let Some(Obj::Map(map)) = headers.get() else { return Err(invalid_request(span)); };
+            let map = map.borrow();
+            if map.entries.len() > 128 { return Err(invalid_request(span)); }
+            for (key, value) in &map.entries {
+                let Some(key) = key.as_str().filter(|s| !s.is_empty() && s.len() <= MAX_HEAD && s.bytes().all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c))) else { return Err(invalid_request(span)); };
+                let Some(value) = value.as_str().filter(|s| s.len() <= MAX_HEAD && !s.chars().any(|c| c < ' ' || c == '\u{7f}')) else { return Err(invalid_request(span)); };
+                let name = key.to_ascii_lowercase();
+                if normalized.iter().any(|(k, _)| *k == name) || matches!(name.as_str(), "content-length" | "transfer-encoding" | "connection") { return Err(invalid_request(span)); }
+                size += key.len() + value.len() + 4;
+                if size > MAX_HEAD { return Err(invalid_request(span)); }
+                normalized.push((name, value.to_string()));
+            }
+        }
+        crate::security::budget::charge(&[(crate::security::budget::Resource::WebRequests, 1)], span)?;
+        let answer = match handle(self, method, target, &normalized, body.as_bytes().to_vec(), "127.0.0.1") {
+            Outcome::Answer(a) => a,
+            Outcome::Diag => return Err(crate::state::Fail),
+        };
+        if answer.body.len() > 8388608 { return Err(invalid_request(span)); }
+        let mut headers: Vec<_> = SECURE.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        if let Some(ctype) = answer.ctype { headers.push(("Content-Type".into(), ctype.into())); }
+        headers.extend(answer.extra);
+        Ok(crate::coll::map_from(vec![
+            (Val::str("status"), Val::int(answer.status)),
+            (Val::str("body"), Val::str(String::from_utf8_lossy(&answer.body).into_owned())),
+            (Val::str("headers"), pairs_map(&headers)),
+        ]))
     }
 }
 
 pub fn server(name: V, port: Option<V>, auth: Option<V>, span: u32) -> R<Val> {
+    require_mode(span)?;
+    if protected_profile() && name.as_str().is_none_or(|s| s.is_empty() || s.len() > 256) { return Err(invalid_request(span)); }
     let p = match port {
         None => 8080,
         Some(v) => match v.as_int() {
@@ -311,7 +376,10 @@ pub fn server(name: V, port: Option<V>, auth: Option<V>, span: u32) -> R<Val> {
             return Err(expects("auth", "jwt", a, span));
         }
     }
+    use crate::security::budget::{charge, Resource};
+    charge(&[(Resource::WebServers, 1), (Resource::Registrations, 1)], span)?;
     let s = native(Server {
+        security: crate::security::context::capture(),
         name: name.as_str().unwrap_or("").to_string(),
         port: Mutex::new(p),
         auth: auth.map(Val::from),
@@ -323,7 +391,16 @@ pub fn server(name: V, port: Option<V>, auth: Option<V>, span: u32) -> R<Val> {
 
 #[allow(clippy::too_many_arguments)]
 pub fn route(server: V, method: V, path: V, handler: V, types: V, role: Option<V>, limit: Option<V>, public: Option<V>, span: u32) -> R<Val> {
-    let s = server.native::<Server>().unwrap();
+    require_mode(span)?;
+    let Some(s) = server.native::<Server>() else { return Err(expects("route", "server", server, span)); };
+    if protected_profile() && (method.as_str().is_none_or(|s| !matches!(s, "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS"))
+        || path.as_str().is_none_or(|s| !s.starts_with('/') || s.len() > 8192 || s.chars().any(|c| c <= ' ' || c == '\u{7f}'))
+        || public.is_some_and(|v| v.as_bool().is_none())) { return Err(invalid_request(span)); }
+    if protected_profile() && (!matches!(handler.get(), Some(Obj::Func(_))) || !matches!(types.get(), Some(Obj::List(_)))) {
+        return Err(invalid_request(span));
+    }
+    let route_types = crate::pipe::collect_vec(types, span)?;
+    if protected_profile() && route_types.len() > 128 { return Err(invalid_request(span)); }
     let role = role.filter(|r| !r.is_none());
     let role = match role {
         None => None,
@@ -354,11 +431,13 @@ pub fn route(server: V, method: V, path: V, handler: V, types: V, role: Option<V
     }
     let trimmed = path.trim_matches('/');
     let segments = if trimmed.is_empty() { Vec::new() } else { trimmed.split('/').map(|x| x.to_string()).collect() };
+    crate::security::budget::charge(&[(crate::security::budget::Resource::Registrations, 1)], span)?;
     routes.push(std::sync::Arc::new(Route {
+        security: crate::security::context::capture(),
         method,
         path,
         handler: Val::from(handler),
-        types: crate::pipe::collect_vec(types, span)?,
+        types: route_types,
         role,
         limit,
         public: public.and_then(|p| p.as_bool()).unwrap_or(false),
@@ -445,14 +524,25 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
+fn timed_read(conn: &mut TcpStream, buf: &mut [u8], until: Option<std::time::Instant>) -> std::io::Result<usize> {
+    if let Some(until) = until {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() { return Err(std::io::ErrorKind::TimedOut.into()); }
+        conn.set_read_timeout(Some(left))?;
+    }
+    conn.read(buf)
+}
+
 fn read_request(conn: &mut TcpStream) -> Read_ {
+    let strict = crate::security::ingress::port().is_some();
+    let until = strict.then(|| std::time::Instant::now() + std::time::Duration::from_millis(750));
     let mut data = Vec::new();
     let mut buf = vec![0u8; 65536];
     let end = loop {
         if let Some(i) = find(&data, b"\r\n\r\n") {
             break i;
         }
-        match conn.read(&mut buf) {
+        match timed_read(conn, &mut buf, until) {
             Ok(0) | Err(_) => return Read_::Closed,
             Ok(n) => data.extend_from_slice(&buf[..n]),
         }
@@ -460,6 +550,7 @@ fn read_request(conn: &mut TcpStream) -> Read_ {
             return Read_::Bad(error_answer(431, None, Vec::new()));
         }
     };
+    if strict && end > MAX_HEAD { return Read_::Bad(error_answer(431, None, Vec::new())); }
     let head: String = data[..end].iter().map(|b| *b as char).collect();
     let rest = data[end + 4..].to_vec();
     let lines: Vec<&str> = head.split("\r\n").collect();
@@ -467,13 +558,20 @@ fn read_request(conn: &mut TcpStream) -> Read_ {
     if parts.len() != 3 || !parts[2].starts_with("HTTP/1.") {
         return Read_::Bad(error_answer(400, None, Vec::new()));
     }
+    if strict && (parts[2] != "HTTP/1.1" || !matches!(parts[0], "GET"|"POST"|"PUT"|"PATCH"|"DELETE"|"HEAD"|"OPTIONS")
+        || !parts[1].starts_with('/') || parts[1].starts_with("//") || parts[1].contains('#') || parts[1].len() > 8192
+        || parts[1].chars().any(|c| c <= ' ' || c == '\u{7f}')) { return Read_::Bad(error_answer(400, None, Vec::new())); }
+    if strict && lines.len() > 129 { return Read_::Bad(error_answer(431, None, Vec::new())); }
     let mut headers: Vec<(String, String)> = Vec::new();
     for line in &lines[1..] {
         let Some((name, value)) = line.split_once(':') else { return Read_::Bad(error_answer(400, None, Vec::new())) };
         if name.is_empty() || name != name.trim() {
             return Read_::Bad(error_answer(400, None, Vec::new()));
         }
+        if strict && (!name.bytes().all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&c))
+            || value.chars().any(|c| c < ' ' || c == '\u{7f}')) { return Read_::Bad(error_answer(400, None, Vec::new())); }
         let key = name.to_lowercase();
+        if strict && headers.iter().any(|(k, _)| *k == key) { return Read_::Bad(error_answer(400, None, Vec::new())); }
         let value = value.trim().to_string();
         match headers.iter_mut().find(|(k, _)| *k == key) {
             Some((_, v)) => {
@@ -497,11 +595,12 @@ fn read_request(conn: &mut TcpStream) -> Read_ {
     }
     let mut body = rest;
     while body.len() < n {
-        match conn.read(&mut buf[..(n - body.len()).min(65536)]) {
+        match timed_read(conn, &mut buf[..(n - body.len()).min(65536)], until) {
             Ok(0) | Err(_) => return Read_::Bad(error_answer(400, None, Vec::new())),
             Ok(k) => body.extend_from_slice(&buf[..k]),
         }
     }
+    if strict && body.len() > n { return Read_::Bad(error_answer(400, None, Vec::new())); }
     body.truncate(n);
     Read_::Ok(parts[0].to_string(), parts[1].to_string(), headers, body)
 }
@@ -590,6 +689,8 @@ enum Outcome {
 }
 
 fn handle(server: &Server, method: &str, target: &str, headers: &[(String, String)], body: Vec<u8>, ip: &str) -> Outcome {
+    if require_mode(0).is_err() { return Outcome::Diag; }
+    let _server = crate::security::context::intersect(&server.security);
     let get = |k: &str| headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
     let (path, query) = {
         let no_frag = target.split('#').next().unwrap_or("");
@@ -626,6 +727,11 @@ fn handle(server: &Server, method: &str, target: &str, headers: &[(String, Strin
         }
         return Outcome::Answer(error_answer(404, None, Vec::new()));
     };
+    let _route = crate::security::context::intersect(&route.security);
+    let _ingress_route = if crate::security::ingress::port().is_some() {
+        crate::security::ingress_permissions::route_engine(&route.method, &route.path).map(|engine|
+            crate::security::context::attenuate(&crate::security::context::Snapshot::default(), engine))
+    } else { None };
     let span = route.span;
     if matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") {
         if let Some(origin) = get("origin") {
@@ -785,6 +891,7 @@ fn handle(server: &Server, method: &str, target: &str, headers: &[(String, Strin
 
 fn answer_of(result: Val, method: &str, span: u32) -> R<Answer> {
     let value = crate::pipe::bind(result.v())?;
+    if protected_profile() { crate::security::context::check_transfer(value.v(), span)?; }
     let ok = if method == "POST" { 201 } else { 200 };
     if value.is_none() {
         return Ok(Answer::new(204));
@@ -808,6 +915,7 @@ fn answer_of(result: Val, method: &str, span: u32) -> R<Answer> {
 // ---------------------------------------------------------------- serving
 
 fn listen(s: &Server, port: i64) -> Result<TcpListener, String> {
+    if crate::security::enforcing() { return Err("Shield network listeners are not authorized".into()); }
     let host = if std::env::var_os("NEXO_WEB_LOCAL").is_some() { "127.0.0.1" } else { "0.0.0.0" };
     let l = TcpListener::bind((host, port as u16)).map_err(|e| {
         let text = e.to_string();
@@ -860,8 +968,9 @@ pub fn has_servers() -> bool {
 }
 
 pub fn serve_forever() -> bool {
+    if crate::security::ingress::port().is_some() { return serve_loopback(); }
     let servers: Vec<Val> = SERVERS.lock().unwrap().clone();
-    if servers.is_empty() || TESTING.load(std::sync::atomic::Ordering::SeqCst) {
+    if servers.is_empty() || memory_profile() || TESTING.load(std::sync::atomic::Ordering::SeqCst) {
         return true;
     }
     let env_port = std::env::var("PORT").ok().filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
@@ -922,6 +1031,8 @@ pub static MISTAKE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 static TESTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn serve_in_background() -> bool {
+    if crate::security::ingress::port().is_some() { diag(Diagnostic::new_spanless("security_web_mode"), 0); return false; }
+    if memory_profile() { return true; }
     TESTING.store(true, std::sync::atomic::Ordering::SeqCst);
     let servers: Vec<Val> = SERVERS.lock().unwrap().clone();
     for (i, v) in servers.into_iter().enumerate() {
@@ -946,6 +1057,80 @@ pub fn serve_in_background() -> bool {
                 crate::state::flush();
             }
         });
+    }
+    true
+}
+
+
+/// Single, explicitly granted loopback listener. No PORT/env host overrides,
+/// no test/background listener, and no privileged request inheritance.
+fn serve_loopback() -> bool {
+    if !crate::security::ingress::supervised() {
+        diag(Diagnostic::new_spanless("security_web_mode"), 0);
+        crate::state::report_pending(); return false;
+    }
+    let servers = SERVERS.lock().unwrap().clone();
+    let port = crate::security::ingress::port().unwrap();
+    if servers.len() != 1 || servers[0].v().native::<Server>().is_none_or(|s| *s.port.lock().unwrap() != i64::from(port)) {
+        diag(Diagnostic::new_spanless("security_web_listener"), 0);
+        crate::state::report_pending(); return false;
+    }
+    let server = servers[0].v().native::<Server>().unwrap();
+    if !crate::security::ingress_permissions::server_matches(&server.name) {
+        diag(Diagnostic::new_spanless("security_ingress_config"), 0); crate::state::report_pending(); return false;
+    }
+    let listener = match TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)) {
+        Ok(listener) => listener,
+        Err(_) => { diag(Diagnostic::new_spanless("security_web_listener"), 0); crate::state::report_pending(); return false; }
+    };
+    if listener.set_nonblocking(true).is_err() { return false; }
+    let actual = match listener.local_addr() { Ok(a) => a.port(), Err(_) => return false };
+    *server.port.lock().unwrap() = i64::from(actual);
+    eprintln!("Shield loopback http://127.0.0.1:{actual}/");
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let mut accepted = 0;
+    while accepted < 8 && std::time::Instant::now() < until {
+        match listener.accept() {
+            Ok((mut conn, peer)) => {
+                accepted += 1;
+                if !peer.ip().is_loopback() { continue; }
+                let _ = conn.set_nonblocking(false);
+                let _ = conn.set_write_timeout(Some(std::time::Duration::from_millis(750)));
+                if crate::security::budget::charge(&[(crate::security::budget::Resource::WebRequests, 1)], 0).is_err() {
+                    crate::state::report_pending(); return false;
+                }
+                match read_request(&mut conn) {
+                    Read_::Closed => {},
+                    Read_::Bad(answer) => write_answer(&mut conn, &answer),
+                    Read_::Ok(method, target, headers, body) => {
+                        let get = |name: &str| headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
+                        let authority = format!("127.0.0.1:{actual}");
+                        let origin = format!("http://{authority}");
+                        if get("host") != Some(authority.as_str()) || get("origin").is_some_and(|v| v != origin)
+                            || get("sec-fetch-site").is_some_and(|v| !matches!(v, "same-origin" | "none"))
+                            || headers.iter().any(|(k, _)| k == "forwarded" || k.starts_with("x-forwarded-")) {
+                            write_answer(&mut conn, &error_answer(403, None, Vec::new())); continue;
+                        }
+                        let _ingress = crate::security::context::attenuate(&crate::security::context::Snapshot::default(),
+                            crate::security::ingress_permissions::engine());
+                        match handle(server, &method, &target, &headers, body, &peer.ip().to_string()) {
+                            Outcome::Answer(answer) => {
+                                if answer.body.len() > 8388608 { invalid_request(0); crate::state::report_pending(); return false; }
+                                write_answer(&mut conn, &answer);
+                            }
+                            Outcome::Diag => {
+                                crate::state::report_pending();
+                                write_answer(&mut conn, &error_answer(500, None, Vec::new()));
+                                return false;
+                            }
+                        }
+                    }
+                }
+                crate::state::flush();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(std::time::Duration::from_millis(5)),
+            Err(_) => return false,
+        }
     }
     true
 }

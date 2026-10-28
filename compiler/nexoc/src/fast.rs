@@ -13,10 +13,31 @@ pub fn security_dependencies() -> bool {
     *ON.get_or_init(|| std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some())
 }
 
-/// The program runs in Shield's offline sandbox.
-pub fn security_sandbox() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("NEXO_SECURITY_SANDBOX").is_ok_and(|s| s == "linux-offline-v1"))
+/// The settings of Shield the lexer looks at.
+pub struct Shield {
+    /// an OS sandbox (offline or online)
+    pub os_isolated: bool,
+    /// streams kept in memory
+    pub memory: bool,
+    /// servers in memory or on loopback
+    pub web: bool,
+    /// any of Shield's ceilings is on
+    pub protected: bool,
+}
+
+pub fn shield() -> &'static Shield {
+    static S: OnceLock<Shield> = OnceLock::new();
+    S.get_or_init(|| {
+        let var = |n: &str| std::env::var(n).ok();
+        let os_isolated = var("NEXO_SECURITY_SANDBOX").is_some_and(|s| matches!(s.as_str(), "linux-offline-v1" | "linux-online-v1"));
+        let memory = var("NEXO_SECURITY_STREAMS").is_some_and(|s| s == "memory-v1");
+        let web = var("NEXO_SECURITY_WEB").is_some_and(|s| s == "memory-v1" || s.starts_with("loopback-v1:"));
+        let protected = ["NEXO_SECURITY_DEPENDENCIES", "NEXO_SECURITY_AUTHORIZATION", "NEXO_SECURITY_STREAMS", "NEXO_SECURITY_WEB"]
+            .iter()
+            .any(|n| std::env::var_os(n).is_some())
+            || os_isolated;
+        Shield { os_isolated, memory, web, protected }
+    })
 }
 
 /// The hash of rustc's own maps (FxHash): a multiply and a rotate per word.

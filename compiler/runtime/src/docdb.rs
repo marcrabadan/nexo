@@ -485,6 +485,7 @@ pub fn erase_row(db: &Database, me: V, info: &TableInfo, key: i64, span: u32) ->
 
 /// connect("mongodb://...") (D171) or connect("elasticsearch://...") (D172).
 pub fn connect(path: String, key: Option<V>, span: u32) -> R<Val> {
+    crate::security::check_connector(span)?;
     let fail = |e: DocError, path: &str| failure("DatabaseError", span, &[("db", path.to_string()), ("reason", e.message)]);
     let mongo = path.starts_with("mongodb://");
     let hosts = if mongo { crate::mongo::parse_url(&path).map(|t| t.hosts) } else { crate::elastic::parse_url(&path).map(|t| t.hosts) };

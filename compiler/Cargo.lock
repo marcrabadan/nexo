@@ -493,6 +493,7 @@ dependencies = [
  "rustls-pemfile",
  "sha2",
  "ureq",
+ "url",
 ]
 
 [[package]]

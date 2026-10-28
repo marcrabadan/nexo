@@ -187,6 +187,7 @@ fn socket<T>(s: &Pair, place: &str, span: u32, what: impl FnOnce(&mut crate::web
 
 fn sent(s: &Pair, place: &str, id: Id, ms: i64, data: &str, key: Option<&str>, partition: i64) -> Message {
     Message {
+        security: crate::security::context::capture(),
         stream: s.clone(),
         place: Some(place.to_string()),
         id,

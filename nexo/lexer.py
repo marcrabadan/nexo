@@ -157,7 +157,12 @@ class Lexer:
                 start = self.i
                 self.i = self.word_end(self.i)
                 word = src[start:self.i]
-                if os.environ.get("NEXO_SECURITY_DEPENDENCIES") and word in {'spawn', 'stream', 'parallel', 'on', '__web_server', '__pipeline', '__web_route', 'sync', '__ai_agent', '__stream_when', 'server', 'pipeline', 'emit', 'agent'}:
+                protected = any(os.environ.get(key) for key in ("NEXO_SECURITY_DEPENDENCIES", "NEXO_SECURITY_AUTHORIZATION", "NEXO_SECURITY_STREAMS", "NEXO_SECURITY_WEB"))
+                web = os.environ.get("NEXO_SECURITY_WEB") == "memory-v1"
+                memory = os.environ.get("NEXO_SECURITY_STREAMS") == "memory-v1"
+                if protected and (word in {'every', 'lifecycle', '__pipeline', 'pipeline'}
+                                  or (not web and word in {'server', '__web_server', '__web_route'})
+                                  or (not memory and word in {'stream', 'when', '__stream_when'})):
                     raise NexoError("security_context_async", self.span(start))
                 if word == "__policy":
                     raise NexoError("policy_internal", self.span(start))

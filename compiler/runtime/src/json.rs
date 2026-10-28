@@ -232,8 +232,32 @@ pub fn s(text: impl Into<String>) -> Json {
     Json::Str(text.into())
 }
 
+/// Iterative preflight before any recursive parse or destruction of a JSON tree.
+/// Quotes and escapes are tracked so brackets inside strings do not count.
+pub fn nesting_within(text: &str, max: usize) -> bool {
+    let (mut depth, mut quoted, mut escaped) = (0usize, false, false);
+    for b in text.bytes() {
+        if quoted {
+            if escaped { escaped = false; } else if b == b'\\' { escaped = true; } else if b == b'"' { quoted = false; }
+        } else if b == b'"' { quoted = true; }
+        else if b == b'[' || b == b'{' { depth += 1; if depth > max { return false; } }
+        else if b == b']' || b == b'}' { depth = depth.saturating_sub(1); }
+    }
+    true
+}
+
 pub fn parse(text: &str) -> Option<Json> {
-    let mut p = P { s: text.as_bytes(), i: 0 };
+    parse_options(text, false)
+}
+
+/// Operator security manifests must not silently accept conflicting fields.
+pub fn parse_unique(text: &str) -> Option<Json> {
+    parse_options(text, true)
+}
+
+fn parse_options(text: &str, unique: bool) -> Option<Json> {
+    if !nesting_within(text, 128) { return None; }
+    let mut p = P { s: text.as_bytes(), i: 0, unique };
     p.ws();
     let v = p.value()?;
     p.ws();
@@ -246,6 +270,7 @@ pub fn parse(text: &str) -> Option<Json> {
 struct P<'a> {
     s: &'a [u8],
     i: usize,
+    unique: bool,
 }
 
 impl P<'_> {
@@ -315,6 +340,7 @@ impl P<'_> {
                     let v = self.value()?;
                     // a repeated key keeps the last value, in the first place
                     if let Some(slot) = pairs.iter_mut().find(|(x, _)| *x == k) {
+                        if self.unique { return None; }
                         slot.1 = v;
                     } else {
                         pairs.push((k, v));
@@ -335,25 +361,29 @@ impl P<'_> {
                 if self.s[self.i] == b'-' {
                     self.i += 1;
                 }
+                match self.s.get(self.i) {
+                    Some(b'0') => self.i += 1,
+                    Some(b'1'..=b'9') => { while self.s.get(self.i).is_some_and(u8::is_ascii_digit) { self.i += 1; } }
+                    _ => return None,
+                }
                 let mut float = false;
-                while self.i < self.s.len() {
-                    match self.s[self.i] {
-                        b'0'..=b'9' => {}
-                        b'.' | b'e' | b'E' | b'+' | b'-' => float = true,
-                        _ => break,
-                    }
-                    self.i += 1;
+                if self.s.get(self.i) == Some(&b'.') {
+                    float = true; self.i += 1;
+                    let digits = self.i;
+                    while self.s.get(self.i).is_some_and(u8::is_ascii_digit) { self.i += 1; }
+                    if self.i == digits { return None; }
+                }
+                if matches!(self.s.get(self.i), Some(b'e' | b'E')) {
+                    float = true; self.i += 1;
+                    if matches!(self.s.get(self.i), Some(b'+' | b'-')) { self.i += 1; }
+                    let digits = self.i;
+                    while self.s.get(self.i).is_some_and(u8::is_ascii_digit) { self.i += 1; }
+                    if self.i == digits { return None; }
                 }
                 let t = std::str::from_utf8(&self.s[start..self.i]).ok()?;
-                if t.is_empty() || t == "-" {
-                    return None;
-                }
-                if !float {
-                    if let Ok(n) = t.parse::<i64>() {
-                        return Some(Json::Int(n));
-                    }
-                }
-                t.parse::<f64>().ok().map(Json::Num)
+                if !float { if let Ok(n) = t.parse::<i64>() { return Some(Json::Int(n)); } }
+                let n = t.parse::<f64>().ok()?;
+                n.is_finite().then_some(Json::Num(n))
             }
         }
     }
@@ -389,6 +419,7 @@ impl P<'_> {
                             if (0xD800..0xDC00).contains(&cp) && self.s.get(self.i..self.i + 2) == Some(b"\\u") {
                                 self.i += 2;
                                 let lo = self.hex4()?;
+                                if !(0xDC00..=0xDFFF).contains(&lo) { return None; }
                                 cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
                             }
                             let ch = char::from_u32(cp)?;
@@ -398,8 +429,57 @@ impl P<'_> {
                         _ => return None,
                     }
                 }
+                0..=31 => return None,
                 c => out.push(c),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod adversarial_tests {
+    use super::*;
+    #[test]
+    fn rejects_hostile_depth_before_recursive_parsing() {
+        let deep = format!("{}0{}", "[".repeat(12000), "]".repeat(12000));
+        assert!(parse(&deep).is_none());
+        assert!(parse_unique(&deep).is_none());
+        assert!(crate::data::parse_json(&deep).is_err());
+        let boundary = format!("{}0{}", "[".repeat(128), "]".repeat(128));
+        assert!(parse(&boundary).is_some());
+        assert!(crate::data::parse_json(&boundary).is_ok());
+        assert!(parse(r#"{"text":"[\\\"{}]"}"#).is_some());
+    }
+    #[test]
+    fn strict_configuration_grammar_and_unicode() {
+        for bad in ["01", "-01", "1.", "1.e2", "1e", "1e+", "1e9999", "+1", "NaN", "Infinity", "\"a\nb\"",
+            r#""\ud800\u0000""#, r#""\ud800\ud800""#, r#""\udc00""#] {
+            assert!(parse_unique(bad).is_none(), "{bad:?}");
+        }
+        for good in ["0", "-0", "1.25", "-1e+2", r#""\ud83d\ude00""#, r#"{"v":1}"#] {
+            assert!(parse_unique(good).is_some(), "{good:?}");
+        }
+        assert!(parse_unique(r#"{"v":1,"v":2}"#).is_none());
+    }
+    #[test]
+    fn seeded_malformed_input_campaign_does_not_panic() {
+        let mut seed = 0x4e45584fu64;
+        let alphabet = b"[]{}\\\"0123456789eE+-.truefalsnul :\n\t";
+        for _ in 0..20000 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let n = (seed >> 32) as usize % 256;
+            let mut input = String::new();
+            for _ in 0..n {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                input.push(alphabet[(seed >> 32) as usize % alphabet.len()] as char);
+            }
+            let _ = parse_unique(&input);
+            let _ = crate::data::parse_json(&input);
+        }
+        // Exercise all low-surrogate alternatives, including malformed pairs.
+        for low in 0..=65535 {
+            let input = format!("\"\\ud800\\u{low:04x}\"");
+            assert_eq!(parse_unique(&input).is_some(), (0xdc00..=0xdfff).contains(&low));
         }
     }
 }

@@ -555,6 +555,7 @@ impl<'a> JsonParser<'a> {
 }
 
 pub(crate) fn parse_json(text: &str) -> Result<Json, (usize, usize)> {
+    if !crate::json::nesting_within(text, 128) { return Err((1, 1)); }
     let chars: Vec<char> = text.chars().collect();
     let mut p = JsonParser { s: &chars, i: 0 };
     p.ws();

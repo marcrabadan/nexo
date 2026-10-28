@@ -917,11 +917,13 @@ pub fn emit(name: &str, args: &[V], span: u32) -> R<()> {
     let handlers = registry().read().unwrap().handlers.get(name).cloned().unwrap_or_default();
     let mut owned = Vec::with_capacity(args.len());
     for a in args {
+        crate::security::context::check_transfer(*a,span)?;
         owned.push(bind(*a)?);
     }
     let bound = raw_all(&owned);
     for h in handlers {
-        let Some(Obj::Func(f)) = h.get() else { continue };
+        let _security = crate::security::context::intersect(&h.security);
+        let Some(Obj::Func(f)) = h.func.get() else { continue };
         let n = f.info.params().len();
         if n != bound.len() {
             return Err(diag(
@@ -932,11 +934,15 @@ pub fn emit(name: &str, args: &[V], span: u32) -> R<()> {
                 span,
             ));
         }
-        call_value(h.v(), &bound, span)?;
+        call_value(h.func.v(), &bound, span)?;
     }
     Ok(())
 }
 
 pub fn on(name: &str, handler: V) {
-    registry().write().unwrap().handlers.entry(name.to_string()).or_default().push(Val::from(handler));
+    if crate::security::budget::charge(&[(crate::security::budget::Resource::Registrations, 1)], 0).is_err() { return; }
+    let handler = crate::state::EventHandler {
+        func: Val::from(handler), security: crate::security::context::capture(),
+    };
+    registry().write().unwrap().handlers.entry(name.to_string()).or_default().push(handler);
 }

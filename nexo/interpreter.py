@@ -189,6 +189,7 @@ class Interpreter:
         self.checker_fns: dict[str, bool] = {}
         self.checker_methods: dict[str, bool] = {}
         self.handlers: dict[str, list] = {}
+        self.handlers_lock = threading.Lock()
         # `fake name returns value` of the running test (section 14)
         self.fakes: dict[str, Any] = {}
         self.tests: list[A.TestDef] = []
@@ -559,6 +560,8 @@ class Interpreter:
         # Sequential in phase 0: same error semantics, the first failure
         # stops the remaining tasks and propagates. Each statement is a task.
         from .checker import assigned_names
+        from .security_budget import charge
+        charge([("tasks", len(s.body))], s.span)
         for stmt in s.body:
             task_env = Env(env, transparent=True)
             self.run_task(lambda: self.exec(stmt, task_env), assigned_names([stmt]), task_env)
@@ -676,21 +679,32 @@ class Interpreter:
                 raise NexoError("unexpected", a.span, fix="expected", got=f'"{source_text(a.span)}"',
                                 expected="a name")
             params.append(a.value.name)
-        self.handlers.setdefault(name, []).append((params, s.body, env))
+        from .security_budget import charge
+        charge([("registrations", 1)], s.span)
+        handler = (params, s.body, env, security_context.capture())
+        with self.handlers_lock:
+            self.handlers.setdefault(name, []).append(handler)
 
     def exec_Emit(self, s: A.Emit, env: Env) -> None:
         name = getattr(s.call.func, "name", "")
-        args = [self.store_value(self.eval(a.value, env)) for a in s.call.args]
-        for params, body, henv in self.handlers.get(name, []):
-            if len(params) != len(args):
-                raise NexoError("arg_too_many", s.call.span, fn=name, n=len(params), m=len(args))
-            local = Env(henv, is_fn=True)
-            for p, v in zip(params, args):
-                local.vars[p] = Binding(share(v), False)
-            try:
-                self.exec_block(body, local)
-            except ReturnSignal:
-                pass
+        args = []
+        for a in s.call.args:
+            value = self.eval(a.value, env)
+            security_context.check_transfer(value, a.span)
+            args.append(self.store_value(value))
+        with self.handlers_lock:
+            handlers = tuple(self.handlers.get(name, ()))
+        for params, body, henv, snapshot in handlers:
+            with security_context.intersect(snapshot):
+                if len(params) != len(args):
+                    raise NexoError("arg_too_many", s.call.span, fn=name, n=len(params), m=len(args))
+                local = Env(henv, is_fn=True)
+                for p, v in zip(params, args):
+                    local.vars[p] = Binding(share(v), False)
+                try:
+                    self.exec_block(body, local)
+                except ReturnSignal:
+                    pass
 
     # -------------------------------------------------------- expressions
     def eval(self, e: A.Expr, env: Env) -> Any:
@@ -923,7 +937,8 @@ class Interpreter:
         _TASK.in_task += 1
         self.task_outputs, self.task_env = outputs, env
         try:
-            return run()
+            with security_context.inherit(security_context.capture()):
+                return run()
         finally:
             _TASK.stamp, self.task_outputs, self.task_env = saved
             _TASK.in_task -= 1
@@ -1027,7 +1042,12 @@ class Interpreter:
             except ReturnSignal as r:
                 return r.value
 
-        for item in list(self.iterate(self.eval(e.iterable, env), e.iterable.span)):
+        from .security_budget import charge
+        items = []
+        for item in self.iterate(self.eval(e.iterable, env), e.iterable.span):
+            charge([("tasks", 1)], e.span)
+            items.append(item)
+        for item in items:
             results.append(self.run_task(lambda: task(item), [], None))
         return results
 

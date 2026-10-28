@@ -263,8 +263,12 @@ impl Lexer {
                 self.i = self.word_end(self.i);
                 let word = self.text(start, self.i);
                 let span = self.span_from(start);
-                if (crate::fast::security_dependencies() || crate::fast::security_sandbox())
-                    && ["parallel", "spawn", "on", "emit", "server", "agent", "pipeline", "sync", "stream", "__web_server", "__web_route", "__ai_agent", "__stream_when", "__pipeline"].contains(&word.as_str()) {
+                // Shield's settings are read once (D180), not at every word
+                let sh = crate::fast::shield();
+                if (sh.protected && ["pipeline", "every", "lifecycle", "__pipeline"].contains(&word.as_str()))
+                    || (sh.protected && !sh.web && ["server", "__web_server", "__web_route"].contains(&word.as_str()))
+                    || (sh.protected && !sh.memory && ["stream", "when", "__stream_when"].contains(&word.as_str()))
+                    || (sh.os_isolated && ["parallel", "spawn", "sync"].contains(&word.as_str())) {
                     return Err(Diagnostic::new("security_context_async", span));
                 }
                 if word == "__policy" {

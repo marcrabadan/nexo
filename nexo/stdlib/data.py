@@ -177,6 +177,9 @@ def b_json_parse(call, text, as_=None):
     if not isinstance(text, str):
         from .core import expects
         raise expects(call, "json.parse", "str", text)
+    from ..json_limits import nesting_within
+    if not nesting_within(text):
+        raise invalid(call, "detail.json", line=1, col=1)
     try:
         value = from_json(json.loads(text), call.span)
     except json.JSONDecodeError as exc:

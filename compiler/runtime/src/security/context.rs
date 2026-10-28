@@ -1,6 +1,5 @@
 //! Immutable dependency ceilings. Every active caller ceiling is intersected.
-//! This first context profile supports synchronous Nexo code only; launchers
-//! reject asynchronous constructs before execution, rather than dropping context.
+//! Scoped tasks capture immutable ceilings; RAII restores each worker's context.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,7 +15,7 @@ impl Configuration {
         std::fs::File::open(path).map_err(|_| "Cannot read dependency permissions")?.take(1048577)
             .read_to_string(&mut text).map_err(|_| "Cannot read dependency permissions")?;
         if text.len() > 1048576 { return Err("Dependency permissions exceed 1 MiB".into()); }
-        let json = crate::json::parse(&text).ok_or("Invalid dependency permission JSON")?;
+        let json = crate::json::parse_unique(&text).ok_or("Invalid dependency permission JSON")?;
         let Json::Obj(fields) = &json else { return Err("Dependency permissions must be an object".into()); };
         if fields.len() != 2 || json.get("version").int() != Some(1) || fields.iter().any(|(k,_)| k != "version" && k != "modules") {
             return Err("Dependency permissions require exactly version=1 and modules".into());
@@ -73,16 +72,64 @@ pub fn restore(depth: u64) {
     if depth != u64::MAX { STACK.with(|s| s.borrow_mut().truncate(depth as usize)); }
 }
 pub fn allows(capability: Capability<'_>, file: u32) -> bool {
-    let Some(contexts) = CONTEXTS.get() else { return true };
     let permits = |e: &Engine| !e.evaluate(capability, true, true).denied();
-    if file != 0 && !permits(contexts.files.get(&file).unwrap_or(&contexts.empty)) { return false; }
+    if let Some(contexts) = CONTEXTS.get() {
+        if file != 0 && !permits(contexts.files.get(&file).unwrap_or(&contexts.empty)) { return false; }
+    }
     STACK.with(|s| s.borrow().iter().all(|e| permits(e)))
+}
+
+#[derive(Clone, Default)]
+pub struct Snapshot(Vec<Arc<Engine>>);
+pub fn combine<'a>(snapshots: impl IntoIterator<Item = &'a Snapshot>) -> Snapshot {
+    let mut engines = Vec::new();
+    for snapshot in snapshots {
+        for engine in &snapshot.0 {
+            if !engines.iter().any(|old| Arc::ptr_eq(old, engine)) { engines.push(engine.clone()); }
+        }
+    }
+    Snapshot(engines)
+}
+pub fn capture() -> Snapshot { STACK.with(|s| Snapshot(s.borrow().clone())) }
+pub struct Scope { old: Vec<Arc<Engine>>, _thread: std::marker::PhantomData<std::rc::Rc<()>> }
+impl Drop for Scope {
+    fn drop(&mut self) { STACK.with(|s| *s.borrow_mut() = std::mem::take(&mut self.old)); }
+}
+pub fn inherit(snapshot: &Snapshot) -> Scope {
+    let old = STACK.with(|s| std::mem::replace(&mut *s.borrow_mut(),snapshot.0.clone()));
+    Scope { old, _thread: std::marker::PhantomData }
+}
+pub fn intersect(snapshot: &Snapshot) -> Scope {
+    let old = STACK.with(|s| {
+        let mut s = s.borrow_mut(); let old = s.clone();
+        s.extend(snapshot.0.iter().cloned()); old
+    });
+    Scope { old, _thread: std::marker::PhantomData }
+}
+pub fn attenuate(snapshot: &Snapshot, engine: Arc<Engine>) -> Scope {
+    let scope = intersect(snapshot);
+    STACK.with(|s| s.borrow_mut().push(engine));
+    scope
 }
 
 /// Until callable/opaque handles have sealed contexts, dependency boundaries
 /// export plain data only. This also rejects deferred computations in containers.
 pub fn check_result(value: crate::value::V, span: u32) {
     if CONTEXTS.get().is_none() || STACK.with(|s| s.borrow().is_empty()) { return; }
+    let _ = check_data(value,span);
+}
+
+/// A channel/shared value can reach a less restricted receiver. Until opaque
+/// values carry sealed contexts, configured Shield tasks exchange plain data.
+pub fn check_transfer(value: crate::value::V, span: u32) -> crate::state::R<()> {
+    if std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_none()
+        && std::env::var_os("NEXO_SECURITY_AUTHORIZATION").is_none()
+        && std::env::var_os("NEXO_SECURITY_STREAMS").is_none()
+        && std::env::var_os("NEXO_SECURITY_WEB").is_none() { return Ok(()); }
+    check_data(value,span)
+}
+
+fn check_data(value: crate::value::V, span: u32) -> crate::state::R<()> {
     fn data(v: crate::value::V, depth: usize, budget: &mut usize) -> bool {
         use crate::value::*;
         if depth > 128 || *budget == 0 { return false; }
@@ -97,6 +144,61 @@ pub fn check_result(value: crate::value::V, span: u32) {
         }
     }
     if !data(value,0,&mut 100000) {
-        let _ = crate::state::diag(nexo_diag::Diagnostic::new_spanless("security_context_escape"),span);
+        return Err(crate::state::diag(nexo_diag::Diagnostic::new_spanless("security_context_escape"),span));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn read(path: &str) -> Arc<Engine> {
+        Arc::new(Engine::new(vec![Rule { effect: Effect::Allow,
+            kind: super::super::Kind::Read, targets: vec![path.into()] }]))
+    }
+    #[test]
+    fn combined_publishers_deduplicate_without_widening_or_leaking() {
+        let public = read("/tmp/public.txt");
+        let first = Snapshot(vec![public.clone(), public.clone()]);
+        let second = Snapshot(vec![read("/tmp"), public]);
+        let combined = combine([&first, &second]);
+        assert_eq!(combined.0.len(), 2);
+        {
+            let _scope = intersect(&combined);
+            assert!(allows(Capability::FileRead("/tmp/public.txt"), 0));
+            assert!(!allows(Capability::FileRead("/tmp/private.txt"), 0));
+        }
+        assert!(allows(Capability::FileRead("/tmp/private.txt"), 0));
+    }
+    #[test]
+    fn snapshot_follows_worker_and_restores_same_thread_and_unwinds() {
+        let empty = Snapshot::default();
+        let cap = Capability::FileRead("/tmp/private.txt");
+        assert!(allows(cap,0));
+        {
+            let _parent = attenuate(&empty,read("/tmp/public.txt"));
+            let snapshot = capture();
+            assert!(!allows(cap,0));
+            let worker = std::thread::spawn(move || {
+                assert!(allows(cap,0));
+                {
+                    let _inherited = inherit(&snapshot);
+                    assert!(!allows(cap,0));
+                    // A broader nested grant cannot erase the captured ceiling.
+                    let _nested = attenuate(&Snapshot::default(),read("/tmp"));
+                    assert!(!allows(cap,0));
+                    assert!(allows(Capability::FileRead("/tmp/public.txt"),0));
+                }
+                assert!(allows(cap,0));
+            });
+            worker.join().unwrap();
+            let _ = std::panic::catch_unwind(|| {
+                let _restore = inherit(&Snapshot::default());
+                assert!(allows(cap,0));
+                panic!("test context restoration");
+            });
+            assert!(!allows(cap,0));
+        }
+        assert!(allows(cap,0));
     }
 }
