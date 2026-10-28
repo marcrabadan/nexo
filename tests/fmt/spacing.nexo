@@ -22,3 +22,6 @@ print(email??"none" , not(true) , len (xs)>0 and true)
 fn load(path: str)->str! :
     text=read(path) ?
     return text
+test "fakes":
+    fake ask returns["a" , "b"]
+    fake support.handle returns (1)
