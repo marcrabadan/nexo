@@ -165,3 +165,9 @@ mod tests {
         }
     }
 }
+
+/// Connectors without brokered IO and sealed deferred state are unavailable in Shield.
+pub fn check_connector(span: u32) -> crate::state::R<()> {
+    if enforcing() { return Err(crate::state::diag(nexo_diag::Diagnostic::new_spanless("security_connector"),span)); }
+    Ok(())
+}

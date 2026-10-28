@@ -148,3 +148,9 @@ def attenuate(snapshot, rules):
         yield
     finally:
         STACK.reset(token)
+
+
+def check_connector(span):
+    from .stdlib.policy import enforcing
+    if enforcing():
+        raise NexoError("security_connector", span)

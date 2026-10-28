@@ -1,0 +1,4 @@
+Error in s19_websocket_url.nexo, line 1:
+  feed = websocket("example.com/feed")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+websocket(...) takes the address of a server, ws:// or wss://, not example.com/feed. Write websocket("wss://host/path").

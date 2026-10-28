@@ -1,0 +1,141 @@
+/* Familiar labels, visible relationships and detail only when requested. */
+.how-head { padding: 62px 0 44px; border-bottom: 1px solid var(--border); }
+.how-head h1 { font-size: clamp(42px, 5.2vw, 68px); line-height: 1.12; letter-spacing: -.055em; margin-bottom: 24px; }
+.how-head .lede { font-size: 18px; max-width: 43em; margin-bottom: 30px; }
+.how-jump { display: flex; flex-wrap: wrap; gap: 12px; }
+.how-jump a { display: flex; justify-content: space-between; align-items: center; gap: 34px; min-width: 160px; padding: 11px 15px; color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; font-size: 13px; text-decoration: none; }
+.how-jump a span { color: var(--muted); font: 10px var(--mono); }
+.how-jump a:hover { border-color: var(--accent); }
+.how-page section { padding-block: 72px; }
+.how-page .section-head { margin-bottom: 36px; }
+.how-page .section-intro { font-size: 16px; max-width: 50em; }
+.how-page h2 { font-size: clamp(32px, 3.6vw, 46px); }
+.how-flow { display: grid; grid-template-columns: minmax(0, 1fr) 32px minmax(0, 1fr) 32px minmax(0, 1.15fr) 32px minmax(0, .9fr); align-items: center; margin: 0; }
+.how-node { min-width: 0; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); padding: 24px 18px; }
+.how-step { display: block; color: var(--accent); font: 10px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 15px; }
+.how-node h3, .how-path h3 { font-size: 19px; font-weight: 600; line-height: 1.4; margin-bottom: 14px; }
+.how-node > code { display: block; font-size: 11px; padding: 11px 0; color: var(--text); }
+.how-node p, .how-path p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.how-node p { margin-top: 16px; }
+.how-path { border: 1px solid var(--border-strong); border-radius: 7px; padding: 20px 18px; }
+.how-path:last-child { border-color: var(--accent); background: var(--accent-soft); }
+.how-path .how-step { margin-bottom: 10px; }
+.how-path h3 { font-size: 16px; margin-bottom: 8px; }
+.how-or { display: block; text-align: center; color: var(--muted); font: 10px/2.4 var(--mono); }
+.how-arrow { width: 18px; height: 18px; display: inline-block; flex: none; vertical-align: -4px; }
+.how-connector { display: grid; place-items: center; color: var(--accent); }
+.how-check-lines { display: grid; gap: 8px; width: 75%; margin: 20px 0; }
+.how-check-lines i { display: block; height: 3px; background: var(--border-strong); border-radius: 2px; }
+.how-check-lines i:nth-child(2) { width: 78%; background: var(--accent); }
+.how-check-lines i:nth-child(3) { width: 56%; }
+.how-result samp { display: block; font: 19px/1.6 var(--mono); color: var(--accent); padding-block: 12px; }
+.how-result { background: var(--bg); }
+.how-flow figcaption { grid-column: 1 / -1; color: var(--muted); font-size: 12px; line-height: 1.8; margin-top: 26px; }
+.how-detail { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 20px 0; margin-top: 34px; }
+.how-detail summary { cursor: pointer; font-size: 14px; color: var(--text); }
+.how-detail > div { max-width: 74ch; padding: 8px 0 0 20px; }
+.how-detail p { color: var(--muted); font-size: 14px; line-height: 1.85; margin: 16px 0 0; }
+.how-features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.how-feature { min-width: 0; display: flex; flex-direction: column; padding: 26px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
+.how-feature-title { display: flex; align-items: center; gap: 18px; margin-bottom: 22px; }
+.how-feature h3 { font-size: 21px; font-weight: 600; margin: 0 0 6px; }
+.how-feature-title p { margin: 0; color: var(--muted); font-size: 14px; }
+.how-glyph { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: 1px solid var(--border-strong); border-radius: 6px; color: var(--accent); font: 21px var(--mono); }
+.how-feature .code { border-radius: 6px; box-shadow: none; margin-top: auto; }
+.how-feature .code-bar::before { display: none; }
+.how-feature .code pre { font-size: 13px; line-height: 1.75; }
+.how-feature .code .out pre { padding-block: 12px; }
+.how-feature .code .out-label { padding-top: 10px; font-size: 10px; }
+.how-feature > a, .how-layer-copy > a { display: flex; align-items: center; gap: 12px; font-size: 13px; font-weight: 600; text-decoration: none; margin-top: 20px; }
+.how-feature > a:hover, .how-layer-copy > a:hover { text-decoration: underline; }
+.how-explore-label { color: var(--text); font-size: 14px; font-weight: 600; margin: 0 0 16px; }
+.how-layer-tabs { margin-bottom: 12px; }
+.how-layer-tabs .tab { font-size: 13px; padding: 10px 18px; }
+.how-view-note { font-size: 12px; color: var(--muted); margin: 0 0 26px; }
+.how-layer-panel { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 56px; align-items: center; }
+.how-layer-panel[hidden] { display: none; }
+.how-boundary { border: 1px solid var(--border-strong); background: var(--bg-alt); border-radius: 10px; padding: 24px; }
+.how-boundary-name { display: block; font: 10px/1.6 var(--mono); color: var(--text); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 20px; }
+.how-rules-only { background: var(--bg); border-style: dashed; }
+.how-program { display: grid; justify-items: center; gap: 14px; text-align: center; padding: 24px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.how-program-symbol { display: block; color: var(--accent); font: 24px var(--mono); }
+.how-program strong { display: block; font-size: 15px; font-weight: 600; }
+.how-program code { font-size: 11px; color: var(--muted); }
+.how-decisions { display: grid; gap: 12px; margin-top: 22px; }
+.how-decisions > div { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 12px; align-items: center; border-top: 1px solid var(--border); padding-top: 14px; font-size: 12px; }
+.how-decisions > div > span:first-child { font: 18px var(--mono); color: var(--accent); }
+.how-decisions > div > span:last-child { color: var(--muted); font-size: 11px; }
+.how-decisions strong { font-weight: 500; }
+.how-container-controls, .how-resource-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.how-container-controls span, .how-resource-row span { font: 10px/1.6 var(--mono); color: var(--muted); padding: 5px 8px; border: 1px solid var(--border); border-radius: 3px; }
+.how-inner-boundary { border: 1px dashed var(--border-strong); border-radius: 6px; padding: 20px; background: var(--surface); }
+.how-inner-boundary .how-boundary-name { margin-bottom: 14px; }
+.how-resource-row { margin: 18px 0 0; }
+.how-linux-boundary { border: 1px solid var(--accent); background: var(--accent-soft); }
+.how-worker-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 18px; }
+.how-worker-controls span { color: var(--text); font-size: 11px; line-height: 1.7; border-top: 1px solid var(--border-strong); padding-top: 9px; }
+.how-worker-controls span::before { content: "✓ "; color: var(--accent); }
+.how-required { display: block; color: var(--muted); font-size: 11px; line-height: 1.8; margin-top: 18px; }
+.how-layer-copy .how-step { margin-bottom: 16px; }
+.how-layer-copy h3 { font-size: 29px; font-weight: 500; letter-spacing: -.035em; line-height: 1.25; margin-bottom: 20px; }
+.how-layer-copy p, .how-layer-copy ul { color: var(--muted); font-size: 15px; line-height: 1.85; }
+.how-layer-copy ul { padding-left: 20px; }
+.how-layer-copy li { padding-left: 4px; margin-bottom: 8px; }
+.how-layer-copy .how-boundary-note { border-left: 2px solid var(--border-strong); padding-left: 16px; font-size: 12px; margin: 22px 0; }
+.how-next { display: flex; flex-wrap: wrap; align-items: center; gap: 28px; margin-top: 36px; }
+@media (max-width: 1040px) {
+  .how-flow { grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1.1fr) 28px minmax(0, .9fr); }
+  .how-node { padding: 20px 14px; }
+  .how-node > code { font-size: 10px; }
+  .how-node h3 { font-size: 17px; }
+  .how-path { padding: 16px 12px; }
+  .how-layer-panel { gap: 32px; }
+  .how-boundary { padding: 20px; }
+  .how-feature { padding: 22px; }
+}
+@media (max-width: 900px) {
+  .how-flow { grid-template-columns: 1fr; max-width: 620px; margin-inline: auto; }
+  .how-node { padding: 24px; }
+  .how-node > code { font-size: 13px; }
+  .how-node h3 { font-size: 21px; }
+  .how-connector { padding-block: 12px; }
+  .how-connector .how-arrow { transform: rotate(90deg); }
+  .how-paths { display: grid; grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr); align-items: center; }
+  .how-path { align-self: stretch; padding: 22px 18px; }
+  .how-or { line-height: 2; }
+  .how-check-lines { max-width: 120px; }
+  .how-layer-panel { grid-template-columns: 1fr; align-items: start; gap: 30px; }
+  .how-layer-copy h3 br { display: none; }
+}
+@media (max-width: 640px) {
+  .how-head { padding-block: 42px 32px; }
+  .how-head h1 { font-size: 42px; }
+  .how-head .lede { font-size: 16px; }
+  .how-jump { gap: 10px; }
+  .how-jump a { flex: 1 1 100%; padding-block: 10px; font-size: 13px; }
+  .how-page section { padding-block: 56px; }
+  .how-features { grid-template-columns: 1fr; gap: 20px; }
+  .how-feature h3 { font-size: 19px; }
+  .how-feature-title p { font-size: 13px; line-height: 1.7; }
+  .how-feature .code pre { font-size: 12px; }
+  .how-feature { padding: 22px 18px; }
+  .how-detail > div { padding-left: 0; }
+  .how-detail summary { font-size: 13px; }
+  .how-layer-tabs .tab { padding: 9px 13px; font-size: 12px; }
+  .how-boundary { padding: 18px; }
+  .how-inner-boundary { padding: 16px; }
+  .how-boundary-name { font-size: 9px; }
+  .how-program { padding-inline: 12px; }
+  .how-program strong { font-size: 13px; }
+  .how-program code { font-size: 10px; }
+  .how-layer-copy h3 { font-size: 27px; }
+  .how-worker-controls { grid-template-columns: 1fr; }
+  .how-decisions > div { column-gap: 8px; }
+  .how-layer-copy p, .how-layer-copy ul { font-size: 14px; }
+  .how-layer-copy h3 br::after { content: " "; }
+}
+@media (max-width: 640px) {
+  /* Keep all three choices visible without requiring horizontal discovery. */
+  .how-layer-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; gap: 4px; }
+  .how-layer-tabs .tab { padding: 10px 7px; white-space: normal; line-height: 1.5; }
+}

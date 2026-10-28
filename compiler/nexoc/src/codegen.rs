@@ -346,6 +346,11 @@ fn where_plan(e: &Expr) -> Option<(String, Vec<&Expr>)> {
                 let _ = write!(out, "?({})", leaves.len() - 1);
                 true
             }
+            ExprKind::Attr { obj, .. } if matches!(obj.kind, ExprKind::Name(_)) => {
+                leaves.push(x);
+                let _ = write!(out, "?({})", leaves.len() - 1);
+                true
+            }
             _ => false,
         }
     }
@@ -356,8 +361,15 @@ fn where_plan(e: &Expr) -> Option<(String, Vec<&Expr>)> {
     }
     out.push('\u{1}');
     for l in &leaves {
-        if let ExprKind::Name(n) = &l.kind {
-            out.push_str(n);
+        match &l.kind {
+            ExprKind::Name(n) => out.push_str(n),
+            // `ref.field`: a column of the table a ref points to (D162)
+            ExprKind::Attr { obj, name, .. } => {
+                if let ExprKind::Name(r) = &obj.kind {
+                    let _ = write!(out, "{r}.{name}");
+                }
+            }
+            _ => {}
         }
         out.push('\u{3}');
         let mut reads = Vec::new();
@@ -5522,11 +5534,17 @@ impl<'a> Gen<'a> {
                         }
                         None => (none(), "count".to_string(), ssp),
                     };
+                    // a bare column: on a grouped query it may run in SQL (D161)
+                    let total = match step.expr.as_ref().map(|x| &x.kind) {
+                        Some(ExprKind::Name(n)) => n.as_str(),
+                        _ => "",
+                    };
                     let cur = self.load(&slot);
                     let ts = self.tb(&cur);
                     let tf = self.tb(&f);
                     let c = self.strarg(&col);
-                    let r = self.call_v("nx_pipe_agg", &format!("{ts}, i32 {kind}, {tf}, {c}, i32 {ssp}, i32 {esp}"));
+                    let tn = self.strarg(total);
+                    let r = self.call_v("nx_pipe_agg", &format!("{ts}, i32 {kind}, {tf}, {c}, {tn}, i32 {ssp}, i32 {esp}"));
                     self.check();
                     self.drop_val(&f);
                     self.owned(r)
@@ -5591,7 +5609,13 @@ impl<'a> Gen<'a> {
                                 key = "key".into();
                             }
                             let k = self.strarg(&key);
-                            self.call_v("nx_pipe_group", &format!("{ts}, {tf}, {k}, i32 {ssp}, i32 {esp}"))
+                            // `group by column` on a database query may run in SQL (D161)
+                            let col = match &x.kind {
+                                ExprKind::Name(n) => n.as_str(),
+                                _ => "",
+                            };
+                            let c = self.strarg(col);
+                            self.call_v("nx_pipe_group", &format!("{ts}, {tf}, {k}, {c}, i32 {ssp}, i32 {esp}"))
                         }
                     };
                     self.check();
@@ -5871,12 +5895,12 @@ declare %V @nx_pipe_map(i64, i64, i64, i64, i32, i32)
 declare %V @nx_pipe_pick(i64, i64, ptr, ptr, i64, i32, i32)
 declare %V @nx_pipe_take(i64, i64, i64, i64, i32, i32)
 declare %V @nx_pipe_sort(i64, i64, i64, i64, i32, i32, i32)
-declare %V @nx_pipe_group(i64, i64, i64, i64, ptr, i64, i32, i32)
+declare %V @nx_pipe_group(i64, i64, i64, i64, ptr, i64, ptr, i64, i32, i32)
 declare %V @nx_pipe_each(i64, i64, i64, i64, i32, i32)
 declare %V @nx_pipe_count(i64, i64, i32)
 declare %V @nx_pipe_sum(i64, i64, i32)
 declare %V @nx_pipe_avg(i64, i64, i32)
-declare %V @nx_pipe_agg(i64, i64, i32, i64, i64, ptr, i64, i32, i32)
+declare %V @nx_pipe_agg(i64, i64, i32, i64, i64, ptr, i64, ptr, i64, i32, i32)
 declare %V @nx_row_get(i64, i64, ptr, i64, ptr)
 declare void @nx_row_missing(i64, i64, ptr, i64, ptr, i64, i32)
 declare ptr @nx_iter(i64, i64, i32)

@@ -1,0 +1,5 @@
+fn add_vat(amount):
+    return amount + amount * 21%
+
+subtotal = 19.90 EUR * 3
+print(add_vat(subtotal))

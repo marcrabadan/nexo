@@ -1,4 +1,1 @@
-Error in s08_mcp.nexo, line 4:
-  tools = [mcp("github")]
-           ^^^^^^^^^^^^^
-"mcp(...)" is not available in phase 5 of Nexo. This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, flags and privacy; remove it to run the program.
+AIError There is no MCP server github

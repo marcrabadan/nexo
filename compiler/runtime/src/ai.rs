@@ -5,7 +5,7 @@
 //! by `nexo ai setup`. Phase 0's ai.py, line by line.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use nexo_diag::{msg, suggest, Diagnostic};
 
@@ -20,9 +20,25 @@ const PROVIDERS: &[(&str, &str)] = &[
     ("anthropic", "https://api.anthropic.com"),
     ("openai", "https://api.openai.com"),
     ("ollama", "http://localhost:11434"),
+    // D173: Azure's address is its resource's, given with url; Bedrock's
+    // comes from the region of the environment
+    ("mistral", "https://api.mistral.ai"),
+    ("gemini", "https://generativelanguage.googleapis.com"),
+    ("azure", ""),
+    ("bedrock", ""),
 ];
-const BLOCK_KEYS: &[&str] = &["provider", "model", "key", "url", "fallback"];
-const LATER_KEYS: &[&str] = &["budget", "when_over_budget"];
+/// The providers that speak OpenAI's chat completions (D173).
+const OPENAI_LIKE: &[&str] = &["openai", "mistral", "azure"];
+const AZURE_VERSION: &str = "2024-10-21";
+const AZURE_SCOPE: &str = "https://cognitiveservices.azure.com/.default";
+const AWS_KEYS: &[&str] = &["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"];
+const AZURE_KEYS: &[&str] = &["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET"];
+
+fn openai_like(provider: &str) -> bool {
+    OPENAI_LIKE.contains(&provider)
+}
+const BLOCK_KEYS: &[&str] = &["provider", "model", "key", "url", "fallback", "budget", "when_over_budget"];
+const LATER_KEYS: &[&str] = &[];
 const CREATIVITY: &[(&str, f64)] = &[("low", 0.2), ("medium", 0.7), ("high", 1.0)];
 const MAX_TOKENS: i64 = 4096;
 const GUARD: &str =
@@ -43,6 +59,7 @@ pub fn release_all() {
     let old = std::mem::take(&mut *PROFILES.lock().unwrap());
     drop(old);
     ALIASES.lock().unwrap().clear();
+    release_servers();
 }
 
 fn get<'a>(layer: &'a Layer, key: &str) -> Option<&'a Val> {
@@ -106,6 +123,9 @@ fn check_block(pairs: &[(&str, V)], span: u32) -> R<Layer> {
                 if !is_text_list(v) {
                     return Err(expects("fallback", "list[str]", v, span));
                 }
+            }
+            "budget" => {
+                budget_of(v, span)?;
             }
             _ => {
                 if v.as_str().is_none() {
@@ -194,12 +214,22 @@ fn json_val(j: &Json) -> Val {
     }
 }
 
-/// The `[ai]` and `[ai.models]` tables of a nexo.toml (D106).
-fn read_toml(path: &Path, span: u32) -> R<(Layer, Vec<(String, String)>)> {
+/// The price of a million input and of a million output tokens, and its
+/// currency (D165).
+pub type Price = (crate::dec::Dec, crate::dec::Dec, String);
+
+/// The `[ai]`, `[ai.models]`, `[ai.prices]` and `[mcp.NAME]` tables of a
+/// nexo.toml (D106, D165, D166); a server is its command.
+type Toml = (Layer, Vec<(String, String)>, Vec<(String, Price)>, Vec<(String, Vec<String>)>);
+
+fn read_toml(path: &Path) -> Result<Toml, Diagnostic> {
     let mut table = Vec::new();
     let mut models = Vec::new();
-    let Ok(text) = std::fs::read_to_string(path) else { return Ok((table, models)) };
-    let mut current = 0; // 0 none, 1 [ai], 2 [ai.models]
+    let mut prices: Vec<(String, Price)> = Vec::new();
+    let mut servers: Vec<(String, Vec<String>)> = Vec::new();
+    let Ok(text) = std::fs::read_to_string(path) else { return Ok((table, models, prices, servers)) };
+    let mut current = 0; // 0 none, 1 [ai], 2 [ai.models], 3 [ai.prices], 4 [mcp.NAME]
+    let mut server = String::new();
     for (n, raw) in text.lines().enumerate() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -210,6 +240,11 @@ fn read_toml(path: &Path, span: u32) -> R<(Layer, Vec<(String, String)>)> {
             current = match name {
                 "ai" => 1,
                 "ai.models" => 2,
+                "ai.prices" => 3,
+                n if n.len() > 4 && n.starts_with("mcp.") => {
+                    server = n[4..].to_string();
+                    4
+                }
                 _ => 0,
             };
             continue;
@@ -221,40 +256,79 @@ fn read_toml(path: &Path, span: u32) -> R<(Layer, Vec<(String, String)>)> {
         let parsed = if line.contains('=') { toml_value(value.trim()) } else { None };
         let key = key.trim();
         let Some(parsed) = parsed.filter(|_| !key.is_empty()) else {
-            let d = Diagnostic::new_spanless("ai_toml").arg("path", path.display().to_string()).arg("line", (n + 1).to_string());
-            return Err(diag(d, span));
+            return Err(Diagnostic::new_spanless("ai_toml").arg("path", path.display().to_string()).arg("line", (n + 1).to_string()));
         };
         if current == 1 {
             table.retain(|(k, _): &(String, Val)| k != key);
             table.push((key.to_string(), json_val(&parsed)));
+        } else if current == 4 {
+            if key == "command" {
+                let words: Vec<String> = match &parsed {
+                    Json::List(items) => items.iter().filter_map(|i| if let Json::Str(t) = i { Some(t.clone()) } else { None }).collect(),
+                    _ => Vec::new(),
+                };
+                servers.retain(|(n, _)| *n != server);
+                servers.push((server.clone(), words));
+            }
+        } else if current == 3 {
+            let key = key.trim_matches('"').to_string();
+            let amounts: Vec<Option<(crate::dec::Dec, String)>> = match &parsed {
+                Json::List(items) if items.len() == 2 => {
+                    items.iter().map(|i| if let Json::Str(t) = i { money_text(t) } else { None }).collect()
+                }
+                _ => Vec::new(),
+            };
+            match amounts.as_slice() {
+                [Some((a, c)), Some((b, d))] if c == d => {
+                    prices.retain(|(k, _)| *k != key);
+                    prices.push((key, (a.clone(), b.clone(), c.clone())));
+                }
+                _ => return Err(Diagnostic::new_spanless("ai_price").arg("model", key).arg("path", path.display().to_string())),
+            }
         } else if let Json::Str(s) = parsed {
             models.retain(|(k, _): &(String, String)| k != key);
             models.push((key.to_string(), s));
         }
     }
-    Ok((table, models))
+    Ok((table, models, prices, servers))
 }
 
-/// [(table, models)] of the project's nexo.toml and the user's ai.toml.
-fn file_layers(span: u32) -> R<Vec<(Layer, Vec<(String, String)>)>> {
-    let mut out = Vec::new();
+/// `15 EUR` (or `0.15 EUR`) as an amount and a currency.
+fn money_text(text: &str) -> Option<(crate::dec::Dec, String)> {
+    let (amount, currency) = text.trim().split_once(' ')?;
+    let (whole, frac) = amount.split_once('.').map_or((amount, None), |(a, b)| (a, Some(b)));
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(whole) || !frac.is_none_or(digits) || currency.len() != 3 || !currency.bytes().all(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
+    Some((crate::dec::Dec::parse(amount)?, currency.to_string()))
+}
+
+/// [(table, models, prices)] of the project's nexo.toml and the user's ai.toml.
+fn file_layers(span: u32) -> R<Vec<Toml>> {
+    if crate::security::enforcing() { return Ok(Vec::new()); }
     let file = crate::state::program().file;
     let start = std::fs::canonicalize(file)
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_path_buf()))
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
-    let mut dir = Some(start.as_path());
+    layers_from(&start).map_err(|d| diag(d, span))
+}
+
+fn layers_from(start: &Path) -> Result<Vec<Toml>, Diagnostic> {
+    let mut out = Vec::new();
+    let mut dir = Some(start);
     while let Some(d) = dir {
         if d.join("nexo.toml").is_file() {
-            out.push(read_toml(&d.join("nexo.toml"), span)?);
+            out.push(read_toml(&d.join("nexo.toml"))?);
             break;
         }
         dir = d.parent();
     }
     let user = config_dir().join("ai.toml");
     if user.is_file() {
-        out.push(read_toml(&user, span)?);
+        out.push(read_toml(&user)?);
     }
     Ok(out)
 }
@@ -262,6 +336,7 @@ fn file_layers(span: u32) -> R<Vec<(Layer, Vec<(String, String)>)>> {
 // --------------------------------------------------------------- resolve
 
 /// A model to call: provider, its name there, address and key.
+#[derive(Clone)]
 struct Target {
     shown: String,
     provider: String,
@@ -290,7 +365,13 @@ fn resolve(model: Option<V>, profile: Option<V>, span: u32) -> R<Vec<Target>> {
     }
     layers.push(CONFIG.lock().unwrap().clone());
     let mut aliases: Vec<(String, String)> = ALIASES.lock().unwrap().clone();
-    for (table, models) in file_layers(span)? {
+    let mut prices: Vec<(String, Price)> = Vec::new();
+    for (table, models, file_prices, _) in file_layers(span)? {
+        for (k, v) in file_prices {
+            if !prices.iter().any(|(m, _)| *m == k) {
+                prices.push((k, v));
+            }
+        }
         let mut layer = table;
         for (k, v) in layer.iter_mut() {
             if k == "key" {
@@ -308,6 +389,7 @@ fn resolve(model: Option<V>, profile: Option<V>, span: u32) -> R<Vec<Target>> {
         }
     }
     let first = |key: &str| layers.iter().find_map(|l| get(l, key)).cloned();
+    if first("budget").is_some() { crate::security::check_connector(span)?; }
     let provider = first("provider").and_then(|v| v.as_str().map(|s| s.to_string()));
     let model = first("model").and_then(|v| v.as_str().map(|s| s.to_string()));
     if provider.is_none() && model.is_none() {
@@ -319,7 +401,120 @@ fn resolve(model: Option<V>, profile: Option<V>, span: u32) -> R<Vec<Target>> {
             names.extend(items.borrow().iter().map(|i| i.as_str().map(|s| s.to_string())));
         }
     }
-    names.into_iter().map(|m| target(m, provider.clone(), &layers, &aliases, span)).collect()
+    let mut targets: Vec<Target> = names.into_iter().map(|m| target(m, provider.clone(), &layers, &aliases, span)).collect::<R<_>>()?;
+    if let Some(b) = first("budget") {
+        let (amount, currency, period) = budget_of(b.v(), span)?;
+        let over = first("when_over_budget").and_then(|v| v.as_str().map(|s| s.to_string()));
+        let cheaper = match over {
+            Some(o) => Some(target(Some(o), provider.clone(), &layers, &aliases, span)?),
+            None => None,
+        };
+        for t in targets.iter().chain(cheaper.iter()) {
+            price_of(&format!("{}:{}", t.provider, t.name), &prices, &currency, span)?;
+        }
+        let spent = spent_in(&period, &prices, &currency, span)?;
+        if spent.cmp(&amount) != std::cmp::Ordering::Less {
+            let Some(c) = cheaper else {
+                let args = [("budget", cents(&amount, &currency)), ("period", period), ("spent", cents(&spent, &currency))];
+                return Err(failure_as("AIError", "AIError.budget", span, &args));
+            };
+            targets = vec![c];
+        }
+    }
+    Ok(targets)
+}
+
+// ---------------------------------------------------------------- budget
+
+/// (amount, currency, "day" or "month") of `budget = 5 EUR per day` (D165).
+fn budget_of(v: V, span: u32) -> R<(crate::dec::Dec, String, String)> {
+    if let Some(t) = v.as_str() {
+        if let Some((m, period)) = t.trim().rsplit_once(" per ") {
+            if let (Some((a, c)), "day" | "month") = (money_text(m), period) {
+                return Ok((a, c, period.to_string()));
+            }
+        }
+    } else if let Some(r) = v.native::<crate::web::Rate>() {
+        if let (Some(Obj::Money(a, c)), "day" | "month", None) = (r.amount.v().get(), r.unit.as_str(), &r.per) {
+            return Ok((a.clone(), c.to_string(), r.unit.clone()));
+        }
+    }
+    let shown = v.as_str().map(|s| s.to_string()).unwrap_or_else(|| show(v));
+    Err(diag(Diagnostic::new_spanless("ai_budget").arg("value", shown), span))
+}
+
+/// The price of a model; None for ollama's, which cost nothing.
+fn price_of(model: &str, prices: &[(String, Price)], currency: &str, span: u32) -> R<Option<Price>> {
+    if model.starts_with("ollama:") {
+        return Ok(None);
+    }
+    let Some((_, price)) = prices.iter().find(|(m, _)| m == model) else {
+        return Err(failure_as("AIError", "AIError.price", span, &[("model", model.to_string()), ("currency", currency.to_string())]));
+    };
+    if price.2 != currency {
+        let args = [("model", model.to_string()), ("currency", price.2.clone()), ("budget_currency", currency.to_string())];
+        return Err(failure_as("AIError", "AIError.price_currency", span, &args));
+    }
+    Ok(Some(price.clone()))
+}
+
+/// What a number of tokens cost at a price.
+fn cost(input: i64, output: i64, price: &Price) -> crate::dec::Dec {
+    use crate::dec::Dec;
+    Dec::from_i64(input).mul(&price.0).add(&Dec::from_i64(output).mul(&price.1)).div(&Dec::from_i64(1_000_000))
+}
+
+/// What the calls of this day (or month) cost, from usage.csv.
+fn spent_in(period: &str, prices: &[(String, Price)], currency: &str, span: u32) -> R<crate::dec::Dec> {
+    let today = show(crate::time::clock("today").v());
+    let mut total = crate::dec::Dec::zero();
+    for (day, model, input, output) in usage_lines() {
+        let this = if period == "day" { day == today } else { day.get(..7) == today.get(..7) };
+        if !this || model.starts_with("ollama:") || !prices.iter().any(|(m, _)| *m == model) {
+            continue;
+        }
+        if let Some(p) = price_of(&model, prices, currency, span)? {
+            total = total.add(&cost(input, output, &p));
+        }
+    }
+    Ok(total)
+}
+
+fn cents(amount: &crate::dec::Dec, currency: &str) -> String {
+    let q = amount.quantize(-2, crate::dec::Rounding::HalfEven).unwrap_or_else(|| amount.clone());
+    format!("{} {currency}", q.py_str())
+}
+
+/// (day, model, input tokens, output tokens) of each line of usage.csv.
+fn usage_lines() -> Vec<(String, String, i64, i64)> {
+    let text = std::fs::read_to_string(config_dir().join("usage.csv")).unwrap_or_default();
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    text.lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() != 4 || !digits(parts[2]) || !digits(parts[3]) {
+                return None;
+            }
+            Some((parts[0].to_string(), parts[1].to_string(), parts[2].parse().ok()?, parts[3].parse().ok()?))
+        })
+        .collect()
+}
+
+/// For `nexo ai usage`: the spend of a day's calls to a model, when its
+/// price is in the nexo.toml of this folder (or above) or the user's
+/// ai.toml; Err with the message when a price cannot be read.
+pub fn usage_spent(model: &str, input: i64, output: i64) -> Result<Option<String>, String> {
+    if model.starts_with("ollama:") {
+        return Ok(None);
+    }
+    let here = std::env::current_dir().unwrap_or_default();
+    let layers = layers_from(&here).map_err(|d| d.text())?;
+    for (_, _, prices, _) in layers {
+        if let Some((_, p)) = prices.iter().find(|(m, _)| m == model) {
+            return Ok(Some(cents(&cost(input, output, p), &p.2)));
+        }
+    }
+    Ok(None)
 }
 
 fn target(model: Option<String>, provider: Option<String>, layers: &[Layer], aliases: &[(String, String)], span: u32) -> R<Target> {
@@ -333,12 +528,16 @@ fn target(model: Option<String>, provider: Option<String>, layers: &[Layer], ali
     let mut provider = provider;
     let mut name = model.clone();
     if let Some(m) = &model {
-        if let Some((p, n)) = m.split_once(':') {
+        // a model names its provider before a colon; Bedrock's own model
+        // ids hold colons, so a configured provider keeps a name whose
+        // first part is not a provider (D173)
+        if let Some((p, n)) = m.split_once(':').filter(|(p, _)| provider_url(p).is_some() || provider.is_none()) {
             check_model_name(m, span)?;
             provider = Some(p.to_string());
             name = Some(n.to_string());
         }
     }
+    if provider.as_deref().is_some_and(|p| matches!(p,"azure"|"bedrock")) { crate::security::check_connector(span)?; }
     let (Some(provider), Some(name)) = (provider.clone(), name) else {
         let m = shown.clone().or(provider).unwrap_or_default();
         return Err(diag(Diagnostic::new_spanless("ai_model").arg("model", m), span));
@@ -364,12 +563,80 @@ fn target(model: Option<String>, provider: Option<String>, layers: &[Layer], ali
 
 // ------------------------------------------------------------- providers
 
+/// The key of a call; none for ollama, and for Bedrock and Azure with the
+/// credentials of the environment (D173). A token of Azure AD comes as
+/// "Bearer <token>", which no api-key starts with.
 fn reveal(t: &Target, span: u32) -> R<Option<String>> {
+    if t.provider == "azure" && t.url.is_empty() {
+        return Err(failure_as("AIError", "AIError.url", span, &[("provider", t.provider.clone())]));
+    }
     match &t.key {
         None if t.provider == "ollama" => Ok(None),
+        None if t.provider == "bedrock" || t.provider == "azure" => {
+            let names = if t.provider == "bedrock" { AWS_KEYS } else { AZURE_KEYS };
+            if names.iter().all(|n| std::env::var(n).is_ok_and(|v| !v.is_empty())) {
+                return if t.provider == "azure" { Ok(Some(format!("Bearer {}", azure_token(span)?))) } else { Ok(None) };
+            }
+            Err(failure_as("AIError", "AIError.cloud_key", span, &[("provider", t.provider.clone()), ("names", names.join(" and "))]))
+        }
         None => Err(failure_as("AIError", "AIError.key", span, &[("provider", t.provider.clone())])),
         Some(k) => Ok(Some(crate::crypto::text_or_secret("key", k.v(), span)?)),
     }
+}
+
+static AZURE_TOKEN: Mutex<Option<String>> = Mutex::new(None);
+
+/// A token of Azure AD for Azure OpenAI (client credentials, D120).
+fn azure_token(span: u32) -> R<String> {
+    if let Some(t) = AZURE_TOKEN.lock().unwrap().clone() {
+        return Ok(t);
+    }
+    let env = |n: &str| std::env::var(n).unwrap_or_default();
+    let host = std::env::var("AZURE_AUTHORITY_HOST").ok().filter(|v| !v.is_empty()).unwrap_or("https://login.microsoftonline.com".into());
+    let enc = |v: &str| -> String {
+        v.bytes()
+            .map(|b| match b {
+                b' ' => "+".to_string(),
+                b if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) => (b as char).to_string(),
+                b => format!("%{b:02X}"),
+            })
+            .collect()
+    };
+    let form = format!(
+        "grant_type=client_credentials&client_id={}&client_secret={}&scope={}",
+        enc(&env("AZURE_CLIENT_ID")),
+        enc(&env("AZURE_CLIENT_SECRET")),
+        enc(AZURE_SCOPE)
+    );
+    let url = format!("{}/{}/oauth2/v2.0/token", host.trim_end_matches('/'), env("AZURE_TENANT_ID"));
+    let r = crate::http::send("POST", &url, &Some((form.into_bytes(), "application/x-www-form-urlencoded")), &[], 60.0, 1, span)?;
+    let token = crate::data::parse_json(&r.text()).ok().and_then(|j| text(at(&j, "access_token")));
+    let Some(token) = token else {
+        return Err(failure("AIError", span, &[("model", "azure".into()), ("detail", msg("detail.ai_no_text", &[]))]));
+    };
+    *AZURE_TOKEN.lock().unwrap() = Some(token.clone());
+    Ok(token)
+}
+
+fn region() -> String {
+    ["AWS_REGION", "AWS_DEFAULT_REGION"].iter().find_map(|n| std::env::var(n).ok().filter(|v| !v.is_empty())).unwrap_or("us-east-1".into())
+}
+
+/// The headers of a call: signed with SigV4 for Bedrock without a key.
+fn signed(t: &Target, key: &Option<String>, url: &str, headers: Vec<(String, String)>, body: &[u8]) -> R<Vec<(String, String)>> {
+    if t.provider != "bedrock" || key.is_some() {
+        return Ok(headers);
+    }
+    let mut h: Vec<(&str, String)> = headers.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+    h.push(("Content-Type", "application/json".into()));
+    crate::infra_cloud::sigv4_path("POST", url, &h, body, "bedrock", &region(), true)
+}
+
+/// A path segment as Python's quote(..., safe='') writes it.
+fn quote_segment(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
 }
 
 fn js(s: &str) -> String {
@@ -401,6 +668,25 @@ fn float(f: f64) -> String {
 struct Message {
     role: &'static str,
     content: String,
+}
+
+/// Messages as Gemini's contents.
+fn gemini_contents(messages: &[Message]) -> String {
+    let items: Vec<String> = messages
+        .iter()
+        .map(|m| {
+            let role = if m.role == "assistant" { "model" } else { "user" };
+            obj(&[("role", js(role)), ("parts", format!("[{}]", obj(&[("text", js(&m.content))])))])
+        })
+        .collect();
+    format!("[{}]", items.join(","))
+}
+
+/// Messages as Bedrock's Converse API has them.
+fn converse_messages(messages: &[Message]) -> String {
+    let items: Vec<String> =
+        messages.iter().map(|m| obj(&[("role", js(m.role)), ("content", format!("[{}]", obj(&[("text", js(&m.content))])))])).collect();
+    format!("[{}]", items.join(","))
 }
 
 fn messages_json(system: &str, messages: &[Message], with_system: bool) -> String {
@@ -438,14 +724,52 @@ fn request_of(
             headers = vec![("x-api-key".to_string(), key.unwrap_or_default()), ("anthropic-version".into(), "2023-06-01".into())];
             url = format!("{}/v1/messages", t.url);
         }
-        "openai" => {
+        p if openai_like(p) => {
             body.push(("temperature", float(temperature)));
             if let Some(m) = max_tokens {
                 body.push(("max_tokens", m.to_string()));
             }
             body.push(("messages", messages_json(system, messages, true)));
-            headers = vec![("Authorization".to_string(), format!("Bearer {}", key.unwrap_or_default()))];
-            url = format!("{}/v1/chat/completions", t.url);
+            let key = key.unwrap_or_default();
+            if p == "azure" {
+                headers = if key.starts_with("Bearer ") { vec![("Authorization".to_string(), key)] } else { vec![("api-key".to_string(), key)] };
+                url = format!("{}/openai/deployments/{}/chat/completions?api-version={AZURE_VERSION}", t.url, quote_segment(&t.name));
+            } else {
+                headers = vec![("Authorization".to_string(), format!("Bearer {key}"))];
+                url = format!("{}/v1/chat/completions", t.url);
+            }
+        }
+        "gemini" => {
+            let mut b = vec![("contents", gemini_contents(messages))];
+            if !system.is_empty() {
+                b.push(("systemInstruction", obj(&[("parts", format!("[{}]", obj(&[("text", js(system))])))])));
+            }
+            let mut config = vec![("temperature", float(temperature))];
+            if let Some(m) = max_tokens {
+                config.push(("maxOutputTokens", m.to_string()));
+            }
+            b.push(("generationConfig", obj(&config)));
+            let method = if stream { "streamGenerateContent?alt=sse" } else { "generateContent" };
+            let url = format!("{}/v1beta/models/{}:{method}", t.url, t.name);
+            return (url, obj(&b), vec![("x-goog-api-key".to_string(), key.unwrap_or_default())]);
+        }
+        "bedrock" => {
+            let mut b = vec![("messages", converse_messages(messages))];
+            if !system.is_empty() {
+                b.push(("system", format!("[{}]", obj(&[("text", js(system))]))));
+            }
+            let mut config = vec![("temperature", float(temperature))];
+            if let Some(m) = max_tokens {
+                config.push(("maxTokens", m.to_string()));
+            }
+            b.push(("inferenceConfig", obj(&config)));
+            let headers = match key {
+                Some(k) => vec![("Authorization".to_string(), format!("Bearer {k}"))],
+                None => Vec::new(),
+            };
+            let base = if t.url.is_empty() { format!("https://bedrock-runtime.{}.amazonaws.com", region()) } else { t.url.clone() };
+            let url = format!("{base}/model/{}/{}", quote_segment(&t.name), if stream { "converse-stream" } else { "converse" });
+            return (url, obj(&b), headers);
         }
         _ => {
             body.push(("messages", messages_json(system, messages, true)));
@@ -463,7 +787,7 @@ fn request_of(
     }
     if stream {
         body.push(("stream", "true".into()));
-        if t.provider == "openai" {
+        if t.provider == "openai" || t.provider == "azure" {
             body.push(("stream_options", obj(&[("include_usage", "true".into())])));
         }
     } else if t.provider == "ollama" {
@@ -518,11 +842,32 @@ fn answer_of(t: &Target, body: &str, stream: bool) -> Option<(Vec<String>, [i64;
                 let u = at(&data, "usage");
                 tokens = [int(u.and_then(|u| at(u, "input_tokens"))), int(u.and_then(|u| at(u, "output_tokens")))];
             }
-            "openai" => {
+            p if openai_like(p) => {
                 let m = at(idx(at(&data, "choices")?, 0)?, "message")?;
                 pieces.push(text(at(m, "content"))?);
                 let u = at(&data, "usage");
                 tokens = [int(u.and_then(|u| at(u, "prompt_tokens"))), int(u.and_then(|u| at(u, "completion_tokens")))];
+            }
+            "gemini" => {
+                let content = at(idx(at(&data, "candidates")?, 0)?, "content")?;
+                let Json::List(parts) = at(content, "parts")? else { return None };
+                for p in parts {
+                    if let Some(x) = at(p, "text") {
+                        pieces.push(text(Some(x))?);
+                    }
+                }
+                let u = at(&data, "usageMetadata");
+                tokens = [int(u.and_then(|u| at(u, "promptTokenCount"))), int(u.and_then(|u| at(u, "candidatesTokenCount")))];
+            }
+            "bedrock" => {
+                let Json::List(blocks) = at(at(at(&data, "output")?, "message")?, "content")? else { return None };
+                for b in blocks {
+                    if let Some(x) = at(b, "text") {
+                        pieces.push(text(Some(x))?);
+                    }
+                }
+                let u = at(&data, "usage");
+                tokens = [int(u.and_then(|u| at(u, "inputTokens"))), int(u.and_then(|u| at(u, "outputTokens")))];
             }
             _ => {
                 pieces.push(text(at(at(&data, "message")?, "content"))?);
@@ -531,58 +876,289 @@ fn answer_of(t: &Target, body: &str, stream: bool) -> Option<(Vec<String>, [i64;
         }
     } else {
         for line in body.lines() {
-            let mut line = line.trim();
-            if t.provider != "ollama" {
-                let Some(rest) = line.strip_prefix("data:") else { continue };
-                line = rest.trim();
-                if line == "[DONE]" || line.is_empty() {
-                    continue;
-                }
-            } else if line.is_empty() {
-                continue;
-            }
-            let ev = crate::data::parse_json(line).ok()?;
-            match t.provider.as_str() {
-                "anthropic" => match text(at(&ev, "type")).as_deref() {
-                    Some("content_block_delta") => {
-                        let d = at(&ev, "delta")?;
-                        if text(at(d, "type")).as_deref() == Some("text_delta") {
-                            pieces.push(text(at(d, "text"))?);
-                        }
-                    }
-                    Some("message_start") => {
-                        tokens[0] = int(at(&ev, "message").and_then(|m| at(m, "usage")).and_then(|u| at(u, "input_tokens")))
-                    }
-                    Some("message_delta") => tokens[1] = int(at(&ev, "usage").and_then(|u| at(u, "output_tokens"))),
-                    _ => {}
-                },
-                "openai" => {
-                    if let Some(Json::List(choices)) = at(&ev, "choices") {
-                        for c in choices {
-                            if let Some(piece) = text(at(c, "delta").and_then(|d| at(d, "content"))).filter(|p| !p.is_empty()) {
-                                pieces.push(piece);
-                            }
-                        }
-                    }
-                    if let Some(u) = at(&ev, "usage").filter(|u| !matches!(u, Json::Null)) {
-                        tokens = [int(at(u, "prompt_tokens")), int(at(u, "completion_tokens"))];
-                    }
-                }
-                _ => {
-                    if let Some(piece) = text(at(&ev, "message").and_then(|m| at(m, "content"))).filter(|p| !p.is_empty()) {
-                        pieces.push(piece);
-                    }
-                    if matches!(at(&ev, "done"), Some(Json::Bool(true))) {
-                        tokens = [int(at(&ev, "prompt_eval_count")), int(at(&ev, "eval_count"))];
-                    }
-                }
-            }
+            pieces.extend(event(t, line, &mut tokens)?);
         }
     }
     if pieces.is_empty() {
         return None;
     }
     Some((pieces, tokens))
+}
+
+/// The pieces of text of one line of a streamed answer (server-sent
+/// events, or JSON lines for ollama); `tokens` gets the counts. None when
+/// the line is not valid.
+fn event(t: &Target, line: &str, tokens: &mut [i64; 2]) -> Option<Vec<String>> {
+    let mut pieces = Vec::new();
+    let mut line = line.trim();
+    if t.provider != "ollama" {
+        let Some(rest) = line.strip_prefix("data:") else { return Some(pieces) };
+        line = rest.trim();
+        if line == "[DONE]" || line.is_empty() {
+            return Some(pieces);
+        }
+    } else if line.is_empty() {
+        return Some(pieces);
+    }
+    let ev = crate::data::parse_json(line).ok()?;
+    match t.provider.as_str() {
+        "anthropic" => match text(at(&ev, "type")).as_deref() {
+            Some("content_block_delta") => {
+                let d = at(&ev, "delta")?;
+                if text(at(d, "type")).as_deref() == Some("text_delta") {
+                    pieces.push(text(at(d, "text"))?);
+                }
+            }
+            Some("message_start") => tokens[0] = int(at(&ev, "message").and_then(|m| at(m, "usage")).and_then(|u| at(u, "input_tokens"))),
+            Some("message_delta") => tokens[1] = int(at(&ev, "usage").and_then(|u| at(u, "output_tokens"))),
+            _ => {}
+        },
+        p if openai_like(p) => {
+            if let Some(Json::List(choices)) = at(&ev, "choices") {
+                for c in choices {
+                    if let Some(piece) = text(at(c, "delta").and_then(|d| at(d, "content"))).filter(|p| !p.is_empty()) {
+                        pieces.push(piece);
+                    }
+                }
+            }
+            if let Some(u) = at(&ev, "usage").filter(|u| !matches!(u, Json::Null)) {
+                *tokens = [int(at(u, "prompt_tokens")), int(at(u, "completion_tokens"))];
+            }
+        }
+        "gemini" => {
+            if let Some(c) = at(&ev, "candidates").and_then(|c| idx(c, 0)) {
+                if let Some(Json::List(parts)) = at(c, "content").and_then(|c| at(c, "parts")) {
+                    for p in parts {
+                        if let Some(piece) = text(at(p, "text")).filter(|p| !p.is_empty()) {
+                            pieces.push(piece);
+                        }
+                    }
+                }
+            }
+            if let Some(u) = at(&ev, "usageMetadata").filter(|u| !matches!(u, Json::Null)) {
+                *tokens = [int(at(u, "promptTokenCount")), int(at(u, "candidatesTokenCount"))];
+            }
+        }
+        "bedrock" => match text(at(&ev, "type")).as_deref() {
+            Some("contentBlockDelta") => {
+                if let Some(x) = at(&ev, "delta").and_then(|d| at(d, "text")) {
+                    pieces.push(text(Some(x))?);
+                }
+            }
+            Some("metadata") => {
+                let u = at(&ev, "usage");
+                *tokens = [int(u.and_then(|u| at(u, "inputTokens"))), int(u.and_then(|u| at(u, "outputTokens")))];
+            }
+            Some("exception") => return None,
+            _ => {}
+        },
+        _ => {
+            if let Some(piece) = text(at(&ev, "message").and_then(|m| at(m, "content"))).filter(|p| !p.is_empty()) {
+                pieces.push(piece);
+            }
+            if matches!(at(&ev, "done"), Some(Json::Bool(true))) {
+                *tokens = [int(at(&ev, "prompt_eval_count")), int(at(&ev, "eval_count"))];
+            }
+        }
+    }
+    Some(pieces)
+}
+
+/// CRC-32 (IEEE), for the messages of an AWS event stream.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for b in data {
+        crc ^= *b as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
+/// The messages of an AWS event stream (Bedrock's converse-stream) as
+/// lines of server-sent events: `data: {"type": event, ...payload}`.
+struct EventLines {
+    inner: Box<dyn std::io::Read + Send + Sync>,
+    buf: Vec<u8>,
+    out: Vec<u8>,
+    at: usize,
+}
+
+impl EventLines {
+    /// The line of one whole message, or None.
+    fn message(&mut self) -> std::io::Result<Option<String>> {
+        if self.buf.len() < 12 {
+            return Ok(None);
+        }
+        let total = u32::from_be_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
+        if total < 16 || self.buf.len() < total {
+            return Ok(None);
+        }
+        let frame: Vec<u8> = self.buf.drain(..total).collect();
+        let crc = u32::from_be_bytes([frame[total - 4], frame[total - 3], frame[total - 2], frame[total - 1]]);
+        if crc32(&frame[..total - 4]) != crc {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "a message of the stream is corrupt"));
+        }
+        let size = u32::from_be_bytes([frame[4], frame[5], frame[6], frame[7]]) as usize;
+        let mut headers: Vec<(String, String)> = Vec::new();
+        let mut p = 12;
+        while p < 12 + size && p < frame.len() {
+            let n = frame[p] as usize;
+            let name = String::from_utf8_lossy(&frame[p + 1..p + 1 + n]).into_owned();
+            let kind = frame[p + 1 + n];
+            p += 2 + n;
+            match kind {
+                6 | 7 => {
+                    let len = u16::from_be_bytes([frame[p], frame[p + 1]]) as usize;
+                    if kind == 7 {
+                        headers.push((name, String::from_utf8_lossy(&frame[p + 2..p + 2 + len]).into_owned()));
+                    }
+                    p += 2 + len;
+                }
+                2 => p += 1,
+                3 => p += 2,
+                4 => p += 4,
+                5 | 8 => p += 8,
+                9 => p += 16,
+                _ => {}
+            }
+        }
+        let header = |k: &str| headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+        let payload = crate::json::parse(&String::from_utf8_lossy(&frame[12 + size..total - 4])).unwrap_or(crate::json::Json::Obj(Vec::new()));
+        let mut pairs = Vec::new();
+        if header(":message-type") == "event" {
+            pairs.push(("type".to_string(), crate::json::s(header(":event-type"))));
+            if let crate::json::Json::Obj(p) = payload {
+                pairs.extend(p);
+            }
+        } else {
+            pairs.push(("type".to_string(), crate::json::s("exception")));
+            pairs.push(("message".to_string(), payload.get("message").clone()));
+        }
+        Ok(Some(format!("data: {}\n", crate::json::Json::Obj(pairs).compact())))
+    }
+}
+
+impl std::io::Read for EventLines {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        while self.at >= self.out.len() {
+            if let Some(line) = self.message()? {
+                self.out = line.into_bytes();
+                self.at = 0;
+                break;
+            }
+            let mut chunk = [0u8; 65536];
+            let n = self.inner.read(&mut chunk)?;
+            if n == 0 {
+                return Ok(0);
+            }
+            self.buf.extend_from_slice(&chunk[..n]);
+        }
+        let n = out.len().min(self.out.len() - self.at);
+        out[..n].copy_from_slice(&self.out[self.at..self.at + n]);
+        self.at += n;
+        Ok(n)
+    }
+}
+
+/// The answer of `ask(..., stream: true)`: its pieces as they arrive
+/// (D164). Read once; a second loop over it gets the same pieces.
+struct Live {
+    t: Target,
+    url: String,
+    lines: std::io::BufReader<Box<dyn std::io::Read + Send + Sync>>,
+    pieces: Vec<String>,
+    tokens: [i64; 2],
+    done: bool,
+    span: u32,
+}
+
+impl Live {
+    fn no_text(&self) -> crate::state::Fail {
+        failure("AIError", self.span, &[("model", self.t.shown.clone()), ("detail", msg("detail.ai_no_text", &[]))])
+    }
+
+    /// Read until one more piece (true) or the end (false).
+    fn pull(&mut self) -> R<bool> {
+        if self.done {
+            return Ok(false);
+        }
+        let before = self.pieces.len();
+        loop {
+            let mut raw = Vec::new();
+            use std::io::BufRead;
+            match self.lines.read_until(b'\n', &mut raw) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) => {
+                    self.done = true;
+                    let timed_out = matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock);
+                    return Err(crate::http::lost(&self.url, timed_out, self.span));
+                }
+            }
+            let line = String::from_utf8_lossy(&raw).into_owned();
+            let mut tokens = self.tokens;
+            let Some(found) = event(&self.t, &line, &mut tokens) else {
+                self.done = true;
+                return Err(self.no_text());
+            };
+            self.tokens = tokens;
+            self.pieces.extend(found);
+            if self.pieces.len() > before {
+                return Ok(true);
+            }
+        }
+        self.done = true;
+        if self.pieces.is_empty() {
+            return Err(self.no_text());
+        }
+        record_usage(&format!("{}:{}", self.t.provider, self.t.name), self.tokens);
+        Ok(false)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_stream(
+    t: &Target,
+    system: &str,
+    messages: &[Message],
+    temperature: f64,
+    max_tokens: Option<i64>,
+    limit: f64,
+    retries: u32,
+    span: u32,
+) -> R<Val> {
+    let key = reveal(t, span)?;
+    let (url, body, headers) = request_of(t, key.clone(), system, messages, temperature, max_tokens, true);
+    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
+    let (reader, at) = crate::http::open("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, retries, span)?;
+    let reader: Box<dyn std::io::Read + Send + Sync> =
+        if t.provider == "bedrock" { Box::new(EventLines { inner: reader, buf: Vec::new(), out: Vec::new(), at: 0 }) } else { reader };
+    let mut live = Live { t: t.clone(), url: at, lines: std::io::BufReader::new(reader), pieces: Vec::new(), tokens: [0, 0], done: false, span };
+    // the first piece is read here, so that a model that cannot answer
+    // still goes to the next one of the fallback (D164)
+    live.pull()?;
+    let live = std::sync::Arc::new(Mutex::new(live));
+    Ok(crate::pipe::lazy(move || {
+        let live = live.clone();
+        let mut i = 0;
+        let items: crate::pipe::Items = Box::new(std::iter::from_fn(move || {
+            let mut l = live.lock().unwrap();
+            if i >= l.pieces.len() {
+                // what the program wrote so far shows while it waits
+                crate::state::flush();
+                match l.pull() {
+                    Ok(true) => {}
+                    Ok(false) => return None,
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+            i += 1;
+            Some(Ok(Val::str(l.pieces[i - 1].clone())))
+        }));
+        Ok(items)
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -598,7 +1174,8 @@ fn send(
     span: u32,
 ) -> R<Vec<String>> {
     let key = reveal(t, span)?;
-    let (url, body, headers) = request_of(t, key, system, messages, temperature, max_tokens, stream);
+    let (url, body, headers) = request_of(t, key.clone(), system, messages, temperature, max_tokens, stream);
+    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
     let r = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, retries, span)?;
     let Some((pieces, tokens)) = answer_of(t, &r.text(), stream) else {
         let detail = msg("detail.ai_no_text", &[]);
@@ -610,6 +1187,7 @@ fn send(
 
 /// One line per call in the user's usage.csv (`nexo ai usage`).
 fn record_usage(model: &str, tokens: [i64; 2]) {
+    if crate::security::enforcing() { return; }
     let d = config_dir();
     if std::fs::create_dir_all(&d).is_err() {
         return;
@@ -819,10 +1397,10 @@ pub fn ask(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
         let result = (|| -> R<Val> {
             let mut attempt = 0;
             loop {
-                let pieces = send(t, &system, &messages, temperature, max_tokens, stream, limit, retries, span)?;
                 if stream {
-                    return Ok(list(pieces.into_iter().map(Val::str).collect()));
+                    return send_stream(t, &system, &messages, temperature, max_tokens, limit, retries, span);
                 }
+                let pieces = send(t, &system, &messages, temperature, max_tokens, stream, limit, retries, span)?;
                 let answer = pieces.concat();
                 if !typed {
                     return Ok(Val::str(answer));
@@ -966,12 +1544,15 @@ fn field_schema(d: &TypeDesc, depth: usize) -> String {
     }
 }
 
+#[derive(Clone)]
 struct Tool {
     seal: crate::security::authorization::Seal,
     func: Val,
     name: String,
     description: String,
     types: Vec<Val>,
+    /// a tool of an MCP server: the server and its JSON schema (D166)
+    mcp: Option<(Arc<Mutex<Server>>, String)>,
 }
 
 impl Tool {
@@ -987,6 +1568,9 @@ impl Tool {
     }
 
     fn params_schema(&self) -> String {
+        if let Some((_, schema)) = &self.mcp {
+            return schema.clone();
+        }
         let mut props = Vec::new();
         let mut required = Vec::new();
         for (i, p) in self.params().iter().enumerate() {
@@ -1012,6 +1596,10 @@ pub struct Agent {
     goal: String,
     max_steps: i64,
     confirm: Vec<String>,
+    /// MCP servers whose tools the agent also has, and the names of those
+    /// whose tools need approval (D166)
+    servers: Vec<Arc<Mutex<Server>>>,
+    confirm_servers: Vec<String>,
 }
 
 impl Native for Agent {
@@ -1084,21 +1672,34 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     let tool_values = list_of("tools")?;
     let confirm_values = list_of("confirm")?;
     let mut tools = Vec::new();
+    let mut servers = Vec::new();
     {
         let registry = TOOLS.lock().unwrap();
         for f in &tool_values {
+            if let Some(m) = f.v().native::<McpServer>() {
+                servers.push(m.server.clone());
+                continue;
+            }
             let found = fn_key(f.v()).and_then(|k| registry.iter().find(|entry| fn_key(entry.func.v()) == Some(k)));
             let Some(entry) = found else {
                 return Err(diag(Diagnostic::new_spanless("ai_not_tool").arg("name", func_name(f.v())), span));
             };
-            if tools.iter().any(|t: &Tool| t.name == func_name(f.v())) {
+            if crate::security::enforcing() && tools.iter().any(|t: &Tool| t.name == func_name(f.v())) {
                 return Err(diag(Diagnostic::new_spanless("security_dispatch"),span));
             }
-            tools.push(Tool { func: f.clone(), name: func_name(f.v()), description: entry.description.clone(), types: entry.types.clone(), seal: entry.seal.clone() });
+            tools.push(Tool { func: f.clone(), name: func_name(f.v()), description: entry.description.clone(), types: entry.types.clone(), seal: entry.seal.clone(), mcp: None });
         }
     }
     let mut confirm = Vec::new();
+    let mut confirm_servers = Vec::new();
     for f in &confirm_values {
+        if let Some(m) = f.v().native::<McpServer>() {
+            if !servers.iter().any(|s| Arc::ptr_eq(s, &m.server)) {
+                return Err(diag(Diagnostic::new_spanless("agent_confirm").arg("name", m.repr()), span));
+            }
+            confirm_servers.push(m.name.clone());
+            continue;
+        }
         let n = func_name(f.v());
         if !tools.iter().any(|t| t.name == n) {
             return Err(diag(Diagnostic::new_spanless("agent_confirm").arg("name", n), span));
@@ -1107,7 +1708,7 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     }
     let name = args.first().and_then(|n| n.as_str()).unwrap_or("").to_string();
     let seal = crate::security::authorization::seal(&name,span);
-    Ok(native(Agent { seal, name, model, tools, goal, max_steps, confirm }))
+    Ok(native(Agent { seal, name, model, tools, goal, max_steps, confirm, servers, confirm_servers }))
 }
 
 /// JSON text of a parsed value (to send back what the model sent).
@@ -1133,6 +1734,23 @@ fn dump(j: &Json) -> String {
 }
 
 fn tools_json(t: &Target, tools: &[Tool]) -> String {
+    if t.provider == "gemini" {
+        let decls: Vec<String> = tools
+            .iter()
+            .map(|x| obj(&[("name", js(&x.name)), ("description", js(&x.description)), ("parameters", x.params_schema())]))
+            .collect();
+        return format!("[{}]", obj(&[("functionDeclarations", format!("[{}]", decls.join(",")))]));
+    }
+    if t.provider == "bedrock" {
+        let specs: Vec<String> = tools
+            .iter()
+            .map(|x| {
+                let spec = obj(&[("name", js(&x.name)), ("description", js(&x.description)), ("inputSchema", obj(&[("json", x.params_schema())]))]);
+                obj(&[("toolSpec", spec)])
+            })
+            .collect();
+        return obj(&[("tools", format!("[{}]", specs.join(",")))]);
+    }
     let items: Vec<String> = tools
         .iter()
         .map(|x| {
@@ -1150,6 +1768,28 @@ fn tools_json(t: &Target, tools: &[Tool]) -> String {
 /// The body of an agent's request: the one of `ask` with structured
 /// messages and the tools.
 fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> String {
+    let temperature = float(0.7);
+    if t.provider == "gemini" || t.provider == "bedrock" {
+        let list = format!("[{}]", messages.join(","));
+        let mut body: Vec<(&str, String)> = Vec::new();
+        if t.provider == "gemini" {
+            body.push(("contents", list));
+            if !system.is_empty() {
+                body.push(("systemInstruction", obj(&[("parts", format!("[{}]", obj(&[("text", js(system))])))])));
+            }
+            body.push(("generationConfig", obj(&[("temperature", temperature)])));
+        } else {
+            body.push(("messages", list));
+            if !system.is_empty() {
+                body.push(("system", format!("[{}]", obj(&[("text", js(system))]))));
+            }
+            body.push(("inferenceConfig", obj(&[("temperature", temperature)])));
+        }
+        if !tools.is_empty() {
+            body.push((if t.provider == "bedrock" { "toolConfig" } else { "tools" }, tools_json(t, tools)));
+        }
+        return obj(&body);
+    }
     let mut body: Vec<(&str, String)> = vec![("model", js(&t.name))];
     let mut all = Vec::new();
     if t.provider != "anthropic" && !system.is_empty() {
@@ -1157,7 +1797,6 @@ fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> 
     }
     all.extend(messages.iter().cloned());
     let messages = format!("[{}]", all.join(","));
-    let temperature = float(0.7);
     match t.provider.as_str() {
         "anthropic" => {
             body.push(("max_tokens", MAX_TOKENS.to_string()));
@@ -1167,7 +1806,7 @@ fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> 
             }
             body.push(("messages", messages));
         }
-        "openai" => {
+        p if openai_like(p) => {
             body.push(("temperature", temperature));
             body.push(("messages", messages));
         }
@@ -1191,8 +1830,9 @@ type ToolCall = (String, String, Json);
 /// One request: (text, the calls, the assistant message as JSON).
 fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], span: u32) -> R<(String, Vec<ToolCall>, String)> {
     let key = reveal(t, span)?;
-    let (url, _, headers) = request_of(t, key, system, &[], 0.7, None, false);
+    let (url, _, headers) = request_of(t, key.clone(), system, &[], 0.7, None, false);
     let body = agent_body(t, system, messages, tools);
+    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
     let r = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, 60.0, 1, span)?;
     let bad = || {
         let detail = msg("detail.ai_no_text", &[]);
@@ -1224,7 +1864,51 @@ fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], spa
             let tokens = [int(u.and_then(|u| at(u, "input_tokens"))), int(u.and_then(|u| at(u, "output_tokens")))];
             return Some((text, calls, message, tokens));
         }
-        let message = if t.provider == "openai" { at(idx(at(&answer, "choices")?, 0)?, "message")? } else { at(&answer, "message")? };
+        if t.provider == "gemini" {
+            let parts = at(at(idx(at(&answer, "candidates")?, 0)?, "content")?, "parts")?;
+            let Json::List(items) = parts else { return None };
+            let mut text = String::new();
+            for p in items {
+                if let Some(x) = at(p, "text") {
+                    text.push_str(&text_of(Some(x))?);
+                }
+                if let Some(f) = at(p, "functionCall") {
+                    let args = match at(f, "args") {
+                        Some(j @ Json::Obj(_)) => clone_json(j),
+                        Some(Json::Null) | None => Json::Obj(Vec::new()),
+                        _ => return None,
+                    };
+                    calls.push((calls.len().to_string(), text_of(at(f, "name"))?, args));
+                }
+            }
+            let message = obj(&[("role", js("model")), ("parts", dump(parts))]);
+            let u = at(&answer, "usageMetadata");
+            let tokens = [int(u.and_then(|u| at(u, "promptTokenCount"))), int(u.and_then(|u| at(u, "candidatesTokenCount")))];
+            return Some((text, calls, message, tokens));
+        }
+        if t.provider == "bedrock" {
+            let content = at(at(at(&answer, "output")?, "message")?, "content")?;
+            let Json::List(blocks) = content else { return None };
+            let mut text = String::new();
+            for b in blocks {
+                if let Some(x) = at(b, "text") {
+                    text.push_str(&text_of(Some(x))?);
+                }
+                if let Some(u) = at(b, "toolUse") {
+                    let input = match at(u, "input") {
+                        Some(j @ Json::Obj(_)) => clone_json(j),
+                        Some(Json::Null) | None => Json::Obj(Vec::new()),
+                        _ => return None,
+                    };
+                    calls.push((text_of(at(u, "toolUseId"))?, text_of(at(u, "name"))?, input));
+                }
+            }
+            let message = obj(&[("role", js("assistant")), ("content", dump(content))]);
+            let u = at(&answer, "usage");
+            let tokens = [int(u.and_then(|u| at(u, "inputTokens"))), int(u.and_then(|u| at(u, "outputTokens")))];
+            return Some((text, calls, message, tokens));
+        }
+        let message = if openai_like(&t.provider) { at(idx(at(&answer, "choices")?, 0)?, "message")? } else { at(&answer, "message")? };
         let text = match at(message, "content") {
             Some(Json::Str(s)) => s.clone(),
             Some(Json::Null) | None => String::new(),
@@ -1246,7 +1930,7 @@ fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], spa
                 calls.push((id, text_of(at(f, "name"))?, args));
             }
         }
-        let tokens = if t.provider == "openai" {
+        let tokens = if openai_like(&t.provider) {
             let u = at(&answer, "usage");
             [int(u.and_then(|u| at(u, "prompt_tokens"))), int(u.and_then(|u| at(u, "completion_tokens")))]
         } else {
@@ -1279,10 +1963,25 @@ fn clone_json(j: &Json) -> Json {
 }
 
 /// (the result for the model, whether it is an error).
-fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, bool)> {
-    let Some(tool) = agent.tools.iter().find(|x| x.name == name) else {
+fn use_tool(agent: &Agent, tools: &[Tool], name: &str, args: &Json, span: u32) -> R<(String, bool)> {
+    let Some(tool) = tools.iter().find(|x| x.name == name) else {
         return Ok((format!("There is no tool {name}."), true));
     };
+    if let Some((server, _)) = &tool.mcp {
+        let server_name = server.lock().unwrap().name.clone();
+        if agent.confirm_servers.contains(&server_name) {
+            let mut values = Vec::new();
+            if let Json::Obj(pairs) = args {
+                for (k, v) in pairs {
+                    values.push((k.clone(), crate::data::json_parse(&dump(v), None, span)?));
+                }
+            }
+            if !confirmed(name, &values) {
+                return Ok((DENIED.to_string(), false));
+            }
+        }
+        return server.lock().unwrap().call_tool(name, args, span);
+    }
     let (_tool_scope, required) = crate::security::authorization::enter_tool(&agent.seal,&tool.seal,span)?;
     let confirm = required || agent.confirm.iter().any(|c| c == name);
     crate::security::authorization::check_confirmation(confirm,span)?;
@@ -1356,6 +2055,30 @@ fn confirm_call(name: &str, shown: &[String]) -> bool {
     matches!(line.trim().to_lowercase().as_str(),"y" | "yes")
 }
 
+fn confirmed(name: &str, values: &[(String, Val)]) -> bool {
+    let shown: Vec<String> = values.iter().map(|(n,v)| format!("{n}: {}", repr(v.v()))).collect();
+    confirm_call(name, &shown)
+}
+
+/// The agent's @tool functions and the tools of its MCP servers.
+fn agent_tools(agent: &Agent, span: u32) -> R<Vec<Tool>> {
+    let mut tools = agent.tools.clone();
+    for s in &agent.servers {
+        let found = s.lock().unwrap().ensure(span)?;
+        for (name, description, schema) in found {
+            tools.push(Tool { seal: agent.seal.clone(), func: Val::none(), name, description, types: Vec::new(), mcp: Some((s.clone(), schema)) });
+        }
+    }
+    let mut seen: Vec<&str> = Vec::new();
+    for t in &tools {
+        if seen.contains(&t.name.as_str()) {
+            return Err(failure_as("AIError", "AIError.tool_twice", span, &[("agent", agent.name.clone()), ("name", t.name.clone())]));
+        }
+        seen.push(&t.name);
+    }
+    Ok(tools)
+}
+
 /// `agent.handle(input)` (D109): the conversation with the model, using
 /// its tools, until it answers without asking for one.
 fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
@@ -1363,6 +2086,7 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
     let model = agent.model.as_ref().map(|m| Val::str(m.clone()));
     let targets = resolve(model.as_ref().map(|m| m.v()), None, span)?;
     let t = &targets[0];
+    let tools = agent_tools(agent, span)?;
     let has_input = !input.is_none();
     let system: Vec<&str> = [agent.goal.as_str(), if has_input { GUARD } else { "" }].into_iter().filter(|x| !x.is_empty()).collect();
     let system = system.join("\n\n");
@@ -1372,16 +2096,21 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
     } else {
         String::new()
     };
-    let mut messages = vec![obj(&[("role", js("user")), ("content", js(&content))])];
+    let first = match t.provider.as_str() {
+        "gemini" => obj(&[("role", js("user")), ("parts", format!("[{}]", obj(&[("text", js(&content))])))]),
+        "bedrock" => obj(&[("role", js("user")), ("content", format!("[{}]", obj(&[("text", js(&content))])))]),
+        _ => obj(&[("role", js("user")), ("content", js(&content))]),
+    };
+    let mut messages = vec![first];
     for _ in 0..agent.max_steps {
-        let (text, calls, message) = agent_step(t, &system, &messages, &agent.tools, span)?;
+        let (text, calls, message) = agent_step(t, &system, &messages, &tools, span)?;
         if calls.is_empty() {
             return Ok(Val::str(text));
         }
         messages.push(message);
         let mut results = Vec::new();
         for (id, name, args) in &calls {
-            let (out, is_error) = use_tool(agent, name, args, span)?;
+            let (out, is_error) = use_tool(agent, &tools, name, args, span)?;
             match t.provider.as_str() {
                 "anthropic" => {
                     let mut r = vec![("type", js("tool_result")), ("tool_use_id", js(id)), ("content", js(&out))];
@@ -1390,17 +2119,246 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
                     }
                     results.push(obj(&r));
                 }
-                "openai" => messages.push(obj(&[("role", js("tool")), ("tool_call_id", js(id)), ("content", js(&out))])),
+                "gemini" => {
+                    let response = obj(&[(if is_error { "error" } else { "content" }, js(&out))]);
+                    results.push(obj(&[("functionResponse", obj(&[("name", js(name)), ("response", response)]))]));
+                }
+                "bedrock" => {
+                    let mut r = vec![("toolUseId", js(id)), ("content", format!("[{}]", obj(&[("text", js(&out))])))];
+                    if is_error {
+                        r.push(("status", js("error")));
+                    }
+                    results.push(obj(&[("toolResult", obj(&r))]));
+                }
+                p if openai_like(p) => messages.push(obj(&[("role", js("tool")), ("tool_call_id", js(id)), ("content", js(&out))])),
                 _ => messages.push(obj(&[("role", js("tool")), ("content", js(&out))])),
             }
         }
         if !results.is_empty() {
-            messages.push(obj(&[("role", js("user")), ("content", format!("[{}]", results.join(",")))]));
+            let field = if t.provider == "gemini" { "parts" } else { "content" };
+            messages.push(obj(&[("role", js("user")), (field, format!("[{}]", results.join(",")))]));
         }
     }
     Err(failure_as("AIError", "AIError.steps", span, &[("agent", agent.name.clone()), ("n", agent.max_steps.to_string())]))
 }
 
-pub fn mcp(span: u32) -> R<Val> {
-    Err(diag(Diagnostic::new_spanless("not_supported").arg("what", "\"mcp(...)\""), span))
+// ------------------------------------------------------------ MCP (D166)
+
+const MCP_VERSION: &str = "2025-06-18";
+const MCP_WAIT: u64 = 60;
+
+/// The MCP servers of the program, by name: started the first time an
+/// agent needs their tools and kept until the program ends.
+static SERVERS: Mutex<Vec<(String, Arc<Mutex<Server>>)>> = Mutex::new(Vec::new());
+
+/// `mcp("name")`: the MCP server of [mcp.name] in nexo.toml (D166).
+pub fn mcp(name: V, span: u32) -> R<Val> {
+    crate::security::check_connector(span)?;
+    let Some(n) = name.as_str() else { return Err(expects("mcp", "str", name, span)) };
+    let mut servers = SERVERS.lock().unwrap();
+    let server = match servers.iter().find(|(k, _)| k == n) {
+        Some((_, s)) => s.clone(),
+        None => {
+            let s = Arc::new(Mutex::new(Server { name: n.to_string(), child: None, stdin: None, lines: None, tools: None, last: 0 }));
+            servers.push((n.to_string(), s.clone()));
+            s
+        }
+    };
+    Ok(native(McpServer { name: n.to_string(), server }))
+}
+
+pub struct McpServer {
+    name: String,
+    server: Arc<Mutex<Server>>,
+}
+
+impl Native for McpServer {
+    fn type_name(&self) -> &str {
+        "mcp"
+    }
+    fn repr(&self) -> String {
+        format!("mcp(\"{}\")", self.name)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// (name, description, JSON schema) of a tool of a server.
+type McpTool = (String, String, String);
+
+pub struct Server {
+    name: String,
+    child: Option<std::process::Child>,
+    stdin: Option<std::process::ChildStdin>,
+    /// the lines the server writes; None once it closes its output
+    lines: Option<std::sync::mpsc::Receiver<Option<Vec<u8>>>>,
+    tools: Option<Vec<McpTool>>,
+    last: i64,
+}
+
+impl Server {
+    fn fail(&self, detail: String, span: u32) -> crate::state::Fail {
+        failure_as("AIError", "AIError.mcp", span, &[("name", self.name.clone()), ("detail", detail)])
+    }
+
+    fn ensure(&mut self, span: u32) -> R<Vec<McpTool>> {
+        if let Some(t) = &self.tools {
+            return Ok(t.clone());
+        }
+        let file = crate::state::program().file;
+        let folder = std::fs::canonicalize(file)
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default();
+        let mut command = None;
+        for (_, _, _, servers) in layers_from(&folder).map_err(|d| diag(d, span))? {
+            if let Some((_, c)) = servers.into_iter().find(|(n, _)| *n == self.name) {
+                command = Some(c);
+                break;
+            }
+        }
+        let Some(command) = command.filter(|c| !c.is_empty()) else {
+            return Err(failure_as("AIError", "AIError.mcp_unknown", span, &[("name", self.name.clone())]));
+        };
+        crate::policy::check("shell", &command.join(" "), span)?;
+        let child = std::process::Command::new(&command[0])
+            .args(&command[1..])
+            .current_dir(&folder)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(_) => return Err(self.fail(msg("detail.mcp_start", &[]), span)),
+        };
+        self.stdin = child.stdin.take();
+        let out = child.stdout.take();
+        let (tx, rx) = std::sync::mpsc::channel();
+        if let Some(out) = out {
+            std::thread::spawn(move || {
+                let mut reader = std::io::BufReader::new(out);
+                loop {
+                    let mut line = Vec::new();
+                    match std::io::BufRead::read_until(&mut reader, b'\n', &mut line) {
+                        Ok(0) | Err(_) => {
+                            let _ = tx.send(None);
+                            return;
+                        }
+                        Ok(_) => {
+                            if tx.send(Some(line)).is_err() {
+                                return;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        self.lines = Some(rx);
+        self.child = Some(child);
+        let client = obj(&[("name", js("nexo")), ("version", js("0.1"))]);
+        self.request("initialize", &obj(&[("protocolVersion", js(MCP_VERSION)), ("capabilities", "{}".into()), ("clientInfo", client)]), span)?;
+        self.send(&obj(&[("jsonrpc", js("2.0")), ("method", js("notifications/initialized"))]), span)?;
+        let mut tools = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let params = match &cursor {
+                Some(c) => obj(&[("cursor", js(c))]),
+                None => "{}".into(),
+            };
+            let result = self.request("tools/list", &params, span)?;
+            if let Some(Json::List(items)) = at(&result, "tools") {
+                for t in items {
+                    let Some(name) = text(at(t, "name")) else { return Err(self.fail(msg("detail.mcp_answer", &[]), span)) };
+                    let description = text(at(t, "description")).unwrap_or_default();
+                    let schema = match at(t, "inputSchema") {
+                        Some(j @ Json::Obj(_)) => dump(j),
+                        _ => r#"{"type":"object"}"#.to_string(),
+                    };
+                    tools.push((name, description, schema));
+                }
+            }
+            cursor = text(at(&result, "nextCursor")).filter(|c| !c.is_empty());
+            if cursor.is_none() {
+                break;
+            }
+        }
+        self.tools = Some(tools.clone());
+        Ok(tools)
+    }
+
+    fn send(&mut self, message: &str, span: u32) -> R<()> {
+        use std::io::Write;
+        let ok = match self.stdin.as_mut() {
+            Some(w) => w.write_all(format!("{message}\n").as_bytes()).and_then(|_| w.flush()).is_ok(),
+            None => false,
+        };
+        if !ok {
+            return Err(self.fail(msg("detail.mcp_closed", &[]), span));
+        }
+        Ok(())
+    }
+
+    fn request(&mut self, method: &str, params: &str, span: u32) -> R<Json> {
+        self.last += 1;
+        let id = self.last;
+        self.send(&obj(&[("jsonrpc", js("2.0")), ("id", id.to_string()), ("method", js(method)), ("params", params.to_string())]), span)?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(MCP_WAIT);
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let got = match &self.lines {
+                Some(rx) => rx.recv_timeout(left),
+                None => Err(std::sync::mpsc::RecvTimeoutError::Disconnected),
+            };
+            let raw = match got {
+                Ok(Some(line)) => line,
+                Ok(None) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(self.fail(msg("detail.mcp_closed", &[]), span));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(self.fail(msg("detail.mcp_wait", &[("seconds", MCP_WAIT.to_string())]), span));
+                }
+            };
+            let line = String::from_utf8_lossy(&raw);
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(message) = crate::data::parse_json(line.trim()) else {
+                return Err(self.fail(msg("detail.mcp_answer", &[]), span));
+            };
+            // notifications and requests of the server are not answers
+            if !matches!(message, Json::Obj(_)) || at(&message, "method").is_some() || !matches!(at(&message, "id"), Some(Json::Int(_))) || int(at(&message, "id")) != id {
+                continue;
+            }
+            if let Some(e @ Json::Obj(_)) = at(&message, "error") {
+                let text = text(at(e, "message")).unwrap_or_default();
+                return Err(self.fail(msg("detail.mcp_error", &[("message", text)]), span));
+            }
+            return match at(&message, "result") {
+                Some(r @ Json::Obj(_)) => Ok(clone_json(r)),
+                _ => Err(self.fail(msg("detail.mcp_answer", &[]), span)),
+            };
+        }
+    }
+
+    fn call_tool(&mut self, name: &str, args: &Json, span: u32) -> R<(String, bool)> {
+        let result = self.request("tools/call", &obj(&[("name", js(name)), ("arguments", dump(args))]), span)?;
+        let mut parts = Vec::new();
+        if let Some(Json::List(items)) = at(&result, "content") {
+            for c in items {
+                if text(at(c, "type")).as_deref() == Some("text") {
+                    if let Some(t) = text(at(c, "text")) {
+                        parts.push(t);
+                    }
+                }
+            }
+        }
+        Ok((parts.join("\n"), matches!(at(&result, "isError"), Some(Json::Bool(true)))))
+    }
+}
+
+pub fn release_servers() {
+    SERVERS.lock().unwrap().clear();
 }

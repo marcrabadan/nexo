@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexo reference</title>
 <meta name="description" content="The Nexo language reference: syntax, types, operators, errors, pipelines, contracts, modules, concurrency, the standard library, the command line and the reserved words. Every example runs with both implementations.">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark light">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="assets/style.css">
 <script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
-<body>
+<body class="reference-page">
 
 <a class="skip" href="#main">Skip to content</a>
 
@@ -18,12 +19,12 @@
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="index.html#features">Features</a>
-      <a href="index.html#examples">Examples</a>
-      <a href="index.html#start">Get started</a>
-      <a href="shield.html">Shield</a>
+      <a href="learn.html">Learn</a>
+      <a href="examples.html">Examples</a>
+      <a href="how-it-works.html">How it works</a>
       <a href="reference.html" aria-current="page">Reference</a>
-      <a href="index.html#roadmap">Roadmap</a>
+      <a href="shield.html">Shield</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
     </nav>
     <div class="header-tools">
       <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
@@ -94,9 +95,9 @@
 
 <header class="ref-head">
   <p class="eyebrow">Reference</p>
-  <h1>The Nexo language</h1>
-  <p class="lede">Everything edition 0.1 has, in one page: the syntax, the types, the rules for errors and numbers, pipelines, contracts, modules, concurrency, the standard library and the commands. Every example runs with both the interpreter and the compiler, and the output under it is what both print.</p>
-  <p class="ref-note">The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">specification</a> is the source of truth; every choice made where it was ambiguous is in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md"><code>docs/decisions.md</code></a>, referred to below as D1, D2...</p>
+  <h1>Language reference</h1>
+  <p class="lede">Look up the syntax, types and rules of Nexo, with examples and their output. If you’re new to the language, start with the <a href="learn.html">guided lessons</a>.</p>
+  <p class="ref-note">Use the contents to find a topic, or explore <a href="examples.html">working programs</a> to see how the pieces fit together. The <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">language specification</a> defines the syntax and behavior in full.</p>
 </header>
 
 <section class="ref-sec" id="lexical">
@@ -401,12 +402,12 @@ Overflow</code></pre></div></div>
     </tbody>
   </table></div>
   <ul class="ref-list">
-    <li><strong>Names.</strong> In a step, a bare name is first a column of the current row or a field of the current record, then a variable; <code>it</code> is the whole element (D44).</li>
-    <li><strong>Lazy.</strong> Nothing is read until the result is stored, passed, iterated or printed, or a final step (<code>each</code>, <code>save</code>, <code>count</code>, <code>sum</code>, <code>avg</code>) needs it; so <code>read_lines(path) |&gt; take 100</code> stops reading early (D50).</li>
-    <li><strong>Functions.</strong> Any function is a step: <code>xs |&gt; f</code> is <code>f(xs)</code>. In <code>map</code> and <code>each</code>, a step that is a function is called with the element: <code>each print</code>, <code>map double</code> (D51).</li>
-    <li><strong>Groups.</strong> After <code>group by region</code> each row has the key column <code>region</code> and the aggregate column named after its argument (<code>sum amount</code> gives <code>amount</code>, <code>count</code> gives <code>count</code>) (D48).</li>
-    <li><strong>Empty.</strong> <code>sum</code> of nothing is <code>0</code> and <code>avg</code> of nothing is <code>none</code>; <code>avg</code> of ints is a <code>float</code> (D49).</li>
-    <li><strong>Everywhere.</strong> The same steps run on lists, CSV tables, the lines of a file, <a href="#mod-db">database tables</a> (as SQL) and <a href="#mod-stream">streams</a> (with time windows), and the compiler fuses <code>where</code>, <code>map</code> and <code>sum</code> into one loop (D134).</li>
+    <li><strong>Names.</strong> In a step, a bare name is first a column of the current row or a field of the current record, then a variable; <code>it</code> is the whole element.</li>
+    <li><strong>Lazy.</strong> Nothing is read until the result is stored, passed, iterated or printed, or a final step (<code>each</code>, <code>save</code>, <code>count</code>, <code>sum</code>, <code>avg</code>) needs it; so <code>read_lines(path) |&gt; take 100</code> stops reading early.</li>
+    <li><strong>Functions.</strong> Any function is a step: <code>xs |&gt; f</code> is <code>f(xs)</code>. In <code>map</code> and <code>each</code>, a step that is a function is called with the element: <code>each print</code>, <code>map double</code>.</li>
+    <li><strong>Groups.</strong> After <code>group by region</code> each row has the key column <code>region</code> and the aggregate column named after its argument (<code>sum amount</code> gives <code>amount</code>, <code>count</code> gives <code>count</code>).</li>
+    <li><strong>Empty.</strong> <code>sum</code> of nothing is <code>0</code> and <code>avg</code> of nothing is <code>none</code>; <code>avg</code> of ints is a <code>float</code>.</li>
+    <li><strong>Everywhere.</strong> The same steps run on lists, CSV tables, the lines of a file, <a href="#mod-db">database tables</a> (as SQL) and <a href="#mod-stream">streams</a> (with time windows), and the compiler fuses <code>where</code>, <code>map</code> and <code>sum</code> into one loop.</li>
   </ul>
 <div class="code"><div class="code-bar"><span>pipes.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Sale:
     region: str
@@ -444,7 +445,7 @@ south: 25.0
 
 <section class="ref-sec" id="contracts">
   <h2><a href="#contracts">Contracts and tests</a></h2>
-  <p><code>expect</code> states what must hold when a function starts, <code>ensure</code> what must hold when it returns, and <code>old(expr)</code> is a value as it was on entry. A broken contract is a <code>ContractBroken</code> error with the values involved. The compiler leaves out the <code>ensure</code> checks it can prove (D83).</p>
+  <p><code>expect</code> states what must hold when a function starts, <code>ensure</code> what must hold when it returns, and <code>old(expr)</code> is a value as it was on entry. A broken contract is a <code>ContractBroken</code> error with the values involved. The compiler leaves out the <code>ensure</code> checks it can prove.</p>
   <p><code>test "name":</code> blocks live next to the code and run with <code>nexo test</code>; running the file skips them. <code>assert expr</code> checks a condition, and <code>assert expr fails</code> checks that it fails.</p>
 <div class="code"><div class="code-bar"><span>contracts.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Account:
     owner: str
@@ -476,7 +477,7 @@ expect amount &gt; 0.00 EUR does not hold (amount = -1.00 EUR)
 ✓ a deposit adds to the balance
 ✓ a negative deposit fails
 2 tests: 2 passed, 0 failed</code></pre></div></div>
-  <p><code>nexo test --coverage</code> runs the same tests and then says how many branches they ran, and which never ran: the body of each function, each branch of an <code>if</code> (and the case where no condition holds), each arm of a <code>match</code>, each loop body and each <code>else</code> of a <code>try</code>. Code inside <code>test</code> blocks and lambdas is not counted (D155).</p>
+  <p><code>nexo test --coverage</code> runs the same tests and then says how many branches they ran, and which never ran: the body of each function, each branch of an <code>if</code> (and the case where no condition holds), each arm of a <code>match</code>, each loop body and each <code>else</code> of a <code>try</code>. Code inside <code>test</code> blocks and lambdas is not counted.</p>
 <div class="code"><div class="code-bar"><span>coverage.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn label(n: int) -&gt; str:
     if n == 0:
         return "none"
@@ -504,7 +505,7 @@ Add tests that run them; nexo test --suggest proposes some.</code></pre></div></
 
 <section class="ref-sec" id="modules">
   <h2><a href="#modules">Modules: code from other files</a></h2>
-  <p>A program can be split into several <code>.nexo</code> files. Each file is a module, and another file uses it with <code>use</code> (section 13, D124). There is nothing to install or register: the file is the module.</p>
+  <p>A program can be split into several <code>.nexo</code> files. Each file is a module, and another file uses it with <code>use</code>. There is nothing to install or register: the file is the module.</p>
 
   <h3 id="mod-names">The name of a module is its path</h3>
   <ul class="ref-list">
@@ -584,7 +585,7 @@ There is no module shop.payment: there is no file shop/payment.nexo. Create the 
 
 <section class="ref-sec" id="concurrency">
   <h2><a href="#concurrency">Concurrency</a></h2>
-  <p><code>parallel for</code> runs its body as tasks on threads, and the results and any output come back in the order of the list; a <code>parallel:</code> block runs its statements at the same time. A task may only change what it created itself (D80-D81). <code>use nexo.sync</code> adds <code>spawn</code>, typed <code>channel</code>s, <code>select</code> and <code>shared</code> variables; when every task waits, Nexo reports a deadlock instead of hanging.</p>
+  <p><code>parallel for</code> runs its body as tasks on threads, and the results and any output come back in the order of the list; a <code>parallel:</code> block runs its statements at the same time. A task may only change what it created itself. <code>use nexo.sync</code> adds <code>spawn</code>, typed <code>channel</code>s, <code>select</code> and <code>shared</code> variables; when every task waits, Nexo reports a deadlock instead of hanging.</p>
 <div class="code"><div class="code-bar"><span>parallel.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.sync
 
 sizes = parallel for word in ["one", "three", "seven"]:
@@ -609,9 +610,9 @@ print(total)</code></pre><div class="out"><div class="out-label">$ nexo parallel
   <h2><a href="#patterns">Patterns</a></h2>
   <p>Five design patterns have their own word; the rest are written with functions, <code>match</code> and named arguments (section 10).</p>
   <ul class="ref-list">
-    <li><code>single name:</code> holds one value with the fields written in it, at the top level of a file; <code>config.port = 9090</code> changes it everywhere (D143).</li>
-    <li><code>states name:</code> lists the transitions as chains, <code>new -&gt; paid -&gt; shipped</code>; it starts in the first state. <code>.state</code> is the current one, <code>.can("x")</code> says whether it may go there, and <code>.go("x")</code> goes or fails with <code>InvalidValue</code> (D144).</li>
-    <li><code>protect(value, fails: 5, wait: 1m):</code> is a circuit breaker: after <code>fails</code> errors in a row its block is not run for <code>wait</code>, and it fails with <code>CircuitOpen</code> instead (D145).</li>
+    <li><code>single name:</code> holds one value with the fields written in it, at the top level of a file; <code>config.port = 9090</code> changes it everywhere.</li>
+    <li><code>states name:</code> lists the transitions as chains, <code>new -&gt; paid -&gt; shipped</code>; it starts in the first state. <code>.state</code> is the current one, <code>.can("x")</code> says whether it may go there, and <code>.go("x")</code> goes or fails with <code>InvalidValue</code>.</li>
+    <li><code>protect(value, fails: 5, wait: 1m):</code> is a circuit breaker: after <code>fails</code> errors in a row its block is not run for <code>wait</code>, and it fails with <code>CircuitOpen</code> instead.</li>
   </ul>
 <div class="code"><div class="code-bar"><span>patterns.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">single config:
     port = 8080
@@ -655,7 +656,7 @@ paid false
 card declined
 card declined
 "charge" is not called for 1m: it failed 2 times in a row</code></pre></div></div>
-  <p><code>action name(params):</code> is a command that can be undone: <code>do:</code> says what it does and <code>undo:</code> how to reverse it, each on its line or as a block. Calling it runs <code>do</code> and remembers its arguments; <code>undo()</code> reverses the last action not yet undone and gives <code>true</code>, or <code>false</code> when there is none. The calls inside need no <code>?</code>: an error in <code>do</code> or <code>undo</code> is the error of the call, and an action that failed is not remembered. Actions go at the top level of a file (D150).</p>
+  <p><code>action name(params):</code> is a command that can be undone: <code>do:</code> says what it does and <code>undo:</code> how to reverse it, each on its line or as a block. Calling it runs <code>do</code> and remembers its arguments; <code>undo()</code> reverses the last action not yet undone and gives <code>true</code>, or <code>false</code> when there is none. The calls inside need no <code>?</code>: an error in <code>do</code> or <code>undo</code> is the error of the call, and an action that failed is not remembered. Actions go at the top level of a file.</p>
 <div class="code"><div class="code-bar"><span>actions.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">var lines = ["first"]
 
 action add(line: str):
@@ -672,7 +673,7 @@ print(lines)</code></pre><div class="out"><div class="out-label">$ nexo actions.
 ["first", "second"]
 true false
 ["first"]</code></pre></div></div>
-  <p><code>workflow name(params):</code> is a list of <code>step</code>s that runs like a function. A step may have an <code>undo</code> on the next line, indented. <code>step wait condition, max: 3 days</code> checks the condition every second until it is true, and fails with <code>Timeout</code> after <code>max</code>. When a step fails, the <code>undo</code> of every step already done runs, last first, and the call fails with the step's error. The state is saved in <code>.nexo/workflows/</code> after every step: a program that stops half way runs the same workflow with the same arguments from the step it stopped in, the next time it is called (D151).</p>
+  <p><code>workflow name(params):</code> is a list of <code>step</code>s that runs like a function. A step may have an <code>undo</code> on the next line, indented. <code>step wait condition, max: 3 days</code> checks the condition every second until it is true, and fails with <code>Timeout</code> after <code>max</code>. When a step fails, the <code>undo</code> of every step already done runs, last first, and the call fails with the step's error. The state is saved in <code>.nexo/workflows/</code> after every step: a program that stops half way runs the same workflow with the same arguments from the step it stopped in, the next time it is called.</p>
 <div class="code"><div class="code-bar"><span>workflows.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">var accounts = []
 
 fn create_account(email: str):
@@ -726,13 +727,13 @@ no mailbox for bob@example.invalid
     <tbody>
       <tr><td><code>print(values..., end: "\n")</code></td><td>Writes the values separated by spaces, then <code>end</code>. Text inside a list or map is shown with quotes.</td></tr>
       <tr><td><code>input(prompt?) -&gt; str</code></td><td>Shows the prompt and reads one line, without its newline; <code>""</code> at the end of the input.</td></tr>
-      <tr><td><code>read(path) -&gt; str!</code></td><td>The text of a file; a <code>.csv</code> file is read as a table: a list of rows, each a map from column to value (D43, D44). Fails with <code>NotFound</code> or <code>IOError</code>.</td></tr>
+      <tr><td><code>read(path) -&gt; str!</code></td><td>The text of a file; a <code>.csv</code> file is read as a table: a list of rows, each a map from column to value. Fails with <code>NotFound</code> or <code>IOError</code>.</td></tr>
       <tr><td><code>write(path, text) -&gt; none!</code></td><td>Writes (or replaces) a file; its folder must exist (<code>NotFound</code> otherwise).</td></tr>
       <tr><td><code>read_lines(path) -&gt; list!</code></td><td>The lines of a file, read as they are used: <code>read_lines("50GB.log") |&gt; take 100</code> reads 100 lines.</td></tr>
-      <tr><td><code>save(value, path) -&gt; none!</code></td><td>The last step of a pipeline: CSV for <code>.csv</code>, JSON for <code>.json</code>, one line per element otherwise. Money is written as text (<code>"19.99 EUR"</code>) and decimals keep every digit (D46).</td></tr>
-      <tr><td><code>move_file(path, to: folder) -&gt; str!</code></td><td>Moves a file into a folder, creating it, and returns the new path: <code>move_file("a.txt", to: "old")</code> gives <code>"old/a.txt"</code>. It does not rename (D96).</td></tr>
-      <tr><td><code>json.parse(text, as: T?) -&gt; T!</code></td><td>Reads JSON. With <code>as:</code> it builds records, applies defaults and reports a missing field or a wrong type as <code>InvalidData</code> (D47).</td></tr>
-      <tr><td><code>csv.parse(text) -&gt; list!</code></td><td>A list of maps. A column of integers is <code>int</code>, of numbers <code>float</code>, otherwise text; an empty cell is <code>none</code> (D45).</td></tr>
+      <tr><td><code>save(value, path) -&gt; none!</code></td><td>The last step of a pipeline: CSV for <code>.csv</code>, JSON for <code>.json</code>, one line per element otherwise. Money is written as text (<code>"19.99 EUR"</code>) and decimals keep every digit.</td></tr>
+      <tr><td><code>move_file(path, to: folder) -&gt; str!</code></td><td>Moves a file into a folder, creating it, and returns the new path: <code>move_file("a.txt", to: "old")</code> gives <code>"old/a.txt"</code>. It does not rename.</td></tr>
+      <tr><td><code>json.parse(text, as: T?) -&gt; T!</code></td><td>Reads JSON. With <code>as:</code> it builds records, applies defaults and reports a missing field or a wrong type as <code>InvalidData</code>.</td></tr>
+      <tr><td><code>csv.parse(text) -&gt; list!</code></td><td>A list of maps. A column of integers is <code>int</code>, of numbers <code>float</code>, otherwise text; an empty cell is <code>none</code>.</td></tr>
       <tr><td><code>convert(data, to: json|csv) -&gt; str</code></td><td>Data as JSON (indented by two spaces) or CSV text.</td></tr>
     </tbody>
   </table></div>
@@ -780,17 +781,17 @@ missing: File "totals.json" not found</code></pre></div></div>
     <thead><tr><th>Call</th><th>What it does</th></tr></thead>
     <tbody>
       <tr><td><code>len(x) -&gt; int</code></td><td>Elements of a list, map or set; characters of a text (not bytes).</td></tr>
-      <tr><td><code>range(end)</code>, <code>range(start, end, step?)</code></td><td>The ints up to <code>end</code>, without it. <code>1..10</code> includes both ends (D60).</td></tr>
+      <tr><td><code>range(end)</code>, <code>range(start, end, step?)</code></td><td>The ints up to <code>end</code>, without it. <code>1..10</code> includes both ends.</td></tr>
       <tr><td><code>set(items...)</code></td><td>A set of its arguments, without repeats.</td></tr>
-      <tr><td><code>int</code>, <code>float</code>, <code>decimal</code>, <code>str</code></td><td>Conversions between values; <code>int</code> truncates toward zero. They do not read text: that is <code>validate</code> (D41).</td></tr>
+      <tr><td><code>int</code>, <code>float</code>, <code>decimal</code>, <code>str</code></td><td>Conversions between values; <code>int</code> truncates toward zero. They do not read text: that is <code>validate</code>.</td></tr>
       <tr><td><code>validate(x, as: T, range: a..b?) -&gt; T!</code></td><td>Checks outside data against <code>int</code>, <code>float</code>, <code>decimal</code>, <code>bool</code>, <code>str</code>, <code>date</code>, <code>time</code> or a record type; fails with <code>InvalidValue</code>.</td></tr>
-      <tr><td><code>round(x, digits?, mode: half_up?)</code></td><td>Keeps the type; half to even unless <code>mode: half_up</code> (D40).</td></tr>
+      <tr><td><code>round(x, digits?, mode: half_up?)</code></td><td>Keeps the type; half to even unless <code>mode: half_up</code>.</td></tr>
       <tr><td><code>split(amount, parts) -&gt; list</code></td><td>Shares money in parts that add up exactly; the first parts take the leftover cents.</td></tr>
       <tr><td><code>convert(m, to: USD, rate: r)</code></td><td>Money in another currency; the rate is always explicit.</td></tr>
       <tr><td><code>PI</code>, <code>half_up</code>, <code>half_even</code></td><td>Built-in values.</td></tr>
     </tbody>
   </table></div>
-  <p>Quantities of one dimension add and compare, and the result takes the smaller unit: <code>30s + 1m</code> is <code>90s</code>, <code>2GB + 500MB</code> is <code>2500 MB</code>. The units are time (<code>ms s m h day days year years</code>), sizes (<code>B KB MB GB TB</code>, 1 KB = 1000 B), <code>km</code>, <code>%</code> and the currency codes (D2, D39). A missing map key gives <code>none</code>, so <code>m[k] ?? default</code> works; an index outside a list is <code>OutOfRange</code> (D64).</p>
+  <p>Quantities of one dimension add and compare, and the result takes the smaller unit: <code>30s + 1m</code> is <code>90s</code>, <code>2GB + 500MB</code> is <code>2500 MB</code>. The units are time (<code>ms s m h day days year years</code>), sizes (<code>B KB MB GB TB</code>, 1 KB = 1000 B), <code>km</code>, <code>%</code> and the currency codes. A missing map key gives <code>none</code>, so <code>m[k] ?? default</code> works; an index outside a list is <code>OutOfRange</code>.</p>
   <div class="table-wrap"><table class="ref-table">
     <thead><tr><th>Type</th><th>Methods</th></tr></thead>
     <tbody>
@@ -830,7 +831,7 @@ print(words, "nexo".upper(), "a-b-c".replace("-", "/"), "file.csv".ends_with(".c
 ["hello", "nexo"] NEXO a/b/c true</code></pre></div></div>
 
   <h3 id="std-text">Text</h3>
-  <p><code>"Hi {name}"</code> interpolates any expression; <code>{{</code> writes a literal brace. <code>text.find(s)</code> is the position of <code>s</code> in characters, or <code>none</code>. <code>regex(pattern)</code> is a regular expression without lookarounds or backreferences, so it always runs in linear time (D95):</p>
+  <p><code>"Hi {name}"</code> interpolates any expression; <code>{{</code> writes a literal brace. <code>text.find(s)</code> is the position of <code>s</code> in characters, or <code>none</code>. <code>regex(pattern)</code> is a regular expression without lookarounds or backreferences, so it always runs in linear time:</p>
   <div class="table-wrap"><table class="ref-table sig">
     <thead><tr><th>Method</th><th>Result</th></tr></thead>
     <tbody>
@@ -840,7 +841,7 @@ print(words, "nexo".upper(), "a-b-c".replace("-", "/"), "file.csv".ends_with(".c
       <tr><td><code>r.groups(t) -&gt; list?</code></td><td>The groups of the first match, or <code>none</code></td></tr>
     </tbody>
   </table></div>
-  <p><code>render(path, name: value...) -&gt; str!</code> fills the <code>{name}</code> slots of a template file; in an <code>.html</code> file the values are escaped. A slot without a value is an <code>InvalidData</code> error (D96).</p>
+  <p><code>render(path, name: value...) -&gt; str!</code> fills the <code>{name}</code> slots of a template file; in an <code>.html</code> file the values are escaped. A slot without a value is an <code>InvalidData</code> error.</p>
 <div class="code"><div class="code-bar"><span>text.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = "Ana"
 print("Hi {name}, {{braces} stay", "hello world".find("o"), "hello".find("z"))
 digits = regex("[0-9]+")
@@ -859,7 +860,7 @@ a#b#c ["a", "b", "c"]
     <li><code>date(y, m, d)</code> is a day: <code>.year</code>, <code>.month</code>, <code>.day</code>, <code>.weekday</code> (1 is Monday). It moves by whole days, months or years, and two dates subtract to days.</li>
     <li><code>time(y, m, d, hour, minute, second, zone: "Europe/Madrid")</code> is an instant in a time zone (by default the machine's: <code>TZ</code>, then <code>/etc/localtime</code>, then UTC); a zone is an IANA name, <code>"UTC"</code> or an offset such as <code>"+05:30"</code>: <code>.hour</code>, <code>.date</code>, <code>.zone</code>, <code>.to_zone(z)</code>. Adding hours follows daylight saving time.</li>
     <li><code>now</code> and <code>today</code> are read from the clock each time. Durations are units: <code>1500ms</code>, <code>90s</code>, <code>5m</code>, <code>2h</code>, <code>3 days</code>, <code>1 year</code>.</li>
-    <li>Dates and times are written as ISO 8601, read from JSON into <code>date</code> and <code>time</code> fields, and checked with <code>validate(x, as: date)</code> (D94).</li>
+    <li>Dates and times are written as ISO 8601, read from JSON into <code>date</code> and <code>time</code> fields, and checked with <code>validate(x, as: date)</code>.</li>
   </ul>
 <div class="code"><div class="code-bar"><span>time.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">d = date(2026, 10, 24)
 print(d, d.year, d.month, d.weekday, d + 7 days, date(2026, 12, 25) - d)
@@ -930,7 +931,7 @@ Error in crypto.nexo, line 28:
 A secret cannot be shown or turned into text. Pass the secret only where it is needed (key: ..., a connect password, an http header); never to print, str() or a file.</code></pre></div></div>
 
   <h3 id="std-http">Network and tests</h3>
-  <p><code>http.get(url, headers:, timeout:, retries:)</code>, <code>http.post(url, body, ...)</code>, <code>put</code>, <code>patch</code> and <code>delete</code> return a response with <code>.status</code>, <code>.text</code>, <code>.headers</code> and <code>.json()</code>. A map or record body is sent as JSON. A status of 400 or more is an <code>HTTPError</code>, and a connection that fails a <code>NetworkError</code>; <code>get</code>, <code>put</code> and <code>delete</code> retry twice after a network error or a 502, 503 or 504; <code>post</code> and <code>patch</code> never retry, since repeating them may repeat their effect. The timeout is 30s by default (D98). Inside a <code>test</code>, <code>fake f returns value</code> replaces a function, a library one or <code>ask</code>, until the test ends (D99). The example starts a <a href="#mod-web"><code>nexo.web</code></a> server and calls it:</p>
+  <p><code>http.get(url, headers:, timeout:, retries:)</code>, <code>http.post(url, body, ...)</code>, <code>put</code>, <code>patch</code> and <code>delete</code> return a response with <code>.status</code>, <code>.text</code>, <code>.headers</code> and <code>.json()</code>. A map or record body is sent as JSON. A status of 400 or more is an <code>HTTPError</code>, and a connection that fails a <code>NetworkError</code>; <code>get</code>, <code>put</code> and <code>delete</code> retry twice after a network error or a 502, 503 or 504; <code>post</code> and <code>patch</code> never retry, since repeating them may repeat their effect. The timeout is 30s by default. Inside a <code>test</code>, <code>fake f returns value</code> replaces a function, a library one or <code>ask</code>, until the test ends. The example starts a <a href="#mod-web"><code>nexo.web</code></a> server and calls it:</p>
 <div class="code"><div class="code-bar"><span>web.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">tokens = jwt(key: password.generate(32))
 
 type Item:
@@ -992,7 +993,7 @@ POST URL/items answered 401 Unauthorized
 
 <section class="ref-sec" id="official">
   <h2><a href="#official">Official modules</a></h2>
-  <p>Modules of the same language, maintained with it. Two load with <code>use</code>; the others are implicit when their block or function appears. Their blocks follow one pattern, <code>word name?:</code> and <code>key = value</code> lines, and both parsers read them into calls of the library (D90).</p>
+  <p>Modules of the same language, maintained with it. Two load with <code>use</code>; the others are implicit when their block or function appears. Their blocks follow one pattern, <code>word name?:</code> and <code>key = value</code> lines, and both parsers read them into calls of the library.</p>
   <div class="table-wrap"><table class="ref-table">
     <thead><tr><th>Module</th><th>What it gives</th><th>Loading</th></tr></thead>
     <tbody>
@@ -1007,16 +1008,16 @@ POST URL/items answered 401 Unauthorized
       <tr><td><a href="#policy">The program <code>policy</code></a></td><td><code>allow</code> and <code>deny</code> of <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>, <code>shell</code>, <code>c</code> and <code>python</code></td><td>implicit</td></tr>
     </tbody>
   </table></div>
-  <p>Not implemented yet: <code>nexo.ml</code>, <code>nexo.ui</code>, <code>nexo.notify</code>, <code>every</code> and <code>lifecycle</code>, canary and blue/green releases, AI budgets and MCP, brokers on the network, PostgreSQL, YAML, XML and Parquet. Using one is an error that says so, never a silent no-op.</p>
+  <p>Not implemented yet: <code>nexo.ml</code>, <code>nexo.ui</code>, <code>nexo.notify</code>, <code>every</code> and <code>lifecycle</code>, canary and blue/green releases, YAML, XML and Parquet. Using one is an error that says so, never a silent no-op.</p>
 
   <h3 id="mod-db"><code>nexo.db</code>: databases</h3>
   <ul class="ref-list">
-    <li><code>db = connect("shop.db", key: secret(...)?)</code> opens or creates an SQLite file. Each <code>@table</code> type is a table: <code>id: id</code> is the automatic key, <code>@unique</code> a unique column, <code>ref T</code> a foreign key and <code>many T</code> the rows that point back.</li>
+    <li><code>db = connect("shop.db", key: secret(...)?)</code> opens or creates an SQLite file; <code>connect("postgres://user@host/shop", key: secret("DB_PASS"))</code> opens a PostgreSQL server and <code>connect("mysql://user@host/shop", ...)</code> a MySQL one (TLS for any host but this machine), with the same tables, queries and migrations. <code>connect("mongodb://user@host/shop", ...)</code> and <code>connect("elasticsearch://user@host:9200/shop", ...)</code> keep the same tables in MongoDB and Elasticsearch, with the same queries and results; there <code>db.sql</code> is an error, there is no schema to migrate, and <code>db.transaction</code> undoes its writes when it fails but does not hide them from other programs before it ends. Each <code>@table</code> type is a table: <code>id: id</code> is the automatic key, <code>@unique</code> a unique column, <code>ref T</code> a foreign key and <code>many T</code> the rows that point back.</li>
     <li><code>db.T.add(field: value...)</code> inserts and returns the record; <code>db.T.find(field: value) -&gt; T!</code> fails with <code>NotFound</code>; <code>db.T.update(record, field: value)</code>, <code>db.T.remove(id)</code>, <code>db.T.all()</code> and <code>db.T.count()</code>.</li>
-    <li>A pipeline on <code>db.T</code> becomes one parameterised SQL query: <code>where</code> comparing columns with values, <code>sort by</code>, <code>take</code> and <code>count</code> run in the database; from the first step that cannot be translated, the rest runs in memory with the same result. <code>NEXO_SQL_LOG=1</code> shows the SQL (D100).</li>
+    <li>A pipeline on <code>db.T</code> becomes one parameterised SQL query: <code>where</code> comparing columns with values (also through a <code>ref</code>: <code>where customer.city == "Rome"</code>), <code>sort by</code>, <code>take</code>, <code>count</code>, <code>pick</code> of columns and <code>group by</code> followed by <code>count</code>, <code>sum</code> or <code>avg</code> run in the database, and the rows of <code>ref</code> fields are read with one query per field; from the first step that cannot be translated, the rest runs in memory with the same result. <code>NEXO_SQL_LOG=1</code> shows the SQL.</li>
     <li><code>db.transaction:</code> keeps or undoes everything inside together; a failure in it is a <code>DatabaseError</code>.</li>
     <li><code>db.sql("... {value}")</code> runs raw SQL written in the call; the values in braces are always parameters, so a query built from text is an error.</li>
-    <li><code>nexo db diff file.nexo</code> compares the types with the database and writes a migration; <code>nexo db migrate</code> applies it in a transaction, and dropping a column needs <code>--allow-drop</code> (D101).</li>
+    <li><code>nexo db diff file.nexo</code> compares the types with the database and writes a migration; <code>nexo db migrate</code> applies it in a transaction, and dropping a column needs <code>--allow-drop</code>.</li>
   </ul>
 <div class="code"><div class="code-bar"><span>db.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.db
 
@@ -1074,7 +1075,7 @@ DatabaseError There is already a Customer with email = "ana@mail.com"
     <li><code>spawn f(args)</code> starts a task that runs on its own; it is not waited for.</li>
     <li><code>channel[T](size: n)</code> is a typed queue: <code>send</code> waits while it is full, <code>receive</code> while it is empty, and <code>for x in c</code> reads until <code>close()</code>. A record sent through a channel is copied, so each task owns what it gets.</li>
     <li><code>select:</code> waits on several channels with <code>name from channel:</code> lines and an optional <code>after 5s:</code>.</li>
-    <li><code>shared x = ...</code> is the only state tasks may change together; the locks are added by the compiler. When every task waits, Nexo reports a deadlock instead of hanging (D82).</li>
+    <li><code>shared x = ...</code> is the only state tasks may change together; the locks are added by the compiler. When every task waits, Nexo reports a deadlock instead of hanging.</li>
   </ul>
 <div class="code"><div class="code-bar"><span>sync.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.sync
 
@@ -1119,7 +1120,7 @@ alert disk full
     <li><code>server name:</code> with <code>port = n</code> and routes <code>get|post|put|patch|delete "/path/{param}"(param: type, ...):</code>. Path, query and JSON body parameters are checked against their types; a wrong one answers 400.</li>
     <li>What a route returns is the answer: a status code (<code>return 404</code>), <code>none</code> (204), a text (<code>text/plain</code>) or any other value as JSON, with 201 for <code>post</code> and 200 otherwise. An error that leaves the route answers too: <code>NotFound</code> is 404, <code>InvalidValue</code> and <code>InvalidData</code> 400, a repeated <code>@unique</code> 409, anything else 500.</li>
     <li><code>auth = jwt(key: ...)</code> protects every route; <code>@public</code> opens one, <code>@role("admin")</code> asks for a role, <code>@limit(10 per minute per ip)</code> limits the calls. <code>tokens.sign(claims, expires: 1h)</code> makes a token.</li>
-    <li>Secure headers are always sent, and a POST, PUT, PATCH or DELETE from another origin answers 403. Under <code>nexo test</code> the server answers on a free port, and <code>name.url</code> is its address (D102-D104). The example is in <a href="#std-http">Network and tests</a>.</li>
+    <li>Secure headers are always sent, and a POST, PUT, PATCH or DELETE from another origin answers 403. Under <code>nexo test</code> the server answers on a free port, and <code>name.url</code> is its address. The example is in <a href="#std-http">Network and tests</a>.</li>
   </ul>
 
   <h3 id="mod-ai"><code>nexo.ai</code>: language models</h3>
@@ -1131,11 +1132,33 @@ alert disk full
       <tr><td><code>creativity</code></td><td><code>low</code>, <code>medium</code>, <code>high</code></td><td><code>medium</code></td></tr>
       <tr><td><code>max</code></td><td><code>20 words</code>, <code>500 tokens</code></td><td>no limit</td></tr>
       <tr><td><code>timeout</code>, <code>retries</code></td><td>a duration; a number</td><td><code>60s</code>; 3 with a type, 1 without</td></tr>
-      <tr><td><code>stream</code></td><td><code>true</code> gives the answer in pieces for a <code>for</code></td><td><code>false</code></td></tr>
+      <tr><td><code>stream</code></td><td><code>true</code> gives the answer in pieces for a <code>for</code>, each as it arrives</td><td><code>false</code></td></tr>
       <tr><td><code>profile</code></td><td>the name of an <code>ai profile</code> block</td><td>none</td></tr>
     </tbody>
   </table></div>
-  <p>A tool is a function marked <code>@tool "what it does"</code>; an <code>agent name:</code> block takes <code>model</code>, <code>tools</code>, <code>goal</code>, <code>max_steps</code> and <code>confirm</code> (tools that need a person's approval), and runs with <code>name.handle(input)</code>. Its tools obey the program's policy. <code>nexo ai usage</code> shows the calls and tokens per model and day (D106-D109).</p>
+  <p>A model is <code>"provider:model"</code>, and each provider is reached through its own API. <code>key</code> takes a <code>secret(...)</code>; <code>url</code> changes the address.</p>
+  <div class="table-wrap"><table class="ref-table">
+    <thead><tr><th>Provider</th><th>Model</th><th>Key and address</th></tr></thead>
+    <tbody>
+      <tr><td><code>anthropic</code></td><td><code>"anthropic:claude-opus"</code></td><td>its API key</td></tr>
+      <tr><td><code>openai</code></td><td><code>"openai:gpt-mini"</code></td><td>its API key</td></tr>
+      <tr><td><code>ollama</code></td><td><code>"ollama:llama"</code></td><td>no key; <code>http://localhost:11434</code> unless <code>url</code> says otherwise</td></tr>
+      <tr><td><code>mistral</code></td><td><code>"mistral:mistral-small"</code></td><td>its API key</td></tr>
+      <tr><td><code>gemini</code></td><td><code>"gemini:gemini-2.0-flash"</code></td><td>its API key</td></tr>
+      <tr><td><code>azure</code></td><td><code>"azure:my-deployment"</code></td><td><code>url = "https://NAME.openai.azure.com"</code> (needed); the resource's api-key, or without a key the Azure AD credentials of <code>nexo.infra</code> (<code>AZURE_TENANT_ID</code>, <code>AZURE_CLIENT_ID</code>, <code>AZURE_CLIENT_SECRET</code>)</td></tr>
+      <tr><td><code>bedrock</code></td><td><code>"bedrock:anthropic.claude-3-haiku-20240307-v1:0"</code></td><td>a Bedrock API key, or without a key the AWS credentials of <code>nexo.infra</code>, signed with SigV4 in <code>AWS_REGION</code></td></tr>
+    </tbody>
+  </table></div>
+  <p>Any server that speaks OpenAI's API, such as Groq, DeepSeek, OpenRouter, Together, vLLM or LM Studio, needs no provider of its own: use <code>provider = "openai"</code> with its address in <code>url</code> and its key, and name its models as the server does.</p>
+<div class="code"><div class="code-bar"><span>an OpenAI-compatible server</span></div><pre><code>ai:
+    provider = "openai"
+    model = "llama-3.3-70b-versatile"
+    url = "https://api.groq.com/openai"
+    key = secret("GROQ_KEY")
+
+ai models:
+    fast = "openai:llama-3.1-8b-instant"</code></pre></div>
+  <p>A tool is a function marked <code>@tool "what it does"</code>; an <code>agent name:</code> block takes <code>model</code>, <code>tools</code>, <code>goal</code>, <code>max_steps</code> and <code>confirm</code> (tools that need a person's approval), and runs with <code>name.handle(input)</code>. Its tools obey the program's policy; <code>tools = [mcp("files")]</code> adds the tools of the MCP server of <code>[mcp.files]</code> in <code>nexo.toml</code>. <code>budget = 5 EUR per day</code> with the prices of <code>[ai.prices]</code> stops the calls once the day's spend reaches it, or sends them to <code>when_over_budget</code>. <code>nexo ai usage</code> shows the calls, tokens and spend per model and day.</p>
 <div class="code"><div class="code-bar"><span>ai.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Opinion:
     tone: "positive" | "negative" | "neutral"
     score: 1..5
@@ -1188,7 +1211,7 @@ No AI provider is configured. Run: nexo ai setup
 4 tests: 4 passed, 0 failed</code></pre></div></div>
 
   <h3 id="mod-stream"><code>nexo.stream</code>: real-time data</h3>
-  <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when kafka("orders") as msg:</code> handles one message at a time: a message that fails is tried 4 times and then goes to <code>orders.dead</code>, and <code>key:</code> makes a repeated key run once. <code>|&gt; window 1m</code>, <code>sliding 5m</code> and <code>session 30s</code> group messages by time for the usual steps. <code>kafka("t").send(value, at: time?)</code> publishes. This edition runs on a local broker, which <code>nexo test</code> drives (D117).</p>
+  <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when kafka("orders") as msg:</code> handles one message at a time: a message that fails is tried 4 times and then goes to <code>orders.dead</code>, and <code>key:</code> makes a repeated key run once. <code>|&gt; window 1m</code>, <code>sliding 5m</code> and <code>session 30s</code> group messages by time for the usual steps. <code>kafka("t").send(value, key: k?, at: time?)</code> publishes. Without a broker a stream is on a local one, with <code>partitions: n</code> handled in parallel, each in order; <code>servers:</code> (Kafka), <code>url:</code> (RabbitMQ), <code>namespace:</code> (Event Hubs, Service Bus), <code>region:</code> (SQS, Kinesis) and <code>project:</code> (Pub/Sub) put it on its broker or cloud, with <code>key: secret(...)</code> as the broker's password, and <code>websocket("wss://host/path")</code> reads a WebSocket server. <code>nexo test</code> runs every stream on an in-memory broker.</p>
 <div class="code"><div class="code-bar"><span>stream.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.stream
 
 type Order:
@@ -1230,7 +1253,7 @@ clicks {"page": "/a", "count": 1}
 2 tests: 2 passed, 0 failed</code></pre></div></div>
 
   <h3 id="mod-flags">Flags and privacy</h3>
-  <p>A <code>flags:</code> block declares each flag once: <code>on</code>, <code>off</code>, a percentage of users (stable per user), or <code>users where condition</code>; <code>nexo lint</code> warns about a flag whose <code>expires:</code> day has passed. <code>flag(name, user?)</code> reads it, and <code>nexo flags set name value --stage prod</code> changes it without a deploy (D115).</p>
+  <p>A <code>flags:</code> block declares each flag once: <code>on</code>, <code>off</code>, a percentage of users (stable per user), or <code>users where condition</code>; <code>nexo lint</code> warns about a flag whose <code>expires:</code> day has passed. <code>flag(name, user?)</code> reads it, and <code>nexo flags set name value --stage prod</code> changes it without a deploy.</p>
 <div class="code"><div class="code-bar"><span>flags.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type User:
     id: int
     country: str
@@ -1250,7 +1273,7 @@ print(1..1000 |&gt; where flag("new_checkout", User(id: it, country: "ES")) |&gt
 true false
 true
 107</code></pre></div></div>
-  <p>Fields marked <code>@personal</code> or <code>@private</code> are personal data: <code>@private</code> ones are encrypted in the database with the <code>key:</code> of <code>connect</code> and hidden by <code>log</code>. <code>keep = 2 years after field</code> erases old rows by itself and <code>purpose</code> says why the data is kept. <code>privacy.export(record)</code> writes its data to <code>table-id.json</code>, <code>privacy.erase(record)</code> deletes or anonymises it, and <code>privacy.restrict(record)</code> keeps it out of every query (D116).</p>
+  <p>Fields marked <code>@personal</code> or <code>@private</code> are personal data: <code>@private</code> ones are encrypted in the database with the <code>key:</code> of <code>connect</code> and hidden by <code>log</code>. <code>keep = 2 years after field</code> erases old rows by itself and <code>purpose</code> says why the data is kept. <code>privacy.export(record)</code> writes its data to <code>table-id.json</code>, <code>privacy.erase(record)</code> deletes or anonymises it, and <code>privacy.restrict(record)</code> keeps it out of every query.</p>
 <div class="code"><div class="code-bar"><span>privacy.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.db
 
 db = connect("crm.db")
@@ -1293,8 +1316,8 @@ Contact: table contact in crm.db
   <h3 id="mod-infra"><code>nexo.infra</code> and <code>nexo.ci</code>: deployment</h3>
   <ul class="ref-list">
     <li><code>infra name:</code> with <code>cloud = "aws"|"azure"|"gcp"|"k8s"</code> declares portable resources (<code>app</code>, <code>database</code>, <code>storage</code>, <code>queue</code>, <code>network</code>...) and <code>native</code> ones of a cloud. <code>stage prod:</code> changes values per stage, and <code>state = s3("bucket")</code> keeps the state outside <code>.nexo/state</code>.</li>
-    <li><code>nexo plan</code> asks the cloud's own API what exists and shows the changes, the cost and the availability; <code>apply</code>, <code>destroy</code>, <code>drift</code>, <code>cost</code> and <code>import</code> use the same API (D118-D121).</li>
-    <li><code>pipeline name:</code> has <code>step</code>s that call <code>run(command)</code>, <code>test()</code>, <code>build_image(name)</code>, <code>plan(...)</code>, <code>apply(...)</code>, <code>approve(by: [...])</code> and <code>comment(text)</code>. <code>nexo ci run</code> runs it here, and <code>nexo ci export github|gitlab|azure|jenkins</code> writes the file of that service (D122-D123). A pipeline that runs commands needs <code>allow shell</code>.</li>
+    <li><code>nexo plan</code> asks the cloud's own API what exists and shows the changes, the cost and the availability; <code>apply</code>, <code>destroy</code>, <code>drift</code>, <code>cost</code> and <code>import</code> use the same API.</li>
+    <li><code>pipeline name:</code> has <code>step</code>s that call <code>run(command)</code>, <code>test()</code>, <code>build_image(name)</code>, <code>plan(...)</code>, <code>apply(...)</code>, <code>approve(by: [...])</code> and <code>comment(text)</code>. <code>nexo ci run</code> runs it here, and <code>nexo ci export github|gitlab|azure|jenkins</code> writes the file of that service. A pipeline that runs commands needs <code>allow shell</code>.</li>
   </ul>
 <div class="code"><div class="code-bar"><span>deploy.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
     allow shell
@@ -1337,7 +1360,7 @@ pipeline release:
         run("echo the release failed")</code></pre></div>
 
   <h3 id="mod-interop"><code>use c</code> and <code>use python</code></h3>
-  <p><code>use c "libm"</code> reads the library's C header when the program is compiled, so every call is checked against the real signature; <code>use c "./lib.so" as name</code> loads a file. <code>use python module as name</code> imports a Python module; numbers, text, lists and maps cross both ways. Calls into C are the only unsafe code in this edition, and <code>nexo audit</code> lists every one (D110, D111, D129).</p>
+  <p><code>use c "libm"</code> reads the library's C header when the program is compiled, so every call is checked against the real signature; <code>use c "./lib.so" as name</code> loads a file. <code>use python module as name</code> imports a Python module; numbers, text, lists and maps cross both ways. Calls into C are the only unsafe code in this edition, and <code>nexo audit</code> lists every one.</p>
 <div class="code"><div class="code-bar"><span>interop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use c "libm"
 use python statistics as stats
 use python collections
@@ -1360,7 +1383,7 @@ Unsafe uses: 4. Files with unsafe code: 1.</code></pre></div></div>
 
   <h3 id="policy">The program policy</h3>
   <p><a href="shield.html">Nexo Shield</a> adds strict execution, synchronous dependency ceilings and hardened Docker deployment with an explicit offline Linux worker. See its <a href="shield.html#architecture">architecture</a> and <a href="shield.html#boundaries">security boundaries</a>.</p>
-  <p>A <code>policy:</code> block lists, with <code>allow</code> and <code>deny</code>, what the program may <code>read</code>, <code>write</code>, reach on the <code>net</code>, take from the <code>env</code>ironment, run as a <code>shell</code> command, and load with <code>c</code> and <code>python</code>. Every access of the library asks it first, following links and <code>..</code>. A release build stops at anything not allowed; development mode warns once, except shell commands, which always need <code>allow shell</code>. <code>nexo policy show</code> prints what a program may do and <code>nexo policy suggest</code> learns the smallest policy from its tests (D142).</p>
+  <p>A <code>policy:</code> block lists, with <code>allow</code> and <code>deny</code>, what the program may <code>read</code>, <code>write</code>, reach on the <code>net</code>, take from the <code>env</code>ironment, run as a <code>shell</code> command, and load with <code>c</code> and <code>python</code>. Every access of the library asks it first, following links and <code>..</code>. A release build stops at anything not allowed; development mode warns once, except shell commands, which always need <code>allow shell</code>. <code>nexo policy show</code> prints what a program may do and <code>nexo policy suggest</code> learns the smallest policy from its tests.</p>
 <div class="code"><div class="code-bar"><span>report.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
     allow read "sales.csv"
     allow write "report.txt"
@@ -1392,6 +1415,16 @@ Anything else stops a release build; nexo report.nexo allows it with a warning, 
 <section class="ref-sec" id="cli">
   <h2><a href="#cli">Command line</a></h2>
   <p>Both implementations take the same commands: <code>.venv/bin/nexo</code> (the interpreter) and <code>compiler/target/release/nexo</code> (the compiler).</p>
+  <details class="native-setup">
+    <summary>Set up native compilation</summary>
+    <p>The interpreter runs your source file directly. The compiler turns it into machine code for your computer. You write the same Nexo syntax with either one.</p>
+    <p>After installing Rust (including Cargo) and clang, run these commands from your Nexo checkout. Save <code>hello.nexo</code> using the <a href="index.html#start">first-program instructions</a>. The last command compiles and runs it.</p>
+    <div class="code"><div class="code-bar"><span>From the Nexo folder</span><button class="copy" type="button">Copy</button></div><pre><code>cd compiler
+cargo build --release
+cd ..
+compiler/target/release/nexo hello.nexo</code></pre></div>
+    <p>See the <a href="https://github.com/marcrabadan/nexo/blob/main/compiler/README.md">compiler setup guide</a> for requirements and build details, or explore the <a href="benchmarks.html">benchmark programs and measurements</a>.</p>
+  </details>
   <div class="table-wrap"><table class="ref-table">
     <thead><tr><th>Command</th><th>What it does</th></tr></thead>
     <tbody>
@@ -1415,7 +1448,7 @@ Anything else stops a release build; nexo report.nexo allows it with a warning, 
       <tr><td><code>nexo policy show|suggest [file.nexo]</code></td><td>What the policy allows; the smallest policy for a test run</td></tr>
     </tbody>
   </table></div>
-  <p>Messages are in English (D125). <code>NEXO_LEAKCHECK=1</code> makes a compiled program report any value it did not free.</p>
+  <p>Messages are in English. <code>NEXO_LEAKCHECK=1</code> makes a compiled program report any value it did not free.</p>
 </section>
 
 <section class="ref-sec" id="reserved">
@@ -1444,14 +1477,16 @@ Anything else stops a release build; nexo report.nexo allows it with a warning, 
   <div class="wrap">
     <div class="foot-brand">
       <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
-      <p>One way to do each thing. Edition 0.1.</p>
+      <p>A readable language. One way to do each thing.</p>
     </div>
     <nav aria-label="Footer">
-      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <a href="learn.html">Learn</a>
+      <a href="examples.html">Examples</a>
+      <a href="how-it-works.html">How it works</a>
       <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
       <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
-      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">Design decisions</a>
-      <a href="https://github.com/marcrabadan/nexo/tree/main/examples">Examples</a>
+      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
     </nav>
   </div>
 </footer>

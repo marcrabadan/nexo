@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the performance section of docs/index.html from languages.json.
+"""Write the performance section of docs/benchmarks.html from languages.json.
 
 The section sits between <!-- performance:start --> and <!-- performance:end -->.
 Each chart shows how many times longer than the fastest language each
@@ -111,8 +111,8 @@ def main():
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Performance</p>
-      <h2>How fast is Nexo?</h2>
-      <p class="section-intro">The same programs in Nexo and six other languages, written the usual way in each and checked to print the same result. Over all of them, compiled Nexo sits behind C, Rust and Go and ahead of Java, JavaScript and Python. It is close to Rust on strings and integer loops, ahead of Go, Java, JavaScript and Python on strings and lists, close to Go and Rust on maps, and just behind Java and JavaScript on records, where every record is a heap object (<a href="https://github.com/marcrabadan/nexo/blob/main/docs/guarantees.md">the goals and where Nexo stands</a>).</p>
+      <h2>Compare the recorded timings.</h2>
+      <p class="section-intro">These measurements compare a fixed set of programs in Nexo and six other languages. Each program is checked to print the same result. The charts show time relative to the fastest implementation for each workload; the overall chart combines those ratios across the workloads, excluding the dedicated start-up workload. Results describe these programs on the machine below, rather than performance for every application.</p>
     </div>
     <div class="tabs" role="tablist" aria-label="Benchmarks">{"".join(tabs)}</div>
     {"".join(panels)}
@@ -126,21 +126,21 @@ def main():
       <ul class="ref-list">
         <li>Measured on {html.escape(data["date"])}, on {html.escape(data["machine"])}. {versions}.</li>
         <li>Times include starting the program: <code>hello</code> shows that cost alone. It weighs most on Java and JavaScript, and these programs run for well under a second in the compiled languages.</li>
-        <li>Nexo and Rust check every integer operation for overflow; C, Go and Java wrap around silently, and Python's integers never overflow.</li>
+        <li>Nexo and Rust check integer operations for overflow. Go and Java use fixed-width integers with wrapping arithmetic; Python uses arbitrary-precision integers. C is compiled with <code>-O2</code> without overflow checks.</li>
         <li>In C and Go a record is a plain value on the stack, so building one costs almost nothing; in Nexo, Java, JavaScript and Python each one is an object on the heap. That is most of the gap on <code>records</code>.</li>
         <li>Each program uses its language's usual tools: <code>ArrayList&lt;Long&gt;</code> and <code>HashMap</code> in Java, a hand-written hash map in C, which has none. Python runs <code>parallel</code> on 4 processes, because its threads share one lock.</li>
-        <li>The Nexo interpreter is the prototype, a tree-walking evaluator written in Python; it shows the language works, not how fast it runs.</li>
+        <li>Nexo interpreter timings are shown separately in the table. The charts and overall comparison use compiled Nexo.</li>
         <li>The programs and the script are in <a href="{SOURCE}"><code>compiler/bench/</code></a>: <code>python3 compiler/bench/languages.py</code> runs them again.</li>
       </ul>
     </div>
   </div>
 </section>
 <!-- performance:end -->"""
-    page = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+    page = (ROOT / "docs" / "benchmarks.html").read_text(encoding="utf-8")
     start, end = page.index("<!-- performance:start -->"), page.index("<!-- performance:end -->")
     page = page[:start] + section + page[end + len("<!-- performance:end -->"):]
-    (ROOT / "docs" / "index.html").write_text(page, encoding="utf-8")
-    print("wrote the performance section of docs/index.html")
+    (ROOT / "docs" / "benchmarks.html").write_text(page, encoding="utf-8")
+    print("wrote the performance section of docs/benchmarks.html")
 
 
 if __name__ == "__main__":

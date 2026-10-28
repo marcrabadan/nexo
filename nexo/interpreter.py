@@ -163,6 +163,22 @@ class Grouped:
         self.groups = groups
 
 
+class GroupedQuery(Grouped):
+    """`group by column` on a database query: the aggregate that follows
+    may run in SQL (D161); otherwise the rows are read and grouped."""
+
+    def __init__(self, key_name: str, query, column, make):
+        self.key_name = key_name
+        self.query, self.column, self.make = query, column, make
+        self._groups = None
+
+    @property
+    def groups(self) -> dict:
+        if self._groups is None:
+            self._groups = self.make()
+        return self._groups
+
+
 class Interpreter:
     def __init__(self, out=None):
         from .stdlib import install
@@ -1100,11 +1116,18 @@ class Interpreter:
                 return [items[i] for i in order]
             return Lazy(sorter)
         if kind == "group":
-            groups: dict = {}
-            for item in self.iterate(source, span):
-                key = hashable(self.eval(step.expr, RowEnv(env, item)), step.expr.span)
-                groups.setdefault(key, []).append(item)
-            return Grouped(source_text(step.expr.span) or "key", groups)
+            def grouping():
+                groups: dict = {}
+                for item in self.iterate(source, span):
+                    key = hashable(self.eval(step.expr, RowEnv(env, item)), step.expr.span)
+                    groups.setdefault(key, []).append(item)
+                return groups
+            if type(value).__name__ == "Query" and isinstance(step.expr, A.Name):
+                from .stdlib import db
+                col = db.group_column(value, step.expr.name)
+                if col is not None:
+                    return GroupedQuery(source_text(step.expr.span) or "key", value, col, grouping)
+            return Grouped(source_text(step.expr.span) or "key", grouping())
         if kind == "each":
             for item in self.iterate(source, span):
                 self.apply_expr(step.expr, item, env)
@@ -1140,6 +1163,8 @@ class Interpreter:
         if kind == "count":
             from .types import At
             return query.m_count(At(self, step.span, step))
+        if kind == "pick" and all(isinstance(c, A.Name) for c in step.columns):
+            return db.pipe_pick(query, [c.name for c in step.columns])
         return None
 
     def word_name(self) -> str:
@@ -1164,6 +1189,15 @@ class Interpreter:
     def aggregate(self, step: A.PipeStep, grouped: Grouped, env: Env) -> list:
         rows = []
         col = source_text(step.expr.span) if step.expr is not None else "count"
+        if isinstance(grouped, GroupedQuery) and step.kind in ("count", "sum", "avg") \
+                and (step.expr is None or isinstance(step.expr, A.Name)):
+            from .stdlib import db
+            from .types import At
+            total = step.expr.name if step.expr is not None else None
+            done = db.group_aggregate(At(self, step.span, step), grouped.query, grouped.column, grouped.key_name,
+                                      step.kind, total, col)
+            if done is not None:
+                return done
         for key, items in grouped.groups.items():
             if step.kind == "count":
                 result = len(items)

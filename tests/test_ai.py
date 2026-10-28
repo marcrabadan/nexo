@@ -338,3 +338,218 @@ def test_agent(phase, agent_server, tmp_path):
     assert local["messages"][2:] == [
         {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "find_order", "arguments": {"id": "42"}}}]},
         {"role": "tool", "content": 'Order(id: "42", status: "sent", total: 19.99, card: "***")'}]
+
+
+LIVE = """ai:
+    provider = "anthropic"
+    model = "claude-live"
+    key = secret("NEXO_AI_KEY")
+    url = "{base}"
+
+for chunk in ask("Tell me a story", stream: true):
+    print(chunk)
+# an assignment reads the whole answer (section 6, rule 4)
+story = ask("Tell me a story", stream: true)
+print(story, len(story))
+try:
+    for chunk in ask("Break", stream: true):
+        print(chunk)
+else e:
+    print(e.kind)
+"""
+
+
+class LiveProvider(BaseHTTPRequestHandler):
+    gate = threading.Event()
+    requests = []
+
+    def log_message(self, *a):
+        pass
+
+    def event(self, data):
+        self.wfile.write(f"data: {data}\n\n".encode())
+        self.wfile.flush()
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        LiveProvider.requests.append(body["messages"][0]["content"])
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        self.event(json.dumps({"type": "message_start", "message": {"usage": {"input_tokens": 7}}}))
+
+        def delta(text):
+            self.event(json.dumps({"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}}))
+
+        if body["messages"][0]["content"] == "Break":
+            delta("Half")
+            self.event("{not json")
+            return
+        delta("Once")
+        # the rest only once the program has shown the first piece
+        delta(" upon" if LiveProvider.gate.wait(10) else "LATE")
+        self.event(json.dumps({"type": "message_delta", "usage": {"output_tokens": 2}}))
+        self.event(json.dumps({"type": "message_stop"}))
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_streamed_answer_arrives_as_it_is_written(phase, tmp_path):
+    import os
+    import subprocess
+    from phases import ROOT
+    LiveProvider.gate.clear()
+    LiveProvider.requests.clear()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), LiveProvider)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        (tmp_path / "app.nexo").write_text(LIVE.format(base=f"http://127.0.0.1:{srv.server_address[1]}"))
+        env = dict(os.environ, PYTHONPATH=str(ROOT), NEXO_LEAKCHECK="1", NEXO_AI_KEY="k3y",
+                   XDG_CONFIG_HOME=str(tmp_path / "config"))
+        proc = subprocess.Popen([*phase[1], "app.nexo"], cwd=tmp_path, env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        lines = [proc.stdout.readline().decode()]
+        LiveProvider.gate.set()
+        lines.append(proc.stdout.read().decode())
+        proc.wait(timeout=60)
+    finally:
+        srv.shutdown()
+    assert "".join(lines) == 'Once\n upon\n["Once", " upon"] 2\nHalf\nAIError\n'
+    assert LiveProvider.requests == ["Tell me a story", "Tell me a story", "Break"]
+    # usage is written when an answer ends; the broken one has none
+    usage = (tmp_path / "config" / "nexo" / "usage.csv").read_text().splitlines()
+    assert [line.split(",", 1)[1] for line in usage] == ["anthropic:claude-live,7,2"] * 2
+
+
+BUDGET = """ai:
+    provider = "openai"
+    model = "openai:gpt-mini"
+    key = secret("NEXO_AI_KEY")
+    url = "{base}/openai"
+    budget = {budget}
+{over}
+for word in {words}:
+    try:
+        print(ask(word))
+    else e:
+        print(e.message)
+"""
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_budget(phase, server, tmp_path):
+    # each call of the fake openai is 3 + 2 tokens: 0.50 EUR at these prices
+    (tmp_path / "nexo.toml").write_text(
+        f'[ai]\nprovider = "ollama"\nurl = "{server}"\n\n[ai.prices]\n"openai:gpt-mini" = ["100000 EUR", "100000 EUR"]\n',
+        encoding="utf-8")
+    env = {"NEXO_AI_KEY": "k3y", "XDG_CONFIG_HOME": str(tmp_path / "config")}
+
+    def program(budget, words, over=""):
+        (tmp_path / "app.nexo").write_text(BUDGET.format(base=server, budget=budget, over=over, words=words))
+        return run(phase[1], ["app.nexo"], tmp_path, env=env).stdout.decode()
+
+    over = '    when_over_budget = "ollama:llama"\n'
+    assert program("1 EUR per day", '["one", "two", "three"]', over) == (
+        "[openai gpt-mini] one\n[openai gpt-mini] two\n[ollama llama] three\n")
+    assert program("1 EUR per day", '["four"]') == (
+        "The AI budget of 1.00 EUR per day is spent (1.00 EUR so far)\n")
+    assert program("2 EUR per month", '["five"]') == "[openai gpt-mini] five\n"
+    assert program("2 USD per day", '["six"]') == (
+        "The price of openai:gpt-mini is in EUR and the budget in USD\n")
+    (tmp_path / "nexo.toml").write_text((tmp_path / "nexo.toml").read_text().replace("gpt-mini", "gpt-big"))
+    assert program("2 EUR per day", '["seven"]') == (
+        "The price of openai:gpt-mini is not known, so its calls cannot be counted against the budget\n")
+    bad = program("5 per day", '["eight"]')
+    assert "The budget 5 per day is not an amount of money per day or per month." in bad
+    (tmp_path / "nexo.toml").write_text((tmp_path / "nexo.toml").read_text().replace("gpt-big", "gpt-mini"))
+    usage = run(phase[1], ["ai", "usage"], tmp_path, env=env).stdout.decode().splitlines()
+    assert [line.split(" ", 1)[1] for line in usage] == [
+        "ollama:llama: 1 calls, 4 input tokens, 3 output",
+        "openai:gpt-mini: 3 calls, 9 input tokens, 6 output, 1.50 EUR",
+    ]
+
+
+MCP_PROGRAM = """policy:
+    allow net "127.0.0.1"
+    allow env "NEXO_AI_KEY"
+    allow shell
+
+ai:
+    provider = "anthropic"
+    model = "claude-mcp"
+    key = secret("NEXO_AI_KEY")
+    url = "{base}"
+
+agent helper:
+    tools = [mcp("nexo")]
+    goal = "Check the code"
+
+print(helper.handle("Is bad.nexo right?"))
+
+agent careful:
+    tools = [mcp("nexo")]
+    confirm = [mcp("nexo")]
+
+print(careful.handle("Check it"))
+
+@tool "A tool named like one of the server's"
+fn check(path: str) -> str:
+    return "mine"
+
+agent twice:
+    tools = [check, mcp("nexo")]
+
+agent missing:
+    tools = [mcp("nothing")]
+
+for a in [twice, missing]:
+    try:
+        a.handle("x")
+    else e:
+        print(e.message)
+"""
+
+
+class McpProvider(BaseHTTPRequestHandler):
+    tools: list = []
+
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        McpProvider.tools.append([t["name"] for t in body.get("tools", [])])
+        last = body["messages"][-1]["content"]
+        if isinstance(last, list):
+            r = last[0]
+            content = [{"type": "text", "text": f"error={r.get('is_error', False)} {r['content']}"}]
+        else:
+            content = [{"type": "tool_use", "id": "t1", "name": "check", "input": {"path": "bad.nexo"}}]
+        data = json.dumps({"content": content, "usage": {"input_tokens": 1, "output_tokens": 1}}).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_agents_use_the_tools_of_an_mcp_server(phase, tmp_path):
+    McpProvider.tools.clear()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), McpProvider)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        (tmp_path / "app.nexo").write_text(MCP_PROGRAM.format(base=f"http://127.0.0.1:{srv.server_address[1]}"))
+        (tmp_path / "bad.nexo").write_text("x = (1 +\n")
+        # the server is this same nexo's `nexo mcp`, started in the folder
+        (tmp_path / "nexo.toml").write_text(f"[mcp.nexo]\ncommand = {json.dumps([*phase[1], 'mcp'])}\n")
+        proc = run(phase[1], ["app.nexo"], tmp_path, stdin=b"n\n",
+                   env={"NEXO_AI_KEY": "k3y", "XDG_CONFIG_HOME": str(tmp_path / "config")})
+    finally:
+        srv.shutdown()
+    out = proc.stdout.decode()
+    checked = run(phase[1], ["check", "bad.nexo"], tmp_path).stdout.decode()
+    assert out == (f"error=True {checked}\n"
+                   "Use check(path: \"bad.nexo\")? (y/n): error=False The user did not allow this call.\n"
+                   "Two tools of twice are named check\n"
+                   "There is no MCP server nothing\n")
+    # the model is offered the tools of the server
+    assert McpProvider.tools[0] == ["check", "run_tests", "docs_for_ai", "plan", "format"]

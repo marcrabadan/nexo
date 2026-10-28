@@ -362,13 +362,14 @@ def run_db(args: list[str]) -> int:
         program = interp.load(source, file)
         if db_path is None:
             db_path = db.connect_literal(program)
+        key_name = db.connect_key(program)
         interp.module_filter = db.schema_program
         for stmt in db.schema_program(program):
             interp.exec(stmt, interp.globals)
     except (NexoError, NexoFailure) as exc:
         report(exc)
         return 1
-    return db.run_command(interp, command, file, db_path, allow_drop)
+    return db.run_command(interp, command, file, db_path, allow_drop, key_name)
 
 
 # ------------------------------------------------------------- phase 5

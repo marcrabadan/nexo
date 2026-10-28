@@ -27,6 +27,25 @@ pub struct Lazy {
 pub struct Grouped {
     pub key_name: String,
     pub groups: Vec<(Val, Vec<Val>)>,
+    /// `group by column` on a database query: the aggregate that follows
+    /// may run in SQL; otherwise the rows are read and grouped (D161)
+    pub query: Option<GroupQuery>,
+}
+
+pub struct GroupQuery {
+    pub query: std::sync::Arc<crate::db::Query>,
+    pub column: crate::db::Column,
+    pub src: Val,
+    pub key: Val,
+    pub step: u32,
+    pub expr: u32,
+}
+
+/// `group by name` on a database query: grouped when the next step runs.
+pub fn group_query(src: V, key: V, key_name: &str, column: &str, step: u32, expr: u32) -> Option<Val> {
+    let (query, column) = crate::db::group_column(src, column)?;
+    let query = Some(GroupQuery { query, column, src: Val::from(src), key: Val::from(key), step, expr });
+    Some(Val::new(Obj::Grouped(Grouped { key_name: key_name.to_string(), groups: Vec::new(), query })))
 }
 
 struct FnIter<F: FnMut() -> Option<R<Val>>>(F, bool);
@@ -292,7 +311,7 @@ pub fn group(src: V, key: V, key_name: &str, step_span: u32, expr_span: u32) -> 
             }
         }
     }
-    Ok(Val::new(Obj::Grouped(Grouped { key_name: key_name.to_string(), groups })))
+    Ok(Val::new(Obj::Grouped(Grouped { key_name: key_name.to_string(), groups, query: None })))
 }
 
 pub fn each(src: V, f: V, step_span: u32, expr_span: u32) -> R<Val> {
@@ -338,10 +357,19 @@ pub fn avg(src: V, span: u32) -> R<Val> {
 }
 
 /// `sum col`, `count` or `avg col` right after `group by`.
-pub fn aggregate(grouped: V, kind: &str, f: V, col: &str, span: u32, expr_span: u32) -> R<Val> {
+pub fn aggregate(grouped: V, kind: &str, f: V, col: &str, column: Option<&str>, span: u32, expr_span: u32) -> R<Val> {
     let Some(Obj::Grouped(g)) = grouped.get() else {
         return Err(diag(Diagnostic::new_spanless("pipe_group_next"), span));
     };
+    if let Some(gq) = &g.query {
+        if kind == "count" || column.is_some() {
+            if let Some(rows) = crate::db::group_aggregate(&gq.query, &gq.column, &g.key_name, kind, column, col, span)? {
+                return Ok(rows);
+            }
+        }
+        let real = group(gq.src.v(), gq.key.v(), &g.key_name, gq.step, gq.expr)?;
+        return aggregate(real.v(), kind, f, col, column, span, expr_span);
+    }
     let mut rows = Vec::with_capacity(g.groups.len());
     for (key, items) in &g.groups {
         let result = if kind == "count" {

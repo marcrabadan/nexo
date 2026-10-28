@@ -1,4 +1,4 @@
-Error in s08_ai_budget.nexo, line 2:
-  ai:
+Error in s08_ai_budget.nexo, line 8:
+  ai profile "work":
   ^^
-"budget" is not available in phase 5 of Nexo. This version includes the core, the standard library, nexo.sync, nexo.ai, nexo.web, nexo.db, nexo.infra, nexo.ci, nexo.stream, flags and privacy; remove it to run the program.
+The budget 5 per day is not an amount of money per day or per month. Write budget = 5 EUR per day or budget = 100 EUR per month.

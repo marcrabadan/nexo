@@ -121,7 +121,7 @@ fn http_with(method: &str, url: &str, headers: &[(String, String)], body: Option
     Ok(Answer { status, headers: hs, body: data })
 }
 
-fn error_text(body: &[u8]) -> String {
+pub fn error_text(body: &[u8]) -> String {
     let text = String::from_utf8_lossy(body).to_string();
     let Some(d) = json::parse(&text) else { return text.trim().chars().take(300).collect() };
     if let Some(msg) = d.get("error").get("message").str() {
@@ -146,7 +146,7 @@ fn check(a: &Answer, what: &str) -> R<()> {
     Ok(())
 }
 
-fn need_env(name: &str) -> R<String> {
+pub fn need_env(name: &str) -> R<String> {
     match std::env::var(name) {
         Ok(v) if !v.is_empty() => Ok(v),
         _ => Err(fail_d(Diagnostic::new_spanless("infra_credentials").arg("name", name))),
@@ -219,6 +219,13 @@ fn now_parts() -> (String, String) {
 
 /// The headers of a request signed with AWS Signature Version 4.
 pub fn sigv4(method: &str, url: &str, headers: &[(&str, String)], body: &[u8], service: &str, region: &str) -> R<Vec<(String, String)>> {
+    sigv4_path(method, url, headers, body, service, region, false)
+}
+
+/// SigV4; with `encoded_path` the path, as sent, is encoded once more, as
+/// services other than S3 ask (Bedrock's model ids hold a colon, sent as
+/// %3A, D173).
+pub fn sigv4_path(method: &str, url: &str, headers: &[(&str, String)], body: &[u8], service: &str, region: &str, encoded_path: bool) -> R<Vec<(String, String)>> {
     let key_id = need_env("AWS_ACCESS_KEY_ID")?;
     let secret = need_env("AWS_SECRET_ACCESS_KEY")?;
     let token = std::env::var("AWS_SESSION_TOKEN").ok().filter(|t| !t.is_empty());
@@ -236,7 +243,7 @@ pub fn sigv4(method: &str, url: &str, headers: &[(&str, String)], body: &[u8], s
     if let Some(t) = token {
         set(&mut h, "x-amz-security-token", t);
     }
-    let path = quote(&unquote(if path.is_empty() { "/" } else { &path }), true);
+    let path = if encoded_path { quote(&path, true) } else { quote(&unquote(if path.is_empty() { "/" } else { &path }), true) };
     let mut pairs: Vec<(String, String)> = query
         .split('&')
         .filter(|p| !p.is_empty())

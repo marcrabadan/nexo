@@ -249,3 +249,5 @@ Shield execution. Their ordinary runtime state persistence bypasses API policy
 checks (D151); support requires explicit state-operation authorization.
 
 See the [targeted adversarial review](shield-security-review.md) for reproduced parser failures, fixes, validation scope and remaining deployment blockers.
+
+See [connector integration boundaries](shield-connectors.md) for databases, remote streams, MCP and cloud AI providers imported from main.
