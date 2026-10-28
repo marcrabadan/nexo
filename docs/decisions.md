@@ -2863,3 +2863,29 @@ site loads from another site (cdn.jsdelivr.net, v0.27.7, Python 3.12),
 which the page says; Pyodide's sqlite3, tzdata and cryptography are
 downloaded the first time a program needs them, so phase 0 imports
 sqlite3 when a database is first used, not at start.
+
+**D177. Pure int functions do not check after each call.** An int-only
+function (D84, D159) looked at the failure flag after every call it
+made, and compared its depth with a limit in its thread's state (D156).
+Two changes, neither of which shows in a program's output:
+- A *pure* int function computes only with ints: its body has no loop,
+  `try` or other statement than `return`, `if`, `expect`, `ensure` and
+  assignments to its own variables, and calls only int-only functions of
+  the top level (no builtins, methods or values), and no test fakes a
+  function of the program. After a call to another int-only function it
+  does not look at the failure flag. While a failure is on its way the
+  limit is 0, so every int-only function goes to its slow path at its
+  entry and returns from there: after a failure such a body runs its
+  remaining statements, whose calls all return at once, and nothing it
+  does can be seen. The first failure is the one reported: a failure
+  raised while another is on its way is dropped (`10 // 0` on the 0 a
+  failed call gave). An endless recursion that calls itself twice still
+  stops at the depth limit at once (tests/test_phase6.py).
+- The limit is one global (`nx_limit`): the largest depth, or 0 while
+  some thread has a failure on its way or runs a `try within`. The slow
+  path tells apart this thread's failure, its depth, its clock and the
+  others', so the code of a thread with nothing to do there goes on.
+  Reading a global does not need the thread state in a register.
+fib(32) went from 2.15× to 1.36× Rust's time on the machine of this
+change (from 28 to 17.6 ms; 1.70× in goals.json on another day).
+NEXO_TIMES=1 writes how long each step of a build takes to stderr.

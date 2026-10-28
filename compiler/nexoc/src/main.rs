@@ -52,6 +52,21 @@ pub fn usage() -> &'static str {
     "Usage: nexo [file.nexo | new name | add [name] [--accept-risk] | publish | build [--release [--trust-ensure]] [--target web] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]"
 }
 
+/// NEXO_TIMES=1 writes how long each step of a build took to stderr.
+pub fn step(label: &str) {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("NEXO_TIMES").is_some()) {
+        return;
+    }
+    let mut last = LAST.lock().unwrap();
+    let now = std::time::Instant::now();
+    if let Some(t) = *last {
+        eprintln!("{label:<12} {:>8.1} ms", (now - t).as_secs_f64() * 1000.0);
+    }
+    *last = Some(now);
+}
+
 /// A file that failed to compile, already rendered in the section 14 format.
 struct CompileError(String);
 
@@ -63,7 +78,9 @@ fn to_ir(source: &str, name: &str, test_mode: bool, trust_ensure: bool) -> Resul
 /// The IR and the program it was made from, with its modules linked in.
 fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, release: bool) -> Result<(String, ast::Program), CompileError> {
     let fail = |d: Diagnostic| CompileError(render(name, source, d.span, &d.text()));
+    step("start");
     let (mut program, mut next_id) = parser::parse_file(source, 0, 0).map_err(fail)?;
+    step("parse");
     // a release build does only what its policy allows (section 9, D142)
     if release {
         next_id += 1;
@@ -75,20 +92,25 @@ fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, 
     let folder = Path::new(name).parent().map(|p| if p.as_os_str().is_empty() { Path::new(".") } else { p }).unwrap_or(Path::new("."));
     cheader::embed(&mut program, folder);
     checker::check(&program).map_err(fail)?;
+    step("check");
     // the modules of the program's files (D124)
     let mut linker = modules::Linker::new(name, next_id);
     linker.link(&mut program).map_err(fail)?;
+    step("modules");
     let mut next_id = linker.next_id();
     if cover::enabled() {
         next_id = cover::instrument(&mut program, name, next_id);
     }
     program.files = linker.files;
     let mut res = resolve::resolve(&program).map_err(fail)?;
+    step("resolve");
     typecheck::check(&program, &res).map_err(fail)?;
+    step("typecheck");
     // records that never leave their function become ints (D157)
     if unbox::unbox(&mut program, &res, &mut next_id) {
         res = resolve::resolve(&program).map_err(fail)?;
         typecheck::check(&program, &res).map_err(fail)?;
+        step("unbox");
     }
     let opts = codegen::Options {
         file: name.to_string(),
@@ -99,6 +121,7 @@ fn to_ir_program(source: &str, name: &str, test_mode: bool, trust_ensure: bool, 
         db_command: false,
     };
     let ir = codegen::Gen::new(source, &res, &opts).program(&program).map_err(fail)?;
+    step("codegen");
     Ok((ir, program))
 }
 
@@ -738,6 +761,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
     } else {
         // each part is made ready for clang by a thread of its own
         let modules = split::split(ir, parts);
+        step("split");
         let objects: Vec<PathBuf> = (0..modules.len()).map(|k| dir.join(format!("program.{k}.o"))).collect();
         // each part goes to its clang through a pipe, not a file
         let results: Vec<Result<std::process::Output, String>> = std::thread::scope(|sc| {
@@ -747,6 +771,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
                 .map(|(obj, m)| {
                     let cc = cc.clone();
                     sc.spawn(move || {
+                        let started = std::time::Instant::now();
                         let m = dev_ir(m);
                         let mut child = Command::new(&cc)
                             .arg(opt)
@@ -767,7 +792,11 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
                                 let _ = stdin.write_all(m.as_bytes());
                                 drop(stdin);
                             });
-                            child.wait_with_output().map_err(|e| format!("{cc}: {e}"))
+                            let out = child.wait_with_output().map_err(|e| format!("{cc}: {e}"));
+                            if std::env::var_os("NEXO_TIMES").is_some() {
+                                eprintln!("  part {:>6.1} MB {:>8.1} ms", m.len() as f64 / 1e6, started.elapsed().as_secs_f64() * 1000.0);
+                            }
+                            out
                         })
                     })
                 })
@@ -781,6 +810,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
             }
         }
         drop(modules);
+        step("clang");
         let output = Command::new(&cc)
             .args(fast_linker())
             .args(&objects)
@@ -794,6 +824,7 @@ fn link_at(ir: &str, out: &Path, opt: &str) -> Result<(), String> {
         if !output.status.success() {
             return Err(fail(output));
         }
+        step("link");
         if std::env::var("NEXO_KEEP_IR").is_ok() {
             let _ = std::fs::write(&ll, ir);
         }

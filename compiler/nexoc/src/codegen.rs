@@ -148,6 +148,9 @@ struct FnState {
     bool_regs: HashMap<String, String>,
     /// every `return` so far gave a value known to be an int
     ret_ints: bool,
+    /// the body of a pure int function (D177): calls to other int-only
+    /// functions need no check of the failure flag
+    pure: bool,
 }
 
 /// What a frame compiles from.
@@ -197,6 +200,9 @@ pub struct Gen<'a> {
     leaf_fns: HashMap<u32, (String, String)>,
     /// functions on ints only: the version that takes the numbers directly
     int_workers: HashMap<FrameId, String>,
+    /// int-only functions that only compute with ints and call other
+    /// int-only functions (D177), by their id
+    pure_fns: std::collections::HashSet<u32>,
     /// the steps of fused pipelines compiled to take an int element (D160)
     step_workers: HashMap<FrameId, String>,
     /// set while compiling such a version
@@ -468,6 +474,7 @@ impl<'a> Gen<'a> {
             frame_fns: HashMap::new(),
             leaf_fns: HashMap::new(),
             int_workers: HashMap::new(),
+            pure_fns: std::collections::HashSet::new(),
             step_workers: HashMap::new(),
             int_params: false,
             branch_body: false,
@@ -592,6 +599,48 @@ impl<'a> Gen<'a> {
         }
         self.known_fns = fns;
         self.known_types = types;
+    }
+
+    /// The int-only functions of the top level that only compute (D177):
+    /// their body has no loop, `try` or other statement that keeps going,
+    /// writes only its own variables, and calls only int-only functions
+    /// of the top level. After a failure every such call returns at its
+    /// entry (the runtime sets the depth limit to 0), so such a body may
+    /// go on to its end without checking the failure flag after each call:
+    /// nothing it does after the failure can be seen.
+    fn find_pure_fns(&mut self, program: &'a Program) {
+        if !self.fakes.is_empty() {
+            return;
+        }
+        let known: std::collections::HashSet<u32> = self.known_fns.values().map(|f| f.id).collect();
+        let mut globals = std::collections::HashSet::new();
+        let mut ints: HashMap<&'a str, &'a FnDef> = HashMap::new();
+        for st in &program.body {
+            match &st.kind {
+                StmtKind::Fn(f) => {
+                    globals.insert(f.name.as_str());
+                    if known.contains(&f.id) && self.int_only(f) {
+                        ints.insert(f.name.as_str(), f);
+                    }
+                }
+                StmtKind::Assign { target: Expr { kind: ExprKind::Name(n), .. }, .. } => {
+                    globals.insert(n.as_str());
+                }
+                StmtKind::VarDecl { name, .. } | StmtKind::Shared { name, .. } => {
+                    globals.insert(name.as_str());
+                }
+                StmtKind::Type(t) => {
+                    globals.insert(t.name.as_str());
+                }
+                _ => {}
+            }
+        }
+        for f in ints.values() {
+            let mut locals: std::collections::HashSet<&str> = f.params.iter().map(|p| p.name.as_str()).collect();
+            if pure_block(&f.body, &ints, &globals, &mut locals) {
+                self.pure_fns.insert(f.id);
+            }
+        }
     }
 
     /// Does this register of the function being written certainly hold an int?
@@ -1772,6 +1821,7 @@ impl<'a> Gen<'a> {
             sure: Vec::new(),
             depth_ptr: String::new(),
             ret_ints: true,
+            pure: false,
         }
     }
 
@@ -1800,7 +1850,8 @@ impl<'a> Gen<'a> {
 
     fn compile_frame(&mut self, frame: FrameId, src: FrameSrc<'a>, name: &str) -> GResult<()> {
         let int_params = std::mem::take(&mut self.int_params);
-        let st = self.new_fn_state(frame);
+        let mut st = self.new_fn_state(frame);
+        st.pure = int_params && matches!(src, FrameSrc::Fn(f) if self.pure_fns.contains(&f.id));
         self.fs.push(st);
         self.frame_slots(frame);
         self.init_frame_slots();
@@ -1838,11 +1889,10 @@ impl<'a> Gen<'a> {
         }
         if int_params {
             // one comparison checks the depth and, while a `try within`
-            // runs, the clock (the limit is then 0, D156)
-            let lp = self.reg();
-            self.emitf(format_args!("{lp} = getelementptr inbounds i8, ptr %tls, i64 32"));
+            // runs or a failure is on its way, the clock or the failure
+            // (the limit is then 0, D156, D177)
             let lim = self.reg();
-            self.emitf(format_args!("{lim} = load i64, ptr {lp}"));
+            self.emitf(format_args!("{lim} = load atomic i64, ptr @nx_limit unordered, align 8"));
             let over = self.reg();
             self.emitf(format_args!("{over} = icmp ugt i64 {d1}, {lim}"));
             let slow = self.label();
@@ -2149,6 +2199,7 @@ impl<'a> Gen<'a> {
                 }
             }
         });
+        self.find_pure_fns(program);
         let mut st = self.new_fn_state(GLOBAL_FRAME);
         st.unwind = vec![("UNHANDLED".into(), 0)];
         self.fs.push(st);
@@ -5111,7 +5162,9 @@ impl<'a> Gen<'a> {
                     self.emitf(format_args!("{dp} = getelementptr inbounds i8, ptr %tls, i64 8"));
                     self.emitf(format_args!("store i64 {d}, ptr {dp}"));
                 }
-                self.check();
+                if !self.f().pure {
+                    self.check();
+                }
                 self.emitf(format_args!("{r} = insertvalue %V {{ i64 {T_INT}, i64 0 }}, i64 {x}, 1"));
             }
             _ => {
@@ -5912,6 +5965,7 @@ declare void @nx_deadline_push(i64, i64, i32, i32)
 declare void @nx_deadline_pop()
 declare void @nx_check_deadline()
 @nx_any_deadline = external global i32
+@nx_limit = external global i64
 declare void @nx_fail_overflow(i32)
 declare void @nx_test_register(ptr, i64, i64, i64)
 "#;
@@ -5986,4 +6040,50 @@ fn sure_walk(body: &[Stmt], res: &Resolution, sure: &mut Vec<BindingId>, taken: 
         }
     }
     sure.truncate(len);
+}
+
+/// A body of a pure int function (D177): see `Gen::find_pure_fns`.
+fn pure_block<'a>(
+    body: &'a [Stmt],
+    ints: &HashMap<&'a str, &'a FnDef>,
+    globals: &std::collections::HashSet<&'a str>,
+    locals: &mut std::collections::HashSet<&'a str>,
+) -> bool {
+    body.iter().all(|st| match &st.kind {
+        StmtKind::Expr(e) | StmtKind::Expect(e) | StmtKind::Ensure(e) | StmtKind::Return(Some(e)) => pure_expr(e, ints),
+        StmtKind::Return(None) | StmtKind::Pass => true,
+        StmtKind::Assign { target: Expr { kind: ExprKind::Name(n), .. }, value, .. } => {
+            let own = !globals.contains(n.as_str()) && !ints.contains_key(n.as_str());
+            own && pure_expr(value, ints) && locals.insert(n.as_str()) | true
+        }
+        StmtKind::VarDecl { name, value, .. } => {
+            let own = !globals.contains(name.as_str()) && !ints.contains_key(name.as_str());
+            own && pure_expr(value, ints) && locals.insert(name.as_str()) | true
+        }
+        StmtKind::If { branches, orelse } => {
+            branches.iter().all(|(c, b)| pure_expr(c, ints) && pure_block(b, ints, globals, locals))
+                && orelse.as_ref().is_none_or(|b| pure_block(b, ints, globals, locals))
+        }
+        _ => false,
+    })
+}
+
+fn pure_expr(e: &Expr, ints: &HashMap<&str, &FnDef>) -> bool {
+    match &e.kind {
+        ExprKind::Num { is_float, .. } => !is_float,
+        ExprKind::Bool(_) | ExprKind::Name(_) => true,
+        ExprKind::Unary { operand, .. } => pure_expr(operand, ints),
+        ExprKind::BinOp { left, right, .. } | ExprKind::BoolOp { left, right, .. } => {
+            pure_expr(left, ints) && pure_expr(right, ints)
+        }
+        ExprKind::Compare { ops, operands } => {
+            ops.iter().all(|o| matches!(*o, "==" | "!=" | "<" | ">" | "<=" | ">="))
+                && operands.iter().all(|o| pure_expr(o, ints))
+        }
+        ExprKind::Call { func, args } => {
+            matches!(&func.kind, ExprKind::Name(n) if ints.contains_key(n.as_str()))
+                && args.iter().all(|a| pure_expr(&a.value, ints))
+        }
+        _ => false,
+    }
 }

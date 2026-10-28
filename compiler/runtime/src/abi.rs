@@ -157,6 +157,10 @@ pub extern "C" fn nx_too_deep() {
 /// limit: too many nested calls, or a `try within` whose clock to check.
 #[no_mangle]
 pub extern "C" fn nx_enter_slow(depth: u64) {
+    // a failure is on its way: the function returns at once (D177)
+    if state::failing() != 0 {
+        return;
+    }
     if depth > state::MAX_DEPTH {
         nx_too_deep();
     } else {

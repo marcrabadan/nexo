@@ -1,0 +1,31 @@
+# int-only functions that only compute (D177): a failure in one stops the
+# whole computation, and the first failure is the one reported
+
+fn big(n: int) -> int:
+    if n == 0:
+        return 9223372036854775807
+    return big(n - 1) + big(n - 1)
+
+fn zero(n: int) -> int:
+    if n > 1000:
+        return 1
+    return 0
+
+fn first(n: int) -> int:
+    # after big fails, zero gives nothing and 10 // 0 is not reported
+    return big(n) + 10 // zero(n)
+
+fn fib(n: int) -> int:
+    if n < 2:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+try:
+    print(first(3))
+else e:
+    print("caught {e.kind}: {e.message}")
+print(fib(20))
+try:
+    print(fib(-1) + big(70))
+else e:
+    print("caught {e.kind}")
