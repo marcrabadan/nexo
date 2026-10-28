@@ -310,7 +310,7 @@ pub(crate) static MESSAGES: &[(&str, &str)] = &[
     ("agent_confirm", "\"{name}\" is in confirm but not in tools."),
     ("fix.agent_confirm", "Add it to tools or remove it from confirm."),
     ("info.ai_confirm", "Use {call}? (y/n): "),
-    ("info.ai_setup_provider", "Provider (anthropic, openai or ollama): "),
+    ("info.ai_setup_provider", "Provider (anthropic, openai, ollama, mistral, gemini, azure or bedrock): "),
     ("info.ai_setup_model", "Model (for example claude-opus): "),
     ("info.ai_setup_key", "Environment variable that holds the key (for example ANTHROPIC_KEY): "),
     ("info.ai_setup_url", "Address (Enter for the usual one): "),

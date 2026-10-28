@@ -236,7 +236,8 @@ fn read_toml(path: &Path) -> Result<Toml, Diagnostic> {
             continue;
         }
         if line.starts_with('[') {
-            let name = line.trim_matches(['[', ']']).trim();
+            // `[ai.prices]  # a comment`
+            let name = line.split('#').next().unwrap_or("").trim().trim_matches(['[', ']']).trim();
             current = match name {
                 "ai" => 1,
                 "ai.models" => 2,

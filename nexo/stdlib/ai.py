@@ -157,7 +157,7 @@ def read_toml(call, path: Path) -> tuple[dict, dict, dict, dict]:
         if not line or line.startswith("#"):
             continue
         if line.startswith("["):
-            name = line.strip("[]").strip()
+            name = line.split("#")[0].strip().strip("[]").strip()  # `[ai.prices]  # a comment`
             current = {"ai": table, "ai.models": models, "ai.prices": prices}.get(name)
             if name.startswith("mcp.") and len(name) > 4:
                 current = servers.setdefault(name[4:], {})
