@@ -1,0 +1,22 @@
+# every way an int-only function is used: called with ints, with other
+# values, through a name, as a value in a pipeline and in a variable
+
+fn double(n: int) -> int:
+    return n * 2
+
+fn triple(n: int) -> int:
+    return n * 3
+
+fn unused(n: int) -> int:
+    return n + 1
+
+fn apply(f, x):
+    return f(x)
+
+print(double(21))
+print([1, 2, 3] |> map double(it))
+print([1, 2, 3] |> map triple)
+t = triple
+print(t(5))
+print(apply(double, 4))
+print(double(n: 6))

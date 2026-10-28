@@ -8,7 +8,7 @@
 //! message the runtime gives; everything else is still checked when the
 //! value is stored (D33).
 
-use std::collections::HashMap;
+use crate::fast::HashMap;
 
 use nexo_diag::{suggest, Diagnostic, Span};
 
@@ -213,15 +213,15 @@ impl<'a> TypeChecker<'a> {
     pub fn new(program: &'a Program, res: &'a Resolution) -> TypeChecker<'a> {
         let mut tc = TypeChecker {
             res,
-            fns: HashMap::new(),
-            types: HashMap::new(),
-            variants: HashMap::new(),
-            binding_fn: HashMap::new(),
+            fns: HashMap::default(),
+            types: HashMap::default(),
+            variants: HashMap::default(),
+            binding_fn: HashMap::default(),
             bty: vec![Ty::Unknown; res.bindings.len()],
         };
         // how many times each binding is defined (functions known by
         // their single definition)
-        let mut defs: HashMap<BindingId, usize> = HashMap::new();
+        let mut defs: HashMap<BindingId, usize> = HashMap::default();
         walk_stmts(&program.body, true, &mut |s| match &s.kind {
             StmtKind::Fn(f) => {
                 tc.fns.insert(f.id, f);

@@ -14,7 +14,7 @@
 //! must be followed by `?`, be inside a `try`, or be at the top level of the
 //! program or of a `test` (where an unhandled error ends the program, D17).
 
-use std::collections::HashMap;
+use crate::fast::HashMap;
 
 use nexo_diag::{Diagnostic, Span};
 
@@ -112,7 +112,7 @@ pub struct Checker {
 type CResult = Result<(), Diagnostic>;
 
 pub fn check(program: &Program) -> CResult {
-    let mut c = Checker { fns: HashMap::new(), methods: HashMap::new() };
+    let mut c = Checker { fns: HashMap::default(), methods: HashMap::default() };
     c.collect(&program.body);
     check_memory(&program.body)?;
     crate::phase5::check_flags(&program.body)?;
@@ -525,7 +525,7 @@ fn strongly_connected(graph: &[(String, Vec<String>)]) -> HashMap<String, Vec<St
             }
         }
     }
-    let mut t = T { graph, index: HashMap::new(), low: HashMap::new(), stack: Vec::new(), comp: HashMap::new(), counter: 0 };
+    let mut t = T { graph, index: HashMap::default(), low: HashMap::default(), stack: Vec::new(), comp: HashMap::default(), counter: 0 };
     for (v, _) in graph {
         if !t.index.contains_key(v.as_str()) {
             visit(&mut t, v.as_str());

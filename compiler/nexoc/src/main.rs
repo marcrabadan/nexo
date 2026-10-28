@@ -20,6 +20,7 @@ mod checker;
 mod codegen;
 mod cover;
 mod docs;
+mod fast;
 mod fmt;
 mod intent;
 mod json;

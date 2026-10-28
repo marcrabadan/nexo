@@ -12,7 +12,7 @@
 //! lambda or pipeline step uses are *captured*: they live in heap cells
 //! shared with the closures.
 
-use std::collections::HashMap;
+use crate::fast::HashMap;
 
 use nexo_diag::Diagnostic;
 
@@ -182,7 +182,7 @@ pub struct Resolution {
     pub next_type_id: u32,
     /// calls of a function to itself by name: they use the function's own
     /// closure, so it does not capture itself (a reference cycle)
-    pub self_calls: std::collections::HashSet<u32>,
+    pub self_calls: crate::fast::HashSet<u32>,
     /// the names each task of a `parallel:` block computes (it may assign
     /// them although they belong outside the task)
     pub task_outputs: HashMap<FrameId, Vec<BindingId>>,
@@ -196,9 +196,9 @@ pub struct Resolution {
     pub db: bool,
     /// top-level names no function, lambda, task or test uses: they are
     /// locals of the main program (kept in registers) instead of statics
-    pub main_local: std::collections::HashSet<BindingId>,
+    pub main_local: crate::fast::HashSet<BindingId>,
     /// the top scope of each module the program uses (D124)
-    pub module_roots: std::collections::HashSet<ScopeId>,
+    pub module_roots: crate::fast::HashSet<ScopeId>,
 }
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
@@ -274,7 +274,7 @@ struct Resolver {
     /// the tasks being resolved: (frame, true for `parallel for`)
     tasks: Vec<(FrameId, bool)>,
     /// top-level names used from another frame
-    used_outside: std::collections::HashSet<BindingId>,
+    used_outside: crate::fast::HashSet<BindingId>,
     /// the top scope of each module, by name, and the modules each file
     /// (its top scope) uses, by the name it uses them with (D124)
     module_scope: HashMap<String, ScopeId>,
@@ -343,33 +343,33 @@ pub fn resolve(program: &Program) -> RResult<Resolution> {
             bindings: Vec::new(),
             scopes: Vec::new(),
             frames: Vec::new(),
-            names: HashMap::new(),
-            assigns: HashMap::new(),
-            scope_of: HashMap::new(),
-            frame_of: HashMap::new(),
-            decl: HashMap::new(),
-            variant_bindings: HashMap::new(),
-            pattern_tests: HashMap::new(),
-            pattern_binds: HashMap::new(),
-            traits_of: HashMap::new(),
-            trait_methods: HashMap::new(),
-            type_ids: HashMap::new(),
-            types: HashMap::new(),
+            names: HashMap::default(),
+            assigns: HashMap::default(),
+            scope_of: HashMap::default(),
+            frame_of: HashMap::default(),
+            decl: HashMap::default(),
+            variant_bindings: HashMap::default(),
+            pattern_tests: HashMap::default(),
+            pattern_binds: HashMap::default(),
+            traits_of: HashMap::default(),
+            trait_methods: HashMap::default(),
+            type_ids: HashMap::default(),
+            types: HashMap::default(),
             next_type_id: 1,
-            self_calls: std::collections::HashSet::new(),
-            task_outputs: HashMap::new(),
+            self_calls: crate::fast::HashSet::default(),
+            task_outputs: HashMap::default(),
             sync: uses(program, "nexo.sync"),
-            suggest_index: std::cell::RefCell::new(HashMap::new()),
+            suggest_index: std::cell::RefCell::new(HashMap::default()),
             builtin_index: std::cell::OnceCell::new(),
             db: uses(program, "nexo.db"),
-            main_local: std::collections::HashSet::new(),
-            module_roots: std::collections::HashSet::new(),
+            main_local: crate::fast::HashSet::default(),
+            module_roots: crate::fast::HashSet::default(),
         },
-        module_scope: HashMap::new(),
-        aliases: HashMap::new(),
-        suggest_index: HashMap::new(),
+        module_scope: HashMap::default(),
+        aliases: HashMap::default(),
+        suggest_index: HashMap::default(),
         builtin_index: None,
-        used_outside: std::collections::HashSet::new(),
+        used_outside: crate::fast::HashSet::default(),
         tasks: Vec::new(),
         self_fn: Vec::new(),
         self_fn_binding: None,
@@ -431,7 +431,7 @@ impl Resolver {
     }
 
     fn new_scope(&mut self, parent: Option<ScopeId>, kind: SKind, frame: FrameId, is_fn: bool) -> ScopeId {
-        self.r.scopes.push(Scope { parent, kind, frame, is_fn, names: Vec::new(), index: HashMap::new() });
+        self.r.scopes.push(Scope { parent, kind, frame, is_fn, names: Vec::new(), index: HashMap::default() });
         self.r.scopes.len() - 1
     }
 
@@ -842,7 +842,7 @@ impl Resolver {
     /// A function defined once calls itself through its own closure; any
     /// other name use is an ordinary capture.
     fn finish_self_calls(&mut self, program: &Program) {
-        let mut defs: HashMap<BindingId, usize> = HashMap::new();
+        let mut defs: HashMap<BindingId, usize> = HashMap::default();
         let r = &self.r;
         crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
             StmtKind::Fn(_) => {

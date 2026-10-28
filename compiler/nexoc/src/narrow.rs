@@ -17,7 +17,7 @@
 //! field of such a record is certainly an int: storing a field checks its
 //! type.
 
-use std::collections::{HashMap, HashSet};
+use crate::fast::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::resolve::*;
@@ -114,9 +114,9 @@ impl<'a> Ints<'a> {
             }
         }
         let mut ints =
-            Ints { res, int_bindings: HashSet::new(), local_ints: HashSet::new(), int_fns, types: known_types.clone(), rec_bindings: HashMap::new() };
+            Ints { res, int_bindings: HashSet::default(), local_ints: HashSet::default(), int_fns, types: known_types.clone(), rec_bindings: HashMap::default() };
         // parameters declared int; plain variables assigned only ints
-        let mut candidates: HashSet<BindingId> = HashSet::new();
+        let mut candidates: HashSet<BindingId> = HashSet::default();
         for (b, binding) in res.bindings.iter().enumerate() {
             if binding.shared || binding.origin != Origin::Plain || defs[b].is_empty() {
                 continue;
@@ -130,7 +130,7 @@ impl<'a> Ints<'a> {
             candidates.insert(b);
         }
         // parameters: from their declaration
-        let mut params: HashSet<BindingId> = HashSet::new();
+        let mut params: HashSet<BindingId> = HashSet::default();
         let mut fns: Vec<&'a FnDef> = Vec::new();
         crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
             StmtKind::Fn(f) => fns.push(f),

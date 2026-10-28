@@ -22,7 +22,7 @@
 //! its span, so errors read exactly as before; the conditions above make
 //! sure no message can name the new variables or functions.
 
-use std::collections::{HashMap, HashSet};
+use crate::fast::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::narrow::{is_int_type, Ints};
@@ -102,7 +102,7 @@ fn method_ok(res: &Resolution, ints: &Ints, t: &TypeDef, m: &FnDef) -> bool {
         return false;
     }
     let mut ok = true;
-    let mut allowed: HashSet<u32> = HashSet::new();
+    let mut allowed: HashSet<u32> = HashSet::default();
     crate::checker::walk_stmts(&m.body, true, &mut |s| {
         ok &= simple_stmt(s);
         match &s.kind {
@@ -297,9 +297,9 @@ impl<'a> Walk<'a> {
 
 fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
     // functions and record types defined once (as codegen finds them)
-    let mut count: HashMap<BindingId, usize> = HashMap::new();
-    let mut fns: HashMap<BindingId, &FnDef> = HashMap::new();
-    let mut types: HashMap<BindingId, &TypeDef> = HashMap::new();
+    let mut count: HashMap<BindingId, usize> = HashMap::default();
+    let mut fns: HashMap<BindingId, &FnDef> = HashMap::default();
+    let mut types: HashMap<BindingId, &TypeDef> = HashMap::default();
     crate::checker::walk_stmts(&program.body, true, &mut |s| match &s.kind {
         StmtKind::Fn(f) => {
             if let Some(b) = res.decl.get(&Node::Stmt(s.id)) {
@@ -358,7 +358,7 @@ fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
     }
     let ints = Ints::new(program, res, &fns, &types);
     // the calls `fake` replaces in tests
-    let mut fakes: HashSet<String> = HashSet::new();
+    let mut fakes: HashSet<String> = HashSet::default();
     crate::checker::walk_stmts(&program.body, true, &mut |s| {
         if let StmtKind::Expr(Expr { kind: ExprKind::Call { func, args }, .. }) = &s.kind {
             if matches!(&func.kind, ExprKind::Name(n) if n == "__fake") {
@@ -381,9 +381,9 @@ fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
         .collect();
 
     // each assignment: the variable, if it is `name = T(args)` of an eligible type
-    let mut var_type: HashMap<BindingId, BindingId> = HashMap::new();
-    let mut defs_of: HashMap<BindingId, Vec<u32>> = HashMap::new();
-    let mut bad: HashSet<BindingId> = HashSet::new();
+    let mut var_type: HashMap<BindingId, BindingId> = HashMap::default();
+    let mut defs_of: HashMap<BindingId, Vec<u32>> = HashMap::default();
+    let mut bad: HashSet<BindingId> = HashSet::default();
     crate::checker::walk_stmts(&program.body, true, &mut |s| {
         let Some(a) = res.assigns.get(&s.id) else { return };
         let mut all: Vec<BindingId> = a.cands.iter().map(|(b, _)| *b).collect();
@@ -430,10 +430,10 @@ fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
         res,
         stack: Vec::new(),
         next_block: 0,
-        first: HashMap::new(),
-        bad: HashSet::new(),
+        first: HashMap::default(),
+        bad: HashSet::default(),
         in_module: false,
-        module_vars: HashSet::new(),
+        module_vars: HashSet::default(),
     };
     walk.block(&program.body);
     var_type.retain(|b, _| {
@@ -452,10 +452,10 @@ fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
             && binding.origin == Origin::Plain
     });
     // every use is a field read or a call of a method that qualifies
-    let mut reads = HashMap::new();
-    let mut calls = HashMap::new();
-    let mut allowed: HashSet<u32> = HashSet::new();
-    let mut writes: HashSet<BindingId> = HashSet::new();
+    let mut reads = HashMap::default();
+    let mut calls = HashMap::default();
+    let mut allowed: HashSet<u32> = HashSet::default();
+    let mut writes: HashSet<BindingId> = HashSet::default();
     crate::checker::walk_stmts(&program.body, true, &mut |s| {
         if let StmtKind::Assign { target, .. } = &s.kind {
             if let ExprKind::Attr { obj, .. } | ExprKind::Index { obj, .. } = &target.kind {
@@ -534,7 +534,7 @@ fn plan(program: &Program, res: &Resolution) -> Option<Plan> {
         }
     }
     methods.sort();
-    let mut defs = HashMap::new();
+    let mut defs = HashMap::default();
     for (b, ids) in &defs_of {
         if var_type.contains_key(b) {
             for id in ids {

@@ -2921,3 +2921,19 @@ failure and run no other code. The pointer is then unused and LLVM
 removes it: fib(32) saves a register and went from about 1.48× to 1.43×
 Rust's time, the same with the function at any alignment (the layout of
 the code had moved the ratio between 1.37× and 1.50×).
+
+**D180. A development build of a large program does less.** Changes to
+the compiler, none of which changes the program it gives:
+- The usual entry of an int-only function of the top level (the one
+  that takes values, D84) and the function's value are made at the end
+  of the program, and only when something needs them: a call with other
+  arguments, a closure, the function read as a value. Otherwise its
+  definition stores a mark that it is defined, which is all a call
+  checks (D29). A test run, the REPL and a program with fakes keep both
+  as before. In the program of goals.py this leaves out a third of the
+  functions clang compiles.
+- In development mode a slot that is only loaded and stored is two
+  slots of one word (scalar.rs, D141), so no address is computed.
+- The lexer and the code generator read the settings of Shield from the
+  environment once, not at every identifier and function, and the maps
+  of the compiler use a cheaper hasher (nexoc/src/fast.rs).

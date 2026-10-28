@@ -263,7 +263,7 @@ impl Lexer {
                 self.i = self.word_end(self.i);
                 let word = self.text(start, self.i);
                 let span = self.span_from(start);
-                if (std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() || std::env::var("NEXO_SECURITY_SANDBOX").is_ok_and(|s| s == "linux-offline-v1"))
+                if (crate::fast::security_dependencies() || crate::fast::security_sandbox())
                     && ["parallel", "spawn", "on", "emit", "server", "agent", "pipeline", "sync", "stream", "__web_server", "__web_route", "__ai_agent", "__stream_when", "__pipeline"].contains(&word.as_str()) {
                     return Err(Diagnostic::new("security_context_async", span));
                 }

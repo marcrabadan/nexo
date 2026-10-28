@@ -9,7 +9,7 @@
 //! each `payments.add` a name `"payments.add"` that the resolver looks up
 //! in the module's scope.
 
-use std::collections::{HashMap, HashSet};
+use crate::fast::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use nexo_diag::{suggest, Diagnostic, Span};
@@ -62,8 +62,8 @@ struct Info {
 
 /// (pub names, other top-level names) of a module.
 fn exported(program: &Program) -> (HashSet<String>, HashSet<String>) {
-    let mut exports = HashSet::new();
-    let mut private = HashSet::new();
+    let mut exports = HashSet::default();
+    let mut private = HashSet::default();
     for s in &program.body {
         match &s.kind {
             StmtKind::Fn(f) => {
@@ -124,7 +124,7 @@ impl Linker {
             Err(_) => main.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
         };
         let scope = Scope { root: root.clone(), packages: crate::packages::scope(&root.join("nexo.toml")), own: None };
-        Linker { root, scopes: vec![scope], modules: HashMap::new(), stack: vec![first], next_id, files: Vec::new() }
+        Linker { root, scopes: vec![scope], modules: HashMap::default(), stack: vec![first], next_id, files: Vec::new() }
     }
 
     /// Load the modules a file uses, check the names it takes from them
@@ -142,7 +142,7 @@ impl Linker {
         if let Some(d) = nested {
             return Err(d);
         }
-        let mut aliases: HashMap<String, (String, String)> = HashMap::new();
+        let mut aliases: HashMap<String, (String, String)> = HashMap::default();
         for s in program.body.iter_mut() {
             let StmtKind::Use { lang, name, alias, .. } = &s.kind else { continue };
             if !is_file_module(lang, name) {
