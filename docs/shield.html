@@ -45,7 +45,7 @@
     <h1>Native execution.<br><em>Explicit permissions.</em></h1>
     <p class="lede">Declare what your program may do. Shield enforces those permissions, narrows them across dependencies and can run compiled Nexo inside a hardened Docker container with an offline Linux worker.</p>
     <div class="actions"><a class="btn btn-primary" href="#docker">Run with Docker</a><a class="btn btn-ghost" href="#architecture">Explore the architecture</a></div>
-    <p class="shield-note">Strict API checks in both implementations. A native Rust compiler/runtime and worker in the production image. Kernel isolation is requested explicitly.</p>
+    <p class="shield-note">Policy checks cover Nexo runtime APIs. Policy alone does not prevent DNS rebinding, mediate direct native syscalls or impose process resource limits. Kernel isolation and hard process limits require an explicitly selected, supported worker/container profile.</p>
   </div>
   <div class="hero-code"><div class="code"><div class="code-bar"><span>docker/shield/example/main.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
     allow read &quot;input.txt&quot;
@@ -108,7 +108,7 @@ docker/shield/run.sh run-linux /app/main.nexo</code></pre></div><p>Exit <code>0<
     <article class="card"><h3>Native integrations stay closed</h3><p>In-process C, Python and shell integrations are rejected under Shield, even if allowed by policy. An independent native worker exists; a typed RPC bridge into Nexo is not implemented.</p></article>
     <article class="card"><h3>Conservative contexts</h3><p>Async execution is rejected in the worker/dependency profiles until contexts can follow queued work. Persistent workflows are rejected before state loading or steps because their state operations bypass ordinary API policy.</p></article>
   </div>
-  <p>API checks alone do not prevent filesystem races or DNS rebinding. Docker alone does not enforce per-policy filesystem grants. The Linux worker requires existing, disjoint positive filesystem grants and rejects deny exceptions it cannot represent faithfully. Full information-flow tracking, agent/tool authorization and package-registry permissions are not implemented.</p>
+  <p>Capability-based API permissions do not imply system-wide object-capability isolation. API checks alone do not prevent filesystem races or DNS rebinding, mediate direct native syscalls, or impose process-wide CPU, memory or descriptor limits. Runtime operation budgets and online broker address pinning are separate defenses. Docker alone does not enforce per-policy filesystem grants. The Linux worker requires existing, disjoint positive filesystem grants and rejects deny exceptions it cannot represent faithfully. Full information-flow tracking, agent/tool authorization and package-registry permissions are not implemented.</p>
   <p><a href="https://github.com/marcrabadan/nexo/blob/c36b5b6398e6c4ab29e36e277a53162dad18ce28/docs/shield.md">API threat model</a> · <a href="https://github.com/marcrabadan/nexo/blob/c36b5b6398e6c4ab29e36e277a53162dad18ce28/docs/shield-isolation.md">Worker isolation contract</a></p>
 </div></section>
 

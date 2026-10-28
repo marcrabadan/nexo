@@ -46,6 +46,9 @@ pub fn policy(entries: V, release: Option<V>, span: u32) -> R<Val> {
     if crate::security::context::initialize(crate::state::program().file).is_err() {
         return Err(diag(Diagnostic::new_spanless("security_context_config"), span));
     }
+    if crate::security::authorization::initialize(crate::state::program().file).is_err() {
+        return Err(diag(Diagnostic::new_spanless("security_authorization"),span));
+    }
     let mut p = POLICY.lock().unwrap();
     if p.engine.is_some() {
         return Err(diag(Diagnostic::new_spanless("policy_internal"), span));

@@ -1,7 +1,7 @@
 # Shield phase 2: execution isolation and dependency ceilings
 
-Phase 2 adds a Linux offline worker, hard resource limits and synchronous
-per-module permission ceilings. Ordinary `security run`/`trace` retain phase 1
+Phase 2 adds a Linux offline worker, hard resource limits and per-module permission ceilings.
+[Joined task contexts and agent/tool grants](shield-dispatch.md) extend them. Ordinary `security run`/`trace` retain phase 1
 API enforcement. OS confinement is requested explicitly and never emulated
 when the host cannot provide it.
 
@@ -79,7 +79,7 @@ cannot remove these kernel restrictions by changing an environment flag.
 This profile has **no network access**, including localhost and DNS. A Nexo
 policy containing a positive network grant is rejected. This avoids claiming
 that a hostname allowlist prevents DNS rebinding: an online isolated profile
-with address pinning and reviewed proxy handling is still unimplemented.
+is available separately as [linux-online-v1](shield-online.md), using a public HTTP(S) broker and rejecting proxies.
 
 ## Resource contract
 
@@ -183,14 +183,16 @@ overrides. They are operator-controlled configuration, not authority supplied
 by a dependency or a model. This is file-module attenuation, not a package
 registry or signed package manifest. It can be combined with the OS profile.
 
-Asynchronous context propagation is deliberately unsupported. With dependency
-ceilings enabled the lexer rejects parallel/spawn, event, server, stream, agent
-and pipeline constructs and their internal registration identifiers, including
-in dependencies and dead code. Some identifiers used by these constructs are
-therefore unavailable in this opt-in profile. This conservative synchronous
-restriction prevents context loss instead of pretending to attenuate callbacks
-or tasks after dispatch. Context capture/propagation across queues, tasks and
-external calls is needed before relaxing it.
+Joined `parallel` tasks now capture and restore permission ceilings. Synchronous
+agents require explicit [operator agent/tool grants](shield-dispatch.md) when
+used with dependency ceilings. [Process-scoped spawn and data-only task
+transfers](shield-spawn.md) are also supported outside the Linux profiles.
+[Synchronous events](shield-events.md) retain registration and emitter ceilings.
+[Process-local memory streams](shield-streams.md) explicitly opt into inline
+stream delivery. Servers, persistent stream listeners and pipelines remain
+rejected, including in dependencies and dead code. Linux worker profiles still reject parallel/spawn constructs
+and sync imports because their syscall filters do not permit threads. These restrictions prevent unchecked
+context loss at unsupported dispatch boundaries.
 
 ## Validation and remaining work
 
@@ -217,8 +219,8 @@ validated here; attempting a sandbox launch returns 125 without running the
 payload. Positive Landlock validation requires a compatible non-root Linux
 host or CI run. No syscall-verification bypass was used to make those tests pass.
 
-Remaining work: a reviewed online profile with DNS/IP/proxy enforcement, cgroup
-and namespace profiles, aggregate resource budgets, asynchronous context capture,
+Remaining work: production validation of the initial [online HTTP(S) profile](shield-online.md), proxy support, cgroup
+and namespace profiles, aggregate resource budgets, per-task cancellation and event-loop context capture,
 typed native RPC and package-registry metadata. Phase 3's information-flow labels
 and agent/tool authorization remain separate from these capability controls.
 

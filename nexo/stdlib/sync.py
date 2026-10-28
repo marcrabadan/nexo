@@ -188,10 +188,14 @@ def new_channel(call, maker: ChannelMaker, size=None) -> Channel:
     if not isinstance(size, int) or isinstance(size, bool) or size < 0:
         raise NexoError("type_mismatch", call.span, name="size", type="int", value=repr_value(size),
                         vtype=type_name(size))
+    from ..security_budget import charge
+    charge([("channels", 1), ("channel_slots", size)], call.span)
     return Channel(maker.elem, size)
 
 
 def send(call, ch: Channel, value) -> None:
+    from ..security_context import check_transfer
+    check_transfer(value, call.span)
     interp = call.interp
     if ch.elem is not None and not interp.is_type(value, ch.elem, call.span):
         raise NexoError("type_mismatch", call.span, name="send", type=repr_value(ch.elem),
@@ -299,33 +303,44 @@ def select(interp, channels: list, limit, span) -> tuple[int, Any]:
 def spawn(interp, func, args: list, node) -> None:
     from ..cli import report
     from ..interpreter import _TASK
+    from ..security_budget import charge, spawn_thread
+    charge([("tasks", 1)], node.span)
     copies = [(n, copy_records(interp.bind_value(v))) for n, v in args]
+    deadlines = list(_TASK.deadlines)
+    from .. import security_context
+    security = security_context.capture()
+    permit = spawn_thread(node.span)
     with COND:
         STATE.alive += 1
         ident = next(STATE.next_task)
-    deadlines = list(_TASK.deadlines)
 
     def run():
-        LOCAL.task = ident
-        _TASK.stamp = interp.new_stamp()
-        _TASK.isolated = True
-        _TASK.deadlines = deadlines
-        for _, v in copies:
-            restamp(v, _TASK.stamp)
         try:
-            interp.call_at(func, copies, node)
-        except Exception as exc:  # an error nobody handles ends the program
-            from ..errors import NexoError as E
+            with security_context.inherit(security):
+                LOCAL.task = ident
+                _TASK.stamp = interp.new_stamp()
+                _TASK.isolated = True
+                _TASK.deadlines = deadlines
+                for _, v in copies:
+                    restamp(v, _TASK.stamp)
+                interp.call_at(func, copies, node)
+        except BaseException as exc:  # an error nobody handles ends the program
             from ..types import NexoFailure
-            if isinstance(exc, (E, NexoFailure)):
-                report(exc)
+            try:
+                report(exc if isinstance(exc, (NexoError, NexoFailure)) else NexoError("spawn_failed", node.span))
+            finally:
                 os._exit(1)
-            raise
         finally:
+            permit.release()
             finished()
 
-    threading.stack_size(256 << 20)
-    threading.Thread(target=run, daemon=True).start()
+    try:
+        threading.stack_size(256 << 20)
+        threading.Thread(target=run, daemon=True).start()
+    except (RuntimeError, ValueError, OSError):
+        permit.release()
+        finished()
+        raise NexoError("spawn_failed", node.span)
 
 
 def finished() -> None:
@@ -365,12 +380,16 @@ class SharedLock:
 
 
 def shared_read(v: Any) -> Any:
+    from ..security_context import check_transfer
+    check_transfer(v)
     return copy_records(v)
 
 
 def shared_store(v: Any) -> Any:
     """A value stored in a shared variable: only code holding the lock
     reaches it, so any task may change its records."""
+    from ..security_context import check_transfer
+    check_transfer(v)
     c = copy_records(v)
     restamp(c, float("inf"))
     return c

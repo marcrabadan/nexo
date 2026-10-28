@@ -90,3 +90,20 @@ def test_contracts_that_read_shared_variables_hold_the_lock(monkeypatch):
     assert run(src) == ""
     # the old() snapshot and the ensure
     assert len(held) - before == 2
+
+
+def test_failed_thread_creation_restores_task_accounting(monkeypatch):
+    from nexo.stdlib import sync
+    from nexo import security_budget
+    monkeypatch.setenv("NEXO_SECURITY_ENFORCE", "1")
+    budget = security_budget.Budget()
+    monkeypatch.setattr(security_budget, "PROCESS", budget)
+    def cannot_start(self):
+        raise RuntimeError("thread creation rejected")
+    monkeypatch.setattr(sync.threading.Thread, "start", cannot_start)
+    error = error_of(SYNC + "fn idle():\n    pass\nspawn idle()\n")
+    assert error.key == "spawn_failed"
+    assert sync.STATE.alive == 1
+    assert budget.threads == 0
+    assert budget.used["tasks"] == 1
+    sync.wait_all()  # must not wait for a task that never started

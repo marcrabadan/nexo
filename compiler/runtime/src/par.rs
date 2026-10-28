@@ -64,6 +64,7 @@ fn reserve(want: usize) -> usize {
 struct Inherit {
     depth: u64,
     deadlines: Vec<(Instant, Val, u32)>,
+    security: crate::security::context::Snapshot,
 }
 
 struct Outcome {
@@ -79,6 +80,7 @@ unsafe impl<T> Sync for Shared<T> {}
 
 /// Run one task on this thread, keeping the thread's own state aside.
 fn run_task(f: V, arg: Option<V>, from: &Inherit, span: u32) -> Outcome {
+    let _security = crate::security::context::inherit(&from.security);
     let old_stamp = state::stamp();
     let old_depth = state::depth();
     state::set_stamp(new_stamp());
@@ -112,9 +114,12 @@ fn run(tasks: &[(V, Option<V>)], max: Option<usize>, span: u32) -> R<Vec<Val>> {
     let from = Inherit {
         depth: state::depth(),
         deadlines: state::with_task(|s| s.deadlines.clone()),
+        security: crate::security::context::capture(),
     };
     let want = n.min(max.unwrap_or(usize::MAX)).min(processors());
-    let extra = if want > 1 { reserve(want - 1) } else { 0 };
+    let reserved = if want > 1 { reserve(want - 1) } else { 0 };
+    let mut thread_permits = crate::security::budget::threads(reserved);
+    let extra = thread_permits.granted();
     let next = AtomicUsize::new(0);
     let first_failure = AtomicUsize::new(usize::MAX);
     let slots: Vec<Mutex<Option<Outcome>>> = (0..n).map(|_| Mutex::new(None)).collect();
@@ -137,20 +142,22 @@ fn run(tasks: &[(V, Option<V>)], max: Option<usize>, span: u32) -> R<Vec<Val>> {
     } else {
         crate::value::going_multi();
         std::thread::scope(|sc| {
-            for _ in 0..extra {
+            for i in 0..extra {
                 let w = &work;
                 let spawned = std::thread::Builder::new().stack_size(TASK_STACK).spawn_scoped(sc, move || {
                     w();
                     crate::value::flush_pool();
                 });
                 if spawned.is_err() {
+                    thread_permits.release_unused(extra - i);
                     break;
                 }
             }
             work();
         });
-        EXTRA.fetch_sub(extra, Ordering::AcqRel);
     }
+    EXTRA.fetch_sub(reserved, Ordering::AcqRel);
+    drop(thread_permits);
     // what the tasks did, in order
     let mut results = Vec::with_capacity(n);
     for slot in slots {
@@ -169,7 +176,13 @@ fn run(tasks: &[(V, Option<V>)], max: Option<usize>, span: u32) -> R<Vec<Val>> {
 
 /// `parallel for x in items, max: n:` with the body compiled as `task`.
 pub fn parallel_for(items: V, task: V, max: V, span: u32) -> R<Val> {
-    let items = crate::pipe::collect_vec(items, span)?;
+    let mut collected = Vec::new();
+    for item in crate::pipe::iterate(items, span)? {
+        let item = item?;
+        crate::security::budget::charge(&[(crate::security::budget::Resource::Tasks, 1)], span)?;
+        collected.push(item.plain());
+    }
+    let items = collected;
     let tasks: Vec<(V, Option<V>)> = items.iter().map(|x| (task, Some(x.v()))).collect();
     let max = max.as_int().map(|m| m.max(1) as usize);
     Ok(list(run(&tasks, max, span)?))
@@ -177,6 +190,7 @@ pub fn parallel_for(items: V, task: V, max: V, span: u32) -> R<Val> {
 
 /// `parallel:` with each statement compiled as a task.
 pub fn parallel_block(tasks: &[V], span: u32) -> R<()> {
+    crate::security::budget::charge(&[(crate::security::budget::Resource::Tasks, tasks.len())], span)?;
     let tasks: Vec<(V, Option<V>)> = tasks.iter().map(|t| (*t, None)).collect();
     run(&tasks, None, span)?;
     Ok(())

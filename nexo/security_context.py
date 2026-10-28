@@ -1,5 +1,6 @@
-"""Synchronous dependency ceilings; root policy remains the outer authority."""
+"""Immutable dependency ceilings and context-local captured permissions."""
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 import json
 import os
@@ -7,7 +8,7 @@ import os
 from .errors import NexoError, SOURCES
 
 RULES = None
-STACK = []
+STACK = ContextVar("nexo_security_stack", default=())
 ROOT = None
 
 
@@ -23,6 +24,9 @@ def load(path, root):
         text = f.read(1048577)
     if len(text.encode("utf-8")) > 1048576:
         raise ValueError("permission file too large")
+    from .json_limits import nesting_within
+    if not nesting_within(text):
+        raise ValueError("JSON nesting exceeds the supported bound")
     doc = json.loads(text, object_pairs_hook=unique)
     if not isinstance(doc, dict) or set(doc) != {"version", "modules"} or type(doc["version"]) is not int or doc["version"] != 1 or not isinstance(doc["modules"], dict):
         raise ValueError("invalid permission schema")
@@ -43,7 +47,7 @@ def load(path, root):
 
 def initialize(root):
     global RULES, ROOT
-    STACK.clear()
+    STACK.set(())
     RULES = None
     path = os.environ.get("NEXO_SECURITY_DEPENDENCIES")
     if not path:
@@ -62,17 +66,14 @@ def scope(file):
     if RULES is None or file == ROOT:
         yield
         return
-    depth = len(STACK)
-    STACK.append(RULES.get(file, []))
+    token = STACK.set(STACK.get() + (RULES.get(file, []),))
     try:
         yield
     finally:
-        del STACK[depth:]
+        STACK.reset(token)
 
 
 def allows(kind, value, file):
-    if RULES is None:
-        return True
     from .stdlib.policy import matches
     def permits(rules):
         allowed = False
@@ -82,12 +83,22 @@ def allows(kind, value, file):
                     return False
                 allowed = True
         return allowed
-    return (file == ROOT or permits(RULES.get(file, []))) and all(permits(r) for r in STACK)
+    return (RULES is None or file == ROOT or permits(RULES.get(file, []))) and all(permits(r) for r in STACK.get())
 
 
 def check_result(value, span):
-    if RULES is None or not STACK:
+    if RULES is None or not STACK.get():
         return
+    _check_data(value, span)
+
+
+def check_transfer(value, span=None):
+    if not (os.environ.get("NEXO_SECURITY_DEPENDENCIES") or os.environ.get("NEXO_SECURITY_AUTHORIZATION") or os.environ.get("NEXO_SECURITY_STREAMS") or os.environ.get("NEXO_SECURITY_WEB")):
+        return
+    _check_data(value, span)
+
+
+def _check_data(value, span):
     from decimal import Decimal
     from .types import Money, Quantity, Currency, LitFloat, NexoSet
     budget = [100000]
@@ -106,3 +117,34 @@ def check_result(value, span):
         return False
     if not data(value):
         raise NexoError("security_context_escape",span)
+
+
+def capture():
+    return STACK.get()
+
+
+@contextmanager
+def inherit(snapshot):
+    token = STACK.set(snapshot)
+    try:
+        yield
+    finally:
+        STACK.reset(token)
+
+
+@contextmanager
+def intersect(snapshot):
+    token = STACK.set(STACK.get() + snapshot)
+    try:
+        yield
+    finally:
+        STACK.reset(token)
+
+
+@contextmanager
+def attenuate(snapshot, rules):
+    token = STACK.set(STACK.get() + snapshot + (rules,))
+    try:
+        yield
+    finally:
+        STACK.reset(token)

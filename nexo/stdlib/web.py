@@ -50,6 +50,22 @@ WINDOWS = {"second": 1, "seconds": 1, "minute": 60, "minutes": 60, "hour": 3600,
 PER = ("ip", "user")
 
 
+def memory_profile():
+    return os.environ.get("NEXO_SECURITY_WEB") == "memory-v1"
+
+
+def require_mode(span=None):
+    from .policy import enforcing
+    if enforcing() and not memory_profile():
+        raise NexoError("security_web_mode", span)
+
+
+def forbid_listener():
+    from .policy import enforcing
+    if enforcing():
+        raise NexoError("security_web_mode")
+
+
 def reason(status: int) -> str:
     return REASONS.get(status, "")
 
@@ -141,8 +157,13 @@ class Jwt(Native):
         if given is None or not hmac.compare_digest(mac, given):
             return None
         try:
-            h = json.loads(unb64url(head) or b"")
-            data = json.loads(unb64url(payload) or b"")
+            from ..json_limits import nesting_within
+            head_text = (unb64url(head) or b"").decode("utf-8")
+            payload_text = (unb64url(payload) or b"").decode("utf-8")
+            if not nesting_within(head_text) or not nesting_within(payload_text):
+                return None
+            h = json.loads(head_text)
+            data = json.loads(payload_text)
         except (ValueError, UnicodeDecodeError):
             return None
         if not isinstance(h, dict) or h.get("alg") != "HS256" or not isinstance(data, dict):
@@ -176,6 +197,9 @@ class Route:
         self.role, self.limit, self.public = role, limit, public
         self.segments = path.strip("/").split("/") if path.strip("/") else []
         self.hits: dict = {}
+        self.lock = threading.RLock()
+        from .. import security_context
+        self.security = security_context.capture()
 
     def match(self, parts: list[str]) -> dict | None:
         if len(parts) != len(self.segments):
@@ -200,6 +224,9 @@ class Server(Native):
     def __init__(self, name, port, auth):
         self.name, self.port, self.auth = name, port, auth
         self.routes: list[Route] = []
+        self.lock = threading.RLock()
+        from .. import security_context
+        self.security = security_context.capture()
         self.sock = None
 
     def repr(self) -> str:
@@ -207,7 +234,9 @@ class Server(Native):
 
     def member(self, call, name: str):
         if name == "url":
-            return f"http://127.0.0.1:{self.port}"
+            return f"memory://{self.name}" if memory_profile() else f"http://127.0.0.1:{self.port}"
+        if name == "dispatch":
+            return Builtin("dispatch", self.dispatch)
         if name == "port":
             return self.port
         if name == "name":
@@ -215,19 +244,75 @@ class Server(Native):
         return self.missing(call, name, ["url", "port", "name"])
 
 
+    def dispatch(self, call, method, target, headers=None, body=""):
+        if not memory_profile():
+            raise NexoError("security_web_mode", call.span)
+        from ..security_context import check_transfer
+        check_transfer(headers, call.span)
+        check_transfer(body, call.span)
+        if not isinstance(method, str) or method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}:
+            raise NexoError("security_web_request", call.span)
+        if (not isinstance(target, str) or not target.startswith("/") or target.startswith("//")
+                or len(target) > 8192 or "#" in target or len(target.encode("utf-8")) > 8192
+                or any(ord(c) < 33 or ord(c) == 127 for c in target)):
+            raise NexoError("security_web_request", call.span)
+        if not isinstance(body, str) or len(body) > MAX_BODY or len(body.encode("utf-8")) > MAX_BODY:
+            raise NexoError("security_web_request", call.span)
+        if headers is None:
+            headers = {}
+        if not isinstance(headers, dict) or len(headers) > 128:
+            raise NexoError("security_web_request", call.span)
+        normalized = {"host": "memory.nexo"}
+        size = 0
+        for key, value in headers.items():
+            if (not isinstance(key, str) or not key or len(key) > MAX_HEAD or not key.isascii()
+                    or not all(c.isalnum() or c in "!#$%&'*+-.^_`|~" for c in key)
+                    or not isinstance(value, str) or len(value) > MAX_HEAD or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+                raise NexoError("security_web_request", call.span)
+            name = key.lower()
+            if name in normalized or name in {"content-length", "transfer-encoding", "connection"}:
+                raise NexoError("security_web_request", call.span)
+            size += len(key.encode("utf-8")) + len(value.encode("utf-8")) + 4
+            if size > MAX_HEAD:
+                raise NexoError("security_web_request", call.span)
+            normalized[name] = value
+        from ..security_budget import charge
+        charge([("web_requests", 1)], call.span)
+        answer = handle(call.interp, self, method, target, normalized, body.encode("utf-8"), "127.0.0.1")
+        if len(answer.body) > 8388608:
+            raise NexoError("security_web_request", call.span)
+        response_headers = dict(SECURE)
+        if answer.ctype:
+            response_headers["Content-Type"] = answer.ctype
+        response_headers.update(answer.extra)
+        return {"status": answer.status, "body": answer.body.decode("utf-8", errors="replace"), "headers": response_headers}
+
+
 def b_web_server(call, name, port=8080, auth=None):
+    require_mode(call.span)
+    if memory_profile() and (not isinstance(name, str) or not name or len(name) > 256 or len(name.encode("utf-8")) > 256):
+        raise NexoError("security_web_request", call.span)
     from .core import expects
     if not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535:
         raise expects(call, "port", "int", port)
     if auth is not None and not isinstance(auth, Jwt):
         raise expects(call, "auth", "jwt", auth)
+    from ..security_budget import charge
+    charge([("web_servers", 1), ("registrations", 1)], call.span)
     server = Server(name, port, auth)
     SERVERS.append(server)
     return server
 
 
 def b_web_route(call, server, method, path, handler, types, role=None, limit=None, public=False):
+    require_mode(call.span)
     from .core import expects
+    if memory_profile() and (not isinstance(server, Server) or not isinstance(handler, Function) or not isinstance(types, list) or len(types) > 128):
+        raise NexoError("security_web_request", call.span)
+    if memory_profile() and (not isinstance(method, str) or method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+            or not isinstance(path, str) or not path.startswith("/") or len(path) > 8192 or len(path.encode("utf-8")) > 8192
+            or any(ord(c) <= 32 or ord(c) == 127 for c in path) or not isinstance(public, bool)):
+        raise NexoError("security_web_request", call.span)
     if role is not None and not isinstance(role, str):
         raise expects(call, "@role", "str", role)
     if role is not None and server.auth is None:
@@ -236,11 +321,14 @@ def b_web_route(call, server, method, path, handler, types, role=None, limit=Non
         raise expects(call, "@limit", "rate", limit)
     if limit is not None and (not isinstance(limit.amount, int) or isinstance(limit.amount, bool) or limit.amount < 1):
         raise expects(call, "@limit", "int", limit.amount)
-    if any(r.method == method and r.path == path for r in server.routes):
-        raise NexoError("route_twice", call.span, method=method, path=path)
-    route = Route(method, path, handler, list(types), role, limit, public)
-    route.span = call.span
-    server.routes.append(route)
+    with server.lock:
+        if any(r.method == method and r.path == path for r in server.routes):
+            raise NexoError("route_twice", call.span, method=method, path=path)
+        from ..security_budget import charge
+        charge([("registrations", 1)], call.span)
+        route = Route(method, path, handler, list(types), role, limit, public)
+        route.span = call.span
+        server.routes.append(route)
     return None
 
 
@@ -366,6 +454,13 @@ class Ctx:
 
 
 def handle(interp, server: Server, method, target, headers, body, ip) -> Answer:
+    require_mode()
+    from .. import security_context
+    with security_context.intersect(server.security):
+        return handle_server(interp, server, method, target, headers, body, ip)
+
+
+def handle_server(interp, server, method, target, headers, body, ip):
     url = urllib.parse.urlsplit(target)
     if headers.get("x-forwarded-proto", "").lower() == "http":
         host = headers.get("host", "")
@@ -374,7 +469,9 @@ def handle(interp, server: Server, method, target, headers, body, ip) -> Answer:
     parts = [urllib.parse.unquote(p) for p in raw_parts]
     found = None
     allowed = []
-    for r in server.routes:
+    with server.lock:
+        routes = tuple(server.routes)
+    for r in routes:
         params = r.match(parts)
         if params is None:
             continue
@@ -387,6 +484,12 @@ def handle(interp, server: Server, method, target, headers, body, ip) -> Answer:
             return error_answer(405, extra=[("Allow", ", ".join(allowed))])
         return error_answer(404)
     route, path_params = found
+    from .. import security_context
+    with security_context.intersect(route.security):
+        return handle_route(interp, server, route, path_params, url, method, target, headers, body, ip)
+
+
+def handle_route(interp, server, route, path_params, url, method, target, headers, body, ip):
     if method in ("POST", "PUT", "PATCH", "DELETE") and "origin" in headers:
         origin = urllib.parse.urlsplit(headers["origin"]).netloc
         if origin != headers.get("host", ""):
@@ -413,9 +516,10 @@ def handle(interp, server: Server, method, target, headers, body, ip) -> Answer:
         now = int(_time.time())
         start = now - now % window
         key = (who, start)
-        route.hits = {k: v for k, v in route.hits.items() if k[1] == start}
-        count = route.hits.get(key, 0) + 1
-        route.hits[key] = count
+        with route.lock:
+            route.hits = {k: v for k, v in route.hits.items() if k[1] == start}
+            count = route.hits.get(key, 0) + 1
+            route.hits[key] = count
         if count > route.limit.amount:
             return error_answer(429, extra=[("Retry-After", str(start + window - now))])
     query: dict[str, str] = {}
@@ -468,6 +572,9 @@ def failure_answer(f: NexoFailure) -> Answer:
 def answer_of(ctx, result, method) -> Answer:
     from .data import to_json
     value = ctx.interp.bind_value(result)
+    if memory_profile():
+        from ..security_context import check_transfer
+        check_transfer(value, ctx.span)
     ok = 201 if method == "POST" else 200
     if value is None:
         return Answer(204)
@@ -486,6 +593,7 @@ def answer_of(ctx, result, method) -> Answer:
 # ---------------------------------------------------------------- serving
 
 def listen(server: Server, port: int) -> None:
+    forbid_listener()
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
@@ -533,8 +641,9 @@ def serve_one(interp, server: Server) -> bool:
 def serve_forever(interp) -> bool:
     """`nexo file.nexo`: the servers answer until the program is stopped.
     False when a handler stopped it with a diagnostic (already shown)."""
-    if not SERVERS:
+    if not SERVERS or memory_profile():
         return True
+    forbid_listener()
     port_env = os.environ.get("PORT")
     for server in SERVERS:
         port = int(port_env) if port_env and port_env.isdigit() and len(SERVERS) == 1 else server.port
@@ -557,6 +666,10 @@ def serve_forever(interp) -> bool:
 
 def serve_in_background(interp) -> None:
     """`nexo test`: every server on a free port, answering on its own thread."""
+    if memory_profile():
+        return
+    if SERVERS:
+        forbid_listener()
     for server in SERVERS:
         listen(server, 0)
 

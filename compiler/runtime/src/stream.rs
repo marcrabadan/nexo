@@ -22,7 +22,9 @@ const BACKOFF: [u64; 3] = [100, 200, 400];
 
 static TEST_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+#[derive(Clone)]
 struct Handler {
+    security: crate::security::context::Snapshot,
     stream: (String, String),
     func: Val,
     key: Option<Val>,
@@ -36,6 +38,8 @@ struct Broker {
     memory: Vec<(String, Vec<(i64, i64, String)>)>,
     keys: Vec<(String, Vec<String>)>,
     group: String,
+    retained_messages: usize,
+    retained_bytes: usize,
 }
 
 static BROKER: Mutex<Option<Broker>> = Mutex::new(None);
@@ -53,8 +57,17 @@ pub fn in_test_mode() -> bool {
     test_mode()
 }
 
+pub fn memory_profile() -> bool {
+    std::env::var("NEXO_SECURITY_STREAMS").is_ok_and(|value| value == "memory-v1")
+}
+fn require_mode(span: u32) -> R<()> {
+    if crate::security::enforcing() && !memory_profile() {
+        return Err(diag(Diagnostic::new_spanless("security_stream_mode"),span));
+    }
+    Ok(())
+}
 fn test_mode() -> bool {
-    TEST_MODE.load(std::sync::atomic::Ordering::SeqCst)
+    TEST_MODE.load(std::sync::atomic::Ordering::SeqCst) || memory_profile()
 }
 
 pub fn release_all() {
@@ -67,6 +80,8 @@ pub fn reset_memory() {
     with(|b| {
         b.memory.clear();
         b.keys.clear();
+        b.retained_messages = 0;
+        b.retained_bytes = 0;
     });
 }
 
@@ -105,6 +120,7 @@ impl Native for Stream {
         Err(crate::stdlib::missing_member("stream", name, &["send"], span))
     }
     fn call_method(&self, _me: V, _name: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+        require_mode(span)?;
         let a = crate::stdlib::method_args("send", &["value", "at"], 1, args, names, span)?;
         let ms = if a[1].is_none() || a[1].tag == T_MISSING {
             now_ms()
@@ -114,14 +130,15 @@ impl Native for Stream {
                 None => return Err(crate::stdlib::expects("send", "time", a[1], span)),
             }
         };
+        crate::security::context::check_transfer(a[0],span)?;
         let value = crate::pipe::bind(a[0])?;
         let data = match value.v().as_str() {
             Some(s) => s.to_string(),
             None => crate::data::to_json_compact(value.v()),
         };
-        let message = append(&self.pair(), data, ms);
+        let message = append(&self.pair(), data, ms, span)?;
         if test_mode() {
-            deliver(&message, span);
+            deliver(&message, span)?;
         }
         Ok(Val::none())
     }
@@ -140,6 +157,7 @@ pub struct Message {
     pub id: i64,
     pub ms: i64,
     pub data: String,
+    pub security: crate::security::context::Snapshot,
 }
 
 impl Message {
@@ -184,6 +202,7 @@ impl Native for Message {
 }
 
 pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+    require_mode(span)?;
     for n in names.iter().flatten() {
         if REMOTE.contains(n) {
             return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", format!("\"{kind}(..., {n}: ...)\"")), span));
@@ -192,6 +211,9 @@ pub fn source(kind: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Va
     }
     let a = crate::stdlib::method_args(kind, &["name"], 1, args, names, span)?;
     let Some(name) = a[0].as_str() else { return Err(crate::stdlib::expects(kind, "str", a[0], span)) };
+    if memory_profile() && (name.is_empty() || name.len() > 256 || !name.chars().all(|c| c.is_alphanumeric() || "._-".contains(c))) {
+        return Err(diag(Diagnostic::new_spanless("security_stream_name"),span));
+    }
     if kind == "websocket" {
         return Err(diag(Diagnostic::new_spanless("not_supported").arg("what", "\"websocket(...)\""), span));
     }
@@ -202,9 +224,15 @@ fn log_path(s: &(String, String)) -> String {
     format!("{ROOT}/{}/{}.log", s.0, s.1)
 }
 
-fn append(s: &(String, String), data: String, ms: i64) -> Message {
+fn append(s: &(String, String), data: String, ms: i64, span: u32) -> R<Message> {
+    require_mode(span)?;
     if test_mode() {
         return with(|b| {
+            if memory_profile() && (data.len() > 1048576 || b.retained_messages >= 4096 || b.retained_bytes.saturating_add(data.len()) > 8388608) {
+                return Err(diag(Diagnostic::new_spanless("security_stream_budget"),span));
+            }
+            b.retained_messages += 1;
+            b.retained_bytes += data.len();
             let ident = format!("{}:{}", s.0, s.1);
             let pos = match b.memory.iter().position(|(k, _)| *k == ident) {
                 Some(p) => p,
@@ -216,7 +244,7 @@ fn append(s: &(String, String), data: String, ms: i64) -> Message {
             let log = &mut b.memory[pos].1;
             let id = log.len() as i64 + 1;
             log.push((id, ms, data.clone()));
-            Message { stream: s.clone(), id, ms, data }
+            Ok(Message { stream: s.clone(), id, ms, data, security: crate::security::context::capture() })
         });
     }
     let _guard = BROKER.lock().unwrap();
@@ -232,26 +260,28 @@ fn append(s: &(String, String), data: String, ms: i64) -> Message {
         let _ = std::io::Read::read_to_string(&mut &*f, &mut text);
         count = text.lines().count() as i64;
     }
-    let message = Message { stream: s.clone(), id: count + 1, ms, data };
+    let message = Message { stream: s.clone(), id: count + 1, ms, data, security: crate::security::context::Snapshot::default() };
     let line = json::obj(vec![("id", Json::Int(message.id)), ("time", Json::Int(ms)), ("data", json::s(message.data.clone()))]).compact();
     if let Ok(mut f) = file {
         let _ = writeln!(f, "{line}");
         let _ = f.unlock();
     }
-    message
+    Ok(message)
 }
 
 // -------------------------------------------------------------- handlers
 
 pub fn when(src: V, func: V, key: Option<V>, span: u32) -> R<Val> {
+    require_mode(span)?;
     let Some(s) = src.native::<Stream>() else { return Err(crate::stdlib::expects("when", "stream", src, span)) };
+    crate::security::budget::charge(&[(crate::security::budget::Resource::Registrations, 1)], span)?;
     let key = key.filter(|k| !k.is_none()).map(Val::from);
-    with(|b| b.handlers.push(Handler { stream: s.pair(), func: Val::from(func), key }));
+    with(|b| b.handlers.push(Handler { stream: s.pair(), func: Val::from(func), key, security: crate::security::context::capture() }));
     Ok(Val::none())
 }
 
 pub fn listening() -> bool {
-    with(|b| !b.handlers.is_empty() || !b.queries.is_empty())
+    !memory_profile() && with(|b| !b.handlers.is_empty() || !b.queries.is_empty())
 }
 
 /// The text of the pending failure, without the place (for the dead
@@ -297,22 +327,26 @@ fn remember_key(s: &(String, String), n: usize, k: String) {
 
 /// Run a handler (the n-th `when` of its stream) with retries; then the
 /// dead-letter stream.
-fn handle(func: &Val, key: &Option<Val>, m: &Message, n: usize, span: u32) {
+fn handle(func: &Val, key: &Option<Val>, m: &Message, n: usize, span: u32) -> R<()> {
     let mv = native(m.clone());
     let mut k = None;
     if let Some(kf) = key {
         match call_value(kf.v(), &[mv.v()], span).and_then(|v| crate::pipe::bind(v.v())) {
             Ok(v) => {
+                crate::security::context::check_transfer(v.v(),span)?;
                 let text = repr(v.v());
                 if seen_key(&m.stream, n, &text) {
-                    return;
+                    return Ok(());
                 }
+                use crate::security::budget::{charge, Resource};
+                charge(&[(Resource::Keys, 1), (Resource::KeyBytes, text.len())], span)?;
                 k = Some(text);
             }
-            Err(_) => {
+            Err(f) => {
+                if crate::security::enforcing() && crate::state::failing() == crate::state::DIAG { return Err(f); }
                 let e = pending_message();
-                dead(m, &e);
-                return;
+                dead(m, &e,span)?;
+                return Ok(());
             }
         }
     }
@@ -323,7 +357,8 @@ fn handle(func: &Val, key: &Option<Val>, m: &Message, n: usize, span: u32) {
                 error = None;
                 break;
             }
-            Err(_) => {
+            Err(f) => {
+                if crate::security::enforcing() && crate::state::failing() == crate::state::DIAG { return Err(f); }
                 error = Some(pending_message());
                 if attempt < 3 {
                     std::thread::sleep(std::time::Duration::from_millis(BACKOFF[attempt]));
@@ -332,35 +367,40 @@ fn handle(func: &Val, key: &Option<Val>, m: &Message, n: usize, span: u32) {
         }
     }
     if let Some(e) = error {
-        dead(m, &e);
-        return;
+        dead(m, &e,span)?;
+        return Ok(());
     }
     if let Some(k) = k {
         remember_key(&m.stream, n, k);
     }
+    Ok(())
 }
 
-fn dead(m: &Message, error: &str) {
+fn dead(m: &Message, error: &str, span: u32) -> R<()> {
     let target = (m.stream.0.clone(), format!("{}.dead", m.stream.1));
-    append(&target, m.data.clone(), m.ms);
+    append(&target, m.data.clone(), m.ms,span)?;
     crate::state::flush();
     eprintln!("{}", msg("info.stream_dead", &[("stream", m.stream.1.clone()), ("id", m.id.to_string()), ("error", error.to_string())]));
+    Ok(())
 }
 
 /// A message reaches every handler and query of its stream.
-fn deliver(m: &Message, span: u32) {
-    let handlers: Vec<(Val, Option<Val>)> =
-        with(|b| b.handlers.iter().filter(|h| h.stream == m.stream).map(|h| (h.func.clone(), h.key.clone())).collect());
-    for (i, (f, k)) in handlers.iter().enumerate() {
-        handle(f, k, m, i + 1, span);
+fn deliver(m: &Message, span: u32) -> R<()> {
+    let _publisher = crate::security::context::intersect(&m.security);
+    let handlers: Vec<Handler> = with(|b| b.handlers.iter().filter(|h| h.stream == m.stream).cloned().collect());
+    for (i, h) in handlers.iter().enumerate() {
+        let _registration = crate::security::context::intersect(&h.security);
+        handle(&h.func, &h.key, m, i + 1, span)?;
     }
     let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
     for q in queries {
         let mine = q.lock().unwrap().stream == m.stream;
         if mine {
             add(&q, m.clone(), span);
+            if crate::state::failing() != 0 { return Err(crate::state::Fail); }
         }
     }
+    Ok(())
 }
 
 // --------------------------------------------------------------- windows
@@ -373,7 +413,7 @@ pub struct Query {
     stream: (String, String),
     /// "window" | "sliding" | "session" and its size in ms
     window: Option<(&'static str, i64)>,
-    ops: Vec<Op>,
+    ops: Vec<(Op, crate::security::context::Snapshot)>,
     open: Vec<Message>,
 }
 
@@ -403,11 +443,15 @@ pub fn query_of(v: V) -> Option<(Arc<Mutex<Query>>, bool)> {
 /// One more step of a stream pipeline (D117).
 pub fn push(src: V, op: Op, each: bool) -> Option<Val> {
     let (q, _) = query_of(src)?;
+    if require_mode(0).is_err() {
+        return Some(Val::none());
+    }
     let (stream, window, mut ops) = {
         let q = q.lock().unwrap();
         (q.stream.clone(), q.window, q.ops.clone())
     };
-    ops.push(op);
+    if crate::security::budget::charge(&[(crate::security::budget::Resource::Registrations, 1)], 0).is_err() { return Some(Val::none()); }
+    ops.push((op, crate::security::context::capture()));
     let next = Arc::new(Mutex::new(Query { stream, window, ops, open: Vec::new() }));
     if each {
         with(|b| b.queries.push(next));
@@ -417,6 +461,7 @@ pub fn push(src: V, op: Op, each: bool) -> Option<Val> {
 }
 
 pub fn window(src: V, size: V, kind: &'static str, step_span: u32, size_span: u32) -> R<Val> {
+    require_mode(step_span)?;
     let Some((q, _)) = query_of(src) else {
         return Err(diag(Diagnostic::new_spanless("stream_window_source").arg("step", kind), step_span));
     };
@@ -439,20 +484,26 @@ pub fn window(src: V, size: V, kind: &'static str, step_span: u32, size_span: u3
         }
         _ => None,
     };
-    let Some(ms) = ms else {
+    let Some(ms) = ms.filter(|ms| *ms > 0) else {
         return Err(diag(Diagnostic::new_spanless("stream_window").arg("step", kind), size_span));
     };
+    crate::security::budget::charge(&[(crate::security::budget::Resource::Registrations, 1)], step_span)?;
     Ok(native(QueryVal(Arc::new(Mutex::new(Query { stream, window: Some((kind, ms)), ops: Vec::new(), open: Vec::new() })))))
 }
 
 fn run(q: &Arc<Mutex<Query>>, messages: Vec<Message>, span: u32) {
     let ops = q.lock().unwrap().ops.clone();
+    // Keep every contributor and every deferred registration active for the
+    // entire pipeline. No step can widen a prior callback or publisher ceiling.
+    let combined = crate::security::context::combine(messages.iter().map(|m| &m.security).chain(ops.iter().map(|(_, s)| s)));
+    let _context = crate::security::context::intersect(&combined);
     let items: Vec<Val> = messages.iter().map(|m| m.value(span)).collect();
     let mut value = list(items);
-    for op in ops {
+    for (op, _) in ops {
         match op(value.v()) {
             Ok(v) => value = v,
             Err(_) => {
+                if crate::security::enforcing() && crate::state::failing() == crate::state::DIAG { return; }
                 crate::state::report_pending();
                 return;
             }
@@ -523,6 +574,7 @@ pub fn drain() {
     let queries: Vec<Arc<Mutex<Query>>> = with(|b| b.queries.clone());
     for q in queries {
         flush_query(&q);
+        if crate::state::failing() != 0 { return; }
     }
 }
 
@@ -550,6 +602,11 @@ fn acknowledge(s: &(String, String), read: i64) {
 /// `nexo file.nexo` with `when` handlers or stream pipelines: read the new
 /// messages of every stream until the program is stopped.
 pub fn listen_forever(program: &str) {
+    if crate::security::enforcing() {
+        diag(Diagnostic::new_spanless("security_stream_mode"),0);
+        crate::state::report_pending();
+        std::process::exit(1);
+    }
     let stem = std::path::Path::new(program).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     with(|b| b.group = if stem.is_empty() { "nexo".into() } else { stem });
     let mut streams: Vec<(String, String)> = Vec::new();
@@ -585,9 +642,10 @@ pub fn listen_forever(program: &str) {
                     id: d.get("id").int().unwrap_or(n),
                     ms: d.get("time").int().unwrap_or(0),
                     data: d.get("data").str().unwrap_or("").to_string(),
+                    security: crate::security::context::Snapshot::default(),
                 };
                 idle = false;
-                deliver(&m, 0);
+                let _ = deliver(&m, 0);
                 crate::state::flush();
                 done = m.id;
                 read[si] = done;

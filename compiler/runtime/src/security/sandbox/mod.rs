@@ -1,4 +1,5 @@
-//! A single-process, offline Linux worker. No fallback to weaker confinement.
+//! A single-process Linux worker, optionally with a separately supervised HTTP
+//! broker. The payload's syscall confinement is identical in both profiles.
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -31,6 +32,7 @@ pub struct Profile {
     pub read: Vec<PathBuf>,
     pub write: Vec<PathBuf>,
     pub limits: Limits,
+    pub network: Option<super::online::Policy>,
 }
 
 pub fn probe() -> String {
@@ -38,6 +40,22 @@ pub fn probe() -> String {
     { linux::probe() }
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     { r#"{"profile":"linux-offline-v1","supported":false,"reason":"unsupported_platform"}"#.into() }
+}
+
+/// Install irreversible hard limits in a dedicated payload process.
+/// Its supervisor remains responsible for the wall deadline.
+pub fn bound_process(limits: &Limits) -> Result<(), String> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    { linux::apply_limits(limits) }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    { let _ = limits; Err("Hard process limits require Linux x86_64".into()) }
+}
+
+pub fn bound_broker(limits: &Limits) -> Result<(), String> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    { linux::broker_parent_lifetime()?; linux::apply_limits(limits) }
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    { let _ = limits; Err("Online isolation requires Linux x86_64".into()) }
 }
 
 /// Apply only in a dedicated, single-threaded worker immediately before exec.
@@ -54,10 +72,14 @@ pub fn enter(profile: &Profile, program: &std::path::Path, args: &[String], env:
 /// terminates the complete untrusted computation. No pre_exec allocation/fork hooks.
 pub fn supervise(worker: &std::path::Path, profile: &Profile, program: &std::path::Path, args: &[String], env: &[(String, String)]) -> Result<u8, String> {
     profile.limits.validate()?;
+    if profile.network.is_some() { super::online::reject_proxies()?; }
+    #[cfg(not(unix))]
+    if profile.network.is_some() { return Err("Online isolation requires Linux".into()); }
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     linux::verify_supervisor()?;
     let mut command = Command::new(worker);
     command.arg("__enter");
+    if profile.network.is_some() { command.args(["--online", "1"]); }
     for path in &profile.read { command.arg("--read").arg(path); }
     for path in &profile.write { command.arg("--write").arg(path); }
     for (name, value) in [("--cpu-seconds", profile.limits.cpu_seconds), ("--memory-mib", profile.limits.memory_mib),
@@ -71,6 +93,13 @@ pub fn supervise(worker: &std::path::Path, profile: &Profile, program: &std::pat
     if payload.len() > 524288 { return Err("Worker environment is too large".into()); }
     command.env_clear().env("LANG", "C.UTF-8");
     command.stdin(Stdio::piped());
+    #[cfg(unix)]
+    let mut broker_channel = if profile.network.is_some() {
+        let (child_end, host_end) = std::os::unix::net::UnixStream::pair().map_err(|_| "Cannot create broker channel")?;
+        use std::os::fd::OwnedFd;
+        command.stdin(Stdio::from(OwnedFd::from(child_end)));
+        Some(host_end)
+    } else { None };
     let mut child = command.spawn().map_err(|e| format!("Cannot start sandbox worker: {e}"))?;
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     let handle = match linux::process_handle(child.id()) {
@@ -88,7 +117,33 @@ pub fn supervise(worker: &std::path::Path, profile: &Profile, program: &std::pat
         let _ = child.kill();
         let _ = child.wait();
     };
-    {
+    // Every exit path drops this guard, kills and reaps the broker too. A DNS
+    // lookup or blocked peer cannot outlive the supervised job's wall deadline.
+    struct Broker(std::process::Child);
+    impl Drop for Broker {
+        fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); }
+    }
+    let mut _broker: Option<Broker> = None;
+    #[cfg(unix)]
+    if let Some(mut channel) = broker_channel.take() {
+        if super::online::write_frame(&mut channel,payload.as_bytes(),524288).is_err() {
+            stop(&mut child); return Err("Cannot deliver worker environment".into());
+        }
+        let policy = profile.network.as_ref().unwrap();
+        let mut broker = Command::new(worker);
+        broker.arg("__broker");
+        broker.arg("--cpu-seconds").arg(profile.limits.cpu_seconds.to_string());
+        broker.arg("--memory-mib").arg(profile.limits.memory_mib.to_string());
+        for host in &policy.allow { broker.arg("--allow-host").arg(host); }
+        for host in &policy.deny { broker.arg("--deny-host").arg(host); }
+        use std::os::fd::OwnedFd;
+        broker.env_clear().env("LANG","C.UTF-8").stdin(Stdio::from(OwnedFd::from(channel)))
+            .stdout(Stdio::null()).stderr(Stdio::null());
+        _broker = Some(Broker(match broker.spawn() {
+            Ok(b) => b, Err(_) => { stop(&mut child); return Err("Cannot start HTTP broker".into()); }
+        }));
+    }
+    if profile.network.is_none() {
         use std::io::Write;
         if child.stdin.take().unwrap().write_all(payload.as_bytes()).is_err() {
             stop(&mut child);

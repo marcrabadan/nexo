@@ -14,6 +14,7 @@ try:
 except ImportError:  # not on Windows
     fcntl = None
 import json
+import os
 import sys
 import threading
 import time as _time
@@ -31,9 +32,10 @@ ROOT = Path(".nexo") / "streams"
 BACKOFF = (0.1, 0.2, 0.4)
 
 TEST_MODE = False
-HANDLERS: list = []  # (stream, fn, key_fn)
+HANDLERS: list = []  # (stream, fn, key_fn, span, immutable context)
 QUERIES: list = []  # StreamQuery waiting for messages
 MEMORY: dict = {}  # test mode: stream id -> list of messages
+RETAINED = {"messages": 0, "bytes": 0}
 SEEN_KEYS: dict = {}  # test mode: stream id -> set of keys
 _lock = threading.RLock()
 
@@ -43,6 +45,21 @@ def reset() -> None:
     QUERIES.clear()
     MEMORY.clear()
     SEEN_KEYS.clear()
+    RETAINED.update(messages=0, bytes=0)
+
+
+def memory_profile():
+    return os.environ.get("NEXO_SECURITY_STREAMS") == "memory-v1"
+
+
+def in_memory():
+    return TEST_MODE or memory_profile()
+
+
+def require_mode(span=None):
+    from .policy import enforcing
+    if enforcing() and not memory_profile():
+        raise NexoError("security_stream_mode", span)
 
 
 def now_ms() -> int:
@@ -61,10 +78,12 @@ class Message(Native):
     """One message: `msg.json()`, `msg.text()`, `msg.id`, `msg.time`."""
 
     type_name = "message"
-    __slots__ = ("stream", "id", "ms", "data")
+    __slots__ = ("stream", "id", "ms", "data", "security")
 
     def __init__(self, stream, id_, ms, data):
         self.stream, self.id, self.ms, self.data = stream, id_, ms, data
+        from .. import security_context
+        self.security = security_context.capture()
 
     def repr(self) -> str:
         return f"message({self.stream.ident()} {self.id})"
@@ -121,20 +140,29 @@ class Stream(Native):
         return self.missing(call, name, ["send"])
 
     def m_send(self, call, value, at=None):
+        require_mode(call.span)
         from .clock import Time
         if at is not None and not isinstance(at, Time):
             from .core import expects
             raise expects(call, "send", "time", at)
         ms = at.ms if at is not None else now_ms()
+        from ..security_context import check_transfer
+        check_transfer(value, call.span)
         message = append(self, payload_text(call.interp.bind_value(value)), ms)
-        if TEST_MODE:
+        if in_memory():
             deliver(call, message)
         return None
 
 
 def append(stream: Stream, data: str, ms: int) -> Message:
+    require_mode()
     with _lock:
-        if TEST_MODE:
+        if in_memory():
+            size = len(data.encode("utf-8"))
+            if memory_profile() and (size > 1048576 or RETAINED["messages"] >= 4096 or RETAINED["bytes"] + size > 8388608):
+                raise NexoError("security_stream_budget")
+            RETAINED["messages"] += 1
+            RETAINED["bytes"] += size
             log = MEMORY.setdefault(stream.ident(), [])
             message = Message(stream, len(log) + 1, ms, data)
             log.append(message)
@@ -156,6 +184,7 @@ def append(stream: Stream, data: str, ms: int) -> Message:
 
 def make_source(kind: str):
     def b_source(call, name, **options):
+        require_mode(call.span)
         from .core import expects
         if not isinstance(name, str):
             raise expects(call, kind, "str", name)
@@ -163,6 +192,8 @@ def make_source(kind: str):
             if k in REMOTE:
                 raise NexoError("not_supported", call.span, what=f'"{kind}(..., {k}: ...)"')
             raise NexoError("arg_unknown", call.span, fn=kind, param=k, params="-")
+        if memory_profile() and (not name or len(name.encode("utf-8")) > 256 or not all(c.isalnum() or c in "._-" for c in name)):
+            raise NexoError("security_stream_name", call.span)
         if kind == "websocket":
             raise NexoError("not_supported", call.span, what='"websocket(...)"')
         return Stream(kind, name)
@@ -172,10 +203,15 @@ def make_source(kind: str):
 # ------------------------------------------------------------- handlers
 
 def b_stream_when(call, source, fn, key=None):
+    require_mode(call.span)
     if not isinstance(source, Stream):
         from .core import expects
         raise expects(call, "when", "stream", source)
-    HANDLERS.append((source, fn, key, call.span))
+    from .. import security_context
+    from ..security_budget import charge
+    charge([("registrations", 1)], call.span)
+    with _lock:
+        HANDLERS.append((source, fn, key, call.span, security_context.capture()))
     return None
 
 
@@ -187,12 +223,20 @@ def handle(call, fn, key, message: Message, n: int = 1) -> None:
     if key is not None:
         from ..types import repr_value
         try:
-            k = repr_value(interp.bind_value(interp.call(key, [(None, message)], call.node)))
+            value = interp.bind_value(interp.call(key, [(None, message)], call.node))
+            from ..security_context import check_transfer
+            check_transfer(value, call.span)
+            k = repr_value(value)
         except (NexoFailure, NexoError) as exc:
+            from .policy import enforcing
+            if enforcing() and isinstance(exc, NexoError):
+                raise
             dead(call, message, exc)
             return
         if k in keys_of(message.stream, n):
             return
+        from ..security_budget import charge
+        charge([("keys", 1), ("key_bytes", len(k.encode("utf-8")))], call.span)
     error = None
     for attempt in range(4):
         try:
@@ -200,6 +244,9 @@ def handle(call, fn, key, message: Message, n: int = 1) -> None:
             error = None
             break
         except (NexoFailure, NexoError) as exc:
+            from .policy import enforcing
+            if enforcing() and isinstance(exc, NexoError):
+                raise
             error = exc
             if attempt < 3:
                 _time.sleep(BACKOFF[attempt])
@@ -228,7 +275,7 @@ def keys_path(stream: Stream, n: int) -> Path:
 
 
 def keys_of(stream: Stream, n: int) -> set:
-    if TEST_MODE:
+    if in_memory():
         return SEEN_KEYS.setdefault(f"{stream.ident()}#{n}", set())
     path = keys_path(stream, n)
     try:
@@ -238,7 +285,7 @@ def keys_of(stream: Stream, n: int) -> set:
 
 
 def remember_key(stream: Stream, n: int, k: str) -> None:
-    if TEST_MODE:
+    if in_memory():
         SEEN_KEYS.setdefault(f"{stream.ident()}#{n}", set()).add(k)
         return
     path = keys_path(stream, n)
@@ -256,14 +303,19 @@ def group() -> str:
 
 def deliver(call, message: Message) -> None:
     """A message reaches every handler and query of its stream."""
-    n = 0
-    for source, fn, key, span in list(HANDLERS):
-        if source == message.stream:
-            n += 1
-            handle(call, fn, key, message, n)
-    for q in list(QUERIES):
-        if q.stream == message.stream:
-            q.add(call, message)
+    from .. import security_context
+    with _lock:
+        handlers, queries = tuple(HANDLERS), tuple(QUERIES)
+    with security_context.intersect(message.security):
+        n = 0
+        for source, fn, key, span, snapshot in handlers:
+            if source == message.stream:
+                n += 1
+                with security_context.intersect(snapshot):
+                    handle(call, fn, key, message, n)
+        for q in queries:
+            if q.stream == message.stream:
+                q.add(call, message)
 
 
 # ---------------------------------------------------------- windows
@@ -286,7 +338,10 @@ class StreamQuery(Native):
         return self.stream.repr()
 
     def with_step(self, step, env) -> "StreamQuery":
-        return StreamQuery(self.stream, self.window, self.steps + [(step, env)])
+        from .. import security_context
+        from ..security_budget import charge
+        charge([("registrations", 1)], step.span)
+        return StreamQuery(self.stream, self.window, self.steps + [(step, env, security_context.capture())])
 
     def add(self, call, message: Message) -> None:
         kind = self.window[0] if self.window else None
@@ -294,18 +349,22 @@ class StreamQuery(Native):
         if kind is None:
             self.run(call, [message])
             return
-        if kind == "sliding":
-            self.open.append(message)
-            self.open = [m for m in self.open if m.ms > message.ms - size]
-            self.run(call, list(self.open))
-            return
-        if self.open:
-            first = self.open[0]
-            if kind == "window" and message.ms // size != first.ms // size:
-                self.flush(call)
-            elif kind == "session" and message.ms - self.open[-1].ms > size:
-                self.flush(call)
-        self.open.append(message)
+        with _lock:
+            if kind == "sliding":
+                self.open.append(message)
+                self.open = [m for m in self.open if m.ms > message.ms - size]
+                closed = list(self.open)
+            else:
+                closed = []
+                if self.open:
+                    first = self.open[0]
+                    if ((kind == "window" and message.ms // size != first.ms // size)
+                            or (kind == "session" and message.ms - self.open[-1].ms > size)):
+                        closed, self.open = self.open, []
+                self.open.append(message)
+        # Never hold the registry/window lock while executing user callbacks.
+        if closed:
+            self.run(call, closed)
 
     def due(self) -> bool:
         """A window or session whose time has passed (run mode)."""
@@ -317,21 +376,36 @@ class StreamQuery(Native):
         return now_ms() - self.open[-1].ms > size
 
     def flush(self, call) -> None:
-        if self.open and self.window is not None and self.window[0] != "sliding":
+        with _lock:
+            if not self.open or self.window is None or self.window[0] == "sliding":
+                return
             messages, self.open = self.open, []
-            self.run(call, messages)
+        self.run(call, messages)
 
     def run(self, call, messages: list) -> None:
+        from contextlib import ExitStack
+        from .. import security_context
+        with ExitStack() as scopes:
+            for message in messages:
+                scopes.enter_context(security_context.intersect(message.security))
+            for _, _, snapshot in self.steps:
+                scopes.enter_context(security_context.intersect(snapshot))
+            self.run_scoped(call, messages)
+
+    def run_scoped(self, call, messages):
         interp = call.interp
         value: Any = [m.value(call) for m in messages]
         try:
-            for i, (step, env) in enumerate(self.steps):
+            for i, (step, env, _) in enumerate(self.steps):
                 if step.kind == "each" and not is_rows(value):
                     # count, sum or avg give one value: each gets it once
                     interp.apply_expr(step.expr, value, env)
                     continue
                 value = interp.step(step, value, env)
         except (NexoFailure, NexoError) as exc:
+            from .policy import enforcing
+            if enforcing() and isinstance(exc, NexoError):
+                raise
             from ..cli import report
             report(exc)
 
@@ -344,11 +418,17 @@ def is_rows(value) -> bool:
 def window_ms(call, step_kind: str, size) -> int:
     if not isinstance(size, Quantity) or size.dimension != "time" or size.base() <= 0:
         raise NexoError("stream_window", call.span, step=step_kind)
-    return int(size.base() * 1000)
+    ms = int(size.base() * 1000)
+    if ms <= 0:
+        raise NexoError("stream_window", call.span, step=step_kind)
+    return ms
 
 
 def stream_step(interp, step, value, env):
     """A step of a pipeline whose source is a stream, or None."""
+    from .policy import enforcing
+    if isinstance(value, (Stream, StreamQuery)):
+        require_mode(step.span)
     if isinstance(value, Stream):
         value = StreamQuery(value)
     if not isinstance(value, StreamQuery):
@@ -360,12 +440,16 @@ def stream_step(interp, step, value, env):
             raise NexoError("stream_window_first", step.span, step=step.kind)
         from ..types import At
         size = interp.eval(step.expr, env)
-        return StreamQuery(value.stream, (step.kind, window_ms(At(interp, step.span), step.kind, size)))
+        ms = window_ms(At(interp, step.span), step.kind, size)
+        from ..security_budget import charge
+        charge([("registrations", 1)], step.span)
+        return StreamQuery(value.stream, (step.kind, ms))
     if step.kind == "call":
         raise NexoError("stream_call", step.span)
     q = value.with_step(step, env)
     if step.kind == "each":
-        QUERIES.append(q)
+        with _lock:
+            QUERIES.append(q)
         return None
     return q
 
@@ -381,7 +465,7 @@ def drain(interp) -> None:
 # ------------------------------------------------------------- run mode
 
 def listening() -> bool:
-    return bool(HANDLERS or QUERIES)
+    return not memory_profile() and bool(HANDLERS or QUERIES)
 
 
 def offset_path(stream: Stream) -> Path:
@@ -433,6 +517,9 @@ def acknowledge(stream: Stream, read: int) -> None:
 def listen_forever(interp, program: str) -> None:
     """`nexo file.nexo` with `when` handlers or stream pipelines: read the
     new messages of every stream until the program is stopped."""
+    from .policy import enforcing
+    if enforcing():
+        raise NexoError("security_stream_mode")
     from ..types import At
     GROUP["name"] = Path(program).stem or "nexo"
     call = At(interp, None)

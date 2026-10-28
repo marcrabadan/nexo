@@ -874,8 +874,10 @@ pub fn ask(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
 
 // ---------------------------------------------------------- tools, agents
 
-/// The @tool functions (D109): (FnInfo address, description, parameter types).
-static TOOLS: Mutex<Vec<(usize, String, Vec<Val>)>> = Mutex::new(Vec::new());
+/// Registered function objects and their sealed registration-time contexts.
+/// Retaining the object prevents recycled addresses from impersonating a tool.
+struct RegisteredTool { func: Val, description: String, types: Vec<Val>, seal: crate::security::authorization::Seal }
+static TOOLS: Mutex<Vec<RegisteredTool>> = Mutex::new(Vec::new());
 const AGENT_KEYS: &[&str] = &["model", "tools", "goal", "max_steps", "confirm"];
 const STEPS: i64 = 10;
 const DENIED: &str = "The user did not allow this call.";
@@ -887,7 +889,7 @@ pub fn release_tools() {
 
 fn fn_key(f: V) -> Option<usize> {
     match f.get() {
-        Some(Obj::Func(func)) => Some(func.info as *const _ as usize),
+        Some(Obj::Func(func)) => Some(func as *const _ as usize),
         _ => None,
     }
 }
@@ -901,8 +903,9 @@ pub fn tool(f: V, description: V, types: V, span: u32) -> R<Val> {
     };
     if let Some(k) = fn_key(f) {
         let mut tools = TOOLS.lock().unwrap();
-        tools.retain(|(key, _, _)| *key != k);
-        tools.push((k, desc.to_string(), types));
+        tools.retain(|entry| fn_key(entry.func.v()) != Some(k));
+        tools.push(RegisteredTool { func: Val::from(f), description: desc.to_string(), types,
+            seal: crate::security::authorization::seal(&func_name(f),span) });
     }
     Ok(Val::none())
 }
@@ -964,6 +967,7 @@ fn field_schema(d: &TypeDesc, depth: usize) -> String {
 }
 
 struct Tool {
+    seal: crate::security::authorization::Seal,
     func: Val,
     name: String,
     description: String,
@@ -1001,6 +1005,7 @@ impl Tool {
 }
 
 pub struct Agent {
+    seal: crate::security::authorization::Seal,
     name: String,
     model: Option<String>,
     tools: Vec<Tool>,
@@ -1082,11 +1087,14 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     {
         let registry = TOOLS.lock().unwrap();
         for f in &tool_values {
-            let found = fn_key(f.v()).and_then(|k| registry.iter().find(|(key, _, _)| *key == k));
-            let Some((_, desc, types)) = found else {
+            let found = fn_key(f.v()).and_then(|k| registry.iter().find(|entry| fn_key(entry.func.v()) == Some(k)));
+            let Some(entry) = found else {
                 return Err(diag(Diagnostic::new_spanless("ai_not_tool").arg("name", func_name(f.v())), span));
             };
-            tools.push(Tool { func: f.clone(), name: func_name(f.v()), description: desc.clone(), types: types.clone() });
+            if tools.iter().any(|t: &Tool| t.name == func_name(f.v())) {
+                return Err(diag(Diagnostic::new_spanless("security_dispatch"),span));
+            }
+            tools.push(Tool { func: f.clone(), name: func_name(f.v()), description: entry.description.clone(), types: entry.types.clone(), seal: entry.seal.clone() });
         }
     }
     let mut confirm = Vec::new();
@@ -1098,7 +1106,8 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
         confirm.push(n);
     }
     let name = args.first().and_then(|n| n.as_str()).unwrap_or("").to_string();
-    Ok(native(Agent { name, model, tools, goal, max_steps, confirm }))
+    let seal = crate::security::authorization::seal(&name,span);
+    Ok(native(Agent { seal, name, model, tools, goal, max_steps, confirm }))
 }
 
 /// JSON text of a parsed value (to send back what the model sent).
@@ -1274,6 +1283,19 @@ fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, boo
     let Some(tool) = agent.tools.iter().find(|x| x.name == name) else {
         return Ok((format!("There is no tool {name}."), true));
     };
+    let (_tool_scope, required) = crate::security::authorization::enter_tool(&agent.seal,&tool.seal,span)?;
+    let confirm = required || agent.confirm.iter().any(|c| c == name);
+    crate::security::authorization::check_confirmation(confirm,span)?;
+    // In the authorization profile, approval precedes typed JSON conversion:
+    // record field defaults can execute Nexo code during that conversion.
+    let early = confirm && crate::security::authorization::active();
+    if early {
+        let shown = tool.params().iter().filter_map(|p| {
+            let name = p.name.get().unwrap_or("");
+            at(args,name).map(|value| format!("{name}: {}",dump(value)))
+        }).collect::<Vec<_>>();
+        if !confirm_call(name,&shown) { return Ok((DENIED.to_string(),false)); }
+    }
     let message_of_failure = |f: crate::state::Fail| -> R<(String, bool)> {
         let Some(err) = crate::state::pending_error() else { return Err(f) };
         let text = match err.get() {
@@ -1301,19 +1323,10 @@ fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, boo
             None => {}
         }
     }
-    if agent.confirm.iter().any(|c| c == name) {
+    if confirm && !early {
         let shown: Vec<String> =
             values.iter().zip(&names).map(|(v, n)| format!("{}: {}", n.unwrap_or(""), repr(v.v()))).collect();
-        let call = format!("{name}({})", shown.join(", "));
-        crate::state::write_out(&msg("info.ai_confirm", &[("call", call)]));
-        crate::state::flush();
-        let line = crate::repl::input_line(|| {
-            let mut line = String::new();
-            let _ = std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut line);
-            line.trim().to_string()
-        });
-        let answer = line.trim().to_lowercase();
-        if !matches!(answer.as_str(), "y" | "yes") {
+        if !confirm_call(name,&shown) {
             return Ok((DENIED.to_string(), false));
         }
     }
@@ -1329,9 +1342,24 @@ fn use_tool(agent: &Agent, name: &str, args: &Json, span: u32) -> R<(String, boo
     })
 }
 
+fn confirm_call(name: &str, shown: &[String]) -> bool {
+    static APPROVAL: Mutex<()> = Mutex::new(());
+    let _approval = APPROVAL.lock().unwrap_or_else(|e| e.into_inner());
+    let call = format!("{name}({})",shown.join(", "));
+    crate::state::write_out(&msg("info.ai_confirm", &[("call",call)]));
+    crate::state::flush();
+    let line = crate::repl::input_line(|| {
+        let mut line = String::new();
+        let _ = std::io::BufRead::read_line(&mut std::io::stdin().lock(),&mut line);
+        line.trim().to_string()
+    });
+    matches!(line.trim().to_lowercase().as_str(),"y" | "yes")
+}
+
 /// `agent.handle(input)` (D109): the conversation with the model, using
 /// its tools, until it answers without asking for one.
 fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
+    let _agent_scope = crate::security::authorization::enter_agent(&agent.seal,span)?;
     let model = agent.model.as_ref().map(|m| Val::str(m.clone()));
     let targets = resolve(model.as_ref().map(|m| m.v()), None, span)?;
     let t = &targets[0];

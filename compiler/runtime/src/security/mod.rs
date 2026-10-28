@@ -3,6 +3,11 @@ pub(crate) mod matching;
 pub mod audit;
 pub mod sandbox;
 pub mod context;
+pub mod budget;
+pub mod authorization;
+pub mod online;
+pub mod ingress;
+pub mod ingress_permissions;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind { Read, Write, Net, Env, Shell, C, Python }
@@ -69,14 +74,15 @@ impl Decision<'_> {
 }
 
 /// Immutable compiled rules; callers share the execution's engine across tasks.
-pub struct Engine { rules: Vec<Rule> }
+pub struct Engine { rules: Vec<Rule>, resolved_paths: bool }
 impl Engine {
-    pub fn new(rules: Vec<Rule>) -> Self { Self { rules } }
+    pub fn new(rules: Vec<Rule>) -> Self { Self { rules, resolved_paths: false } }
+    pub(crate) fn with_resolved_paths(rules: Vec<Rule>) -> Self { Self { rules, resolved_paths: true } }
     pub fn evaluate(&self, capability: Capability<'_>, release: bool, shield: bool) -> Decision<'_> {
         let mut allowed = false;
         for rule in &self.rules {
             if rule.kind != capability.kind() { continue; }
-            let target = rule.targets.iter().find(|t| matching::matches(rule.kind.as_str(), capability.target(), t));
+            let target = rule.targets.iter().find(|t| if self.resolved_paths { matching::matches_resolved(rule.kind.as_str(), capability.target(), t) } else { matching::matches(rule.kind.as_str(), capability.target(), t) });
             if !rule.targets.is_empty() && target.is_none() { continue; }
             if rule.effect == Effect::Deny { return Decision::DenyRule(target.map(String::as_str)); }
             allowed = true;
@@ -91,7 +97,7 @@ impl Engine {
 }
 
 /// Launcher configuration is trusted host input, never an authority granted by a model.
-pub fn enforcing() -> bool { std::env::var_os("NEXO_SECURITY_ENFORCE").is_some_and(|v| v == "1") || std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() }
+pub fn enforcing() -> bool { std::env::var_os("NEXO_SECURITY_ENFORCE").is_some_and(|v| v == "1") || std::env::var_os("NEXO_SECURITY_DEPENDENCIES").is_some() || std::env::var_os("NEXO_SECURITY_AUTHORIZATION").is_some() || std::env::var_os("NEXO_SECURITY_STREAMS").is_some() || std::env::var_os("NEXO_SECURITY_WEB").is_some() }
 
 #[cfg(test)]
 mod tests {

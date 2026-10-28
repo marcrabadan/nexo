@@ -1,0 +1,146 @@
+# Shield task contexts and agent/tool authorization
+
+This extension supports immutable context capture for joined `parallel:` and
+`parallel for` tasks, plus operator-controlled permissions for synchronous
+agents and tool dispatch. [Process-scoped spawned tasks](shield-spawn.md)
+add asynchronous launches with the same immutable ceilings. [Synchronous events](shield-events.md)
+retain registration and emitter scopes; external event loops remain unsupported.
+
+## Joined task contexts
+
+Both runtimes capture the complete active permission stack before scheduling a
+parallel block. Each task executes with that snapshot, including nested blocks,
+root callbacks, imported functions and the path that runs on the scheduling
+thread. An RAII guard in Rust and context-variable tokens in Python restore the
+previous context after success or failure. Worker reuse cannot inherit a prior
+task's authority. The interpreter still evaluates parallel work sequentially;
+the compiler uses its existing bounded thread pool and ordered result handling.
+
+`--dependencies permissions.json` now permits joined parallel work. The root
+policy, every active caller ceiling and the operation's lexical module ceiling
+remain intersected. Ordinary `try` cannot catch a security violation. The
+existing plain-data restriction on dependency results remains in force.
+
+Linux worker profiles still reject parallel constructs because their syscall
+filters prohibit threads. `spawn` and sync imports now work outside those Linux profiles. Synchronous
+events intersect registration and emitter scopes in every profile.
+[Memory streams](shield-streams.md) explicitly opt into process-local dispatch
+with publisher and registration scopes. Servers require the explicit [in-memory HTTP profile](shield-web.md). External
+listeners and persistent pipelines remain rejected under dependency or authorization
+configuration, including dependencies and dead code. Per-task cancellation
+and external event-loop lifecycles are separate future work.
+
+## Operator authorization file
+
+```sh
+nexo security run --authorization authorization.json main.nexo
+nexo security trace --dependencies permissions.json \
+    --authorization authorization.json main.nexo
+nexo security check --authorization authorization.json main.nexo
+```
+
+Both CLIs accept the same option. The file is trusted launcher configuration;
+a model response, tool argument, retrieved document or application input cannot
+change it or supply a replacement grant. Keep it and all its parent directories
+outside writable grants to untrusted code. Linux workers additionally protect
+its canonical path against overlapping write grants, just as they protect the
+dependency configuration.
+
+Example `authorization.json`, for a `support` agent and a `report` tool declared
+in `main.nexo`:
+
+```json
+{
+  "version": 1,
+  "agents": {
+    "main.nexo::support": {
+      "permissions": [
+        ["allow", "net", "api.openai.com"],
+        ["allow", "read", "data/public"]
+      ],
+      "tools": ["main.nexo::report"]
+    }
+  },
+  "tools": {
+    "main.nexo::report": {
+      "permissions": [["allow", "read", "data/public"]],
+      "confirm": false
+    }
+  }
+}
+```
+
+All shown fields are required. Unknown fields, duplicate JSON keys, duplicate
+canonical identities, unknown tools in an allowlist, malformed permissions and
+unsupported versions are rejected before execution. Files are bounded to 1 MiB;
+identities must refer to existing files. `file::symbol` paths are relative to the
+manifest directory. Permission targets use the normal policy working-directory
+semantics. Paths are canonicalized during initialization and mapped to frozen
+source identities; dispatch never recanonicalizes a mutable module path.
+
+The authorization schema has its own version 1; it does not change the existing
+dependency manifest schema. Agent/tool permissions can only reduce application
+and caller permissions. Empty permissions grant nothing. An agent also needs
+permission for its model destination and any environment-backed credentials
+resolved during its call, independent of the tools it can use. A tool needs its
+own effect permissions in addition to membership in that particular agent's
+allowlist. The model can choose only registered tool names; it cannot introduce
+a function or permission. Ambiguous duplicate exposed tool names are rejected.
+
+Tool registration retains the actual function object, its qualified identity and
+its registration-time context. Distinct closures cannot impersonate one another
+through shared function metadata or a recycled object address. Each agent also
+captures its creation context. Handling a request intersects that captured
+context, the current caller and the agent grant. Dispatch adds the captured tool
+context and the tool grant before argument conversion, defaults, function calls,
+deferred result evaluation or serialization. A nested agent cannot widen an
+outer tool's ceiling. Permission snapshots contain immutable rules, not mutable
+Nexo objects or model data.
+
+Agents under `--dependencies` require an authorization manifest. Without either
+manifest, ordinary agent execution keeps its existing policy contract. Direct
+trusted application calls to a tool function remain ordinary function calls;
+the tool grant specifically governs the model's dispatch path. This is not a
+sandbox for a hostile application author who can change the root policy.
+
+## Human approval
+
+`confirm: true` is an operator requirement for each dispatch. It combines with
+an agent's source-level `confirm` list; source code cannot disable it. In the
+authorization profile, the prompt shows the raw proposed arguments and runs
+before typed JSON conversion, since record defaults can execute Nexo code.
+Approval prompts are serialized across threads. Only `y` or `yes` on the
+trusted input channel approves the currently displayed call. EOF and every
+other answer deny it. Model text is never interpreted as approval.
+
+Linux profiles reserve stdin for control/broker IPC and therefore reject a
+requested confirmation before reading it or executing the tool. Approval tokens,
+remote approval services and noninteractive approval protocols are not provided.
+An operator must use an appropriate human-input execution mode for such tools.
+
+## Limits and validation
+
+This is capability attenuation, not data-label propagation or complete taint
+tracking. Existing secret/private redaction remains separate. Dependency contexts
+still disallow callable, deferred and opaque values crossing their return
+boundaries, including records; use scalar data and materialized data containers.
+Arbitrary native plugins remain rejected. Named grants do not provide package
+signatures or identify separate declarations with the same symbol in one module.
+The module source, compiler/runtime and operator configuration must be trusted.
+
+```sh
+cd compiler
+cargo build --locked --workspace
+cargo test --locked --workspace
+cd ..
+pytest -q tests/test_security_dispatch.py tests/test_security_isolation.py \
+    tests/test_security.py tests/test_policy.py tests/test_ai.py \
+    tests/test_http.py tests/test_security_online.py
+```
+
+Tests use a local fake model and real files; they verify denied side effects do
+not occur, approval precedes record defaults, each ceiling is required, nested
+agents cannot widen grants, joined tasks keep caller restrictions and root
+permissions return after completion. A Rust test explicitly transfers snapshots
+to another thread and checks restoration after an unwind. Docker validation
+includes this suite without enabling external network access.
