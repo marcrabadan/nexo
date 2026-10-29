@@ -39,7 +39,46 @@ fn permissions(j: &Json) -> Result<Arc<Engine>, String> {
     }
     Ok(Arc::new(Engine::new(rules)))
 }
+/// An observation of a configured dispatch ceiling, never an authority token.
+pub struct AnalysisDecision {
+    pub scope: &'static str, pub file: PathBuf, pub symbol: String,
+    pub allowed: bool, pub confirm: bool,
+}
 impl Configuration {
+    pub fn analysis_registrations(&self, file: &Path, symbol: &str) -> Vec<(&'static str,PathBuf,String)> {
+        let key = (file.to_path_buf(),symbol.to_string());
+        if !self.tools.contains_key(&key) { return vec![]; }
+        let mut out = vec![("tool",key.0.clone(),key.1.clone())];
+        out.extend(self.agents.iter().filter(|(_,a)|a.tools.contains(&key)).map(|(id,_)|("agent",id.0.clone(),id.1.clone())));
+        out
+    }
+    pub fn analysis_agent_files(&self, file: &Path, symbol: &str) -> Vec<PathBuf> {
+        let id = (file.to_path_buf(),symbol.to_string());
+        self.agents.iter().filter(|(_,a)|a.tools.contains(&id)).map(|((file,_),_)|file.clone()).collect()
+    }
+    pub fn analysis_confirmation(&self, file: &Path, symbol: &str) -> bool {
+        self.tools.get(&(file.to_path_buf(),symbol.to_string())).is_some_and(|t|t.confirm)
+    }
+    pub fn analysis_has_tool(&self, file: &Path, symbol: &str) -> bool {
+        self.tools.contains_key(&(file.to_path_buf(),symbol.to_string()))
+    }
+    /// Inspect configured tool/agent scenarios without entering a runtime scope.
+    pub fn analysis_checks(&self, file: &Path, symbol: &str, cap: Capability<'_>) -> Vec<AnalysisDecision> {
+        let id = (file.to_path_buf(),symbol.to_string());
+        let Some(tool) = self.tools.get(&id) else { return vec![] };
+        let mut out = vec![AnalysisDecision { scope: "tool", file: file.to_path_buf(), symbol: symbol.into(),
+            allowed: !tool.permissions.evaluate(cap,true,true).denied(), confirm: tool.confirm }];
+        let mut matched_agent = false;
+        for ((file,symbol),agent) in &self.agents {
+            if agent.tools.contains(&id) {
+                matched_agent = true;
+                out.push(AnalysisDecision { scope: "agent", file: file.clone(), symbol: symbol.clone(),
+                    allowed: !agent.permissions.evaluate(cap,true,true).denied(), confirm: false });
+            }
+        }
+        if !matched_agent { out.push(AnalysisDecision { scope: "dispatch", file:file.to_path_buf(),symbol:symbol.into(),allowed:false,confirm:false }); }
+        out
+    }
     pub fn load(path: &Path) -> Result<Self,String> {
         use std::io::Read;
         let mut text = String::new();

@@ -1,5 +1,8 @@
 # Phase 2 first slice: implementation and validation
 
+This is the historical first-slice record. Phase 2 completion, metadata v2
+and current validation are documented in [the completion record](ai-native-phase2-completion.md).
+
 Date: 2026-10-29. Phase 1 was committed and pushed to `origin/main` as
 `d71ffca` on explicit user request. The user then authorized Phase 2.
 This record covers the initial effect-reporting slice, implemented locally

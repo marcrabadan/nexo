@@ -22,6 +22,7 @@ mod cover;
 mod docs;
 mod diagnostics;
 mod effects;
+mod effect_policy;
 mod fast;
 mod fmt;
 mod intent;
@@ -52,7 +53,7 @@ use std::process::{Command, ExitCode, Stdio};
 use nexo_diag::{msg, render, Diagnostic};
 
 pub fn usage() -> &'static str {
-    "Usage: nexo [file.nexo | new name | add [name] [--accept-risk] | publish | build [--release [--trust-ensure]] [--target web] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --effects [--json] [paths...] | check --json [paths...] | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--authorization file.json] [--streams=memory] [--web=memory|loopback:PORT] [--ingress file.json] [--sandbox=linux|linux-online] file.nexo | security probe [--sandbox=linux-online] | security worker [options] -- executable [args...]]"
+    "Usage: nexo [file.nexo | new name | add [name] [--accept-risk] | publish | build [--release [--trust-ensure]] [--target web] [-o out] file.nexo | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --effects [--json] [--require-complete] [--dependencies file.json] [--authorization file.json] [paths...] | check --json [paths...] | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--authorization file.json] [--streams=memory] [--web=memory|loopback:PORT] [--ingress file.json] [--sandbox=linux|linux-online] file.nexo | security probe [--sandbox=linux-online] | security worker [options] -- executable [args...]]"
 }
 
 /// NEXO_TIMES=1 writes how long each step of a build took to stderr.
@@ -1498,7 +1499,7 @@ fn run_fix(paths: &[String]) -> u8 {
 
 /// `nexo check [paths]`: report the compile error of each file, if any.
 fn run_check(paths: &[String]) -> u8 {
-    if paths.iter().any(|p| p == "--json" || p == "--effects") {
+    if paths.iter().any(|p| matches!(p.as_str(), "--json" | "--effects" | "--require-complete" | "--dependencies" | "--authorization")) {
         return diagnostics::run_check_json(paths);
     }
     let mut status = 0;
@@ -1562,7 +1563,7 @@ fn main() -> ExitCode {
             "fmt" => run_fmt(&rest[1..]),
             "lint" => run_lint(&rest[1..]),
             "fix" => run_fix(&rest[1..]),
-            "check" if rest.get(1).map(String::as_str) == Some("--intent") && !rest.iter().any(|a| a == "--json" || a == "--effects") => run_intent(&rest[2..]),
+            "check" if rest.get(1).map(String::as_str) == Some("--intent") && !rest.iter().any(|a| matches!(a.as_str(), "--json" | "--effects" | "--require-complete" | "--dependencies" | "--authorization")) => run_intent(&rest[2..]),
             "check" => run_check(&rest[1..]),
             "audit" => run_audit(&rest[1..]),
             "docs" => run_docs(&rest[1..]),

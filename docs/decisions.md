@@ -2974,3 +2974,21 @@ partial results as `analysis_limit`. JSON extends D181's `data` object with
 authorization, approval, contracts and OS isolation are unchanged. Static
 ceiling comparison, method/implicit-call coverage and target specialization
 remain later Phase 2 increments. See `docs/effects.md` for precise limits.
+
+**D183. Complete Phase 2 with configured, conservative ceilings.** The opt-in
+`check --effects` pass loads the same dependency/authorization manifests as
+Shield, through read-only loader/query interfaces. A bounded fixed point tracks
+relevant caller identities per origin fact; import closure retains known tool
+registration ceilings. Known requirements are compared against root, dependency,
+tool and allowed-agent ceilings, with explicit dispatch denial for an absent
+agent allowlist. These are configured possible-dispatch comparisons, never
+runtime authority or evidence of approval. Nested/opaque registration stays
+unknown. Immutable aliases/literal targets and unambiguous record methods are
+resolved; dynamic parameters, callbacks and unsupported behavior remain explicit
+unknowns as required by the effect model. `--require-complete` rejects incomplete
+analysis without changing ordinary compilation or default advisory mode. Effect
+metadata moves to version 2 (the diagnostic envelope stays v1) with per-scope
+checks and explicit approval requirements, including pure tools. Runtime seals,
+ceilings, task contexts, contracts, approval and fail-closed enforcement remain
+unchanged; no grammar or dependency is added. See `docs/effects.md` and the Phase 2
+completion record for acceptance evidence and deliberate model limits.

@@ -22,7 +22,7 @@ from .errors import NexoError
 from .interpreter import Env, Interpreter
 from .types import NexoFailure, repr_value
 
-USAGE = ("Usage: nexo [file.nexo | new name | add [name] [--accept-risk] | publish | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --effects [--json] [paths...] | check --json [paths...] | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp"
+USAGE = ("Usage: nexo [file.nexo | new name | add [name] [--accept-risk] | publish | test|fmt|lint|fix|check|audit [paths...] | test --coverage [paths...] | test --suggest file.nexo | check --effects [--json] [--require-complete] [--dependencies file.json] [--authorization file.json] [paths...] | check --json [paths...] | check --intent [paths...] | docs [paths...] | docs --for-ai [file.nexo] | lsp | mcp"
          " | db diff|migrate file.nexo [--db path] [--allow-drop] | ai setup|usage"
          " | plan|apply|destroy|drift|cost [file.nexo] [--stage stage] [--yes] | import cloud resource id [file.nexo] | ci run [pipeline] [file.nexo] [--step step | --after success|failure] [--yes] | ci export github|gitlab|azure|jenkins [pipeline] [file.nexo] | flags set name value [file.nexo] [--stage stage] | privacy report [file.nexo] | policy show|suggest [file.nexo] | security check|run|trace|audit [--dependencies file.json] [--sandbox=linux] file.nexo | security probe | security worker [options] -- executable [args...]]")
 BANNER = "Nexo {v} (phase 0). Type code and press Enter; Ctrl-D to exit."
@@ -274,7 +274,7 @@ def run_fix(paths: list[str]) -> int:
 def run_check(paths: list[str]) -> int:
     """`nexo check`: report the compile error of each file, if any."""
     from .lint import front_end
-    if "--json" in paths or "--effects" in paths:
+    if "--json" in paths or "--effects" in paths or any(a in paths for a in ("--require-complete", "--dependencies", "--authorization")):
         from .diagnostics import run_check_json
         return run_check_json(paths)
     status = 0
@@ -886,7 +886,7 @@ def main(argv: list[str] | None = None) -> int:
     if rest[:2] == ["test", "--coverage"]:
         sys.setrecursionlimit(10000)
         return run_tests(rest[2:], coverage=True)
-    if rest[:2] == ["check", "--intent"] and "--json" not in rest and "--effects" not in rest:
+    if rest[:2] == ["check", "--intent"] and "--json" not in rest and "--effects" not in rest and not any(a in rest for a in ("--require-complete", "--dependencies", "--authorization")):
         return run_intent(rest[2:])
     if rest[:1] == ["db"]:
         return run_db(rest[1:])
@@ -903,7 +903,7 @@ def main(argv: list[str] | None = None) -> int:
     if rest in (["ai", "setup"], ["ai", "usage"]):
         from .stdlib import ai
         return ai.setup_command() if rest[1] == "setup" else ai.usage_command()
-    if rest[:1] == ["check"] and ("--json" in rest or "--effects" in rest):
+    if rest[:1] == ["check"] and ("--json" in rest or "--effects" in rest or any(a in rest for a in ("--require-complete", "--dependencies", "--authorization"))):
         sys.setrecursionlimit(10000)
         return run_check(rest[1:])
     if any(a.startswith("-") for a in rest):

@@ -6,7 +6,7 @@ FROM ${RUST_IMAGE} AS toolchain
 FROM toolchain AS build
 WORKDIR /src
 COPY compiler/ compiler/
-COPY nexo/stdlib/api.json nexo/stdlib/infra_providers.json nexo/stdlib/
+COPY nexo/stdlib/api.json nexo/stdlib/infra_providers.json nexo/stdlib/effects.json nexo/stdlib/
 RUN --mount=type=secret,id=build_ca,mode=0444 \
     if [ -s /run/secrets/build_ca ]; then export CARGO_HTTP_CAINFO=/run/secrets/build_ca; fi; \
     cargo build --manifest-path compiler/Cargo.toml --locked --release --workspace -j 2
@@ -16,7 +16,7 @@ FROM ${DEBIAN_IMAGE} AS runtime
 # limits/profile when explicitly requested. No Rust toolchain in this image.
 COPY --from=toolchain --chmod=0444 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN --mount=type=secret,id=build_ca,mode=0444 \
-    set -eu; ca=/etc/ssl/certs/ca-certificates.crt; \
+    set -eu; chmod 0755 /etc/ssl /etc/ssl/certs; ca=/etc/ssl/certs/ca-certificates.crt; \
     if [ -s /run/secrets/build_ca ]; then ca=/run/secrets/build_ca; fi; \
     sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
     apt-get -o Acquire::https::CaInfo="$ca" -o APT::Update::Error-Mode=any update \
@@ -48,20 +48,19 @@ RUN cargo test --manifest-path compiler/Cargo.toml --offline --locked --release 
  && while IFS= read -r binary; do cp "$binary" /test-executables/; done < /tmp/test-executables.list
 
 FROM scratch AS validation-source
-COPY compiler/ /compiler/
-COPY nexo/ /nexo/
-COPY tests/ /tests/
-COPY pyproject.toml /pyproject.toml
+# The validation suite also checks examples, documentation and editor artifacts.
+# .dockerignore excludes host secrets, VCS data, caches and compiled outputs.
+COPY . /
 
 # This disposable test image uses the same production compiler and worker.
-# No Docker socket, Rust installation, mutable source tree or cargo cache.
+# No host source mount, Docker socket, Rust installation or cargo cache.
 FROM runtime AS validation
 USER root
 RUN --mount=type=secret,id=build_ca,mode=0444 \
-    set -eu; ca=/etc/ssl/certs/ca-certificates.crt; \
+    set -eu; chmod 0755 /etc/ssl /etc/ssl/certs; ca=/etc/ssl/certs/ca-certificates.crt; \
     if [ -s /run/secrets/build_ca ]; then ca=/run/secrets/build_ca; fi; \
     apt-get -o Acquire::https::CaInfo="$ca" -o APT::Update::Error-Mode=any update \
- && apt-get -o Acquire::https::CaInfo="$ca" install -y --no-install-recommends python3 python3-venv python3-dev \
+ && apt-get -o Acquire::https::CaInfo="$ca" install -y --no-install-recommends python3 python3-venv python3-dev git \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 COPY --from=validation-source --chown=10001:10001 / /workspace/
@@ -69,6 +68,13 @@ RUN --mount=type=secret,id=build_ca,mode=0444 \
     set -eu; if [ -s /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
     python3 -m venv /opt/nexo-venv \
  && /opt/nexo-venv/bin/python -m pip install --no-cache-dir -e '.[dev]'
+# Preserve the checkout layout expected by conformance/documentation helpers.
+# These are aliases to the freshly built production artifacts, not host binaries.
+RUN mkdir -p compiler/target/debug \
+ && ln -s /usr/local/bin/nexo compiler/target/debug/nexo \
+ && ln -s /usr/local/bin/nexo-shield-worker compiler/target/debug/nexo-shield-worker \
+ && ln -s /usr/local/lib/nexo/libnexo_runtime.a compiler/target/debug/libnexo_runtime.a \
+ && ln -s /usr/local/lib/nexo/libnexo_runtime.a /usr/local/bin/libnexo_runtime.a
 COPY --from=test-binaries --chmod=0555 /test-executables/ /opt/nexo-tests/
 COPY --chmod=0555 docker/shield/validate.sh /usr/local/bin/shield-validate
 ENV PATH=/opt/nexo-venv/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \

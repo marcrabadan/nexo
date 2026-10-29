@@ -9,6 +9,8 @@ import pytest
 
 from test_check_json import commands, ROOT, SCHEMA, validate
 
+EFFECT_SCHEMA = json.loads((ROOT / "docs/effects-v2.schema.json").read_text())
+
 
 def report(cmd, tmp_path, source, extra=()):
     (tmp_path / 'app.nexo').write_text(source)
@@ -21,7 +23,8 @@ def report(cmd, tmp_path, source, extra=()):
     for diagnostic in doc['diagnostics']:
         if diagnostic['code'] == 'effects_summary':
             data = diagnostic['data']
-            assert data['effects_version'] == 1 and data['policy_scope'] == 'root'
+            validate(data, EFFECT_SCHEMA, EFFECT_SCHEMA)
+            assert data['effects_version'] == 2 and data['policy_scope'] in ('root', 'configured')
             assert type(data['complete']) is bool and type(data['pure']) is bool
             assert not data['pure'] or data['complete'] and not data['effects']
     return p.returncode, doc
@@ -143,7 +146,6 @@ fn process() -> int!:
 def test_unknown_ai_native_aliases_and_unmodeled_api(commands, tmp_path):
     for source in [
         'fn ai() -> str!:\n    return ask("hello")?\n',
-        'fn g():\n    f = len\n    return f([1])\n',
         'fn g():\n    return now()\n',
         'use python math\n',
     ]:

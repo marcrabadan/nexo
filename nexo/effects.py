@@ -41,6 +41,7 @@ class Unit:
     facts: set = field(default_factory=set)
     calls: set = field(default_factory=set)
     defaults: list = field(default_factory=list)
+    contexts: dict = field(default_factory=dict)
 
 
 def children(n):
@@ -83,15 +84,21 @@ def literal_value(expr):
 
 
 class Analysis:
-    def __init__(self, file, program, linker):
+    def __init__(self, file, program, linker, configuration):
+        self.configuration = configuration
         self.units = []
         self.modules = {}
         self.linker = linker
         self.rules = (policy.declared(program) or (0, []))[1]
         self.programs = {file: program, **{m.file: m.program for m in linker.modules.values()}}
-        for name, p in self.programs.items():
+        ordered = sorted(self.programs, key=lambda name: (name != file, name))
+        truncated = len(ordered) > MAX_UNITS
+        for name in ordered[:MAX_UNITS]:
+            p = self.programs[name]
             self.modules[name] = len(self.units)
             self.units.append(Unit(name, '<module>', errors.Span(name, 1, 1, 1), p.body))
+        if truncated:
+            self.fact(self.units[0], self.units[0].span, 'unknown', reason='analysis_limit')
         self.lines = {name: errors.SOURCES.get(name, "").split("\n") for name in self.programs}
         for index in sorted(self.modules.values(), key=lambda i: (i != self.modules[file], self.units[i].file)):
             self.prepare(index, {})
@@ -120,7 +127,7 @@ class Analysis:
                 if is_file_module(n):
                     key = self.linker.use_keys.get(id(n))
                     info = self.linker.modules.get(key)
-                    env[bound_name(n)] = ('module', self.modules[info.file]) if info else ('unknown', None)
+                    env[bound_name(n)] = ('module', self.modules[info.file]) if info and info.file in self.modules else ('unknown', None)
                 elif n.lang:
                     env[bound_name(n)] = ('unknown', None)
         pending = []
@@ -140,6 +147,31 @@ class Analysis:
                 if (len(decls) == 1 and id(fn) in direct and name not in CATALOG["builtin_roots"]
                         and not name.startswith("__")):
                     env[name] = ('function', child)
+        for node in unit.body:
+            if not isinstance(node, A.TypeDef):
+                continue
+            methods = {}
+            for fn in node.methods:
+                if len(self.units) >= MAX_UNITS:
+                    self.fact(unit, unit.span, 'unknown', reason='analysis_limit')
+                    break
+                child = len(self.units)
+                self.units.append(Unit(unit.file, node.name + '.' + fn.name, fn.name_span, fn.body,
+                    defaults=[p.default for p in fn.params if p.default is not None]))
+                if fn.annotations:
+                    self.fact(self.units[child], fn.span, 'unknown', reason='annotated_function')
+                methods[fn.name] = child
+                pending.append((child, fn))
+            methods = {name: idx for name, idx in methods.items() if name not in {f.name for f in node.fields}}
+            if (len(declarations.get(node.name, [])) == 1 and node.fields and node.name not in inherited
+                    and node.name not in CATALOG['builtin_roots'] and not node.name.startswith('__')):
+                env[node.name] = ('record', methods)
+        for node in unit.body:
+            if (isinstance(node, A.Assign) and node.op == '=' and isinstance(node.target, A.Name)
+                    and len(declarations[node.target.name]) == 1 and node.target.name not in inherited
+                    and node.target.name not in CATALOG['builtin_roots'] and not node.target.name.startswith('__')
+                    and isinstance(node.value, (A.Name, A.Attr, A.Str, A.Call))):
+                env[node.target.name] = ('alias', (index, node.value))
         unit.env = env
         # Loop/pattern/lambda bindings are conservative even outside their scope.
         todo = list(unit.body)
@@ -156,19 +188,46 @@ class Analysis:
             todo.extend(children(n))
 
         for child, fn in pending:
-            outer = ChainMap({p.name: ("unknown", None) for p in fn.params}, env)
+            parameters = {p.name: ("unknown", None) for p in fn.params}
+            if '.' in self.units[child].name and fn.params and fn.params[0].name == 'self':
+                class_name = self.units[child].name.rsplit('.', 1)[0]
+                binding = env.get(class_name)
+                if binding and binding[0] == 'record':
+                    parameters['self'] = ('instance', binding[1])
+            outer = ChainMap(parameters, env)
             self.prepare(child, outer)
 
-    def identity(self, expr, env):
+    def identity(self, expr, env, depth=0):
+        if depth > 32:
+            return 'unknown', None
+        binding = ('unknown', None)
         if isinstance(expr, A.Name):
-            return env.get(expr.name, ('builtin', expr.name))
-        if isinstance(expr, A.Attr):
-            kind, name = self.identity(expr.obj, env)
+            binding = env.get(expr.name, ('builtin', expr.name))
+        elif isinstance(expr, A.Str) and literal(expr) is not None:
+            binding = ('literal', literal(expr))
+        elif isinstance(expr, A.Call):
+            kind, methods = self.identity(expr.func, env, depth + 1)
+            if kind == 'record':
+                binding = ('instance', methods)
+        elif isinstance(expr, A.Attr):
+            kind, name = self.identity(expr.obj, env, depth + 1)
             if kind == 'module':
-                return self.units[name].env.get(expr.name, ('unknown', None))
-            if kind == 'builtin':
-                return kind, name + '.' + expr.name
-        return 'unknown', None
+                binding = self.units[name].env.get(expr.name, ('unknown', None))
+            elif kind == 'builtin':
+                binding = kind, name + '.' + expr.name
+            elif kind == 'instance' and expr.name in name:
+                binding = 'function', name[expr.name]
+        if binding[0] == 'alias':
+            owner, value = binding[1]
+            return self.identity(value, self.units[owner].env, depth + 1)
+        return binding
+
+    def value(self, expr, env):
+        kind, value = self.identity(expr, env)
+        return value if kind == 'literal' else literal(expr)
+
+    def known_value(self, expr, env):
+        return literal_value(expr) or self.identity(expr, env)[0] == 'literal'
 
     def call(self, unit, n):
         kind, name = self.identity(n.func, unit.env)
@@ -177,10 +236,10 @@ class Analysis:
         elif kind != 'builtin':
             self.fact(unit, n.span, 'unknown', reason='dynamic_call')
         elif name in CATALOG['pure']:
-            if any(not literal_value(a.value) for a in n.args):
+            if any(not self.known_value(a.value, unit.env) for a in n.args):
                 self.fact(unit, n.span, 'unknown', reason='dynamic_value')
         elif name in CATALOG['calls']:
-            if any(not literal_value(a.value) for a in n.args):
+            if any(not self.known_value(a.value, unit.env) for a in n.args):
                 self.fact(unit, n.span, 'unknown', reason='dynamic_value')
             if name == 'run':
                 self.fact(unit, n.span, 'unknown', reason='native_process')
@@ -190,7 +249,7 @@ class Analysis:
                 arg = spec['argument']
                 if value is None and arg is not None and arg < len(positional):
                     value = positional[arg]
-                target = literal(value)
+                target = self.value(value, unit.env)
                 mode, cap, op = spec['mode'], spec['capability'], spec['operation']
                 reason = ''
                 if mode == 'any':
@@ -231,8 +290,10 @@ class Analysis:
         if isinstance(n, A.Use):
             if is_file_module(n):
                 info = self.linker.modules.get(self.linker.use_keys.get(id(n)))
-                if info:
+                if info and info.file in self.modules:
                     unit.calls.add(self.modules[info.file])
+                else:
+                    self.fact(unit, n.span, 'unknown', reason='analysis_limit')
             elif n.lang in ('c', 'python'):
                 self.fact(unit, n.span, 'native.load', n.lang, n.name)
                 self.fact(unit, n.span, 'unknown', reason='native_integration')
@@ -261,50 +322,120 @@ class Analysis:
         for unit in self.units:
             self.scan(unit, unit.body)
             self.scan(unit, unit.defaults)
+        local_contexts = [self.configuration.contexts(u.file, u.name.rsplit('.', 1)[-1]) for u in self.units]
+        registration_limited = False
+        if self.configuration.has_authorization:
+            modules = {i for i,u in enumerate(self.units) if u.name == '<module>'}
+            known_registrations = set()
+            for module in modules:
+                unit = self.units[module]
+                file = Path(unit.file).resolve()
+                for node in unit.body:
+                    call = node.expr if isinstance(node, A.ExprStmt) else node.value if isinstance(node, A.Assign) else None
+                    if not isinstance(call, A.Call) or not call.args:
+                        continue
+                    kind, name = self.identity(call.func, unit.env)
+                    if kind == 'builtin' and name == '__ai_tool':
+                        target_kind, target = self.identity(call.args[0].value, unit.env)
+                        if target_kind == 'function' and '.' not in self.units[target].name:
+                            known_registrations.add(('tool', file, self.units[target].name))
+                    if (kind == 'builtin' and name == '__ai_agent' and isinstance(node, A.Assign)
+                            and isinstance(node.target, A.Name) and literal(call.args[0].value) == node.target.name):
+                        known_registrations.add(('agent', file, node.target.name))
+
+            registered = {i: set(local_contexts[i]) for i in modules}
+            queue = deque(sorted(modules))
+            queued = set(queue)
+            size = sum(len(c) for c in registered.values())
+            while queue and not registration_limited:
+                parent = queue.popleft()
+                queued.remove(parent)
+                for child in sorted(self.units[parent].calls & modules):
+                    extra = registered[parent] - registered[child]
+                    size += len(extra)
+                    if size > MAX_FACTS:
+                        registration_limited = True
+                        break
+                    if extra:
+                        registered[child].update(extra)
+                        if child not in queued:
+                            queue.append(child)
+                            queued.add(child)
+            by_file = {Path(self.units[i].file).resolve(): contexts for i,contexts in registered.items()}
+            for i,unit in enumerate(self.units):
+                if not any(symbol and symbol != '#registration' for _,symbol in local_contexts[i]):
+                    continue
+                required = self.configuration.registrations(unit.file, unit.name.rsplit('.', 1)[-1])
+                if '.' in unit.name or not required <= known_registrations:
+                    self.fact(unit, unit.span, 'unknown', reason='dynamic_registration_context')
+                for file,_ in list(local_contexts[i]):
+                    captured = by_file.get(Path(file).resolve())
+                    if captured is None:
+                        self.fact(unit, unit.span, 'unknown', reason='dynamic_registration_context')
+                    else:
+                        local_contexts[i].update(captured)
+        for i,unit in enumerate(self.units):
+            unit.contexts = {f: set(local_contexts[i]) for f in unit.facts}
         reverse = [set() for _ in self.units]
         for i, unit in enumerate(self.units):
             for callee in unit.calls:
                 reverse[callee].add(i)
         queue = deque(i for i, u in enumerate(self.units) if u.facts)
         queued = set(queue)
-        total = sum(len(u.facts) for u in self.units)
-        limited = total > MAX_FACTS or any(f.reason == 'analysis_limit' for u in self.units for f in u.facts)
+        total = sum(len(u.facts) + sum(len(c) for c in u.contexts.values()) for u in self.units)
+        limited = registration_limited or total > MAX_FACTS or any(f.reason == 'analysis_limit' for u in self.units for f in u.facts)
         while queue and not limited:
             child = queue.popleft()
             queued.remove(child)
             for parent in sorted(reverse[child]):
-                new = self.units[child].facts - self.units[parent].facts
-                total += len(new)
-                if total > MAX_FACTS:
-                    limited = True
+                changed = False
+                for fact in self.units[child].facts:
+                    if fact not in self.units[parent].facts:
+                        self.units[parent].facts.add(fact)
+                        total += 1
+                        changed = True
+                    contexts = self.units[parent].contexts.setdefault(fact, set())
+                    extra = (self.units[child].contexts[fact] | local_contexts[parent]) - contexts
+                    total += len(extra)
+                    contexts.update(extra)
+                    changed |= bool(extra)
+                    if total > MAX_FACTS:
+                        limited = True
+                        break
+                if limited:
                     break
-                if new:
-                    self.units[parent].facts.update(new)
-                    if parent not in queued:
-                        queue.append(parent)
-                        queued.add(parent)
+                if changed and parent not in queued:
+                    queue.append(parent)
+                    queued.add(parent)
         if limited:
             for unit in self.units:
                 unit.facts.clear()
+                unit.contexts.clear()
                 self.fact(unit, unit.span, 'unknown', reason='analysis_limit')
         out = []
         for unit in sorted(self.units, key=lambda u: (u.file, u.span.line, u.name)):
             effects = []
             for f in sorted(unit.facts):
+                checks = []
+                if not f.reason and f.capability:
+                    checks.append(dict(scope='root', identity=None,
+                        status='allowed' if permits(self.rules, f.capability, f.target) else 'denied', approval_required=False))
+                    checks.extend(self.configuration.checks(unit.contexts.get(f, set()), f.capability, f.target))
+                    checks.sort(key=lambda c: (c['scope'], c['identity'] or ''))
                 status = 'unknown' if f.reason else 'not_applicable' if not f.capability else (
-                    'allowed' if permits(self.rules, f.capability, f.target) else 'denied')
+                    'denied' if any(c['status'] == 'denied' for c in checks) else 'allowed')
                 span = errors.Span(f.file, f.line, f.col, f.end_col)
                 effects.append(dict(operation=f.operation, capability=f.capability or None,
                                     target=f.target if f.capability and not f.reason else None,
-                                    status=status, reason=f.reason or None, file=f.file,
+                                    status=status, reason=f.reason or None, checks=checks, file=f.file,
                                     range=span_range(self.lines.get(f.file, ['']), span)))
             complete = all(e['status'] != 'unknown' for e in effects)
             denied = any(e['status'] == 'denied' for e in effects)
             out.append(dict(file=unit.file, range=span_range(self.lines[unit.file], unit.span),
                             severity=1 if denied else 2 if not complete else 3, source='nexo',
                             code='effects_summary', message=errors.NexoError('effects_summary').text(),
-                            data=dict(fixes=[], effects_version=1, function=unit.name, complete=complete, pure=complete and not effects,
-                                      policy_scope='root', effects=effects)))
+                            data=dict(fixes=[], effects_version=2, approval_required=self.configuration.approval(unit.file, unit.name.rsplit('.', 1)[-1]), function=unit.name, complete=complete, pure=complete and not effects,
+                                      policy_scope='configured' if self.configuration.active else 'root', effects=effects)))
         return out
 
 
@@ -326,6 +457,8 @@ def host(url):
     return name.lower()
 
 
-def analyze(source, file):
+def analyze(source, file, dependencies=None, authorization=None):
+    from .effect_policy import Configuration
+    configuration = Configuration(file, dependencies, authorization)
     _, program, linker = front_end_modules(source, file)
-    return Analysis(file, program, linker).run()
+    return Analysis(file, program, linker, configuration).run()

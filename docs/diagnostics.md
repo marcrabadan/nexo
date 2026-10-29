@@ -75,3 +75,8 @@ not feed whole outputs to remote models automatically. No telemetry is added.
 versioned summary metadata in `data`. See [the effect contract](effects.md).
 Unknown effects are warnings: successful exit status does not mean complete
 effect analysis or runtime authorization. Existing `check --json` is unchanged.
+
+Effect metadata version 2 supports `--dependencies`, `--authorization` and
+`--require-complete` with `--effects`; the [metadata schema](effects-v2.schema.json)
+and [effect contract](effects.md) define configured comparisons and approval
+requirements. The diagnostics envelope remains version 1.

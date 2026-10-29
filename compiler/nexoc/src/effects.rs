@@ -15,6 +15,10 @@ enum Binding {
     Module(usize),
     Unknown,
     Builtin(String),
+    Alias(usize, Rc<Expr>),
+    Literal(String),
+    Record(Rc<BTreeMap<String, usize>>),
+    Instance(Rc<BTreeMap<String, usize>>),
 }
 #[derive(Default)]
 struct Env {
@@ -48,6 +52,7 @@ struct Unit<'a> {
     facts: BTreeSet<Fact>,
     calls: BTreeSet<usize>,
     defaults: Vec<&'a Expr>,
+    contexts: BTreeMap<Fact, BTreeSet<(String, String)>>,
 }
 impl<'a> Unit<'a> {
     fn new(file: String, name: String, span: Span, body: &'a [Stmt]) -> Self {
@@ -60,6 +65,7 @@ impl<'a> Unit<'a> {
             facts: BTreeSet::new(),
             calls: BTreeSet::new(),
             defaults: vec![],
+            contexts: BTreeMap::new(),
         }
     }
     fn fact(&mut self, span: Span, operation: &str, capability: &str, target: &str, reason: &str) {
@@ -250,6 +256,7 @@ struct Analysis<'a> {
     engine: Engine,
     sources: BTreeMap<String, Vec<Vec<char>>>,
     resolution: &'a crate::resolve::Resolution,
+    configuration: crate::effect_policy::Configuration,
 }
 impl<'a> Analysis<'a> {
     fn modules(&mut self, body: &'a [Stmt]) {
@@ -261,6 +268,11 @@ impl<'a> Analysis<'a> {
             } = &st.kind
             {
                 if !self.modules.contains_key(name) {
+                    if self.units.len() >= MAX_UNITS {
+                        let span = self.units[0].span;
+                        self.units[0].fact(span, "unknown", "", "", "analysis_limit");
+                        continue;
+                    }
                     let file = crate::modules::shown_path(std::path::Path::new(name));
                     let id = self.units.len();
                     self.modules.insert(name.clone(), id);
@@ -341,7 +353,7 @@ impl<'a> Analysis<'a> {
             }
         }
         let mut pending = vec![];
-        for (name, decls) in declarations {
+        for (name, decls) in &declarations {
             env.insert(name.clone(), Binding::Unknown);
             for f in decls.iter().flatten() {
                 if self.units.len() >= MAX_UNITS {
@@ -375,6 +387,74 @@ impl<'a> Analysis<'a> {
                     && !crate::resolve::LIBRARY_FUNCTIONS.contains(&name.as_str())
                 {
                     env.insert(name.clone(), Binding::Function(child));
+                }
+            }
+        }
+        for node in body {
+            let StmtKind::Type(t) = &node.kind else {
+                continue;
+            };
+            let mut methods = BTreeMap::new();
+            for f in &t.methods {
+                if self.units.len() >= MAX_UNITS {
+                    let span = self.units[index].span;
+                    self.units[index].fact(span, "unknown", "", "", "analysis_limit");
+                    break;
+                }
+                let mut u = Unit::new(
+                    self.units[index].file.clone(),
+                    format!("{}.{}", t.name, f.name),
+                    f.name_span,
+                    &f.body,
+                );
+                u.defaults = f.params.iter().filter_map(|p| p.default.as_ref()).collect();
+                let child = self.units.len();
+                if !f.annotations.is_empty() {
+                    u.fact(f.span, "unknown", "", "", "annotated_function");
+                }
+                self.units.push(u);
+                methods.insert(f.name.clone(), child);
+                pending.push((child, f));
+            }
+            for field in &t.fields {
+                methods.remove(&field.name);
+            }
+            if declarations.get(&t.name).is_some_and(|d| d.len() == 1) && !t.fields.is_empty() {
+                env.insert(t.name.clone(), Binding::Record(Rc::new(methods)));
+            }
+        }
+        for node in body {
+            if let StmtKind::Assign {
+                target:
+                    Expr {
+                        kind: ExprKind::Name(name),
+                        ..
+                    },
+                op: "=",
+                value,
+                ..
+            } = &node.kind
+            {
+                if declarations.get(name).is_some_and(|d| d.len() == 1)
+                    && inherited.as_ref().is_none_or(|e| e.get(name).is_none())
+                    && !name.starts_with("__")
+                    && !self
+                        .catalog
+                        .get("builtin_roots")
+                        .arr()
+                        .iter()
+                        .any(|v| v.str() == Some(name))
+                    && !crate::resolve::is_builtin(name)
+                    && !crate::resolve::LIBRARY_FUNCTIONS.contains(&name.as_str())
+                    && matches!(
+                        value.kind,
+                        ExprKind::Name(_)
+                            | ExprKind::Attr { .. }
+                            | ExprKind::Str(_)
+                            | ExprKind::Call { .. }
+                    )
+                {
+                    env.insert(name.clone(), Binding::Alias(index, Rc::new(value.clone())));
                 }
             }
         }
@@ -437,6 +517,14 @@ impl<'a> Analysis<'a> {
             for p in &f.params {
                 outer.insert(p.name.clone(), Binding::Unknown);
             }
+            if self.units[child].name.contains('.')
+                && f.params.first().is_some_and(|p| p.name == "self")
+            {
+                let class_name = self.units[child].name.rsplit_once('.').unwrap().0;
+                if let Some(Binding::Record(methods)) = self.units[index].env.get(class_name) {
+                    outer.insert("self".into(), Binding::Instance(methods.clone()));
+                }
+            }
             let outer = Rc::new(Env {
                 local: outer,
                 parent: Some(self.units[index].env.clone()),
@@ -445,28 +533,57 @@ impl<'a> Analysis<'a> {
         }
     }
     fn identity(&self, e: &Expr, env: &Env) -> Binding {
-        match &e.kind {
+        self.identity_depth(e, env, 0)
+    }
+    fn identity_depth(&self, e: &Expr, env: &Env, depth: usize) -> Binding {
+        if depth > 32 {
+            return Binding::Unknown;
+        }
+        let binding = match &e.kind {
             ExprKind::Name(name) => {
                 if let Some((base, tail)) = name.split_once('.') {
-                    return self.member(
+                    self.member(
                         env.get(base)
                             .cloned()
                             .unwrap_or(Binding::Builtin(base.into())),
                         tail,
-                    );
-                }
-                env.get(name)
-                    .cloned()
-                    .unwrap_or_else(|| match self.resolution.names.get(&e.id) {
-                        Some(crate::resolve::NameRes::Builtin(canonical)) => {
-                            Binding::Builtin(canonical.clone())
+                    )
+                } else {
+                    env.get(name).cloned().unwrap_or_else(|| {
+                        match self.resolution.names.get(&e.id) {
+                            Some(crate::resolve::NameRes::Builtin(name)) => {
+                                Binding::Builtin(name.clone())
+                            }
+                            _ => Binding::Unknown,
                         }
-                        _ => Binding::Unknown,
                     })
+                }
             }
-            ExprKind::Attr { obj, name, .. } => self.member(self.identity(obj, env), name),
+            ExprKind::Str(_) => literal(e).map(Binding::Literal).unwrap_or(Binding::Unknown),
+            ExprKind::Call { func, .. } => match self.identity_depth(func, env, depth + 1) {
+                Binding::Record(methods) => Binding::Instance(methods),
+                _ => Binding::Unknown,
+            },
+            ExprKind::Attr { obj, name, .. } => {
+                self.member(self.identity_depth(obj, env, depth + 1), name)
+            }
             _ => Binding::Unknown,
+        };
+        match binding {
+            Binding::Alias(owner, value) => {
+                self.identity_depth(&value, &self.units[owner].env, depth + 1)
+            }
+            _ => binding,
         }
+    }
+    fn value(&self, e: &Expr, env: &Env) -> Option<String> {
+        match self.identity(e, env) {
+            Binding::Literal(value) => Some(value),
+            _ => literal(e),
+        }
+    }
+    fn known_value(&self, e: &Expr, env: &Env) -> bool {
+        literal_value(e) || matches!(self.identity(e, env), Binding::Literal(_))
     }
     fn member(&self, binding: Binding, member: &str) -> Binding {
         match binding {
@@ -475,6 +592,10 @@ impl<'a> Analysis<'a> {
                 .env
                 .get(member)
                 .cloned()
+                .unwrap_or(Binding::Unknown),
+            Binding::Instance(methods) => methods
+                .get(member)
+                .map(|i| Binding::Function(*i))
                 .unwrap_or(Binding::Unknown),
             _ => Binding::Unknown,
         }
@@ -492,7 +613,11 @@ impl<'a> Analysis<'a> {
                     .iter()
                     .any(|v| v.str() == Some(&name));
                 let specs = self.catalog.get("calls").get(&name).arr().to_vec();
-                if (pure || !specs.is_empty()) && args.iter().any(|a| !literal_value(&a.value)) {
+                if (pure || !specs.is_empty())
+                    && args
+                        .iter()
+                        .any(|a| !self.known_value(&a.value, &self.units[index].env))
+                {
                     self.units[index].fact(e.span, "unknown", "", "", "dynamic_value");
                 }
                 if !pure && specs.is_empty() {
@@ -516,7 +641,7 @@ impl<'a> Analysis<'a> {
                                     .map(|a| &a.value)
                             })
                         });
-                    let mut target = value.and_then(literal);
+                    let mut target = value.and_then(|e| self.value(e, &self.units[index].env));
                     let mut cap = spec.get("capability").str().unwrap_or("");
                     let op = spec.get("operation").str().unwrap();
                     let mode = spec.get("mode").str().unwrap();
@@ -648,6 +773,152 @@ impl<'a> Analysis<'a> {
                 self.expr(i, e);
             }
         }
+        let mut local_contexts: Vec<_> = self
+            .units
+            .iter()
+            .map(|u| {
+                self.configuration
+                    .contexts(&u.file, u.name.rsplit('.').next().unwrap())
+            })
+            .collect();
+        let mut registration_limited = false;
+        if self.configuration.has_authorization() {
+            let modules: BTreeSet<usize> = self
+                .units
+                .iter()
+                .enumerate()
+                .filter(|(_, u)| u.name == "<module>")
+                .map(|(i, _)| i)
+                .collect();
+            let mut known_registrations = BTreeSet::new();
+            for module in &modules {
+                let unit = &self.units[*module];
+                let file = std::path::Path::new(&unit.file)
+                    .canonicalize()
+                    .unwrap_or_else(|_| unit.file.clone().into());
+                for node in unit.body {
+                    let expression = match &node.kind {
+                        StmtKind::Expr(e) => Some(e),
+                        StmtKind::Assign { value, .. } => Some(value),
+                        _ => None,
+                    };
+                    let Some(Expr {
+                        kind: ExprKind::Call { func, args },
+                        ..
+                    }) = expression
+                    else {
+                        continue;
+                    };
+                    let Some(first) = args.first() else { continue };
+                    if let Binding::Builtin(name) = self.identity(func, &unit.env) {
+                        if name == "__ai_tool" {
+                            if let Binding::Function(target) =
+                                self.identity(&first.value, &unit.env)
+                            {
+                                if !self.units[target].name.contains('.') {
+                                    known_registrations.insert((
+                                        "tool",
+                                        file.clone(),
+                                        self.units[target].name.clone(),
+                                    ));
+                                }
+                            }
+                        }
+                        if name == "__ai_agent" {
+                            if let StmtKind::Assign {
+                                target:
+                                    Expr {
+                                        kind: ExprKind::Name(name),
+                                        ..
+                                    },
+                                ..
+                            } = &node.kind
+                            {
+                                if literal(&first.value).as_deref() == Some(name) {
+                                    known_registrations.insert((
+                                        "agent",
+                                        file.clone(),
+                                        name.clone(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let mut registered: BTreeMap<usize, BTreeSet<(String, String)>> = modules
+                .iter()
+                .map(|i| (*i, local_contexts[*i].clone()))
+                .collect();
+            let mut queue: VecDeque<_> = modules.iter().copied().collect();
+            let mut queued = modules.clone();
+            let mut size: usize = registered.values().map(|c| c.len()).sum();
+            while !queue.is_empty() && !registration_limited {
+                let parent = queue.pop_front().unwrap();
+                queued.remove(&parent);
+                for child in self.units[parent].calls.intersection(&modules) {
+                    let extra: BTreeSet<_> = registered[&parent]
+                        .difference(&registered[child])
+                        .cloned()
+                        .collect();
+                    size += extra.len();
+                    if size > MAX_FACTS {
+                        registration_limited = true;
+                        break;
+                    }
+                    if !extra.is_empty() {
+                        registered.get_mut(child).unwrap().extend(extra);
+                        if queued.insert(*child) {
+                            queue.push_back(*child);
+                        }
+                    }
+                }
+            }
+            let by_file: BTreeMap<_, _> = registered
+                .iter()
+                .map(|(i, c)| {
+                    (
+                        std::path::Path::new(&self.units[*i].file)
+                            .canonicalize()
+                            .unwrap_or_else(|_| self.units[*i].file.clone().into()),
+                        c,
+                    )
+                })
+                .collect();
+            for (i, u) in self.units.iter_mut().enumerate() {
+                if !local_contexts[i]
+                    .iter()
+                    .any(|(_, symbol)| !symbol.is_empty() && symbol != "#registration")
+                {
+                    continue;
+                }
+                let required = self
+                    .configuration
+                    .registrations(&u.file, u.name.rsplit('.').next().unwrap());
+                if u.name.contains('.')
+                    || required.iter().any(|id| !known_registrations.contains(id))
+                {
+                    u.fact(u.span, "unknown", "", "", "dynamic_registration_context");
+                }
+                for (file, _) in local_contexts[i].clone() {
+                    let key = std::path::Path::new(&file)
+                        .canonicalize()
+                        .unwrap_or_else(|_| file.clone().into());
+                    if let Some(captured) = by_file.get(&key) {
+                        local_contexts[i].extend(captured.iter().cloned());
+                    } else {
+                        u.fact(u.span, "unknown", "", "", "dynamic_registration_context");
+                    }
+                }
+            }
+        }
+        for (i, u) in self.units.iter_mut().enumerate() {
+            u.contexts = u
+                .facts
+                .iter()
+                .map(|f| (f.clone(), local_contexts[i].clone()))
+                .collect();
+        }
         let mut reverse = vec![BTreeSet::new(); self.units.len()];
         for (i, u) in self.units.iter().enumerate() {
             for c in &u.calls {
@@ -662,8 +933,13 @@ impl<'a> Analysis<'a> {
             .map(|(i, _)| i)
             .collect();
         let mut queued: BTreeSet<usize> = queue.iter().copied().collect();
-        let mut total: usize = self.units.iter().map(|u| u.facts.len()).sum();
-        let mut limited = total > MAX_FACTS
+        let mut total: usize = self
+            .units
+            .iter()
+            .map(|u| u.facts.len() + u.contexts.values().map(|c| c.len()).sum::<usize>())
+            .sum();
+        let mut limited = registration_limited
+            || total > MAX_FACTS
             || self
                 .units
                 .iter()
@@ -672,27 +948,39 @@ impl<'a> Analysis<'a> {
             let child = queue.pop_front().unwrap();
             queued.remove(&child);
             for parent in &reverse[child] {
-                let new: Vec<Fact> = self.units[child]
-                    .facts
-                    .difference(&self.units[*parent].facts)
-                    .cloned()
-                    .collect();
-                total += new.len();
-                if total > MAX_FACTS {
-                    limited = true;
+                let facts: Vec<_> = self.units[child].facts.iter().cloned().collect();
+                let mut changed = false;
+                for fact in facts {
+                    if self.units[*parent].facts.insert(fact.clone()) {
+                        total += 1;
+                        changed = true;
+                    }
+                    let inherited: BTreeSet<_> = self.units[child].contexts[&fact]
+                        .union(&local_contexts[*parent])
+                        .cloned()
+                        .collect();
+                    let contexts = self.units[*parent].contexts.entry(fact).or_default();
+                    let count = contexts.len();
+                    contexts.extend(inherited);
+                    total += contexts.len() - count;
+                    changed |= contexts.len() != count;
+                    if total > MAX_FACTS {
+                        limited = true;
+                        break;
+                    }
+                }
+                if limited {
                     break;
                 }
-                if !new.is_empty() {
-                    self.units[*parent].facts.extend(new);
-                    if queued.insert(*parent) {
-                        queue.push_back(*parent);
-                    }
+                if changed && queued.insert(*parent) {
+                    queue.push_back(*parent);
                 }
             }
         }
         if limited {
             for u in &mut self.units {
                 u.facts.clear();
+                u.contexts.clear();
                 u.fact(u.span, "unknown", "", "", "analysis_limit");
             }
         }
@@ -707,18 +995,43 @@ impl<'a> Analysis<'a> {
                     .facts
                     .iter()
                     .map(|f| {
+                        let mut checks = vec![];
+                        if f.reason.is_empty() && !f.capability.is_empty() {
+                            let allowed = Capability::from_boundary(&f.capability, &f.target)
+                                .is_some_and(|c| !self.engine.evaluate(c, true, false).denied());
+                            checks.push(obj(vec![
+                                ("scope", s("root")),
+                                ("identity", Json::Null),
+                                ("status", s(if allowed { "allowed" } else { "denied" })),
+                                ("approval_required", Json::Bool(false)),
+                            ]));
+                            if let Some(contexts) = u.contexts.get(f) {
+                                checks.extend(self.configuration.checks(
+                                    contexts,
+                                    &f.capability,
+                                    &f.target,
+                                ));
+                            }
+                            checks.sort_by_key(|c| {
+                                (
+                                    c.get("scope").str().unwrap_or("").to_string(),
+                                    c.get("identity").str().unwrap_or("").to_string(),
+                                )
+                            });
+                        }
                         let status = if !f.reason.is_empty() {
                             complete = false;
                             "unknown"
                         } else if f.capability.is_empty() {
                             "not_applicable"
-                        } else if Capability::from_boundary(&f.capability, &f.target)
-                            .is_some_and(|cap| !self.engine.evaluate(cap, true, false).denied())
+                        } else if checks
+                            .iter()
+                            .any(|c| c.get("status").str() == Some("denied"))
                         {
-                            "allowed"
-                        } else {
                             denied = true;
                             "denied"
+                        } else {
+                            "allowed"
                         };
                         obj(vec![
                             ("operation", s(&f.operation)),
@@ -732,6 +1045,7 @@ impl<'a> Analysis<'a> {
                                 },
                             ),
                             ("status", s(status)),
+                            ("checks", Json::Arr(checks)),
                             ("reason", nullable(&f.reason)),
                             ("file", s(&f.file)),
                             (
@@ -770,11 +1084,25 @@ impl<'a> Analysis<'a> {
                         "data",
                         obj(vec![
                             ("fixes", Json::Arr(vec![])),
-                            ("effects_version", n(1)),
+                            ("effects_version", n(2)),
+                            (
+                                "approval_required",
+                                Json::Bool(
+                                    self.configuration
+                                        .approval(&u.file, u.name.rsplit('.').next().unwrap()),
+                                ),
+                            ),
                             ("function", s(&u.name)),
                             ("complete", Json::Bool(complete)),
                             ("pure", Json::Bool(complete && effects.is_empty())),
-                            ("policy_scope", s("root")),
+                            (
+                                "policy_scope",
+                                s(if self.configuration.active() {
+                                    "configured"
+                                } else {
+                                    "root"
+                                }),
+                            ),
                             ("effects", Json::Arr(effects)),
                         ]),
                     ),
@@ -811,7 +1139,14 @@ fn expr_children(e: &Expr) -> Vec<&Expr> {
         _ => crate::checker::children(e),
     }
 }
-pub(crate) fn analyze(source: &str, file: &str) -> Result<Vec<Json>, Diagnostic> {
+pub(crate) fn analyze(
+    source: &str,
+    file: &str,
+    dependencies: Option<&str>,
+    authorization: Option<&str>,
+) -> Result<Vec<Json>, Diagnostic> {
+    let configuration =
+        crate::effect_policy::Configuration::load(file, dependencies, authorization)?;
     let program = crate::linked(file, source)?;
     let res = crate::resolve::resolve(&program)?;
     crate::typecheck::check(&program, &res)?;
@@ -843,6 +1178,7 @@ pub(crate) fn analyze(source: &str, file: &str) -> Result<Vec<Json>, Diagnostic>
             .expect("checked-in effect catalog"),
         engine: Engine::new(rules),
         resolution: &res,
+        configuration,
         sources: BTreeMap::from([(file.to_string(), crate::lsp::lines_of(source))]),
     };
     analysis.modules(&program.body);

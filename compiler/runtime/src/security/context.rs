@@ -9,6 +9,11 @@ use crate::json::Json;
 
 pub struct Configuration { modules: HashMap<PathBuf, Arc<Engine>> }
 impl Configuration {
+    /// Read-only static comparison; missing dependency identities deny access.
+    /// Does not initialize or change the active runtime context.
+    pub fn analysis_allows(&self, file: &Path, capability: Capability<'_>) -> bool {
+        self.modules.get(file).is_some_and(|e| !e.evaluate(capability,true,true).denied())
+    }
     pub fn load(path: &Path, root: &Path) -> Result<Self, String> {
         use std::io::Read;
         let mut text = String::new();

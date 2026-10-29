@@ -1,156 +1,200 @@
-# Static effects and capability requirements (Phase 2, first slice)
+# Static effects and capability requirements — Phase 2
 
-`nexo check --effects [--json] [paths...]` reports conservative requirements
-without executing the program. Both backends use their existing front ends,
-module linkers and diagnostics. Rust additionally uses its resolved builtin
-identities; Python uses conservative lexical binding information. Existing
-`check`, compilation and Shield execution remain unchanged. No grammar or
-dependency changes are required. D182 records the design.
+`nexo check --effects [--json] [--require-complete] [--dependencies file.json]
+[--authorization file.json] [paths...]` checks a program without executing it.
+Both backends reuse their front ends, linked modules, LSP coordinates and Shield
+policy engines. The language grammar and ordinary compilation are unchanged.
+D182 introduced the report; D183 completes configured ceiling analysis and the
+version 2 metadata contract.
 
 ```nexo
 policy:
     allow read "data/"
 
+path = "data/log"
+reader = read
+
 fn load() -> str!:
-    return read("data/log")?
+    return reader(path)?
 
 fn report() -> str!:
     return load()?
 ```
 
-Both `load` and `report` require `read "data/log"`; their facts identify the
-original call in `load`. The policy comparison reports that this root grant
-matches. A deny rule overrides an allow, regardless of their order. A known
-requirement with no matching grant is reported as denied, including when no
-policy is declared. Console I/O has no D142 capability and is reported explicitly
-as `console.read` or `console.write`, rather than classified as pure.
+Both functions require `read "data/log"`. Facts retain the original call's file
+and range. An immutable, unambiguous alias can resolve to a builtin, function,
+imported function or literal target. Conditional definitions, mutable bindings,
+shadowed builtins and unresolved callbacks remain conservative unknowns.
 
-## Interpretation and exit status
+## Operator configuration and caller boundaries
 
-This is an **opt-in report of all functions**, including unreachable functions,
-and module initialization. It over-approximates branches, defaults, tests and
-some deferred bodies. It does not specialize a callee's parameter from each
-caller's argument. Known literal targets can be compared; a path parameter,
-interpolation or unresolved provider configuration remains unknown.
+Use the **same manifests as Shield**, supplied explicitly or through the existing
+`NEXO_SECURITY_DEPENDENCIES` / `NEXO_SECURITY_AUTHORIZATION` environment variables:
 
-- Exit 0: front-end checks succeeded and no known root-policy denial was found.
-  Unknowns are warnings and can still be present. Check `complete`, not only the
-  exit status, when deciding whether further analysis is needed.
-- Exit 1: a front-end/read failure or a known root-policy denial.
-- Exit 2: invalid or duplicate flags. `--intent` cannot be combined with this
-  deterministic analysis. The program, model, tool and target operation never run.
+```sh
+nexo check --effects --json --require-complete \
+  --dependencies permissions.json --authorization grants.json app.nexo
+```
 
-`allowed` means **matched by the declared root policy at analysis time**. It
-is not a runtime authorization decision. `policy_scope` is always `root`.
-Dependency, task, caller, agent and tool ceilings are not statically compared
-in this slice. Runtime checks still intersect every active ceiling, require
-operator-controlled approval and fail closed. Reports cannot create grants.
-Tests demonstrate that dependency denials still stop execution even after a
-successful static root-policy report. Symlink/filesystem matching reuses the
-existing matcher and may inspect path metadata; it is a snapshot, not a proof
-about filesystem mutation after the check or OS-enforced isolation.
+Explicit options override their corresponding environment setting. The existing
+strict loaders validate size, depth, duplicate fields, canonical file identities,
+versions, rules and allowlists. Invalid configuration produces the existing
+`security_context_config` or `security_authorization` diagnostic. No permissive
+fallback is used. Loading and querying configurations never initializes or
+mutates active runtime authorization, context stacks or approval state.
 
-## Versioned metadata
+Known capability requirements are compared with:
 
-JSON mode uses the existing [v1 diagnostics envelope](diagnostics.md) and schema;
-new information is in the existing extensible `data` object. Each module/function
-has a catalog diagnostic `effects_summary` with severity 1 if any known root
-requirement is denied, otherwise 2 if incomplete, otherwise 3. Its source path
-and UTF-16 range identify the definition. Compile errors keep their existing
-codes, messages, ranges and fixes instead of being replaced by summaries.
+- The declared root policy; absent grants deny, and explicit deny wins.
+- The defining dependency's ceiling and every statically reachable caller
+  ceiling along a call path. A root function cannot remove an imported caller's
+  restriction. All possible paths are joined conservatively: a denied path is
+  reported even if another path allows the same operation.
+- Configured tool ceilings and the permissions of every configured agent whose
+  allowlist includes that tool. A tool with no permitted agent has a denied
+  `dispatch` check. These are possible **configured dispatch scenarios**, not a
+  claim that a model will select a tool or that a function has been registered.
+- Dependency ceilings captured at top-level tool registration. Import-graph
+  propagation retains importer restrictions when a tool is defined in a nested
+  import. Known imported agent identities contribute their dependency contexts
+  too. Nested, unresolved or opaque registration contexts remain explicit
+  `dynamic_registration_context` unknowns.
 
-| `data` field | Meaning |
+The report never supplies approval. `approval_required` records the operator's
+confirmation requirement, including for a pure configured tool. Native/process
+requirements under configured ceilings use Shield's strict comparison and do
+not imply confinement of arbitrary native code.
+
+`allowed` means the **statically identified configured comparisons** matched at
+analysis time. It is not a runtime authorization token. Runtime still intersects
+actual caller/task/module/agent/tool contexts, verifies seals and allowlists,
+requires approval and checks every protected operation. Dynamic task/handler
+registration and opaque dispatch remain unknown when their contexts cannot be
+identified. Static results never widen policy or bypass Shield.
+
+Filesystem matching reuses Shield's matcher and can inspect symlink/path
+metadata. It is a snapshot, not a proof about subsequent filesystem mutation,
+network endpoints or OS isolation. Configuration paths and source identities
+are canonically resolved; no target file contents, provider or tool is executed
+by this analysis.
+
+## Report and exit semantics
+
+The pass reports **all functions and module initializers**, including unreachable
+code. Branches, defaults, tests and supported deferred bodies are over-approximated.
+It does not assume a closed set of arguments for externally callable functions.
+
+- Exit **0**: front-end checks passed and no known configured denial was found.
+  Advisory mode can still contain unknowns.
+- Exit **1**: source/configuration/read failure, a known denial, or an incomplete
+  summary when `--require-complete` is requested.
+- Exit **2**: malformed or duplicate options. Configuration and completeness
+  options require `--effects`. `--intent` is incompatible with deterministic
+  analysis and never invokes a model through this command.
+
+Unknowns remain severity-2 warnings even when `--require-complete` makes the
+command fail. In either mode, successful checking is not proof of correctness,
+runtime approval, all runtime permissions or OS-enforced isolation.
+
+## Versioned JSON metadata
+
+The [diagnostics v1 envelope](diagnostics.md) and schema remain unchanged.
+`effects_summary` diagnostics now carry **`effects_version: 2`** in `data`;
+consumers of effect metadata must reject unsupported versions. The normative
+metadata shape is [effects-v2.schema.json](effects-v2.schema.json), which reuses
+the existing diagnostic range schema. Version 1 meant root-only comparison;
+version 2 adds configured comparisons, registration contexts and approval
+requirements. This changes effect-metadata interpretation, not envelope version.
+
+| Summary field | Meaning |
 | --- | --- |
-| `effects_version` | `1`; consumers must reject unknown effect metadata versions. |
-| `function` | `<module>`, a function name or a dotted lexical function name. Combine with diagnostic `file` and `range` for identity. |
-| `complete` | No unknown facts remain within the supported conservative analysis/model. It is not proof of all runtime authorization or behavior. |
-| `pure` | `complete` and the modeled effect set is empty. Never true for incomplete analysis. This is modeled purity, not a guarantee about arbitrary native values or code. |
-| `policy_scope` | `root`; comparison excludes runtime ceilings and approvals. |
-| `effects` | Stable, sorted and deduplicated transitive facts, retaining origin file/range. |
-| `fixes` | Empty; the analyzer never proposes or applies an automatic permission grant. |
+| `function` | `<module>`, function or dotted method/lexical function name. Combine diagnostic `file` and `range` for identity. |
+| `effects_version` | `2`. |
+| `complete` | No unknown facts within the supported conservative model. This is not a general proof about arbitrary runtime/native values. |
+| `pure` | `complete` and the modeled effect set is empty; never true for an unknown summary. |
+| `policy_scope` | `root` without operator manifests; `configured` when either manifest is supplied. |
+| `approval_required` | Whether this configured tool identity requires human confirmation; no approval is granted. |
+| `effects` | Sorted, deduplicated transitive requirements retaining origin file/range. |
+| `fixes` | Empty; permission grants are never applied or proposed automatically. |
 
 Each fact contains `operation`, nullable `capability`, nullable `target`,
-`status`, nullable `reason`, `file` and the existing LSP `range` shape. `status`
+`status`, nullable `reason`, origin `file`/`range` and a `checks` array. Status
 is `allowed`, `denied`, `unknown` or `not_applicable` (no policy capability).
-Unknown targets are null, not an implicit wildcard. Origin ranges identify
-where a requirement originated, not the caller receiving it. New reason codes
-and operations can be added within metadata v1; changing field meanings or
-coordinate conventions requires a new version.
+Unknown targets are null, not wildcards. Origin positions use zero-based UTF-16
+code units and end-exclusive ranges, exactly as the LSP.
 
-## Analysis implementation
+Each known comparison has `scope` (`root`, `dependency`, `agent`, `tool` or
+`dispatch`), `identity` (null for root, otherwise file or `file::symbol`),
+`status` (`allowed`/`denied`) and `approval_required`. Comparisons are sorted;
+any denial makes that requirement denied. No list of matching comparisons is
+emitted for an unknown requirement. A known denial elsewhere remains an error.
 
-Both implementations build lexical function/module units and direct-call edges
-from the linked AST. Immutable parent scopes are shared rather than copied per
-function. Unambiguous local function calls and qualified imported calls contribute
-edges; recursive components converge using a reverse-edge worklist and union of
-origin facts. No recursive call-graph traversal is required. Facts are sorted
-by source identity/position and operation, making output deterministic.
+Summary severity is 1 for a known denial, otherwise 2 if incomplete, otherwise
+3. Compile errors retain the existing catalog codes, messages and fixes instead
+of being replaced by summaries. Future reason/operation codes and additive
+metadata can appear; consumers must tolerate them. Breaking interpretation
+changes require a new effect metadata version.
 
-Shadowed builtin names, reassignment, aliases, callbacks and conditional function
-definitions are conservative unknown calls. Function declarations sharing a
-builtin name are treated conservatively because Nexo's runtime lookup can fall
-back to the builtin before a local binding exists. A missing function summary
-never becomes an empty/pure one. Module initializers propagate through imports;
-function facts keep the defining module's source identity.
+## Inference and deliberate unknowns
 
-The shared `nexo/stdlib/effects.json` catalog is a compiler model, not a second
-API inventory. `nexo docs --for-ai` and `api.json` remain the public API source.
-Catalog coverage is checked against public builtin names so an API addition
-cannot silently bypass shadow analysis. Unmodeled operations remain unknown.
+The linked AST forms lexical function/module units and direct-call edges.
+Record methods have independent summaries; calls on statically identified
+record constructions/immutable receivers and `self` resolve when unambiguous.
+Field/method collisions, dynamic receivers, trait dispatch and opaque values
+remain unknown. Constructors/default behavior is conservative rather than
+assumed pure. Shared parent scopes avoid quadratic copies of visible globals.
 
-Currently modeled:
+A reverse-edge worklist propagates effects and relevant caller identities to a
+fixed point, including recursive components. A separate import-graph closure
+tracks captured registration ceilings. Missing callable summaries cannot become
+empty/pure summaries. Alias expansion is bounded at 32 links; unresolved/cyclic
+aliases remain unknown rather than assuming a target. Function parameters,
+callbacks, mutable/conditional aliases and paths that cannot be uniquely resolved
+stay unknown. There is no inference-based grant or implicit permission escalation.
 
-- `read`, `read_lines`, `write`, `save`: existing read/write capabilities,
-  including named path arguments and `save`'s second positional argument.
-- `secret`: conservative environment requirement by key name, even if a created
-  secret is never consumed. No environment value is read or included.
-- `http` methods: net requirements for a deliberately narrow ASCII HTTP(S) URL
-  subset. Only the lowercase host is retained; no DNS request is made.
-- `connect`: local database read/write requirements; `:memory:` has no file
-  requirement. Server URLs and dynamic connections remain unknown because
-  authentication, discovery and further operations are not fully modeled.
-- `ask`: explicit AI/net effect with unknown target/configuration. Prompts and
-  provider credentials are never attached.
-- `run`, C and Python imports: explicit native/process capability requirements
-  plus unknown arbitrary native effects. Shell command text is not attached.
+The shared `nexo/stdlib/effects.json` describes effects; `api.json` and
+`nexo docs --for-ai` remain the exact public API inventory. Currently modeled:
+
+- `read`, `read_lines`, `write`, `save`: read/write requirements, positional and
+  named path arguments and immutable literal aliases.
+- `secret`: conservative env requirement by key name, without reading a value.
+- HTTP methods: net requirements for a narrow ASCII HTTP(S) URL subset. Only
+  the lowercase host is kept; no DNS request or credential-bearing URL is emitted.
+- `connect`: read/write for a literal local database; `:memory:` has no file
+  requirement. Server authentication/discovery and dynamic connections stay unknown.
+- `ask`: explicit AI/net effect with unresolved provider configuration. No
+  prompt, response or provider credential is attached.
+- `run`, C and Python integrations: capability requirements plus explicit
+  unknown arbitrary native effects. Shell command text is omitted.
 - Console I/O and a small explicit set of pure core/JSON/CSV operations.
 
-Builtin calls with non-literal arguments and interpolated text also remain
-unknown: core conversions and `len` can force lazy/native values and execute
-effects beyond the visible call. This deliberately trades precision for explicit
-uncertainty until value/target refinement is implemented.
+Builtin calls receiving unknown values and interpolated text stay conservative:
+`len`, conversion or formatting can force lazy/native values and trigger hidden
+effects. Unresolved methods, callbacks, indexing, lazy iteration, pipelines,
+events, annotations, provider/connector behavior and opaque/deferred calls are
+reported as unknown. This is the specified unknown/dynamic-effect behavior of
+Phase 2, not a claim of a complete symbolic evaluator or unrestricted effect
+polymorphism. More precision can be added without weakening the runtime boundary.
 
-Method dispatch, record/trait behavior, annotations, indexing, lazy iteration,
-pipelines, events, dynamic calls, unmodeled standard-library APIs and higher-order
-flows are not fully modeled. Their supported encounters are reported as unknown;
-this slice does not claim a sound general-purpose effect type system for all
-Nexo constructs or arbitrary native values. Type/method declarations are flagged
-as unmodeled; their methods do not yet have separate callable summaries.
+Inference is limited to 10,000 retained units and 200,000 fact/context
+memberships per entry graph. Registration closure has the same membership
+budget. Exceeding a limit discards partial summaries and reports `analysis_limit`
+for every retained unit, with `complete: false` and `pure: false`. Parsing,
+linking and direct AST collection keep their existing resource behavior; these
+are analysis budgets, not process memory/CPU confinement.
 
-Analysis is capped at 10,000 module/function units and 200,000 propagated fact
-memberships per input graph. Exceeding a limit discards partial summaries and
-reports `analysis_limit` for each retained unit, always with `complete: false`
-and `pure: false`. No unlimited inference or authorization claim is made.
-Parsing/linking/type checking and direct AST collection still have their existing
-resource behavior; these caps are not process memory or CPU limits.
+## Validation
 
-## Validation and next increments
+The Phase 2 tests cover parity, recursion/imports, caller and captured-registration
+ceilings, operator allowlists, approval metadata, malformed/oversized manifests,
+canonical identities, aliases and methods, symlink denials, explicit unknowns,
+strict completeness, unchanged runtime denial and no execution/state mutation.
+The existing formatter, unit, LSP, JSON and Shield tests remain the compatibility
+baseline. [The completion record](ai-native-phase2-completion.md) records results
+and Linux evidence.
 
-`tests/test_effects.py` covers backend parity, recursion, imports, nested calls,
-known grants/denials, deny precedence, dynamic targets/callbacks, shadowing,
-conditional definitions, defaults, URL redaction/limits, invalid module encoding,
-analysis limits, no execution, runtime dependency denial and caller intersections.
-Existing Phase 1, LSP, unit and Shield regressions validate shared infrastructure.
-
-`compiler/bench/effects.py` generates fixed 1k/10k/100k-line chain, recursive and
-imported corpora, recording corpus hashes, median/p95 times, output bytes and
-fresh-child peak RSS. Its generated Nexo programs are checked but never executed.
-Measurements include front-end cost and JSON serialization. The checked-in
-baseline records the host/toolchain and debug compiler hash; it is not a cross-host
-performance guarantee. See [the Phase 2 validation record](ai-native-phase2-validation.md).
-
-Next Phase 2 increments: static dependency/tool ceiling comparison with trusted
-configuration identity, parameter/alias/callback target refinement, method and
-implicit/deferred-call coverage, and explicit diagnostic reasons for provider/
-connector-specific requirements. Preserve runtime denial, approval and existing
-OS-isolation boundaries throughout. Phases 3–5 have not started.
+`compiler/bench/effects.py` generates reproducible chain, recursive and imported
+1k/10k/100k-line corpora. It records corpus hashes, debug compiler/toolchain,
+wall-time median/p95, output bytes and fresh-child peak RSS. Generated programs
+are checked but never executed. These are baseline measurements; the 100k
+corpora deliberately hit the explicit unit limit and are not called complete.

@@ -16,14 +16,36 @@ fn problem(code: &str, message: &str, file: Json) -> Json {
 pub(crate) fn run_check_json(args: &[String]) -> u8 {
     let effects = args.iter().any(|a| a == "--effects");
     let json_mode = args.iter().any(|a| a == "--json");
-    let paths: Vec<String> = args
-        .iter()
-        .filter(|a| *a != "--json" && *a != "--effects")
-        .cloned()
-        .collect();
+    let strict = args.iter().any(|a| a == "--require-complete");
+    let mut paths = vec![];
+    let mut options = std::collections::BTreeMap::new();
+    let mut invalid = false;
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--dependencies" || a == "--authorization" {
+            if !effects
+                || options.contains_key(a)
+                || i + 1 == args.len()
+                || args[i + 1].starts_with('-')
+            {
+                invalid = true;
+                break;
+            }
+            options.insert(a, args[i + 1].as_str());
+            i += 2;
+            continue;
+        }
+        if !["--effects", "--json", "--require-complete"].contains(&a) {
+            paths.push(args[i].clone());
+        }
+        i += 1;
+    }
+    invalid |= args.iter().filter(|a| *a == "--require-complete").count() > 1 || strict && !effects;
     let mut out = Vec::new();
     let mut status = 0;
-    if paths.iter().any(|a| a.starts_with('-'))
+    if invalid
+        || paths.iter().any(|a| a.starts_with('-'))
         || args.iter().filter(|a| *a == "--json").count() > 1
         || args.iter().filter(|a| *a == "--effects").count() > 1
         || !(effects || json_mode)
@@ -56,15 +78,20 @@ pub(crate) fn run_check_json(args: &[String]) -> u8 {
                 }
             };
             let checked = if effects {
-                crate::effects::analyze(&source, &name)
+                crate::effects::analyze(
+                    &source,
+                    &name,
+                    options.get("--dependencies").copied(),
+                    options.get("--authorization").copied(),
+                )
             } else {
                 crate::front_end(&source, &name).map(|_| vec![])
             };
             if let Ok(findings) = &checked {
-                if findings
-                    .iter()
-                    .any(|d| d.get("severity").num() == Some(1.0))
-                {
+                if findings.iter().any(|d| {
+                    d.get("severity").num() == Some(1.0)
+                        || strict && d.get("data").get("complete") == &Json::Bool(false)
+                }) {
                     status = 1;
                 }
                 out.extend(findings.iter().cloned());
@@ -109,6 +136,9 @@ pub(crate) fn run_check_json(args: &[String]) -> u8 {
                 d.get("data").get("function").str().unwrap_or(""),
                 d.get("message").str().unwrap_or("")
             );
+            if d.get("data").get("approval_required") == &Json::Bool(true) {
+                println!("  human approval required for configured tool dispatch");
+            }
             for e in d.get("data").get("effects").arr() {
                 println!(
                     "  {}: {} ({})",
@@ -119,6 +149,15 @@ pub(crate) fn run_check_json(args: &[String]) -> u8 {
                         .or_else(|| e.get("capability").str())
                         .unwrap_or("no policy capability")
                 );
+                for check in e.get("checks").arr() {
+                    if check.get("status").str() == Some("denied") {
+                        println!(
+                            "    denied by {}: {}",
+                            check.get("scope").str().unwrap_or(""),
+                            check.get("identity").str().unwrap_or("<application>")
+                        );
+                    }
+                }
             }
         }
     }

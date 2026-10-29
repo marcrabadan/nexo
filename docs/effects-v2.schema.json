@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nexo static effect metadata v2",
+  "type": "object",
+  "properties": {
+    "fixes": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "effects_version": {
+      "const": 2
+    },
+    "approval_required": {
+      "type": "boolean"
+    },
+    "function": {
+      "type": "string"
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "pure": {
+      "type": "boolean"
+    },
+    "policy_scope": {
+      "enum": [
+        "root",
+        "configured"
+      ]
+    },
+    "effects": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/effect"
+      }
+    }
+  },
+  "required": [
+    "fixes",
+    "effects_version",
+    "approval_required",
+    "function",
+    "complete",
+    "pure",
+    "policy_scope",
+    "effects"
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "check": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "enum": [
+            "root",
+            "dependency",
+            "agent",
+            "tool",
+            "dispatch"
+          ]
+        },
+        "identity": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "allowed",
+            "denied"
+          ]
+        },
+        "approval_required": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "scope",
+        "identity",
+        "status",
+        "approval_required"
+      ],
+      "additionalProperties": true
+    },
+    "effect": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "capability": {
+          "enum": [
+            null,
+            "read",
+            "write",
+            "net",
+            "env",
+            "shell",
+            "c",
+            "python"
+          ]
+        },
+        "target": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "allowed",
+            "denied",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "diagnostics-v1.schema.json#/$defs/range"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        }
+      },
+      "required": [
+        "operation",
+        "capability",
+        "target",
+        "status",
+        "reason",
+        "file",
+        "range",
+        "checks"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

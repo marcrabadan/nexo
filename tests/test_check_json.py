@@ -1,5 +1,6 @@
 """The versioned check interface is identical in both implementations."""
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -11,14 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = json.loads((ROOT / "docs/diagnostics-v1.schema.json").read_text())
 
 
-def validate(value, schema):
+def validate(value, schema, root=None):
     """Validate the subset used by our wire schema without a new dependency."""
+    root = SCHEMA if root is None else root
     if "$ref" in schema:
-        return validate(value, SCHEMA["$defs"][schema["$ref"].rsplit("/", 1)[1]])
+        base = SCHEMA if schema["$ref"].startswith("diagnostics-v1.schema.json") else root
+        return validate(value, base["$defs"][schema["$ref"].rsplit("/", 1)[1]], base)
     if "anyOf" in schema:
         for option in schema["anyOf"]:
             try:
-                validate(value, option)
+                validate(value, option, root)
                 return
             except AssertionError:
                 pass
@@ -38,11 +41,12 @@ def validate(value, schema):
         if schema.get("additionalProperties") is False:
             assert value.keys() <= props.keys()
         for key in value.keys() & props.keys():
-            validate(value[key], props[key])
+            validate(value[key], props[key], root)
     if isinstance(value, list):
         assert len(value) >= schema.get("minItems", 0)
+        assert len(value) <= schema.get("maxItems", len(value))
         for item in value:
-            validate(item, schema.get("items", {}))
+            validate(item, schema.get("items", {}), root)
     if "minimum" in schema:
         assert value >= schema["minimum"]
 
@@ -52,7 +56,12 @@ NATIVE = ROOT / "compiler/target/debug/nexo"
 @pytest.fixture(scope="module")
 def commands():
     cmds = [[sys.executable, "-m", "nexo.cli"]]
-    if shutil.which("cargo"):
+    prebuilt = os.environ.get("NEXO_TEST_COMPILER")
+    if prebuilt:
+        binary = Path(prebuilt).resolve(strict=True)
+        assert binary.is_file() and os.access(binary, os.X_OK)
+        cmds.append([str(binary)])
+    elif shutil.which("cargo"):
         subprocess.run(["cargo", "build", "--locked"], cwd=ROOT / "compiler", check=True,
                        capture_output=True)
         cmds.append([str(NATIVE)])
