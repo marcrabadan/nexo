@@ -80,6 +80,8 @@ print(double(3))</code></pre><div class="out"><div class="out-label">Example res
 
 <section id="shield-layers"><div class="wrap">
   <div class="section-head"><p class="eyebrow">Nexo Shield</p><h2>Your program.  <br>Access you choose.</h2><p class="section-intro">Shield adds permission checks. Docker can contain the run. An optional Linux worker adds restrictions enforced by the operating system.</p></div>
+  <div class="code"><div class="code-bar"><span>Inspect effects before you run</span><button class="copy" type="button">Copy</button></div><pre><code>nexo check --effects --require-complete app.nexo</code></pre></div>
+  <p>First, inspect the permissions your code is known to need. Static analysis follows supported calls and reports policy denials and unresolved effects without executing your program. Dynamic cases can remain unknown; <code>--require-complete</code> makes those incomplete summaries fail the check. Shield still checks access when you run. <a href="shield.html#static-analysis">Explore configured permissions and approval requirements</a>.</p>
   <p class="how-explore-label" id="how-layer-label">Explore the layers</p>
   <div class="tabs how-layer-tabs" role="tablist" aria-labelledby="how-layer-label">
     <button class="tab" role="tab" id="layer-rules" aria-controls="view-rules" aria-selected="true">Set the rules</button>

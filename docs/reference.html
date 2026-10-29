@@ -1415,6 +1415,17 @@ The policy denies reading "secrets/keys.txt" (deny read "secrets/"). Remove deny
   c       nothing
   python  nothing
 Anything else stops a release build; nexo report.nexo allows it with a warning, except shell commands.</code></pre></div></div>
+
+  <h3 id="effects">Check effects before execution</h3>
+  <p><code>nexo check --effects</code> reports the permissions required by functions and module initializers without running the program. Both implementations follow direct, recursive and imported calls, supported immutable aliases and unambiguous record methods. Known requirements are compared with the declared policy; missing grants and explicit denials are errors.</p>
+  <div class="code"><div class="code-bar"><span>Inspect a program</span><button class="copy" type="button">Copy</button></div><pre><code>nexo check --effects app.nexo
+nexo check --effects --json --require-complete app.nexo</code></pre></div>
+  <p>Unresolved callbacks, dynamic targets and unsupported registration contexts are reported as unknown. Unknowns are warnings by default. Add <code>--require-complete</code> to return exit code 1 for an incomplete analysis, as well as for known denials or source/configuration errors. Exit code 0 without this option can still include unknowns. Invalid options return exit code 2.</p>
+  <p>To compare operator-configured dependency, tool and agent permissions too, supply the same manifests used by Shield:</p>
+  <div class="code"><div class="code-bar"><span>Check configured permissions</span><button class="copy" type="button">Copy</button></div><pre><code>nexo check --effects --json --require-complete \
+  --dependencies permissions.json --authorization grants.json app.nexo</code></pre></div>
+  <p>The corresponding defaults are <code>NEXO_SECURITY_DEPENDENCIES</code> and <code>NEXO_SECURITY_AUTHORIZATION</code>; each explicit option overrides its environment setting. These options and <code>--require-complete</code> require <code>--effects</code>. The analysis cannot be combined with <code>--intent</code> and never calls a model.</p>
+  <p><code>--json</code> uses the diagnostics v1 envelope with effect metadata v2, including scoped permission comparisons and required human approval. Analysis never grants approval or authorizes execution. Shield still enforces actual runtime contexts, allowlists and protected operations. See <a href="shield.html#static-analysis">static analysis and runtime checks</a> and the <a href="https://github.com/marcrabadan/nexo/blob/main/docs/effects.md">full effect report contract</a>.</p>
 </section>
 
 <section class="ref-sec" id="cli">
@@ -1441,6 +1452,8 @@ compiler/target/release/nexo hello.nexo</code></pre></div>
       <tr><td><code>nexo fmt [paths]</code></td><td>Formats files in place; there are no options</td></tr>
       <tr><td><code>nexo lint [paths]</code>, <code>nexo fix [paths]</code></td><td>Warnings with their fixes, and applying the safe ones</td></tr>
       <tr><td><code>nexo check [paths]</code></td><td>The compile checks, without running anything</td></tr>
+      <tr><td><code>nexo check --json [paths]</code></td><td>Compile diagnostics as structured JSON</td></tr>
+      <tr><td><code>nexo check --effects [--json] [--require-complete] [--dependencies file.json] [--authorization file.json] [paths]</code></td><td><a href="#effects">Static effect summaries and configured permission comparisons</a>; optionally reject incomplete analysis</td></tr>
       <tr><td><code>nexo docs [paths]</code></td><td>Markdown documentation from the <code>##</code> comments; <code>--for-ai file.nexo</code> lists what a program can use</td></tr>
       <tr><td><code>nexo lsp</code></td><td>The language server, on standard input and output</td></tr>
       <tr><td><code>nexo mcp</code></td><td>A Model Context Protocol server: <code>check</code>, <code>run_tests</code>, <code>docs_for_ai</code>, <code>plan</code> and <code>format</code> for AI assistants, never <code>apply</code></td></tr>

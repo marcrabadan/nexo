@@ -68,7 +68,7 @@ print(&quot;Shield Docker: {text}&quot;)</code></pre></div>
     </div>
   </div>
 </div>
-<div class="wrap"><nav class="shield-jump" aria-label="Shield sections"><span>Inside Shield</span><a href="#policy">Read a policy</a><a href="#architecture">Architecture <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#features">Capabilities <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#docker">Deployment <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#boundaries">Boundaries <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a></nav></div>
+<div class="wrap"><nav class="shield-jump" aria-label="Shield sections"><span>Inside Shield</span><a href="#policy">Read a policy</a><a href="#static-analysis">Check before running</a><a href="#architecture">Architecture <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#features">Capabilities <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#docker">Deployment <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a href="#boundaries">Boundaries <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a></nav></div>
 </div>
 
 <section id="policy"><div class="wrap">
@@ -79,6 +79,19 @@ print(&quot;Shield Docker: {text}&quot;)</code></pre></div>
     <article class="card"><p class="shield-card-label">Deny</p><h3>Keep commands closed</h3><p><code>deny shell</code> forbids shell commands. A deny rule takes precedence over an allow rule, and undeclared checked access is rejected.</p></article>
   </div>
   <p class="shield-note">If this program tries to read <code>private.txt</code>, there is no permission for that file, so Shield stops execution. A permission failure cannot be handled with <code>try</code>. Keep grants narrow and add only the access the program needs.</p>
+</div></section>
+
+<section id="static-analysis"><div class="wrap">
+  <div class="section-head"><p class="eyebrow">Before execution</p><h2>Inspect the access your code needs.</h2><p class="section-intro">Static effect analysis follows supported calls and compares known permission requirements before you run the program. It is available in both the interpreter and compiler.</p></div>
+  <div class="code"><div class="code-bar"><span>Check your source and existing Shield manifests</span><button class="copy" type="button">Copy</button></div><pre><code>nexo check --effects app.nexo
+nexo check --effects --json --require-complete \
+  --dependencies permissions.json --authorization grants.json app.nexo</code></pre></div>
+  <div class="grid shield-capabilities">
+    <article class="card"><p class="shield-card-label">Permissions</p><h3>Compare known requirements</h3><p>Reports retain the source of each effect and compare it with the root policy, relevant dependency and caller ceilings, and configured tool and agent permissions. A denied possible call path is reported even if another path allows it.</p></article>
+    <article class="card"><p class="shield-card-label">Approval</p><h3>Keep human decisions explicit</h3><p>The report identifies operator-required approval, including for a pure configured tool. Reading a manifest and checking a program never grant that approval or dispatch a tool.</p></article>
+    <article class="card"><p class="shield-card-label">Completeness</p><h3>Make unknowns visible</h3><p>Dynamic targets, unresolved callbacks and opaque registration contexts remain unknown. They are advisory by default; <code>--require-complete</code> returns a failure for incomplete summaries. Analysis limits also produce explicit unknowns.</p></article>
+  </div>
+  <p class="shield-note">A static match describes the source, configuration and filesystem snapshot at analysis time. It is not an execution authorization or an isolation guarantee. Runtime permission checks, allowlists, approvals and the selected execution boundary still apply. <a href="reference.html#effects">Read the commands, options and exit codes</a>.</p>
 </div></section>
 
 <section class="alt" id="architecture"><div class="wrap">
