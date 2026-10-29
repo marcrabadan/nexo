@@ -1,0 +1,5 @@
+use python statistics as stats
+
+assert stats.mean([2, 4, 6]) == 4
+print("mean:", stats.mean([2, 4, 6]))
+print("median:", stats.median([9, 1, 5]))

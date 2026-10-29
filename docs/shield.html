@@ -49,6 +49,7 @@
     <p class="shield-note">Policy alone does not prevent DNS rebinding, mediate direct native syscalls or impose process resource limits. Explicit supported worker profiles provide separate kernel confinement and broker address pinning.</p>
     <p class="lede">Choose which files your program can read and write. Shield checks those permissions when the program runs, and Docker adds a separate boundary around its execution.</p>
     <div class="actions"><a class="btn btn-primary" href="#docker">Run with Docker <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 19 19 5M5 5h14v14"/></svg></span></a><a class="btn btn-ghost" href="#architecture">See the architecture <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 4v16m-6-6 6 6 6-6"/></svg></span></a></div>
+    <p class="shield-note">Want to try it first? <a href="security.html">Follow the security guide</a>: read one permitted file, verify a denial, then constrain an agent’s tool without calling a model.</p>
     <p class="shield-note">Prefer a visual overview? <a href="how-it-works.html#shield-layers">Explore the Shield layers</a>. New to the language? <a href="learn.html">Start with the Nexo lessons</a>. You can learn ordinary programs first, then add a policy when they need access to files or other resources.</p>
   </div>
   <div class="hero-code shield-policy">

@@ -1,0 +1,13 @@
+policy:
+    allow read "public/report.txt"
+    deny shell
+
+@tool "Read the public order summary"
+fn report() -> str!:
+    return read("public/report.txt")?
+
+agent support:
+    tools = [report]
+    goal = "Answer using the public order summary"
+    max_steps = 3
+    confirm = [report]

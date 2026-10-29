@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexo security — permissions, tools and approval</title>
+<meta name="description" content="A practical Nexo security guide: limit file access, verify a denial, constrain an agent tool and distinguish static analysis, human approval and runtime isolation.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="reference-page">
+
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="learn.html">Learn</a>
+      <a href="playground.html">Playground</a>
+      <a href="examples.html">Examples</a>
+      <a href="libraries.html">Libraries</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main id="main"><div class="wrap ref-layout">
+<aside class="ref-side"><details class="ref-toc" open><summary>On this page</summary><nav aria-label="Security guide"><ol>
+<li><a href="#access">Limit file access</a></li><li><a href="#denial">Check a denial</a></li><li><a href="#tools">Constrain a tool</a></li><li><a href="#approval">Review unknowns and approval</a></li><li><a href="#next">Choose your next boundary</a></li>
+</ol></nav></details></aside>
+<article class="ref-body"><header class="ref-head"><p class="eyebrow">Security / Practical guide</p><h1>Give a tool only the access it needs.</h1><p class="lede">Start with one readable file. Check an attempted access outside that grant. Then apply the same boundary to an agent’s tool and inspect its approval requirement.</p>
+<p class="ref-note">You need an <a href="index.html#start">installed Nexo CLI</a> and a repository checkout. All commands below run from <code>docs/security</code>. The examples use local files only: no API key, model request, database or container is needed. <a href="https://github.com/marcrabadan/nexo/tree/main/docs/security">Open the example files</a>. For the architecture, see <a href="shield.html">Nexo Shield</a>.</p></header>
+<section class="ref-sec" id="access"><h2><a href="#access">1. Limit file access</a></h2>
+<p>The example folder contains <a href="security/public/report.txt"><code>public/report.txt</code></a> with the text <code>Orders ready: 2</code>. The program grants access to that exact file and denies shell commands. Permission targets are resolved from the working directory, so enter the example folder first.</p>
+<div class="code"><div class="code-bar"><span>read.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
+    allow read &quot;public/report.txt&quot;
+    deny shell
+
+read(&quot;public/report.txt&quot;)
+print(&quot;Read permitted.&quot;)</code></pre></div>
+<div class="code"><div class="code-bar"><span>From the repository root</span><button class="copy" type="button">Copy</button></div><pre><code>cd docs/security
+nexo check --effects --require-complete read.nexo
+nexo security run read.nexo</code></pre></div>
+
+<p>The static check exits 0. The strict runtime command reads the file and prints <code>Read permitted.</code>. Static analysis inspects known requirements; <code>security run</code> enforces checked API access during execution. Neither command requests OS isolation.</p></section>
+<section class="ref-sec" id="denial"><h2><a href="#denial">2. Check an attempted access outside the grant</a></h2>
+<p>The next program retains the same policy but requests <code>private.txt</code>. That file does not need to exist: permission is refused before its contents can be read.</p>
+<div class="code"><div class="code-bar"><span>denied.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
+    allow read &quot;public/report.txt&quot;
+    deny shell
+
+print(read(&quot;private.txt&quot;))</code></pre></div>
+<div class="code"><div class="code-bar"><span>Run each command separately; both are expected to fail</span><button class="copy" type="button">Copy</button></div><pre><code>nexo check --effects denied.nexo
+nexo security run denied.nexo</code></pre></div>
+
+<p>Both commands return exit code 1 and report the missing read grant. This is an expected denial. Under Shield, undeclared checked access is fatal and <code>try</code> cannot recover from a security violation. If an allow and a deny both match, the deny wins. Keep this example denied rather than broadening its policy.</p></section>
+<section class="ref-sec" id="tools"><h2><a href="#tools">3. Constrain an agent’s tool</a></h2>
+<p>The tool reads the same fixed file; the agent lists that tool and asks for confirmation. The example deliberately never calls <code>support.handle</code>, so checking it cannot invoke a provider.</p>
+<div class="code"><div class="code-bar"><span>agent.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
+    allow read &quot;public/report.txt&quot;
+    deny shell
+
+@tool &quot;Read the public order summary&quot;
+fn report() -&gt; str!:
+    return read(&quot;public/report.txt&quot;)?
+
+agent support:
+    tools = [report]
+    goal = &quot;Answer using the public order summary&quot;
+    max_steps = 3
+    confirm = [report]</code></pre></div>
+
+<p>Source declarations describe the application. A separate, trusted operator manifest constrains model dispatch. It names the allowed agent and tool by <code>file::symbol</code>; identity paths are relative to the manifest directory. The agent and tool each receive only the read grant. The tool also requires human approval.</p>
+<div class="code"><div class="code-bar"><span>authorization.json</span><button class="copy" type="button">Copy</button></div><pre><code>{
+  &quot;version&quot;: 1,
+  &quot;agents&quot;: {
+    &quot;agent.nexo::support&quot;: {
+      &quot;permissions&quot;: [
+        [
+          &quot;allow&quot;,
+          &quot;read&quot;,
+          &quot;public/report.txt&quot;
+        ]
+      ],
+      &quot;tools&quot;: [
+        &quot;agent.nexo::report&quot;
+      ]
+    }
+  },
+  &quot;tools&quot;: {
+    &quot;agent.nexo::report&quot;: {
+      &quot;permissions&quot;: [
+        [
+          &quot;allow&quot;,
+          &quot;read&quot;,
+          &quot;public/report.txt&quot;
+        ]
+      ],
+      &quot;confirm&quot;: true
+    }
+  }
+}</code></pre></div>
+<div class="code"><div class="code-bar"><span>Inspect configured permissions without running the agent</span><button class="copy" type="button">Copy</button></div><pre><code>nexo check --effects --json --authorization authorization.json agent.nexo</code></pre></div>
+
+<p>In the summary whose <code>function</code> is <code>report</code>, the read effect has <code>allowed</code> comparisons for the root, agent and tool scopes, and <code>approval_required</code> is <code>true</code>. Each applicable scope must permit access; an agent grant cannot widen the program policy. The tool grant governs model dispatch, while a direct trusted call to the function remains an ordinary function call.</p>
+<p>To try a denied configuration, copy <code>authorization.json</code> to <code>no-tools.json</code> and set the agent’s <code>tools</code> array to <code>[]</code>. Check again with <code>--authorization no-tools.json</code>: it returns exit code 1 with a denied dispatch comparison. The model cannot add a grant to fix this.</p></section>
+<section class="ref-sec" id="approval"><h2><a href="#approval">4. Review unknowns and approval separately</a></h2>
+<p>The preceding check exits 0 in advisory mode, but its module summary still contains unknown registration effects. The complete <code>report</code> function summary does not make the entire module complete. You can make that distinction a failing check:</p>
+<div class="code"><div class="code-bar"><span>Expected exit code 1: the module summary is incomplete</span><button class="copy" type="button">Copy</button></div><pre><code>nexo check --effects --json --require-complete \
+  --authorization authorization.json agent.nexo</code></pre></div>
+
+<p>An unknown means the analyzer cannot establish the effect for that construct. It must not be interpreted as pure or permitted. <code>--require-complete</code> fails on unknowns without changing their warning severity. <a href="reference.html#effects">Read the full command and exit semantics</a>.</p>
+<p>The analysis never supplies approval. When you later connect a real provider, configure its destination and credential permissions too, then launch with <code>nexo security run --authorization authorization.json agent.nexo</code>. As supplied, this file only registers the tool and agent; it does not dispatch them. An actual <code>support.handle(...)</code> call needs provider setup and a human-input execution mode for confirmation. Keep the operator manifest and its parent directories outside the application’s writable grants. <a href="https://github.com/marcrabadan/nexo/blob/main/docs/shield-dispatch.md">Read the dispatch and approval contract</a>.</p></section>
+<section class="ref-sec" id="next"><h2><a href="#next">5. Choose the boundary your application needs</a></h2>
+<p>Permissions, credentials, API authentication and process isolation address different parts of an application. Continue with the guide that matches what you are building.</p>
+<div class="table-wrap"><table class="ref-table"><thead><tr><th>Your next task</th><th>Continue here</th></tr></thead><tbody>
+<tr><td>Use a real model</td><td><a href="libraries.html#ai-setup">Provider setup</a> and <a href="libraries.html#ai-agent">agents and tools</a>. A fake answer helps test application logic; it does not prove the real dispatch boundary.</td></tr>
+<tr><td>Keep credentials out of source</td><td><a href="reference.html#std-crypto">Secrets, passwords and cryptography</a>: pass <code>secret</code> values to supported consumers, use <code>password.hash</code>/<code>password.check</code> for passwords, and review key handling separately from file permissions.</td></tr>
+<tr><td>Protect an HTTP API</td><td><a href="libraries.html#web-auth">JWT authentication and role tests</a>, with the complete <a href="libraries.html#web">Web and HTTP guide</a> and <a href="reference.html#mod-web">server reference</a>. Authentication does not grant the server process additional Shield permissions.</td></tr>
+<tr><td>Limit imported code</td><td><a href="https://github.com/marcrabadan/nexo/blob/main/docs/effects.md">Dependency and caller ceilings</a>: use the same dependency manifest for static inspection and runtime enforcement.</td></tr>
+<tr><td>Contain native execution</td><td><a href="shield.html#docker">Hardened Docker</a> and <a href="shield.html#boundaries">Linux worker requirements</a>. Probe the deployment host; unsupported requested isolation must stop execution.</td></tr>
+</tbody></table></div>
+<p>A static match is a snapshot of source, configuration and filesystem metadata. It cannot authorize changed artifacts or replace runtime checks, human approval or the chosen isolation boundary.</p></section>
+</article></div></main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer">
+      <a href="learn.html">Learn</a>
+      <a href="playground.html">Playground</a>
+      <a href="examples.html">Examples</a>
+      <a href="libraries.html">Libraries</a>
+      <a href="how-it-works.html">How it works</a>
+      <a href="reference.html">Reference</a>
+      <a href="shield.html">Shield</a>
+      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
+      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+# A fresh key per run is for this isolated example, not a deployment setting.
+tokens = jwt(key: password.generate(32))
+
+type Registration:
+    name: str
+    email: str
+
+server signup:
+    port = 8080
+    auth = tokens
+
+    @public
+    get "/health"():
+        return "ready"
+
+    @role("admin")
+    post "/registrations"(entry: Registration):
+        return entry
+
+test "the health route is public":
+    assert http.get("{signup.url}/health").text == "ready"
+
+test "a private route rejects a missing token":
+    try:
+        http.post("{signup.url}/registrations", {"name": "Ana", "email": "ana@example.com"}, retries: 0)
+        fail("expected authentication to be required")
+    else e is HTTPError:
+        assert e.message == "POST {signup.url}/registrations answered 401 Unauthorized"
+        print(e.message.replace(signup.url, "URL"))
+
+test "a valid token still needs the required role":
+    token = tokens.sign({"sub": "ana", "role": "reader"}, expires: 1h)
+    try:
+        http.post("{signup.url}/registrations", {"name": "Ana", "email": "ana@example.com"},
+                  headers: {"Authorization": "Bearer {token}"}, retries: 0)
+        fail("expected the admin role to be required")
+    else e is HTTPError:
+        assert e.message == "POST {signup.url}/registrations answered 403 Forbidden"
+        print(e.message.replace(signup.url, "URL"))
+
+test "an admin token opens the route":
+    token = tokens.sign({"sub": "ana", "role": "admin"}, expires: 1h)
+    reply = http.post("{signup.url}/registrations", {"name": "Ana", "email": "ana@example.com"},
+                      headers: {"Authorization": "Bearer {token}"})
+    assert reply.status == 201
+    print(reply.status, reply.json()["name"])

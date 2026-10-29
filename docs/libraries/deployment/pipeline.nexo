@@ -1,0 +1,17 @@
+fn double(n: int) -> int:
+    return n * 2
+
+pipeline verify:
+    trigger push to main
+    version = "1.0.0"
+
+    step checks:
+        assert double(3) == 6
+        print("checks passed")
+
+    step package:
+        artifact = "signup:{version}"
+        print(artifact)
+
+    after success:
+        print("ready for review")

@@ -1,0 +1,6 @@
+policy:
+    allow read "public/report.txt"
+    deny shell
+
+read("public/report.txt")
+print("Read permitted.")

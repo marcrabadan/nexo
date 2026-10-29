@@ -610,6 +610,7 @@ print(total)</code></pre><div class="out"><div class="out-label">$ nexo parallel
 
 <section class="ref-sec" id="patterns">
   <h2><a href="#patterns">Patterns</a></h2>
+  <p>Use the <a href="libraries.html#reliability">resilience and workflow guide</a> for bounded retries, fallback, circuit breakers, undo actions and compensation.</p>
   <p>Five design patterns have their own word; the rest are written with functions, <code>match</code> and named arguments (section 10).</p>
   <ul class="ref-list">
     <li><code>single name:</code> holds one value with the fields written in it, at the top level of a file; <code>config.port = 9090</code> changes it everywhere.</li>
@@ -675,6 +676,7 @@ print(lines)</code></pre><div class="out"><div class="out-label">$ nexo actions.
 ["first", "second"]
 true false
 ["first"]</code></pre></div></div>
+  <h3 id="workflows">Durable workflows</h3>
   <p><code>workflow name(params):</code> is a list of <code>step</code>s that runs like a function. A step may have an <code>undo</code> on the next line, indented. <code>step wait condition, max: 3 days</code> checks the condition every second until it is true, and fails with <code>Timeout</code> after <code>max</code>. When a step fails, the <code>undo</code> of every step already done runs, last first, and the call fails with the step's error. The state is saved in <code>.nexo/workflows/</code> after every step: a program that stops half way runs the same workflow with the same arguments from the step it stopped in, the next time it is called.</p>
 <div class="code"><div class="code-bar"><span>workflows.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">var accounts = []
 
@@ -881,6 +883,7 @@ else e:
 "2026-02-30" is not a valid date</code></pre></div></div>
 
   <h3 id="std-crypto">Security</h3>
+  <p>For a practical path through access control, tool permissions and approvals, start with the <a href="security.html">security guide</a>. The APIs below handle secrets, passwords and cryptographic operations.</p>
   <div class="table-wrap"><table class="ref-table sig">
     <thead><tr><th>Call</th><th>What it does</th></tr></thead>
     <tbody>
@@ -1074,6 +1077,7 @@ DatabaseError There is already a Customer with email = "ana@mail.com"
   <p>More examples, and how to set it up: <a href="libraries.html#db">AI, data and streams</a>.</p>
 
   <h3 id="mod-sync"><code>nexo.sync</code>: workers and channels</h3>
+  <p>Follow the <a href="libraries.html#sync">sync guide</a> for a bounded worker queue, selection timeouts, shared state and an explained deadlock. The list below is the compact reference.</p>
   <ul class="ref-list">
     <li><code>spawn f(args)</code> starts a task that runs on its own; it is not waited for.</li>
     <li><code>channel[T](size: n)</code> is a typed queue: <code>send</code> waits while it is full, <code>receive</code> while it is empty, and <code>for x in c</code> reads until <code>close()</code>. A record sent through a channel is copied, so each task owns what it gets.</li>
@@ -1119,6 +1123,7 @@ alert disk full
 10 14</code></pre></div></div>
 
   <h3 id="mod-web"><code>nexo.web</code>: servers</h3>
+  <p>Start with the <a href="libraries.html#web">Web and HTTP guide</a> for typed routes, request validation, JWT roles and real HTTP tests. The options below are the compact reference.</p>
   <ul class="ref-list">
     <li><code>server name:</code> with <code>port = n</code> and routes <code>get|post|put|patch|delete "/path/{param}"(param: type, ...):</code>. Path, query and JSON body parameters are checked against their types; a wrong one answers 400.</li>
     <li>What a route returns is the answer: a status code (<code>return 404</code>), <code>none</code> (204), a text (<code>text/plain</code>) or any other value as JSON, with 201 for <code>post</code> and 200 otherwise. An error that leaves the route answers too: <code>NotFound</code> is 404, <code>InvalidValue</code> and <code>InvalidData</code> 400, a repeated <code>@unique</code> 409, anything else 500.</li>
@@ -1258,6 +1263,7 @@ clicks {"page": "/a", "count": 1}
   <p>More examples, and how to set it up: <a href="libraries.html#stream">AI, data and streams</a>.</p>
 
   <h3 id="mod-flags">Flags and privacy</h3>
+  <p>Follow the <a href="libraries.html#flags">feature flag guide</a> and <a href="libraries.html#privacy">privacy guide</a> for runnable local examples and their operational limits.</p>
   <p>A <code>flags:</code> block declares each flag once: <code>on</code>, <code>off</code>, a percentage of users (stable per user), or <code>users where condition</code>; <code>nexo lint</code> warns about a flag whose <code>expires:</code> day has passed. <code>flag(name, user?)</code> reads it, and <code>nexo flags set name value --stage prod</code> changes it without a deploy.</p>
 <div class="code"><div class="code-bar"><span>flags.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type User:
     id: int
@@ -1319,6 +1325,7 @@ Contact: table contact in crm.db
   read by: the program</code></pre></div></div>
 
   <h3 id="mod-infra"><code>nexo.infra</code> and <code>nexo.ci</code>: deployment</h3>
+  <p>Start with the <a href="libraries.html#deployment">infrastructure and CI guide</a> to validate a declaration, run a local pipeline and export CI configuration before contacting a provider.</p>
   <ul class="ref-list">
     <li><code>infra name:</code> with <code>cloud = "aws"|"azure"|"gcp"|"k8s"</code> declares portable resources (<code>app</code>, <code>database</code>, <code>storage</code>, <code>queue</code>, <code>network</code>...) and <code>native</code> ones of a cloud. <code>stage prod:</code> changes values per stage, and <code>state = s3("bucket")</code> keeps the state outside <code>.nexo/state</code>.</li>
     <li><code>nexo plan</code> asks the cloud's own API what exists and shows the changes, the cost and the availability; <code>apply</code>, <code>destroy</code>, <code>drift</code>, <code>cost</code> and <code>import</code> use the same API.</li>
@@ -1365,6 +1372,7 @@ pipeline release:
         run("echo the release failed")</code></pre></div>
 
   <h3 id="mod-interop"><code>use c</code> and <code>use python</code></h3>
+  <p>The <a href="libraries.html#interop">C and Python guide</a> covers prerequisites, valid calls, signature errors and the audit boundary.</p>
   <p><code>use c "libm"</code> reads the library's C header when the program is compiled, so every call is checked against the real signature; <code>use c "./lib.so" as name</code> loads a file. <code>use python module as name</code> imports a Python module; numbers, text, lists and maps cross both ways. Calls into C are the only unsafe code in this edition, and <code>nexo audit</code> lists every one.</p>
 <div class="code"><div class="code-bar"><span>interop.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use c "libm"
 use python statistics as stats

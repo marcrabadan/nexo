@@ -1,0 +1,10 @@
+infra signup:
+    cloud = "k8s"
+    namespace = "signup-demo"
+    app api:
+        image = "signup-api:1.0.0"
+        port = 8080
+        replicas = 1
+
+stage prod:
+    replicas = 2

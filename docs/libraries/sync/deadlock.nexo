@@ -1,0 +1,6 @@
+use nexo.sync
+
+jobs = channel[int](size: 1)
+jobs.send(1)
+# The only task waits for room, but no receiver can free a slot.
+jobs.send(2)

@@ -1,0 +1,5 @@
+use c "libm"
+
+assert libm.sqrt(9.0) == 3.0
+print("root:", libm.sqrt(9.0))
+print("power:", libm.pow(2, 5))

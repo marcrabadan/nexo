@@ -1,0 +1,24 @@
+use nexo.sync
+
+fn produce(jobs: channel[int]):
+    for n in 1..6:
+        jobs.send(n)
+    jobs.close()
+
+fn worker(jobs: channel[int], results: channel[int]):
+    var subtotal = 0
+    for n in jobs:
+        subtotal += n * 2
+    results.send(subtotal)
+
+jobs = channel[int](size: 2)
+results = channel[int](size: 2)
+spawn produce(jobs)
+repeat 2:
+    spawn worker(jobs, results)
+
+var total = 0
+repeat 2:
+    total += results.receive()
+assert total == 42
+print("total:", total)

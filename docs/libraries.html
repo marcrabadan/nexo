@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexo libraries</title>
-<meta name="description" content="Set up and use nexo.ai, nexo.db and nexo.stream: language models with typed answers and agents, databases from SQLite to PostgreSQL, MySQL, MongoDB and Elasticsearch, and streams on Kafka, RabbitMQ and the clouds. Every example runs with both implementations.">
+<meta name="description" content="Practical Nexo guides for web APIs, AI, databases, streams, concurrency, feature flags, privacy, infrastructure, CI, C/Python integration and workflow compensation, with executable examples.">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
@@ -49,6 +49,15 @@
     <summary>On this page</summary>
     <nav aria-label="Libraries">
       <ol>
+        <li><a href="#web">Web and HTTP</a>
+          <ol>
+            <li><a href="#web-setup">Run and test locally</a></li>
+            <li><a href="#web-routes">Typed routes and bodies</a></li>
+            <li><a href="#web-auth">Authentication and roles</a></li>
+            <li><a href="#web-client">HTTP errors and retries</a></li>
+            <li><a href="#web-next">Persistence and boundaries</a></li>
+          </ol>
+        </li>
         <li><a href="#ai">nexo.ai</a>
           <ol>
             <li><a href="#ai-setup">Set up a model</a></li>
@@ -77,6 +86,51 @@
             <li><a href="#stream-processes">Producer and consumer</a></li>
           </ol>
         </li>
+        <li><a href="#sync">nexo.sync</a>
+          <ol>
+            <li><a href="#sync-workers">Workers and bounded queues</a></li>
+            <li><a href="#sync-select">Select and timeouts</a></li>
+            <li><a href="#sync-shared">Shared state</a></li>
+            <li><a href="#sync-deadlocks">Deadlocks</a></li>
+            <li><a href="#sync-boundaries">Lifecycle and boundaries</a></li>
+          </ol>
+        </li>
+        <li><a href="#flags">Feature flags</a>
+          <ol>
+            <li><a href="#flags-cohorts">Stable cohorts</a></li>
+            <li><a href="#flags-overrides">Local overrides</a></li>
+            <li><a href="#flags-lifecycle">Flag lifecycle</a></li>
+          </ol>
+        </li>
+        <li><a href="#privacy">Privacy</a>
+          <ol>
+            <li><a href="#privacy-records">Records and retention</a></li>
+            <li><a href="#privacy-logs">Private fields and logs</a></li>
+            <li><a href="#privacy-report">Data model report</a></li>
+          </ol>
+        </li>
+        <li><a href="#deployment">Infrastructure and CI</a>
+          <ol>
+            <li><a href="#deployment-infra">Declare and check</a></li>
+            <li><a href="#deployment-ci">Run a local pipeline</a></li>
+            <li><a href="#deployment-export">Export CI configuration</a></li>
+          </ol>
+        </li>
+        <li><a href="#interop">C and Python</a>
+          <ol>
+            <li><a href="#interop-python">Python modules</a></li>
+            <li><a href="#interop-c">C signatures</a></li>
+            <li><a href="#interop-boundaries">Audit and boundaries</a></li>
+          </ol>
+        </li>
+        <li><a href="#reliability">Resilience and workflows</a>
+          <ol>
+            <li><a href="#reliability-retry">Retries and fallback</a></li>
+            <li><a href="#reliability-circuit">Circuit breakers</a></li>
+            <li><a href="#reliability-actions">Undo actions</a></li>
+            <li><a href="#reliability-workflows">Workflow compensation</a></li>
+          </ol>
+        </li>
       </ol>
     </nav>
   </details>
@@ -86,10 +140,140 @@
 
 <header class="ref-head">
   <p class="eyebrow">Libraries</p>
-  <h1>AI, data and streams</h1>
-  <p class="lede">Set up and use the three libraries that connect a program to the outside world: language models with <code>nexo.ai</code>, databases with <code>nexo.db</code> and message brokers with <code>nexo.stream</code>.</p>
-  <p class="ref-note">Every program on this page runs with both implementations, and the output shown is what they print. The examples need no key, server or broker: SQLite and the local broker are built in, and <code>nexo test</code> replaces the model with <code>fake</code>. Each section starts with what to set up for the real thing. The <a href="reference.html#official">reference</a> lists every option.</p>
+  <h1>Libraries, step by step</h1>
+  <p class="lede">Build services, coordinate work and manage application data. Follow practical guides for web APIs, AI, databases and streams, then add feature flags, privacy controls, deployment and recovery.</p>
+  <p class="ref-note">Example files live in <a href="https://github.com/marcrabadan/nexo/tree/main/docs/libraries"><code>docs/libraries</code></a> in the repository checkout. Unless a command says otherwise, run it from its example’s folder. Displayed results come from executable examples; validation uses isolated copies so databases, exports and local state stay separate. No external provider is called by the executed examples. C/Python examples require their host integration tooling.</p>
+  <p class="ref-note">Adding credentials or model tools? Follow the <a href="security.html">security guide</a> to check permissions, verify a denial and constrain an agent’s tools before connecting external services. The <a href="reference.html#official">reference</a> lists module options and language constructs.</p>
 </header>
+
+<section class="ref-sec" id="web">
+  <h2><a href="#web"><code>nexo.web</code> and HTTP: build and test an API</a></h2>
+  <p>A <code>server</code> block defines routes; <code>http</code> calls them as a client. Start with a small registration endpoint, verify its inputs and responses, then add authentication. These examples return the submitted record; they do not create an account, persist data or send an email.</p>
+
+  <h3 id="web-setup">Run locally, test on a free port</h3>
+  <p>No <code>use</code> or external service is needed for these APIs. From the repository checkout, run the first example’s tests:</p>
+  <div class="code"><div class="code-bar"><span>From the repository root</span><button class="copy" type="button">Copy</button></div><pre><code>nexo test docs/libraries/web/routes.nexo</code></pre></div>
+  <p>In a test, Nexo starts the server on a free local port; <code>signup.url</code> contains its address. Use that URL rather than assuming port 8080. To try the example outside tests, run <code>nexo docs/libraries/web/routes.nexo</code>, visit <code>http://localhost:8080/health</code>, then stop it with Ctrl-C. The routes in this first example have no authentication; use them for the local exercise.</p>
+
+  <h3 id="web-routes">Typed routes and request bodies</h3>
+  <p><code>get "/greet/{id}"(id: int, name: str = "visitor")</code> takes <code>id</code> from the path and <code>name</code> from the query string. A <code>post</code> route with a record parameter validates the JSON body against that record before entering the handler. A missing required field or invalid typed path returns 400. A <code>str</code> field checks its type; it does not establish that an email address exists or belongs to the caller.</p>
+  <p>A text result becomes a text response. A record becomes JSON, with status 201 for a successful POST. The client’s <code>.status</code>, <code>.text</code> and <code>.json()</code> let tests inspect the response. These tests make real loopback requests, including invalid ones:</p>
+<div class="code"><div class="code-bar"><span>routes.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Registration:
+    name: str
+    email: str
+
+server signup:
+    port = 8080
+
+    get "/health"():
+        return "ready"
+
+    get "/greet/{id}"(id: int, name: str = "visitor"):
+        return "hello {name}, number {id}"
+
+    post "/registrations"(entry: Registration):
+        return entry
+
+test "routes return text and JSON":
+    health = http.get("{signup.url}/health")
+    assert health.status == 200
+    print(health.text)
+    reply = http.post("{signup.url}/registrations", {"name": "Ana", "email": "ana@example.com"})
+    assert reply.status == 201
+    print(reply.status, reply.json()["name"])
+
+test "path and query parameters are typed":
+    reply = http.get("{signup.url}/greet/7?name=Ana")
+    print(reply.text)
+    try:
+        http.get("{signup.url}/greet/not-a-number", retries: 0)
+        fail("expected an invalid path parameter")
+    else e is HTTPError:
+        assert e.message == "GET {signup.url}/greet/not-a-number answered 400 Bad Request"
+        print(e.message.replace(signup.url, "URL"))
+
+test "missing record fields fail validation":
+    try:
+        http.post("{signup.url}/registrations", {"name": "Ana"}, retries: 0)
+        fail("expected a missing email field")
+    else e is HTTPError:
+        assert e.message == "POST {signup.url}/registrations answered 400 Bad Request"
+        print(e.message.replace(signup.url, "URL"))</code></pre><div class="out"><div class="out-label">$ nexo test routes.nexo</div><pre><code>ready
+201 Ana
+✓ routes return text and JSON
+hello Ana, number 7
+GET URL/greet/not-a-number answered 400 Bad Request
+✓ path and query parameters are typed
+POST URL/registrations answered 400 Bad Request
+✓ missing record fields fail validation
+3 tests: 3 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="web-auth">Authentication and roles</h3>
+  <p>Set <code>auth = tokens</code> to require a JWT by default. Mark only intentionally open routes with <code>@public</code>; use <code>@role("admin")</code> when a valid token also needs an admin role. The tests below distinguish a missing token (401) from a valid token with the wrong role (403), then verify the allowed request.</p>
+  <p>The example creates a fresh signing key and signs tokens directly inside tests. It is not a login implementation. For deployment, use a managed, stable signing secret through <code>jwt(key: secret("JWT_KEY"))</code>, and issue a role only after your application has authenticated the user and established that role. Do not accept a caller-supplied role as authority. Follow the <a href="security.html#next">secrets and security references</a> before connecting real users.</p>
+<div class="code"><div class="code-bar"><span>auth.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo"># A fresh key per run is for this isolated example, not a deployment setting.
+tokens = jwt(key: password.generate(32))
+
+type Registration:
+    name: str
+    email: str
+
+server signup:
+    port = 8080
+    auth = tokens
+
+    @public
+    get "/health"():
+        return "ready"
+
+    @role("admin")
+    post "/registrations"(entry: Registration):
+        return entry
+
+test "the health route is public":
+    assert http.get("{signup.url}/health").text == "ready"
+
+test "a private route rejects a missing token":
+    try:
+        http.post("{signup.url}/registrations", {"name": "Ana", "email": "ana@example.com"}, retries: 0)
+        fail("expected authentication to be required")
+    else e is HTTPError:
+        assert e.message == "POST {signup.url}/registrations answered 401 Unauthorized"
+        print(e.message.replace(signup.url, "URL"))
+
+test "a valid token still needs the required role":
+    token = tokens.sign({"sub": "ana", "role": "reader"}, expires: 1h)
+    try:
+        http.post("{signup.url}/registrations", {"name": "Ana", "email": "ana@example.com"},
+                  headers: {"Authorization": "Bearer {token}"}, retries: 0)
+        fail("expected the admin role to be required")
+    else e is HTTPError:
+        assert e.message == "POST {signup.url}/registrations answered 403 Forbidden"
+        print(e.message.replace(signup.url, "URL"))
+
+test "an admin token opens the route":
+    token = tokens.sign({"sub": "ana", "role": "admin"}, expires: 1h)
+    reply = http.post("{signup.url}/registrations", {"name": "Ana", "email": "ana@example.com"},
+                      headers: {"Authorization": "Bearer {token}"})
+    assert reply.status == 201
+    print(reply.status, reply.json()["name"])</code></pre><div class="out"><div class="out-label">$ nexo test auth.nexo</div><pre><code>✓ the health route is public
+POST URL/registrations answered 401 Unauthorized
+✓ a private route rejects a missing token
+POST URL/registrations answered 403 Forbidden
+✓ a valid token still needs the required role
+201 Ana
+✓ an admin token opens the route
+4 tests: 4 passed, 0 failed</code></pre></div></div>
+
+  <h3 id="web-client">HTTP failures, timeouts and retries</h3>
+  <p>An HTTP response with status 400 or higher raises <code>HTTPError</code>; connection failures raise <code>NetworkError</code>. Use <code>try</code>/<code>else</code> when you expect an error response. In the examples, <code>fail</code> after each request ensures that a missing rejection fails the test instead of silently passing.</p>
+  <p>Requests accept <code>headers:</code>, <code>timeout:</code> and <code>retries:</code>. The default timeout is 30 seconds. GET, PUT and DELETE retry twice after a network error or a 502, 503 or 504. POST and PATCH do not retry by default because repeating them may repeat an effect. Set an appropriate timeout for the dependency you are calling; decide how duplicate writes will be handled before adding retries.</p>
+  <p><code>fake</code> can replace a dependency in a test without contacting its service. Keep real HTTP tests for route validation and authentication, and use fakes when testing application logic around an unrelated external dependency. See the <a href="reference.html#std-http">HTTP client and fake example</a> for the call syntax.</p>
+
+  <h3 id="web-next">Add persistence and execution boundaries</h3>
+  <p>Continue with <a href="#db-web">a web API backed by a database table</a> when registrations must survive a restart. For all route options and error mappings, see the <a href="reference.html#mod-web">server reference</a>.</p>
+  <p>JWT authentication controls who can call a route. Shield controls the protected operations the program can perform. Follow the <a href="security.html">security guide</a> for grants, known effects and denials. The ordinary HTTP examples here are not Shield deployment profiles: dependency/authorization configurations reject external listeners; supported in-memory and loopback ingress profiles require <a href="https://github.com/marcrabadan/nexo/blob/main/docs/shield-web.md">explicit configuration</a>. The offline Linux worker denies sockets.</p>
+</section>
 
 <section class="ref-sec" id="ai">
   <h2><a href="#ai"><code>nexo.ai</code>: language models</a></h2>
@@ -257,6 +441,7 @@ test "the pieces arrive in order":
 1 test: 1 passed, 0 failed</code></pre></div></div>
 
   <h3 id="ai-agent">Agents and tools</h3>
+  <p>After learning the tool syntax below, use the <a href="security.html#tools">operator-controlled tool example</a> to add narrow grants and human approval. Faking an answer tests application logic; real dispatch permissions must be checked separately.</p>
   <p>A function marked <code>@tool "what it does"</code> can be called by the model, with arguments checked against its parameter types. An <code>agent</code> block gives a model a goal, its tools and a limit of steps; a tool in <code>confirm</code> runs only after a person answers yes on the terminal. The tools are ordinary functions that you test directly, and <code>fake support.handle</code> replaces the agent's answer.</p>
 <div class="code"><div class="code-bar"><span>agent.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">## An agent that answers order questions with the program's own functions.
 type Order:
@@ -777,9 +962,389 @@ order 3: 75 EUR (message 3)</code></pre></div></div><div class="code"><div class
   <p>The second run of the consumer prints nothing new: the three orders were acknowledged. The same two programs work on Kafka, RabbitMQ or a cloud queue by adding the broker's option to <code>kafka("orders")</code>.</p>
 </section>
 
-</article>
-</div>
-</main>
+<section class="ref-sec" id="sync">
+  <h2><a href="#sync"><code>nexo.sync</code>: coordinate concurrent work</a></h2>
+  <p>Use workers when independent tasks need to exchange results. Channels carry messages, <code>select</code> waits for a message or timeout, and <code>shared</code> marks state that tasks may change together. Start with a fixed number of workers and an explicit way to know when their work is complete.</p>
+
+  <h3 id="sync-workers">A bounded worker queue</h3>
+  <p><code>use nexo.sync</code> enables these constructs. <code>spawn f(args)</code> launches a task and lets its caller continue. It does not return a join handle; the process waits for spawned tasks before normal shutdown. In this example, receiving one subtotal from each worker gives the main task an explicit completion point.</p>
+  <p><code>channel[int](size: 2)</code> holds at most two queued integers. <code>send</code> waits when the queue is full, which prevents this producer from running arbitrarily far ahead. <code>receive</code> waits when the queue is empty. Two workers consume each job once between them; a channel is not a broadcast.</p>
+<div class="code"><div class="code-bar"><span>workers.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.sync
+
+fn produce(jobs: channel[int]):
+    for n in 1..6:
+        jobs.send(n)
+    jobs.close()
+
+fn worker(jobs: channel[int], results: channel[int]):
+    var subtotal = 0
+    for n in jobs:
+        subtotal += n * 2
+    results.send(subtotal)
+
+jobs = channel[int](size: 2)
+results = channel[int](size: 2)
+spawn produce(jobs)
+repeat 2:
+    spawn worker(jobs, results)
+
+var total = 0
+repeat 2:
+    total += results.receive()
+assert total == 42
+print("total:", total)</code></pre><div class="out"><div class="out-label">$ nexo workers.nexo</div><pre><code>total: 42</code></pre></div></div>
+  <p>The producer closes the jobs channel after its final send. Workers drain the remaining values and then leave their <code>for</code> loops. Each sends exactly one subtotal. The division of jobs between workers may vary, but the combined total is always 42. Only the main task prints, so scheduling does not change the displayed result.</p>
+  <p>Closure means “no more messages”; it does not discard queued values. Sending after closure is an error. Give one producer responsibility for closing the queue, or coordinate multiple producers before closing it. An empty queue with no future sender and no closure can leave a consumer waiting.</p>
+
+  <h3 id="sync-select">Wait for a message or a timeout</h3>
+  <p><code>select</code> can wait on several channel branches. A branch receives one available message. An <code>after</code> branch provides a timeout when no message arrives. Here the first selection consumes the queued alert; the second reaches its timeout because the queue is now empty.</p>
+<div class="code"><div class="code-bar"><span>select.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.sync
+
+alerts = channel[str](size: 1)
+alerts.send("disk full")
+
+select:
+    message from alerts:
+        print("alert:", message)
+    after 1s:
+        fail("the queued alert should be ready")
+
+select:
+    message from alerts:
+        fail("the alert was already consumed")
+    after 1ms:
+        print("no more alerts")</code></pre><div class="out"><div class="out-label">$ nexo select.nexo</div><pre><code>alert: disk full
+no more alerts</code></pre></div></div>
+  <p>A timeout ends this wait; it does not cancel a worker or close its channel. Arrange shutdown separately. Do not depend on a particular task scheduling order when several sources can produce messages.</p>
+
+  <h3 id="sync-shared">Share state deliberately</h3>
+  <p>Ordinary task-owned values are not a place for workers to accumulate shared mutations. Prefer channels for passing results. When tasks need a common map, declare it with <code>shared</code>. Statements that use shared state run under the shared lock; that does not turn several separate statements into a transaction.</p>
+<div class="code"><div class="code-bar"><span>shared.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.sync
+
+shared seen = {}
+
+fn remember(n: int):
+    seen[n] = n * 2
+
+parallel for n in 1..6:
+    remember(n)
+
+assert len(seen) == 6
+assert seen[4] == 8
+print("entries:", len(seen))
+print("entry 4:", seen[4])</code></pre><div class="out"><div class="out-label">$ nexo shared.nexo</div><pre><code>entries: 6
+entry 4: 8</code></pre></div></div>
+  <p>The <code>parallel for</code> finishes before the assertions run. Each iteration writes a distinct key, so the final map has six entries regardless of scheduling. Keep shared operations short and avoid relying on map iteration order. See the <a href="reference.html#concurrency">concurrency reference</a> for the surrounding language constructs.</p>
+
+  <h3 id="sync-deadlocks">Recognize a queue deadlock</h3>
+  <p>A bounded queue needs a receiver that can make progress. In this deliberately failing example, the first send fills the only slot. The second send waits for room, but there is no other task to receive anything.</p>
+<div class="code"><div class="code-bar"><span>deadlock.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.sync
+
+jobs = channel[int](size: 1)
+jobs.send(1)
+# The only task waits for room, but no receiver can free a slot.
+jobs.send(2)</code></pre><div class="out"><div class="out-label">$ nexo deadlock.nexo</div><pre><code>Error in deadlock.nexo, line 6:
+  jobs.send(2)
+  ^^^^^^^^^^^^
+Every task is waiting on a channel and none can go on. Close the channel with close() when there is nothing more to send, or send what another task waits for.</code></pre></div></div>
+  <p>This command is expected to exit with code 1. Nexo reports that every task is waiting instead of hanging indefinitely on these channel waits. Start a receiver before filling the queue, or structure the producer/consumer lifecycle as in the worker example. Increasing the buffer only postpones this design error. Deadlock detection is not a general timeout for arbitrary blocking external operations.</p>
+
+  <h3 id="sync-boundaries">Choose sync, streams or an execution boundary</h3>
+  <p>Channels coordinate tasks inside one running process. They do not provide a durable broker, replay after a restart or cross-process delivery. Use <a href="#stream">streams and message brokers</a> for those requirements. There is no task handle or per-task cancellation API in this interface.</p>
+  <p>Under Shield, spawned tasks retain the caller’s captured permission ceilings; launching a task cannot regain broader root permissions. Configured dependency/agent/tool boundaries restrict messages and shared values to supported plain data. The Linux worker profiles reject threads and sync imports. See the <a href="https://github.com/marcrabadan/nexo/blob/main/docs/shield-spawn.md">spawn security contract</a> and <a href="security.html">security guide</a> before choosing a deployment profile.</p>
+</section>
+
+<section class="ref-sec" id="flags">
+  <h2><a href="#flags">Feature flags: roll out a change deliberately</a></h2>
+  <p>A flag changes which application path runs without changing its source. Flags are available implicitly: declare a <code>flags:</code> block, then call <code>flag(name, user?)</code>. Use a flag for rollout decisions; keep authorization in your authentication and permission checks.</p>
+  <h3 id="flags-cohorts">Switches, audiences and stable cohorts</h3>
+  <p><code>on</code> and <code>off</code> are global switches. <code>users where</code> evaluates a condition against the supplied user. A percentage chooses a stable cohort using the flag name and user identity, rather than making a fresh random decision for each request. Supply a stable user ID; 10% does not mean exactly one in every ten requests or exactly 10% of a small sample.</p>
+<div class="code"><div class="code-bar"><span>rollout.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type User:
+    id: int
+    country: str
+
+flags:
+    checkout = off
+    preview = 10%
+    regional_help = users where country == "ES"
+    old_design = on, expires: 2099-03-01
+
+ana = User(id: 7, country: "ES")
+luis = User(id: 8, country: "FR")
+assert flag("preview", ana) == flag("preview", ana)
+print("checkout:", flag("checkout"))
+print("regional:", flag("regional_help", ana), flag("regional_help", luis))
+print("stable cohort:", flag("preview", ana) == flag("preview", ana))</code></pre><div class="out"><div class="out-label">$ nexo rollout.nexo</div><pre><code>checkout: false
+regional: true false
+stable cohort: true</code></pre></div></div>
+  <h3 id="flags-overrides">Change the local override</h3>
+  <p>Run these commands in the example folder. The first invocation uses the declared default. The setter writes an override to the local <code>.nexo/flags.json</code> store; the next invocation reads it. This example does not contact a hosted flag service.</p>
+<div class="code"><div class="out"><div class="out-label">$ nexo rollout.nexo</div><pre><code>checkout: false
+regional: true false
+stable cohort: true</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo flags set checkout on rollout.nexo</div><pre><code>checkout = on (stage default)</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo rollout.nexo</div><pre><code>checkout: true
+regional: true false
+stable cohort: true</code></pre></div></div>
+  <p>Use <code>nexo flags set checkout off rollout.nexo</code> to switch it back. Add <code>--stage prod</code> to set a production-stage override; the running application must select the matching stage, such as through <code>NEXO_STAGE=prod</code>. Keep stage and working-directory configuration consistent between the setter and application. Protect the override store from untrusted writes.</p>
+  <h3 id="flags-lifecycle">Retire flags after the rollout</h3>
+  <p><code>expires:</code> lets lint report a flag past its intended lifetime; it is not an automatic kill switch. Test both application paths, decide what happens when the feature is disabled, and remove the flag when its migration is complete. See the <a href="reference.html#mod-flags">flag syntax reference</a>.</p>
+</section>
+
+<section class="ref-sec" id="privacy">
+  <h2><a href="#privacy">Privacy: know where personal data goes</a></h2>
+  <p>Mark data at its record definition, then follow it through storage, logs, export and deletion. These operations help implement application behavior; they do not establish a complete privacy policy or manage copies held by other systems.</p>
+  <h3 id="privacy-records">Retention, export, erasure and restriction</h3>
+  <p><code>@personal</code> identifies personal fields. <code>purpose</code> records why a type is retained. <code>keep = 2 years after last_seen</code> makes old rows eligible for removal by the runtime’s retention sweep when the table is used, with subsequent sweeps at its configured interval. It is not a separate background deletion service.</p>
+  <p>The example uses future dates for its two fixtures so they remain outside the retention cutoff. It declares a retention rule but does not force a sweep or claim that an old row inserted after a sweep disappears immediately. It creates only a temporary local SQLite database when run by this documentation’s validation. Running the source yourself creates files in your working directory.</p>
+<div class="code"><div class="code-bar"><span>records.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.db
+
+db = connect("contacts.db")
+
+@table
+type Contact:
+    id: id
+    name: str @personal
+    email: str @personal
+    last_seen: date
+
+    keep = 2 years after last_seen
+    purpose = "answer support requests"
+
+ana = db.Contact.add(name: "Ana", email: "ana@example.com", last_seen: date(2099, 1, 1))
+luis = db.Contact.add(name: "Luis", email: "luis@example.com", last_seen: date(2099, 1, 1))
+assert db.Contact.count() == 2
+print("contacts before changes:", db.Contact.count())
+path = privacy.export(ana)
+assert len(read(path)) &gt; 0
+print("export:", path)
+privacy.erase(ana)
+privacy.restrict(luis)
+assert db.Contact.count() == 0
+print("visible contacts:", db.Contact.count())
+print("physical rows:", len(db.sql("SELECT id FROM contact")))</code></pre><div class="out"><div class="out-label">$ nexo records.nexo</div><pre><code>contacts before changes: 2
+export: contact-1.json
+visible contacts: 0
+physical rows: 1</code></pre></div></div>
+  <p><code>privacy.export</code> writes a JSON export containing personal data: handle that file as sensitive. Erasure removes or anonymizes the record according to the supported storage semantics. Restriction hides the remaining record from ordinary queries, but does not physically delete it: the raw SQL count deliberately shows that one row remains. Direct SQL and external consumers need their own controls.</p>
+  <h3 id="privacy-logs">Private fields and logs</h3>
+  <p><code>@private</code> adds redaction when a record is passed to <code>log</code>. This example uses a dummy token:</p>
+<div class="code"><div class="code-bar"><span>logging.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Session:
+    user: str
+    token: str @private
+
+log(Session(user: "ana", token: "example-token-not-a-real-credential"))</code></pre><div class="out"><div class="out-label">$ nexo logging.nexo</div><pre><code>Session(user: "ana", token: "***")</code></pre></div></div>
+  <p>Redaction is not general information-flow tracking: do not extract a private field and print or concatenate it into a message. For database storage, <code>@private</code> columns require the connection’s encryption key, for example <code>connect("contacts.db", key: secret("DB_KEY"))</code>. Keep that key outside source and manage its availability separately. The <a href="reference.html#std-crypto">secret and cryptography APIs</a> explain supported consumers.</p>
+  <h3 id="privacy-report">Inspect the declared data model</h3>
+<div class="code"><div class="out"><div class="out-label">$ nexo privacy report records.nexo</div><pre><code>Personal data of records.nexo:
+
+Contact: table contact in contacts.db
+  name   personal
+  email  personal
+  kept: 2 years after last_seen
+  purpose: answer support requests
+  read by: the program</code></pre></div></div>
+  <p>The report describes declared fields, retention and purpose. It is not a discovery scan of every file, log, backup or downstream service. See the <a href="reference.html#mod-flags">privacy reference</a> and <a href="security.html">security guide</a> for related controls.</p>
+</section>
+
+<section class="ref-sec" id="deployment">
+  <h2><a href="#deployment"><code>nexo.infra</code> and <code>nexo.ci</code>: inspect, verify, then deploy</a></h2>
+  <p>Infrastructure declarations describe resources and stage overrides. A pipeline sequences work. Keep source validation, local pipeline execution, export and real infrastructure changes separate so the command you run matches the operation you intend.</p>
+  <h3 id="deployment-infra">Declare an application and its production stage</h3>
+<div class="code"><div class="code-bar"><span>deploy.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">infra signup:
+    cloud = "k8s"
+    namespace = "signup-demo"
+    app api:
+        image = "signup-api:1.0.0"
+        port = 8080
+        replicas = 1
+
+stage prod:
+    replicas = 2</code></pre></div>
+  <p>This Kubernetes example names an image and namespace; it does not build that image. The production stage changes the replica count. Check the source without contacting a cluster:</p>
+<div class="code"><div class="out"><div class="out-label">$ nexo check deploy.nexo</div><pre><code>No errors in deploy.nexo.</code></pre></div></div>
+  <p><code>nexo plan deploy.nexo --stage prod</code> is a provider operation: it queries the configured cluster to compare desired and actual resources. It needs the relevant provider credentials and network access. <code>apply</code> and <code>destroy</code> can modify real resources; they are not part of this documentation’s executed examples. Review the plan, image availability, namespace, secrets and target environment before choosing those commands. See the <a href="reference.html#mod-infra">provider and deployment reference</a> for supported resources and configuration.</p>
+  <h3 id="deployment-ci">Run a local verification pipeline</h3>
+  <p>This pipeline uses a fixed version, checks a function and passes an artifact name between steps. It does not run a shell command, build an image or publish anything.</p>
+<div class="code"><div class="code-bar"><span>pipeline.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn double(n: int) -&gt; int:
+    return n * 2
+
+pipeline verify:
+    trigger push to main
+    version = "1.0.0"
+
+    step checks:
+        assert double(3) == 6
+        print("checks passed")
+
+    step package:
+        artifact = "signup:{version}"
+        print(artifact)
+
+    after success:
+        print("ready for review")</code></pre></div>
+<div class="code"><div class="out"><div class="out-label">$ nexo ci run verify pipeline.nexo</div><pre><code>== step checks
+checks passed
+== step package
+signup:1.0.0
+== after success
+ready for review
+Pipeline verify: 2 steps passed, version 1.0.0.</code></pre></div></div>
+  <p>For an actual build, add the supported <code>test()</code> or <code>build_image(...)</code> operation with its required tools and permissions. Steps that execute commands need the corresponding policy, including <code>allow shell</code> where required. Use <code>approve(by: [...])</code> before a sensitive step; do not treat <code>--yes</code> as evidence that a human reviewed a change.</p>
+  <h3 id="deployment-export">Generate a CI configuration without publishing it</h3>
+<div class="code"><div class="out"><div class="out-label">$ nexo ci export github verify pipeline.nexo</div><pre><code>Wrote .github/workflows/verify.yml.</code></pre></div></div>
+  <p>This writes <code>.github/workflows/verify.yml</code> locally. Review the generated file and configure its runner, credentials and approval settings before committing it to an application repository. Exporting does not enable a workflow, upload secrets or deploy the application. Other targets are <code>gitlab</code>, <code>azure</code> and <code>jenkins</code>. The <a href="reference.html#cli">CLI reference</a> also lists selecting an individual step and failure/success handlers.</p>
+</section>
+
+<section class="ref-sec" id="interop">
+  <h2><a href="#interop">C and Python: reuse an existing library</a></h2>
+  <p>Use interoperability when an existing library supplies behavior your application needs. Both integrations need the relevant host runtime or toolchain; an import is executable integration, not a declaration that automatically contains third-party code.</p>
+  <h3 id="interop-python">Import a Python module</h3>
+  <p><code>use python statistics as stats</code> loads Python’s standard-library module under a local name. Numbers, text, lists and maps can cross the boundary. This example needs no third-party Python package:</p>
+<div class="code"><div class="code-bar"><span>python.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use python statistics as stats
+
+assert stats.mean([2, 4, 6]) == 4
+print("mean:", stats.mean([2, 4, 6]))
+print("median:", stats.median([9, 1, 5]))</code></pre><div class="out"><div class="out-label">$ nexo python.nexo</div><pre><code>mean: 4
+median: 5</code></pre></div></div>
+  <p>For another module, install it in the Python environment used by the Nexo integration and test its availability on the deployment host. A dependency installed in an unrelated virtual environment may not be visible there. Conversion support does not imply that arbitrary Python objects behave like Nexo records or that Python calls are pure.</p>
+  <h3 id="interop-c">Check a C signature</h3>
+  <p><code>use c "libm"</code> uses the system math library. C integration requires the supported C header discovery/toolchain and the library on the host. Keep headers and the linked library consistent.</p>
+<div class="code"><div class="code-bar"><span>c.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use c "libm"
+
+assert libm.sqrt(9.0) == 3.0
+print("root:", libm.sqrt(9.0))
+print("power:", libm.pow(2, 5))</code></pre><div class="out"><div class="out-label">$ nexo c.nexo</div><pre><code>root: 3.0
+power: 32.0</code></pre></div></div>
+  <p>Signature checking catches this incorrect argument before a valid C invocation can occur. The command is deliberately expected to fail:</p>
+<div class="code"><div class="code-bar"><span>bad-argument.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use c "libm"
+
+print(libm.sqrt("nine"))</code></pre><div class="out"><div class="out-label">$ nexo bad-argument.nexo</div><pre><code>Error in bad-argument.nexo, line 3:
+  print(libm.sqrt("nine"))
+        ^^^^^^^^^^^^^^^^^
+libm.sqrt: expects float, but gets str. Check the arguments of libm.sqrt.</code></pre></div></div>
+  <h3 id="interop-boundaries">Audit the native boundary</h3>
+<div class="code"><div class="out"><div class="out-label">$ nexo audit c.nexo</div><pre><code>c.nexo:1: use c "libm": C code runs here without Nexo's checks (implicit unsafe). Keep the library reviewed; a published package needs a signed review of it.
+c.nexo:3: libm.sqrt(...) calls C (implicit unsafe). Check its arguments and its result: nothing protects the memory it touches.
+c.nexo:4: libm.sqrt(...) calls C (implicit unsafe). Check its arguments and its result: nothing protects the memory it touches.
+c.nexo:5: libm.pow(...) calls C (implicit unsafe). Check its arguments and its result: nothing protects the memory it touches.
+Unsafe uses: 4. Files with unsafe code: 1.</code></pre></div></div>
+  <p><code>audit</code> inventories known C imports and calls; it is not a vulnerability scanner or a proof of memory safety. Valid signatures cannot prevent a C library from corrupting memory. Review ownership, library versions and deployment requirements independently. Shield rejects in-process C and Python integrations even when the root policy grants them, because their confinement is outside the supported boundary. See the <a href="reference.html#mod-interop">interop reference</a> and <a href="shield.html#boundaries">Shield limitations</a>.</p>
+</section>
+
+<section class="ref-sec" id="reliability">
+  <h2><a href="#reliability">Resilience and workflows: make failure behavior explicit</a></h2>
+  <p>These are language constructs and ordinary functions rather than extra modules to import. Decide whether an operation can safely be repeated, which failures are recoverable, and how completed side effects will be compensated.</p>
+  <h3 id="reliability-retry">Bound retries and provide an explicit fallback</h3>
+  <p>This local simulation tries at most twice, then returns a cached value. It verifies both recovery on the second attempt and exhaustion. The simulated provider has no external side effects and no delay; this is not a general retry decorator.</p>
+<div class="code"><div class="code-bar"><span>retry.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">var attempts = 0
+var unavailable = false
+
+fn fetch() -&gt; str!:
+    attempts += 1
+    if unavailable or attempts &lt; 2:
+        fail("temporary failure")
+    return "fresh value"
+
+fn fetch_with_fallback() -&gt; str:
+    repeat 2:
+        try:
+            return fetch()
+        else e:
+            print("attempt failed:", e.message)
+    return "cached value"
+
+assert fetch_with_fallback() == "fresh value"
+assert attempts == 2
+print("attempts:", attempts)
+
+attempts = 0
+unavailable = true
+assert fetch_with_fallback() == "cached value"
+print("fallback after", attempts, "attempts")</code></pre><div class="out"><div class="out-label">$ nexo retry.nexo</div><pre><code>attempt failed: temporary failure
+attempts: 2
+attempt failed: temporary failure
+attempt failed: temporary failure
+fallback after 2 attempts</code></pre></div></div>
+  <p>Real retry policy should select transient failures, bound elapsed time and account for repeated effects. A cached result has different freshness semantics from a successful live request: make that tradeoff explicit to callers. For built-in HTTP timeouts and method-specific retries, use the <a href="#web-client">HTTP client guide</a>. Do not stack retries without calculating the total attempt budget.</p>
+  <h3 id="reliability-circuit">Stop calling a failing dependency</h3>
+  <p><code>protect(provider, fails: 2, wait: 1m)</code> opens a circuit after two consecutive failures. While open, it raises <code>CircuitOpen</code> without invoking the protected block. The example’s third request takes that path; the one-minute window does not make this program sleep for a minute.</p>
+<div class="code"><div class="code-bar"><span>circuit.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn provider(amount: int) -&gt; int!:
+    if amount &lt; 0:
+        fail("provider unavailable")
+    return amount
+
+fn guarded(amount: int) -&gt; int!:
+    var value = 0
+    protect(provider, fails: 2, wait: 1m):
+        value = provider(amount)?
+    return value
+
+for amount in [-1, -2, 5]:
+    try:
+        print(guarded(amount))
+    else e is CircuitOpen:
+        print("circuit open: use the local fallback")
+    else e:
+        print(e.message)</code></pre><div class="out"><div class="out-label">$ nexo circuit.nexo</div><pre><code>provider unavailable
+provider unavailable
+circuit open: use the local fallback</code></pre></div></div>
+  <p>The circuit’s local state is not a durable or distributed failure counter. Choose an appropriate fallback or propagate the failure. See the <a href="reference.html#patterns">patterns reference</a> for state machines and the surrounding constructs.</p>
+  <h3 id="reliability-actions">Undo an application action</h3>
+  <p>An <code>action</code> declares its forward operation and an <code>undo</code>. Calls are remembered for reversal in the current action history. Here two list edits are undone in reverse order; this history is not the durable workflow store.</p>
+<div class="code"><div class="code-bar"><span>actions.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">var lines = ["first"]
+
+action add(line: str):
+    do: lines = lines + [line]
+    undo: lines = [l for l in lines if l != line]
+
+add("second")
+add("third")
+print(lines)
+undo()
+print(lines)
+print(undo(), undo())
+print(lines)
+
+assert lines == ["first"]</code></pre><div class="out"><div class="out-label">$ nexo actions.nexo</div><pre><code>["first", "second", "third"]
+["first", "second"]
+true false
+["first"]</code></pre></div></div>
+  <h3 id="reliability-workflows">Compensate completed workflow steps</h3>
+  <p>A <code>workflow</code> saves step progress in <code>.nexo/workflows/</code>. A failure runs the completed steps’ declared compensations in reverse order. The example creates an account, confirms it and sends a welcome message; the simulated failed delivery removes only that failed signup.</p>
+<div class="code"><div class="code-bar"><span>workflow.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">var accounts = []
+
+fn create_account(email: str):
+    accounts = accounts + [email]
+
+fn delete_account(email: str):
+    accounts = [a for a in accounts if a != email]
+
+fn confirmed(email: str) -&gt; bool:
+    return email in accounts
+
+fn send_welcome(email: str):
+    if email.ends_with(".invalid"):
+        fail("no mailbox for {email}")
+    print("welcome,", email)
+
+workflow customer_signup(email: str):
+    step create_account(email)
+        undo delete_account(email)
+    step wait confirmed(email), max: 3 days
+    step send_welcome(email)
+
+customer_signup("ana@example.com")
+try:
+    customer_signup("bob@example.invalid")
+else e:
+    print(e.message)
+print(accounts)
+
+assert accounts == ["ana@example.com"]</code></pre><div class="out"><div class="out-label">$ nexo workflow.nexo</div><pre><code>welcome, ana@example.com
+no mailbox for bob@example.invalid
+["ana@example.com"]</code></pre></div></div>
+  <p>State is saved after completed steps; a process interrupted between an external effect and its progress save may repeat that effect on restart. Use idempotent operations or external deduplication where required. The local journal is not a transaction with a remote service, and compensation does not automatically reverse arbitrary effects. Successful runs remove their workflow journal; calling again with the same arguments starts a new run.</p>
+  <p>The sample tests compensation in one process, not a crash-recovery guarantee. A <code>step wait condition, max: ...</code> requires a deadline. Keep journal storage durable and protected when using restart recovery. Persistent workflows are rejected under Shield because their state confinement is not implemented. Continue with the <a href="reference.html#workflows">workflow reference</a> and <a href="shield.html#boundaries">execution boundaries</a>.</p>
+</section>
 
 </article>
 </div>

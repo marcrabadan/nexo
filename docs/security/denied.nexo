@@ -1,0 +1,5 @@
+policy:
+    allow read "public/report.txt"
+    deny shell
+
+print(read("private.txt"))

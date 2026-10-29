@@ -1,0 +1,30 @@
+var accounts = []
+
+fn create_account(email: str):
+    accounts = accounts + [email]
+
+fn delete_account(email: str):
+    accounts = [a for a in accounts if a != email]
+
+fn confirmed(email: str) -> bool:
+    return email in accounts
+
+fn send_welcome(email: str):
+    if email.ends_with(".invalid"):
+        fail("no mailbox for {email}")
+    print("welcome,", email)
+
+workflow customer_signup(email: str):
+    step create_account(email)
+        undo delete_account(email)
+    step wait confirmed(email), max: 3 days
+    step send_welcome(email)
+
+customer_signup("ana@example.com")
+try:
+    customer_signup("bob@example.invalid")
+else e:
+    print(e.message)
+print(accounts)
+
+assert accounts == ["ana@example.com"]

@@ -1,0 +1,41 @@
+type Registration:
+    name: str
+    email: str
+
+server signup:
+    port = 8080
+
+    get "/health"():
+        return "ready"
+
+    get "/greet/{id}"(id: int, name: str = "visitor"):
+        return "hello {name}, number {id}"
+
+    post "/registrations"(entry: Registration):
+        return entry
+
+test "routes return text and JSON":
+    health = http.get("{signup.url}/health")
+    assert health.status == 200
+    print(health.text)
+    reply = http.post("{signup.url}/registrations", {"name": "Ana", "email": "ana@example.com"})
+    assert reply.status == 201
+    print(reply.status, reply.json()["name"])
+
+test "path and query parameters are typed":
+    reply = http.get("{signup.url}/greet/7?name=Ana")
+    print(reply.text)
+    try:
+        http.get("{signup.url}/greet/not-a-number", retries: 0)
+        fail("expected an invalid path parameter")
+    else e is HTTPError:
+        assert e.message == "GET {signup.url}/greet/not-a-number answered 400 Bad Request"
+        print(e.message.replace(signup.url, "URL"))
+
+test "missing record fields fail validation":
+    try:
+        http.post("{signup.url}/registrations", {"name": "Ana"}, retries: 0)
+        fail("expected a missing email field")
+    else e is HTTPError:
+        assert e.message == "POST {signup.url}/registrations answered 400 Bad Request"
+        print(e.message.replace(signup.url, "URL"))

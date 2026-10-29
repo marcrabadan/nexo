@@ -1,0 +1,16 @@
+use nexo.sync
+
+alerts = channel[str](size: 1)
+alerts.send("disk full")
+
+select:
+    message from alerts:
+        print("alert:", message)
+    after 1s:
+        fail("the queued alert should be ready")
+
+select:
+    message from alerts:
+        fail("the alert was already consumed")
+    after 1ms:
+        print("no more alerts")

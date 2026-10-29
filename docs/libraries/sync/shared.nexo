@@ -1,0 +1,14 @@
+use nexo.sync
+
+shared seen = {}
+
+fn remember(n: int):
+    seen[n] = n * 2
+
+parallel for n in 1..6:
+    remember(n)
+
+assert len(seen) == 6
+assert seen[4] == 8
+print("entries:", len(seen))
+print("entry 4:", seen[4])

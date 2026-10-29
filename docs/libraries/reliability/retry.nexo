@@ -1,0 +1,25 @@
+var attempts = 0
+var unavailable = false
+
+fn fetch() -> str!:
+    attempts += 1
+    if unavailable or attempts < 2:
+        fail("temporary failure")
+    return "fresh value"
+
+fn fetch_with_fallback() -> str:
+    repeat 2:
+        try:
+            return fetch()
+        else e:
+            print("attempt failed:", e.message)
+    return "cached value"
+
+assert fetch_with_fallback() == "fresh value"
+assert attempts == 2
+print("attempts:", attempts)
+
+attempts = 0
+unavailable = true
+assert fetch_with_fallback() == "cached value"
+print("fallback after", attempts, "attempts")

@@ -1,0 +1,5 @@
+type Session:
+    user: str
+    token: str @private
+
+log(Session(user: "ana", token: "example-token-not-a-real-credential"))

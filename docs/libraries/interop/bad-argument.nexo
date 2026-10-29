@@ -1,0 +1,3 @@
+use c "libm"
+
+print(libm.sqrt("nine"))

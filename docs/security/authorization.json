@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "agents": {
+    "agent.nexo::support": {
+      "permissions": [
+        [
+          "allow",
+          "read",
+          "public/report.txt"
+        ]
+      ],
+      "tools": [
+        "agent.nexo::report"
+      ]
+    }
+  },
+  "tools": {
+    "agent.nexo::report": {
+      "permissions": [
+        [
+          "allow",
+          "read",
+          "public/report.txt"
+        ]
+      ],
+      "confirm": true
+    }
+  }
+}

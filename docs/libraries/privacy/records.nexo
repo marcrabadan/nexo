@@ -1,0 +1,26 @@
+use nexo.db
+
+db = connect("contacts.db")
+
+@table
+type Contact:
+    id: id
+    name: str @personal
+    email: str @personal
+    last_seen: date
+
+    keep = 2 years after last_seen
+    purpose = "answer support requests"
+
+ana = db.Contact.add(name: "Ana", email: "ana@example.com", last_seen: date(2099, 1, 1))
+luis = db.Contact.add(name: "Luis", email: "luis@example.com", last_seen: date(2099, 1, 1))
+assert db.Contact.count() == 2
+print("contacts before changes:", db.Contact.count())
+path = privacy.export(ana)
+assert len(read(path)) > 0
+print("export:", path)
+privacy.erase(ana)
+privacy.restrict(luis)
+assert db.Contact.count() == 0
+print("visible contacts:", db.Contact.count())
+print("physical rows:", len(db.sql("SELECT id FROM contact")))

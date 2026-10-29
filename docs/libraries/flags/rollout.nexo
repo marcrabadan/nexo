@@ -1,0 +1,16 @@
+type User:
+    id: int
+    country: str
+
+flags:
+    checkout = off
+    preview = 10%
+    regional_help = users where country == "ES"
+    old_design = on, expires: 2099-03-01
+
+ana = User(id: 7, country: "ES")
+luis = User(id: 8, country: "FR")
+assert flag("preview", ana) == flag("preview", ana)
+print("checkout:", flag("checkout"))
+print("regional:", flag("regional_help", ana), flag("regional_help", luis))
+print("stable cohort:", flag("preview", ana) == flag("preview", ana))

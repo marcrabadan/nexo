@@ -1,0 +1,18 @@
+fn provider(amount: int) -> int!:
+    if amount < 0:
+        fail("provider unavailable")
+    return amount
+
+fn guarded(amount: int) -> int!:
+    var value = 0
+    protect(provider, fails: 2, wait: 1m):
+        value = provider(amount)?
+    return value
+
+for amount in [-1, -2, 5]:
+    try:
+        print(guarded(amount))
+    else e is CircuitOpen:
+        print("circuit open: use the local fallback")
+    else e:
+        print(e.message)
