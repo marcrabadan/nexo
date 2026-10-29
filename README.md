@@ -84,6 +84,12 @@ git clone https://github.com/marcrabadan/nexo.git
 cd nexo
 ```
 
+`make setup` does the rest: the virtual environment of phase 0, the
+compiler of phase 1 and the VS Code extension's packages, each one when
+its tools are there. `make` lists every target and `make tools` says what
+is installed and what is missing. The sections below are the same steps
+by hand.
+
 ### Interpreter (phase 0)
 
 Needs Python 3.12 or newer.

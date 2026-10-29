@@ -82,20 +82,3 @@ command.* The server's own log is in the **Output** panel, channel
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `nexo.path` | `nexo` | the `nexo` command to run: a name on the `PATH`, or the absolute path of `compiler/target/release/nexo` or `.venv/bin/nexo` |
-
-## Building the extension
-
-```sh
-cd editors/vscode
-npm install
-npm test           # grammar, activation and language server tests
-npx vsce package   # nexo-0.4.0.vsix
-code --install-extension nexo-0.4.0.vsix
-```
-
-`npm test` talks to a real server over the protocol. It takes the one in
-`$NEXO`, else the compiler's debug build, else `.venv/bin/nexo`, and says
-which it used; with none of them it skips that test.
-
-Publishing to the Marketplace needs a publisher account and a token:
-`npx vsce publish -p <token>` (see the main README).
