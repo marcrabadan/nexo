@@ -1,7 +1,8 @@
 # AI-native Phase 1 implementation and validation
 
-Implemented on 2026-10-29. Phase 2 has not started; its proposed scope and
-acceptance criteria are in [the roadmap](ai-native-roadmap.md).
+Implemented on 2026-10-29, subsequently committed and pushed as `d71ffca`.
+Phase 2 was then explicitly authorized; its first slice and remaining scope
+are documented in [the roadmap](ai-native-roadmap.md).
 
 ## Architecture decisions
 
@@ -35,8 +36,8 @@ or granting permissions.
 | `docs/playground/nexo.zip` | Regenerate the deterministic interpreter bundle after Python source changes. |
 
 Pre-existing edits to `README.md`, `editors/vscode/README.md` and the untracked
-`Makefile` were preserved; they are outside this change. Nothing was pushed,
-merged or deployed.
+`Makefile` were preserved; they are outside this change. Phase 1 was pushed
+on explicit user request. Nothing was merged or deployed.
 
 ## Validation
 

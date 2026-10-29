@@ -4,8 +4,9 @@ Audit date: 2026-10-29. This roadmap extends the general-purpose language;
 [the specification](especificacion-nexo.md) remains authoritative and
 [decisions](decisions.md) record implementation choices. Roadmap phases below
 are independent of the historical language phases and Shield phases.
-Only roadmap Phase 1 is implemented in this change. Phase 2 requires review
-of Phase 1 before implementation begins.
+Phase 1 was committed and pushed as `d71ffca`; the user subsequently authorized
+Phase 2. Its first opt-in analysis slice is implemented; [the effect contract](effects.md)
+documents coverage and remaining increments. Phases 3–5 remain future work.
 
 ## Current implementation inventory
 
@@ -20,7 +21,7 @@ in the specification or README as implemented or production-validated.
 | Streaming and cancellation | Incremental provider streaming exists and is tested. Transport timeouts and stream completion tracking are partial lifecycle mechanisms; a unified cancellation contract spanning providers, agent steps, tools and child processes is missing. |
 | Typed tools and agents | Implemented: `@tool`, agent configuration, schema generation, tool argument checking, bounded `max_steps`, failure handling and human confirmation. `run_agent` / `use_tool` and native equivalents are the extension points. Uniform typed agent input/result contracts need further design. |
 | Permissions and authorization | Implemented: policies, deny precedence, strict Shield execution, module/dependency ceilings, task-context intersections and sealed operator-controlled agent/tool authorization (`nexo/authorization.py`, `security_context.py`, native `security/`, `docs/shield-dispatch.md`). These are the sole runtime authorization engine. |
-| Static effects | Partial foundations: linked AST, resolved calls in Rust, policy declarations and security checks. No general transitive function-effect summary or sound dynamic-target classification. `security check` validates a program/policy; it does not prove that every runtime operation is allowed. |
+| Static effects | Partial foundations: linked AST, resolved calls in Rust, policy declarations and security checks. Opt-in transitive function/module summaries and explicit unknowns now exist (D182); method/deferred-call refinement and static runtime-ceiling comparison remain incomplete. `security check` validates a program/policy; it does not prove that every runtime operation is allowed. |
 | Budgets | Existing step limits, per-call token/timeout limits, AI spend accounting and configured daily/monthly budgets; Shield operation counters and process limits are separate. Atomic reservation across concurrent agent workflows, provider-independent actual-cost limits and durable reconciliation need work. See `docs/shield-budgets.md`. |
 | Durable workflow/retry | AI retry/fallback, circuit breakers, actions/undo and durable `workflow` steps already exist (`nexo/stdlib/patterns.py`, native `patterns.rs`, D150/D151; restart tests in `test_phase6.py`). State is saved after completed steps; it is not transactional with external effects. Enforcing policy/Shield rejects persistent workflows (`security_workflow`, `test_security.py`) because state confinement is unimplemented. Secure durable agent integration and exactly-once external effects are missing; reuse these workflows rather than adding another engine. |
 | Audit and tracing | Shield structured decisions, trace mode, source identities and redaction exist. A uniform OpenTelemetry-compatible workflow trace schema/exporter is not established by these events. The specification's broad automatic-observability statement is not evidence of complete coverage. No hidden exporter should be added. |
@@ -127,7 +128,7 @@ license/supply-chain review and an explanation of why existing code is insuffici
 
 ## Incremental phases and objective acceptance criteria
 
-### Phase 1 — implemented vertical slice, pending review
+### Phase 1 — implemented vertical slice
 
 - Both CLIs provide `check --json` with schema_version 1, success, file, code,
   severity, message, optional range and existing suggested edits/metadata.
@@ -140,7 +141,13 @@ license/supply-chain review and an explanation of why existing code is insuffici
 - Run Rust/Python tests, conformance and differential checks; disclose host or
   pre-existing failures. Review this slice before implementing Phase 2.
 
-### Phase 2 — proposed scope for the next reviewed change
+### Phase 2 — first analysis slice implemented, further increments pending
+
+The first slice implements `check --effects [--json]`, shared builtin models,
+conservative lexical/direct/imported-call propagation, recursive fixed points,
+root-policy comparisons and explicit unknowns. Runtime ceilings remain enforced
+by Shield and are not statically certified. See [validation](ai-native-phase2-validation.md).
+The broader Phase 2 target remains:
 
 Design/report effects for file, network, environment, process/native, database
 and AI operations. Reuse declarations/policy syntax; avoid grammar changes.

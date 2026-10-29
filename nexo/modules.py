@@ -151,7 +151,7 @@ class Linker:
         file = shown_path(path)
         try:
             source = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeError):
             raise NexoError("module_not_found", s.span, name=name, path=file) from None
         SOURCES[file] = source
         program = parse(source, file)

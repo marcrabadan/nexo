@@ -14,11 +14,19 @@ fn problem(code: &str, message: &str, file: Json) -> Json {
 }
 
 pub(crate) fn run_check_json(args: &[String]) -> u8 {
-    let paths: Vec<String> = args.iter().filter(|a| *a != "--json").cloned().collect();
+    let effects = args.iter().any(|a| a == "--effects");
+    let json_mode = args.iter().any(|a| a == "--json");
+    let paths: Vec<String> = args
+        .iter()
+        .filter(|a| *a != "--json" && *a != "--effects")
+        .cloned()
+        .collect();
     let mut out = Vec::new();
     let mut status = 0;
     if paths.iter().any(|a| a.starts_with('-'))
-        || args.iter().filter(|a| *a == "--json").count() != 1
+        || args.iter().filter(|a| *a == "--json").count() > 1
+        || args.iter().filter(|a| *a == "--effects").count() > 1
+        || !(effects || json_mode)
     {
         out.push(problem(
             "check_usage",
@@ -47,7 +55,21 @@ pub(crate) fn run_check_json(args: &[String]) -> u8 {
                     continue;
                 }
             };
-            if let Err(d) = crate::front_end(&source, &name) {
+            let checked = if effects {
+                crate::effects::analyze(&source, &name)
+            } else {
+                crate::front_end(&source, &name).map(|_| vec![])
+            };
+            if let Ok(findings) = &checked {
+                if findings
+                    .iter()
+                    .any(|d| d.get("severity").num() == Some(1.0))
+                {
+                    status = 1;
+                }
+                out.extend(findings.iter().cloned());
+            }
+            if let Err(d) = checked {
                 let (file, text) = d
                     .span
                     .and_then(|sp| nexo_diag::file_of(sp.file))
@@ -67,15 +89,38 @@ pub(crate) fn run_check_json(args: &[String]) -> u8 {
             }
         }
     }
-    println!(
-        "{}",
-        obj(vec![
-            ("schema_version", n(1)),
-            ("position_encoding", s("utf-16")),
-            ("success", Json::Bool(status == 0)),
-            ("diagnostics", Json::Arr(out)),
-        ])
-        .text()
-    );
+    if json_mode {
+        println!(
+            "{}",
+            obj(vec![
+                ("schema_version", n(1)),
+                ("position_encoding", s("utf-16")),
+                ("success", Json::Bool(status == 0)),
+                ("diagnostics", Json::Arr(out)),
+            ])
+            .text()
+        );
+    } else {
+        for d in out {
+            println!(
+                "{}: {}: {} {}",
+                d.get("file").str().unwrap_or("<command>"),
+                d.get("code").str().unwrap_or(""),
+                d.get("data").get("function").str().unwrap_or(""),
+                d.get("message").str().unwrap_or("")
+            );
+            for e in d.get("data").get("effects").arr() {
+                println!(
+                    "  {}: {} ({})",
+                    e.get("operation").str().unwrap_or(""),
+                    e.get("status").str().unwrap_or(""),
+                    e.get("reason")
+                        .str()
+                        .or_else(|| e.get("capability").str())
+                        .unwrap_or("no policy capability")
+                );
+            }
+        }
+    }
     status
 }

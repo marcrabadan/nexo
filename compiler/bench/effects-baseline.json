@@ -1,0 +1,849 @@
+{
+  "date": "2026-10-29",
+  "note": "Local debug-build baseline; 100k-line corpora hit the explicit analysis-unit limit. Phase 2 changes are based on the recorded Phase 1 commit.",
+  "runs": [
+    {
+      "platform": "macOS-26.3.1-arm64-arm-64bit",
+      "python": "3.12.13 (main, May 10 2026, 19:20:41) [Clang 22.1.3 ]",
+      "repeat": 3,
+      "compiler_build": "debug; cargo build --locked",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)",
+      "base_commit": "d71ffca8ad29a3df8a29547ada49d099280210de",
+      "compiler_sha256": "5d52f3daca4d5855ec37fc43714c718145e17214a5296d5161417e09cb4cdcb8",
+      "measurements": [
+        {
+          "backend": "interpreter",
+          "lines": 1000,
+          "shape": "chain",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "chain",
+              "sha256": "865476a2869d04d0cd6d88abfa976fd8196d83e123752dfbe0f7129bc5850f54",
+              "wall_seconds": 0.1742562080034986,
+              "peak_rss_bytes": 35258368,
+              "output_bytes": 321652,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "chain",
+              "sha256": "865476a2869d04d0cd6d88abfa976fd8196d83e123752dfbe0f7129bc5850f54",
+              "wall_seconds": 0.15734929201425985,
+              "peak_rss_bytes": 35487744,
+              "output_bytes": 321652,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "chain",
+              "sha256": "865476a2869d04d0cd6d88abfa976fd8196d83e123752dfbe0f7129bc5850f54",
+              "wall_seconds": 0.1556845000013709,
+              "peak_rss_bytes": 35373056,
+              "output_bytes": 321652,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.15734929201425985,
+          "p95_seconds": 0.1742562080034986
+        },
+        {
+          "backend": "interpreter",
+          "lines": 10000,
+          "shape": "chain",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "chain",
+              "sha256": "1d332a25538c5ea45e6d84875265dd1e921a6f38a3a6e8aedcfd0660247e73af",
+              "wall_seconds": 1.013770832971204,
+              "peak_rss_bytes": 80904192,
+              "output_bytes": 3242649,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "chain",
+              "sha256": "1d332a25538c5ea45e6d84875265dd1e921a6f38a3a6e8aedcfd0660247e73af",
+              "wall_seconds": 1.004999625030905,
+              "peak_rss_bytes": 80379904,
+              "output_bytes": 3242649,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "chain",
+              "sha256": "1d332a25538c5ea45e6d84875265dd1e921a6f38a3a6e8aedcfd0660247e73af",
+              "wall_seconds": 0.9822307500289753,
+              "peak_rss_bytes": 81313792,
+              "output_bytes": 3242649,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 1.004999625030905,
+          "p95_seconds": 1.013770832971204
+        },
+        {
+          "backend": "interpreter",
+          "lines": 100000,
+          "shape": "chain",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "chain",
+              "sha256": "9e8549246c89b8279f01961580f559dc01f7056ec438f622ebb982469c01c778",
+              "wall_seconds": 4.856747416954022,
+              "peak_rss_bytes": 351567872,
+              "output_bytes": 6544498,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "chain",
+              "sha256": "9e8549246c89b8279f01961580f559dc01f7056ec438f622ebb982469c01c778",
+              "wall_seconds": 4.885651041986421,
+              "peak_rss_bytes": 349683712,
+              "output_bytes": 6544498,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "chain",
+              "sha256": "9e8549246c89b8279f01961580f559dc01f7056ec438f622ebb982469c01c778",
+              "wall_seconds": 4.842158375016879,
+              "peak_rss_bytes": 350158848,
+              "output_bytes": 6544498,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            }
+          ],
+          "median_seconds": 4.856747416954022,
+          "p95_seconds": 4.885651041986421
+        },
+        {
+          "backend": "compiler",
+          "lines": 1000,
+          "shape": "chain",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "chain",
+              "sha256": "865476a2869d04d0cd6d88abfa976fd8196d83e123752dfbe0f7129bc5850f54",
+              "wall_seconds": 0.10086025000782683,
+              "peak_rss_bytes": 18513920,
+              "output_bytes": 292668,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "chain",
+              "sha256": "865476a2869d04d0cd6d88abfa976fd8196d83e123752dfbe0f7129bc5850f54",
+              "wall_seconds": 0.07998199999565259,
+              "peak_rss_bytes": 18825216,
+              "output_bytes": 292668,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "chain",
+              "sha256": "865476a2869d04d0cd6d88abfa976fd8196d83e123752dfbe0f7129bc5850f54",
+              "wall_seconds": 0.08012158400379121,
+              "peak_rss_bytes": 18644992,
+              "output_bytes": 292668,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.08012158400379121,
+          "p95_seconds": 0.10086025000782683
+        },
+        {
+          "backend": "compiler",
+          "lines": 10000,
+          "shape": "chain",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "chain",
+              "sha256": "1d332a25538c5ea45e6d84875265dd1e921a6f38a3a6e8aedcfd0660247e73af",
+              "wall_seconds": 0.7449123749975115,
+              "peak_rss_bytes": 75726848,
+              "output_bytes": 2952665,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "chain",
+              "sha256": "1d332a25538c5ea45e6d84875265dd1e921a6f38a3a6e8aedcfd0660247e73af",
+              "wall_seconds": 0.748443209042307,
+              "peak_rss_bytes": 75366400,
+              "output_bytes": 2952665,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "chain",
+              "sha256": "1d332a25538c5ea45e6d84875265dd1e921a6f38a3a6e8aedcfd0660247e73af",
+              "wall_seconds": 0.7449680829886347,
+              "peak_rss_bytes": 75415552,
+              "output_bytes": 2952665,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.7449680829886347,
+          "p95_seconds": 0.748443209042307
+        },
+        {
+          "backend": "compiler",
+          "lines": 100000,
+          "shape": "chain",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "chain",
+              "sha256": "9e8549246c89b8279f01961580f559dc01f7056ec438f622ebb982469c01c778",
+              "wall_seconds": 2.043175583006814,
+              "peak_rss_bytes": 320143360,
+              "output_bytes": 5964492,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "chain",
+              "sha256": "9e8549246c89b8279f01961580f559dc01f7056ec438f622ebb982469c01c778",
+              "wall_seconds": 2.041697084030602,
+              "peak_rss_bytes": 318472192,
+              "output_bytes": 5964492,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "chain",
+              "sha256": "9e8549246c89b8279f01961580f559dc01f7056ec438f622ebb982469c01c778",
+              "wall_seconds": 2.0750282499939203,
+              "peak_rss_bytes": 323387392,
+              "output_bytes": 5964492,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            }
+          ],
+          "median_seconds": 2.043175583006814,
+          "p95_seconds": 2.0750282499939203
+        }
+      ]
+    },
+    {
+      "platform": "macOS-26.3.1-arm64-arm-64bit",
+      "python": "3.12.13 (main, May 10 2026, 19:20:41) [Clang 22.1.3 ]",
+      "repeat": 3,
+      "compiler_build": "debug; cargo build --locked",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)",
+      "base_commit": "d71ffca8ad29a3df8a29547ada49d099280210de",
+      "compiler_sha256": "5d52f3daca4d5855ec37fc43714c718145e17214a5296d5161417e09cb4cdcb8",
+      "measurements": [
+        {
+          "backend": "interpreter",
+          "lines": 1000,
+          "shape": "recursive",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "recursive",
+              "sha256": "ac9fc626b9d2a5b4c637de759d90bd8e08bad0e289b3d804ef3ccf2349e59a74",
+              "wall_seconds": 0.15316575003089383,
+              "peak_rss_bytes": 35422208,
+              "output_bytes": 321652,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "recursive",
+              "sha256": "ac9fc626b9d2a5b4c637de759d90bd8e08bad0e289b3d804ef3ccf2349e59a74",
+              "wall_seconds": 0.15333916601957753,
+              "peak_rss_bytes": 35454976,
+              "output_bytes": 321652,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "recursive",
+              "sha256": "ac9fc626b9d2a5b4c637de759d90bd8e08bad0e289b3d804ef3ccf2349e59a74",
+              "wall_seconds": 0.1559012089855969,
+              "peak_rss_bytes": 35356672,
+              "output_bytes": 321652,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.15333916601957753,
+          "p95_seconds": 0.1559012089855969
+        },
+        {
+          "backend": "interpreter",
+          "lines": 10000,
+          "shape": "recursive",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "recursive",
+              "sha256": "c85dc76d244549c5074c65c2292404864da00849fd8fc00079bd0ef4e34deb36",
+              "wall_seconds": 1.0118891670135781,
+              "peak_rss_bytes": 79822848,
+              "output_bytes": 3242649,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "recursive",
+              "sha256": "c85dc76d244549c5074c65c2292404864da00849fd8fc00079bd0ef4e34deb36",
+              "wall_seconds": 0.9935927089536563,
+              "peak_rss_bytes": 81117184,
+              "output_bytes": 3242649,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "recursive",
+              "sha256": "c85dc76d244549c5074c65c2292404864da00849fd8fc00079bd0ef4e34deb36",
+              "wall_seconds": 1.004390166956,
+              "peak_rss_bytes": 79413248,
+              "output_bytes": 3242649,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 1.004390166956,
+          "p95_seconds": 1.0118891670135781
+        },
+        {
+          "backend": "interpreter",
+          "lines": 100000,
+          "shape": "recursive",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "recursive",
+              "sha256": "93acd9161935a0f786e99a344dfe2c5862e6fbdac957e12cda14a2f7b74e38c3",
+              "wall_seconds": 4.87243741704151,
+              "peak_rss_bytes": 351485952,
+              "output_bytes": 6544498,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "recursive",
+              "sha256": "93acd9161935a0f786e99a344dfe2c5862e6fbdac957e12cda14a2f7b74e38c3",
+              "wall_seconds": 4.858546875009779,
+              "peak_rss_bytes": 349962240,
+              "output_bytes": 6544498,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "recursive",
+              "sha256": "93acd9161935a0f786e99a344dfe2c5862e6fbdac957e12cda14a2f7b74e38c3",
+              "wall_seconds": 4.811575500003528,
+              "peak_rss_bytes": 351109120,
+              "output_bytes": 6544498,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            }
+          ],
+          "median_seconds": 4.858546875009779,
+          "p95_seconds": 4.87243741704151
+        },
+        {
+          "backend": "compiler",
+          "lines": 1000,
+          "shape": "recursive",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "recursive",
+              "sha256": "ac9fc626b9d2a5b4c637de759d90bd8e08bad0e289b3d804ef3ccf2349e59a74",
+              "wall_seconds": 0.07840895798290148,
+              "peak_rss_bytes": 18563072,
+              "output_bytes": 292668,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "recursive",
+              "sha256": "ac9fc626b9d2a5b4c637de759d90bd8e08bad0e289b3d804ef3ccf2349e59a74",
+              "wall_seconds": 0.07884858298348263,
+              "peak_rss_bytes": 18513920,
+              "output_bytes": 292668,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "recursive",
+              "sha256": "ac9fc626b9d2a5b4c637de759d90bd8e08bad0e289b3d804ef3ccf2349e59a74",
+              "wall_seconds": 0.08000620797974989,
+              "peak_rss_bytes": 18350080,
+              "output_bytes": 292668,
+              "summaries": 500,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.07884858298348263,
+          "p95_seconds": 0.08000620797974989
+        },
+        {
+          "backend": "compiler",
+          "lines": 10000,
+          "shape": "recursive",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "recursive",
+              "sha256": "c85dc76d244549c5074c65c2292404864da00849fd8fc00079bd0ef4e34deb36",
+              "wall_seconds": 0.7483205000171438,
+              "peak_rss_bytes": 75317248,
+              "output_bytes": 2952665,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "recursive",
+              "sha256": "c85dc76d244549c5074c65c2292404864da00849fd8fc00079bd0ef4e34deb36",
+              "wall_seconds": 0.7521162920165807,
+              "peak_rss_bytes": 73760768,
+              "output_bytes": 2952665,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "recursive",
+              "sha256": "c85dc76d244549c5074c65c2292404864da00849fd8fc00079bd0ef4e34deb36",
+              "wall_seconds": 0.7487883750000037,
+              "peak_rss_bytes": 73564160,
+              "output_bytes": 2952665,
+              "summaries": 5000,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.7487883750000037,
+          "p95_seconds": 0.7521162920165807
+        },
+        {
+          "backend": "compiler",
+          "lines": 100000,
+          "shape": "recursive",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "recursive",
+              "sha256": "93acd9161935a0f786e99a344dfe2c5862e6fbdac957e12cda14a2f7b74e38c3",
+              "wall_seconds": 2.0376180419698358,
+              "peak_rss_bytes": 321601536,
+              "output_bytes": 5964492,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "recursive",
+              "sha256": "93acd9161935a0f786e99a344dfe2c5862e6fbdac957e12cda14a2f7b74e38c3",
+              "wall_seconds": 2.033619499998167,
+              "peak_rss_bytes": 322224128,
+              "output_bytes": 5964492,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "recursive",
+              "sha256": "93acd9161935a0f786e99a344dfe2c5862e6fbdac957e12cda14a2f7b74e38c3",
+              "wall_seconds": 2.0903628329979256,
+              "peak_rss_bytes": 319225856,
+              "output_bytes": 5964492,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            }
+          ],
+          "median_seconds": 2.0376180419698358,
+          "p95_seconds": 2.0903628329979256
+        }
+      ]
+    },
+    {
+      "platform": "macOS-26.3.1-arm64-arm-64bit",
+      "python": "3.12.13 (main, May 10 2026, 19:20:41) [Clang 22.1.3 ]",
+      "repeat": 3,
+      "compiler_build": "debug; cargo build --locked",
+      "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13) (Homebrew)",
+      "base_commit": "d71ffca8ad29a3df8a29547ada49d099280210de",
+      "compiler_sha256": "5d52f3daca4d5855ec37fc43714c718145e17214a5296d5161417e09cb4cdcb8",
+      "measurements": [
+        {
+          "backend": "interpreter",
+          "lines": 1000,
+          "shape": "imported",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "imported",
+              "sha256": "7788c22a5b06977f1262c00a323c2170a74da210b8d6a800a46d1ee99f088595",
+              "wall_seconds": 0.1626428750460036,
+              "peak_rss_bytes": 33570816,
+              "output_bytes": 320198,
+              "summaries": 505,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "imported",
+              "sha256": "7788c22a5b06977f1262c00a323c2170a74da210b8d6a800a46d1ee99f088595",
+              "wall_seconds": 0.16298737499164417,
+              "peak_rss_bytes": 33652736,
+              "output_bytes": 320198,
+              "summaries": 505,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 1000,
+              "shape": "imported",
+              "sha256": "7788c22a5b06977f1262c00a323c2170a74da210b8d6a800a46d1ee99f088595",
+              "wall_seconds": 0.16005629202118143,
+              "peak_rss_bytes": 33603584,
+              "output_bytes": 320198,
+              "summaries": 505,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.1626428750460036,
+          "p95_seconds": 0.16298737499164417
+        },
+        {
+          "backend": "interpreter",
+          "lines": 10000,
+          "shape": "imported",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "imported",
+              "sha256": "58593deedd2071e3b2065ff49361bd75a51d4b8c039241bed4213c2232865a4e",
+              "wall_seconds": 1.0197498750058003,
+              "peak_rss_bytes": 69943296,
+              "output_bytes": 3218668,
+              "summaries": 5005,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "imported",
+              "sha256": "58593deedd2071e3b2065ff49361bd75a51d4b8c039241bed4213c2232865a4e",
+              "wall_seconds": 1.047574041003827,
+              "peak_rss_bytes": 69976064,
+              "output_bytes": 3218668,
+              "summaries": 5005,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "interpreter",
+              "lines": 10000,
+              "shape": "imported",
+              "sha256": "58593deedd2071e3b2065ff49361bd75a51d4b8c039241bed4213c2232865a4e",
+              "wall_seconds": 1.0327406659489498,
+              "peak_rss_bytes": 69795840,
+              "output_bytes": 3218668,
+              "summaries": 5005,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 1.0327406659489498,
+          "p95_seconds": 1.047574041003827
+        },
+        {
+          "backend": "interpreter",
+          "lines": 100000,
+          "shape": "imported",
+          "samples": [
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "imported",
+              "sha256": "257e0da54fd7d201d0434f234d1c456eb550c50903d2c728aa0dc1ae6169d694",
+              "wall_seconds": 6.463141124986578,
+              "peak_rss_bytes": 196509696,
+              "output_bytes": 6494398,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "imported",
+              "sha256": "257e0da54fd7d201d0434f234d1c456eb550c50903d2c728aa0dc1ae6169d694",
+              "wall_seconds": 6.479437792033423,
+              "peak_rss_bytes": 196902912,
+              "output_bytes": 6494398,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "interpreter",
+              "lines": 100000,
+              "shape": "imported",
+              "sha256": "257e0da54fd7d201d0434f234d1c456eb550c50903d2c728aa0dc1ae6169d694",
+              "wall_seconds": 6.4525107920053415,
+              "peak_rss_bytes": 196050944,
+              "output_bytes": 6494398,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            }
+          ],
+          "median_seconds": 6.463141124986578,
+          "p95_seconds": 6.479437792033423
+        },
+        {
+          "backend": "compiler",
+          "lines": 1000,
+          "shape": "imported",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "imported",
+              "sha256": "7788c22a5b06977f1262c00a323c2170a74da210b8d6a800a46d1ee99f088595",
+              "wall_seconds": 0.08017520903376862,
+              "peak_rss_bytes": 19120128,
+              "output_bytes": 291144,
+              "summaries": 505,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "imported",
+              "sha256": "7788c22a5b06977f1262c00a323c2170a74da210b8d6a800a46d1ee99f088595",
+              "wall_seconds": 0.08288583299145103,
+              "peak_rss_bytes": 19529728,
+              "output_bytes": 291144,
+              "summaries": 505,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 1000,
+              "shape": "imported",
+              "sha256": "7788c22a5b06977f1262c00a323c2170a74da210b8d6a800a46d1ee99f088595",
+              "wall_seconds": 0.08108570805052295,
+              "peak_rss_bytes": 18874368,
+              "output_bytes": 291144,
+              "summaries": 505,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.08108570805052295,
+          "p95_seconds": 0.08288583299145103
+        },
+        {
+          "backend": "compiler",
+          "lines": 10000,
+          "shape": "imported",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "imported",
+              "sha256": "58593deedd2071e3b2065ff49361bd75a51d4b8c039241bed4213c2232865a4e",
+              "wall_seconds": 0.7483516660286114,
+              "peak_rss_bytes": 77053952,
+              "output_bytes": 2928614,
+              "summaries": 5005,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "imported",
+              "sha256": "58593deedd2071e3b2065ff49361bd75a51d4b8c039241bed4213c2232865a4e",
+              "wall_seconds": 0.7440099999657832,
+              "peak_rss_bytes": 76906496,
+              "output_bytes": 2928614,
+              "summaries": 5005,
+              "incomplete": 0,
+              "limited": 0
+            },
+            {
+              "backend": "compiler",
+              "lines": 10000,
+              "shape": "imported",
+              "sha256": "58593deedd2071e3b2065ff49361bd75a51d4b8c039241bed4213c2232865a4e",
+              "wall_seconds": 0.7429869580082595,
+              "peak_rss_bytes": 75923456,
+              "output_bytes": 2928614,
+              "summaries": 5005,
+              "incomplete": 0,
+              "limited": 0
+            }
+          ],
+          "median_seconds": 0.7440099999657832,
+          "p95_seconds": 0.7483516660286114
+        },
+        {
+          "backend": "compiler",
+          "lines": 100000,
+          "shape": "imported",
+          "samples": [
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "imported",
+              "sha256": "257e0da54fd7d201d0434f234d1c456eb550c50903d2c728aa0dc1ae6169d694",
+              "wall_seconds": 1.871555250021629,
+              "peak_rss_bytes": 301400064,
+              "output_bytes": 5914392,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "imported",
+              "sha256": "257e0da54fd7d201d0434f234d1c456eb550c50903d2c728aa0dc1ae6169d694",
+              "wall_seconds": 1.8803024999797344,
+              "peak_rss_bytes": 302039040,
+              "output_bytes": 5914392,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            },
+            {
+              "backend": "compiler",
+              "lines": 100000,
+              "shape": "imported",
+              "sha256": "257e0da54fd7d201d0434f234d1c456eb550c50903d2c728aa0dc1ae6169d694",
+              "wall_seconds": 1.8765013329684734,
+              "peak_rss_bytes": 303644672,
+              "output_bytes": 5914392,
+              "summaries": 10000,
+              "incomplete": 10000,
+              "limited": 10000
+            }
+          ],
+          "median_seconds": 1.8765013329684734,
+          "p95_seconds": 1.8803024999797344
+        }
+      ]
+    }
+  ]
+}

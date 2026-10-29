@@ -955,6 +955,7 @@ Everything is installed as a single binary, `nexo`; there are no separate tools 
 | `nexo test` | runs the `test` blocks |
 | `nexo fmt` | formats and adds implicit `use` lines |
 | `nexo check [paths...]` | checks without executing the program |
+| `nexo check --effects [--json] [paths...]` | conservative static effect requirements and root-policy comparison; see [the model and limits](effects.md) (D182) |
 | `nexo check --json [paths...]` | versioned structured diagnostics; see [the v1 contract](diagnostics.md) (D181) |
 | `nexo lint` | warns about questionable code with a proposed fix |
 | `nexo fix` | applies the linter's safe fixes |

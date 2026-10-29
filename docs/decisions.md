@@ -2957,3 +2957,20 @@ unchanged, including D67/D68 differences between backends. Intent checks are
 excluded because they invoke a model. The normative schema and agent workflow
 are in `docs/diagnostics.md`; no dependency, grammar, permission or execution
 change is needed. Effect analysis is deferred until this slice is reviewed.
+
+**D182. Opt-in conservative effect reports reuse Shield.** `nexo check
+--effects [--json]` builds function/module summaries over the existing linked
+ASTs and propagates origin facts through direct and recursive calls. It uses
+shared immutable lexical scopes and a reverse-edge worklist. Rust validates
+builtin identity with its resolver; ambiguous shadowing, dynamic targets and
+unmodeled constructs stay unknown. A shared versioned builtin-effect catalog
+extends the existing API inventory without adding runtime APIs or syntax.
+Known requirements are compared only with the root policy using Shield's
+existing engine/matching predicates; missing grants and explicit denies are
+errors. Unknowns are advisory warnings with explicit incomplete metadata and
+can never imply purity or permission. Unit/fact limits discard incomplete
+partial results as `analysis_limit`. JSON extends D181's `data` object with
+`effects_version: 1`; human output is available too. Runtime ceilings,
+authorization, approval, contracts and OS isolation are unchanged. Static
+ceiling comparison, method/implicit-call coverage and target specialization
+remain later Phase 2 increments. See `docs/effects.md` for precise limits.

@@ -54,13 +54,19 @@ class Finding:
 
 def front_end(source: str, file: str) -> tuple[list[Token], A.Program]:
     """The checks of a run that happen before the program starts."""
+    tokens, program, _linker = front_end_modules(source, file)
+    return tokens, program
+
+
+def front_end_modules(source: str, file: str):
+    """The same front end, retaining module identities for analysis."""
     tokens = tokenize(source, file)
     program = Parser(list(tokens), file).program()
     Checker().check(program)
-    # the modules it uses (D124)
     from .modules import Linker
-    Linker(file).link(program)
-    return tokens, program
+    linker = Linker(file)
+    linker.link(program)
+    return tokens, program, linker
 
 
 def lint_source(source: str, file: str) -> list[Finding]:

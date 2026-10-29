@@ -16,10 +16,13 @@ def problem(code: str, message: str, file: str | None) -> dict:
 
 def run_check_json(args: list[str]) -> int:
     from .cli import test_files
-    paths = [a for a in args if a != "--json"]
+    effects = "--effects" in args
+    json_mode = "--json" in args
+    paths = [a for a in args if a not in ("--json", "--effects")]
     out = []
     status = 0
-    if any(a.startswith("-") for a in paths) or args.count("--json") != 1:
+    if (any(a.startswith("-") for a in paths) or args.count("--json") > 1
+            or args.count("--effects") > 1 or not (effects or json_mode)):
         out.append(problem("check_usage", "Usage: nexo check --json [paths...]", None))
         status = 2
     else:
@@ -32,7 +35,13 @@ def run_check_json(args: list[str]) -> int:
                 status = 1
                 continue
             try:
-                front_end(source, name)
+                if effects:
+                    from .effects import analyze
+                    findings = analyze(source, name)
+                    out.extend(findings)
+                    status = max(status, int(any(d["severity"] == 1 for d in findings)))
+                else:
+                    front_end(source, name)
             except NexoError as err:
                 file = err.span.file if err.span else name
                 text = errors.SOURCES.get(file, source) if file != name else source
@@ -42,6 +51,12 @@ def run_check_json(args: list[str]) -> int:
                     d["range"] = None
                 out.append(d)
                 status = 1
-    print(json.dumps({"schema_version": 1, "position_encoding": "utf-16",
-                      "success": status == 0, "diagnostics": out}, ensure_ascii=True))
+    if json_mode:
+        print(json.dumps({"schema_version": 1, "position_encoding": "utf-16",
+                          "success": status == 0, "diagnostics": out}, ensure_ascii=True))
+    else:
+        for d in out:
+            print(f"{d['file'] or '<command>'}: {d['code']}: {d['data'].get('function', '')} {d['message']}")
+            for e in d['data'].get('effects', []):
+                print(f"  {e['operation']}: {e['status']} ({e['reason'] or e['capability'] or 'no policy capability'})")
     return status

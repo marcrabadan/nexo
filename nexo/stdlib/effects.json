@@ -1,0 +1,242 @@
+{
+  "version": 1,
+  "pure": [
+    "len",
+    "range",
+    "set",
+    "round",
+    "split",
+    "convert",
+    "fail",
+    "validate",
+    "int",
+    "float",
+    "decimal",
+    "str",
+    "bool",
+    "list",
+    "map",
+    "money",
+    "old",
+    "json.parse",
+    "csv.parse",
+    "__policy"
+  ],
+  "calls": {
+    "read": [
+      {
+        "operation": "file.read",
+        "capability": "read",
+        "argument": 0,
+        "keyword": "path",
+        "mode": "literal"
+      }
+    ],
+    "read_lines": [
+      {
+        "operation": "file.read",
+        "capability": "read",
+        "argument": 0,
+        "keyword": "path",
+        "mode": "literal"
+      }
+    ],
+    "write": [
+      {
+        "operation": "file.write",
+        "capability": "write",
+        "argument": 0,
+        "keyword": "path",
+        "mode": "literal"
+      }
+    ],
+    "save": [
+      {
+        "operation": "file.write",
+        "capability": "write",
+        "argument": 1,
+        "keyword": "path",
+        "mode": "literal"
+      }
+    ],
+    "secret": [
+      {
+        "operation": "environment.read",
+        "capability": "env",
+        "argument": 0,
+        "keyword": "name",
+        "mode": "literal"
+      }
+    ],
+    "http.get": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": 0,
+        "keyword": "url",
+        "mode": "host"
+      }
+    ],
+    "http.post": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": 0,
+        "keyword": "url",
+        "mode": "host"
+      }
+    ],
+    "http.put": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": 0,
+        "keyword": "url",
+        "mode": "host"
+      }
+    ],
+    "http.patch": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": 0,
+        "keyword": "url",
+        "mode": "host"
+      }
+    ],
+    "http.delete": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": 0,
+        "keyword": "url",
+        "mode": "host"
+      }
+    ],
+    "http.head": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": 0,
+        "keyword": "url",
+        "mode": "host"
+      }
+    ],
+    "http.options": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": 0,
+        "keyword": "url",
+        "mode": "host"
+      }
+    ],
+    "connect": [
+      {
+        "operation": "database.connect",
+        "capability": null,
+        "argument": 0,
+        "keyword": "url",
+        "mode": "database"
+      }
+    ],
+    "ask": [
+      {
+        "operation": "ai.request",
+        "capability": "net",
+        "argument": null,
+        "keyword": null,
+        "mode": "dynamic"
+      }
+    ],
+    "run": [
+      {
+        "operation": "process.execute",
+        "capability": "shell",
+        "argument": null,
+        "keyword": null,
+        "mode": "any"
+      }
+    ],
+    "print": [
+      {
+        "operation": "console.write",
+        "capability": null,
+        "argument": null,
+        "keyword": null,
+        "mode": "any"
+      }
+    ],
+    "input": [
+      {
+        "operation": "console.read",
+        "capability": null,
+        "argument": null,
+        "keyword": null,
+        "mode": "any"
+      }
+    ]
+  },
+  "builtin_roots": [
+    "apply",
+    "approve",
+    "ask",
+    "build_image",
+    "comment",
+    "connect",
+    "convert",
+    "csv",
+    "date",
+    "decimal",
+    "decrypt",
+    "decrypt_file",
+    "encrypt",
+    "encrypt_file",
+    "eventhub",
+    "fail",
+    "flag",
+    "float",
+    "http",
+    "input",
+    "int",
+    "json",
+    "jwt",
+    "kafka",
+    "key",
+    "keypair",
+    "kinesis",
+    "len",
+    "log",
+    "mcp",
+    "move_file",
+    "password",
+    "plan",
+    "print",
+    "privacy",
+    "pubsub",
+    "rabbit",
+    "range",
+    "read",
+    "read_lines",
+    "regex",
+    "render",
+    "round",
+    "run",
+    "s3",
+    "save",
+    "secret",
+    "servicebus",
+    "set",
+    "sign",
+    "split",
+    "sqs",
+    "str",
+    "test",
+    "time",
+    "undo",
+    "validate",
+    "verify",
+    "websocket",
+    "write"
+  ]
+}

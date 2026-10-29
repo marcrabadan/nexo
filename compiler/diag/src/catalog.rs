@@ -201,6 +201,8 @@ pub(crate) static MESSAGES: &[(&str, &str)] = &[
     ("lint_summary", "Warnings: {n}. Safe fixes with nexo fix: {safe}."),
     ("lint_none", "No warnings in {path}."),
     ("lsp_fix_all", "Apply the safe fixes (nexo fix)"),
+    ("effects_summary", "Static effect summary."),
+    ("fix.effects_summary", "Review capability requirements and unknowns; keep runtime Shield checks enabled."),
     ("check_ok", "No errors in {path}."),
     ("audit.use_c", "{use}: C code runs here without Nexo's checks (implicit unsafe)."),
     ("fix.audit.use_c", "Keep the library reviewed; a published package needs a signed review of it."),

@@ -68,3 +68,10 @@ human diagnostics do. They omit source snippets, environment dumps and
 provider configuration, but cannot certify that an identifier or literal is
 not sensitive. Keep results local unless the user authorizes disclosure; do
 not feed whole outputs to remote models automatically. No telemetry is added.
+
+## Static effect metadata
+
+`nexo check --effects --json [paths...]` reuses this envelope and adds
+versioned summary metadata in `data`. See [the effect contract](effects.md).
+Unknown effects are warnings: successful exit status does not mean complete
+effect analysis or runtime authorization. Existing `check --json` is unchanged.

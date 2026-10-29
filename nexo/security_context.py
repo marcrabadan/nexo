@@ -73,17 +73,21 @@ def scope(file):
         STACK.reset(token)
 
 
-def allows(kind, value, file):
+def permits(rules, kind, value):
+    """Pure policy predicate shared by runtime ceilings and static reports."""
     from .stdlib.policy import matches
-    def permits(rules):
-        allowed = False
-        for effect, k, targets in rules:
-            if k == kind and (not targets or any(matches(kind, value, t) for t in targets)):
-                if effect == "deny":
-                    return False
-                allowed = True
-        return allowed
-    return (RULES is None or file == ROOT or permits(RULES.get(file, []))) and all(permits(r) for r in STACK.get())
+    allowed = False
+    for effect, k, targets in rules:
+        if k == kind and (not targets or any(matches(kind, value, t) for t in targets)):
+            if effect == "deny":
+                return False
+            allowed = True
+    return allowed
+
+
+def allows(kind, value, file):
+    return (RULES is None or file == ROOT or permits(RULES.get(file, []), kind, value)) and all(
+        permits(r, kind, value) for r in STACK.get())
 
 
 def check_result(value, span):

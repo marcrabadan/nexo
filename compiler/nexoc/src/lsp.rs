@@ -66,7 +66,7 @@ fn completion_kind(kind: &str) -> u32 {
 
 // ------------------------------------------------------------ positions
 
-fn lines_of(text: &str) -> Vec<Vec<char>> {
+pub(crate) fn lines_of(text: &str) -> Vec<Vec<char>> {
     text.split('\n').map(|l| l.chars().collect()).collect()
 }
 
@@ -103,7 +103,7 @@ fn lsp_range(lines: &[Vec<char>], line: usize, col: usize, end_line: usize, end_
     obj(vec![("start", pos(line, col)), ("end", pos(end_line, end_col))])
 }
 
-fn span_range(lines: &[Vec<char>], span: Option<Span>) -> Json {
+pub(crate) fn span_range(lines: &[Vec<char>], span: Option<Span>) -> Json {
     match span {
         None => lsp_range(lines, 1, 1, 1, 1),
         Some(sp) => lsp_range(lines, sp.line as usize, sp.col as usize, sp.line as usize, sp.end_col as usize),

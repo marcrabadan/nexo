@@ -43,7 +43,7 @@ pub fn project_root(file: &str) -> PathBuf {
 
 /// The path of a module file as messages show it: relative to the current
 /// folder when it is inside it.
-fn shown_path(path: &Path) -> String {
+pub(crate) fn shown_path(path: &Path) -> String {
     let cwd = std::env::current_dir().ok().and_then(|c| c.canonicalize().ok());
     match cwd.as_deref().and_then(|c| path.strip_prefix(c).ok()) {
         Some(rel) => rel.to_string_lossy().into_owned(),
