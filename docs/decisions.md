@@ -2945,3 +2945,15 @@ the compiler, none of which changes the program it gives:
 - The lexer and the code generator read the settings of Shield from the
   environment once, not at every identifier and function, and the maps
   of the compiler use a cheaper hasher (nexoc/src/fast.rs).
+
+**D181. A versioned JSON view of check diagnostics.** `nexo check --json`
+uses the existing check pipeline and the LSP error/fix representation in
+both implementations. A v1 envelope declares UTF-16 coordinates and success;
+source paths identify imported-module errors, while absent locations are null.
+`data.fixes` reuses existing edits and safety classifications. I/O and usage
+failures are structured too, so reported failures never contaminate stdout
+with human text. Human diagnostics and existing static-check coverage remain
+unchanged, including D67/D68 differences between backends. Intent checks are
+excluded because they invoke a model. The normative schema and agent workflow
+are in `docs/diagnostics.md`; no dependency, grammar, permission or execution
+change is needed. Effect analysis is deferred until this slice is reviewed.

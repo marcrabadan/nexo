@@ -89,20 +89,26 @@ def edit_json(lines: list[str], e: Edit) -> dict:
 
 # ------------------------------------------------------------ diagnostics
 
+def error_diagnostic(err: NexoError, text: str) -> dict:
+    """Shared LSP/CLI representation of a compile error."""
+    lines = text.split("\n")
+    fixes = []
+    fix = error_fix(err, text)
+    if fix is not None:
+        fix_key = "fix." + (err.fix or err.key)
+        title = errors.msg(fix_key, **err.args_) if errors.has(fix_key) else err.text()
+        fixes.append({"title": title, "safe": fix.safe, "edits": [edit_json(lines, e) for e in fix.edits]})
+    return {"range": span_range(lines, err.span), "severity": 1, "source": "nexo", "code": err.key,
+            "message": err.text(), "data": {"fixes": fixes}}
+
+
 def diagnostics(text: str, name: str) -> list[dict]:
     lines = text.split("\n")
     out = []
     try:
         findings = lint_source(text, name)
     except NexoError as err:
-        fixes = []
-        fix = error_fix(err, text)
-        if fix is not None:
-            fix_key = "fix." + (err.fix or err.key)
-            title = errors.msg(fix_key, **err.args_) if errors.has(fix_key) else err.text()
-            fixes.append({"title": title, "safe": fix.safe, "edits": [edit_json(lines, e) for e in fix.edits]})
-        out.append({"range": span_range(lines, err.span), "severity": 1, "source": "nexo", "code": err.key,
-                    "message": err.text(), "data": {"fixes": fixes}})
+        out.append(error_diagnostic(err, text))
         return out
     for f in findings:
         fixes = []

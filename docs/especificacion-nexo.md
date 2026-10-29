@@ -954,6 +954,8 @@ Everything is installed as a single binary, `nexo`; there are no separate tools 
 | `nexo build --release` | optimised build; `--target web`, `mobile`, `linux-arm`, `arduino` |
 | `nexo test` | runs the `test` blocks |
 | `nexo fmt` | formats and adds implicit `use` lines |
+| `nexo check [paths...]` | checks without executing the program |
+| `nexo check --json [paths...]` | versioned structured diagnostics; see [the v1 contract](diagnostics.md) (D181) |
 | `nexo lint` | warns about questionable code with a proposed fix |
 | `nexo fix` | applies the linter's safe fixes |
 | `nexo profile` | CPU and RAM usage per line |

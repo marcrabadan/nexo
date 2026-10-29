@@ -1,0 +1,70 @@
+# Machine-readable check diagnostics (v1)
+
+Both CLIs accept `nexo check --json [paths...]`. The option can appear before
+or after paths. File selection, ordering and the front end are the same as
+ordinary `check`: one error per failing input, no lint warnings and no program
+execution. An empty directory succeeds with an empty list. Hidden descendants
+are skipped by the existing discovery rules. Explicit files are checked even
+if their name starts with a dot. Discovery retains the existing limitations
+around unreadable directories and directory symlinks; this is not a confined
+filesystem reader.
+
+Stdout is exactly one JSON document followed by a newline, on success and on
+reported errors. Human output remains the default. Exit status is 0 on
+success, 1 on a source/read error and 2 on invalid JSON-mode options. An
+unreadable or invalid UTF-8 input uses `check_io`; malformed options use
+`check_usage`. Neither includes OS error details or file contents. `--intent`
+cannot be combined with `--json`: this interface is deterministic and does
+not invoke a model. No new dependencies or network calls are introduced.
+
+The normative shape is [diagnostics-v1.schema.json](diagnostics-v1.schema.json).
+Example:
+
+```json
+{"schema_version":1,"position_encoding":"utf-16","success":true,"diagnostics":[]}
+```
+
+Each diagnostic has:
+
+| Field | Meaning |
+| --- | --- |
+| `code` | Existing catalog key, or `check_io` / `check_usage`; branch on this, never parse prose. |
+| `severity` | LSP values: 1 error, 2 warning, 3 information, 4 hint. Check currently emits only errors. |
+| `message` | Existing English diagnostic including its repair sentence. |
+| `source` | `nexo`. |
+| `file` | Source path, including the actual imported module when known; null for command-wide errors. Paths are not URIs. |
+| `range` | LSP start/end positions: zero-based lines and UTF-16 code units, end exclusive. Null when no source position exists. |
+| `data` | Machine-readable metadata, currently `fixes`; consumers must tolerate future metadata keys. |
+
+`data.fixes` contains available edits from the existing LSP infrastructure:
+`title`, `safe` (the existing fix classification), and `edits` containing
+`range` and `newText`. An empty array means no automated edit is available,
+even though the message describes a repair. Edits apply to `file`. Large
+single-line spans are clamped to the source line, exactly as in LSP.
+
+Consumers must reject unsupported `schema_version` values. Breaking changes
+require a new version; existing keys and coordinate conventions are stable
+within v1. New catalog codes and metadata keys may appear. Message wording is
+not an API. The two backends share the wire contract, not identical static
+analysis coverage: the compiler resolves names and types before execution
+(D67/D68), while the interpreter defers some of those errors until runtime.
+This change deliberately preserves that existing check/exit behavior. A
+successful check is not a proof of correctness, authorization or isolation.
+
+## Coding-agent workflow
+
+1. Run `nexo docs --for-ai [file.nexo]` for the existing exact API inventory
+   and declarations (D130). Do not infer APIs from diagnostic prose.
+2. Run `nexo check --json file.nexo`, capture stdout and exit status separately,
+   decode the document and validate its version and shape.
+3. Present findings using `file` and `range`. Review proposed edits against
+   the current file contents, apply approved edits in reverse position order,
+   then rerun the check. `safe` is not an authorization grant.
+4. Run relevant tests and Shield checks under the required policy/isolation
+   profile before executing generated code. Diagnostics never grant access.
+
+Diagnostics contain source-derived identifiers, literals and paths just as
+human diagnostics do. They omit source snippets, environment dumps and
+provider configuration, but cannot certify that an identifier or literal is
+not sensitive. Keep results local unless the user authorizes disclosure; do
+not feed whole outputs to remote models automatically. No telemetry is added.

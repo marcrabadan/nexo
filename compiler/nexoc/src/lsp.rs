@@ -132,6 +132,25 @@ fn name_of(uri: &str) -> &str {
     uri.rsplit('/').next().unwrap_or(uri)
 }
 
+/// Shared LSP/CLI representation of a compile error.
+pub(crate) fn error_diagnostic(d: &nexo_diag::Diagnostic, text: &str) -> Json {
+    let lines = lines_of(text);
+    let mut fixes = Vec::new();
+    if let Some(fix) = crate::lint::error_fix(d, text) {
+        let key = format!("fix.{}", d.fix.unwrap_or(d.key));
+        let title = if has(&key) { msg(&key, &d.args) } else { d.text() };
+        fixes.push(fix_json(&lines, title, &fix));
+    }
+    obj(vec![
+        ("range", span_range(&lines, d.span)),
+        ("severity", n(1)),
+        ("source", s("nexo")),
+        ("code", s(d.key)),
+        ("message", s(d.text())),
+        ("data", obj(vec![("fixes", Json::Arr(fixes))])),
+    ])
+}
+
 fn diagnostics(text: &str, name: &str) -> Vec<Json> {
     let lines = lines_of(text);
     let diag = |range: Json, severity: u32, code: &str, message: String, fixes: Vec<Json>| {
@@ -146,13 +165,7 @@ fn diagnostics(text: &str, name: &str) -> Vec<Json> {
     };
     match crate::lint_source(text, name) {
         Err(d) => {
-            let mut fixes = Vec::new();
-            if let Some(fix) = crate::lint::error_fix(&d, text) {
-                let key = format!("fix.{}", d.fix.unwrap_or(d.key));
-                let title = if has(&key) { msg(&key, &d.args) } else { d.text() };
-                fixes.push(fix_json(&lines, title, &fix));
-            }
-            vec![diag(span_range(&lines, d.span), 1, d.key, d.text(), fixes)]
+            vec![error_diagnostic(&d, text)]
         }
         Ok(findings) => findings
             .iter()
