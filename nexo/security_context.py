@@ -123,33 +123,50 @@ def _check_data(value, span):
         raise NexoError("security_context_escape",span)
 
 
+class Snapshot(tuple):
+    def __new__(cls, rules, controls, finance=(), tokens=()):
+        value = super().__new__(cls, rules)
+        value.controls = controls
+        value.finance = finance
+        value.tokens = tokens
+        return value
+
+
 def capture():
-    return STACK.get()
+    from . import agent_control
+    from . import agent_finance, agent_tokens
+    return Snapshot(STACK.get(), agent_control.capture(),agent_finance.capture(),agent_tokens.capture())
 
 
 @contextmanager
 def inherit(snapshot):
+    from . import agent_control, agent_finance, agent_tokens
     token = STACK.set(snapshot)
     try:
-        yield
+        with agent_control.scope(getattr(snapshot, "controls", ()), replace=True), agent_finance.scope(getattr(snapshot,"finance",()),replace=True), agent_tokens.scope(getattr(snapshot,"tokens",()),replace=True):
+            yield
     finally:
         STACK.reset(token)
 
 
 @contextmanager
 def intersect(snapshot):
+    from . import agent_control, agent_finance, agent_tokens
     token = STACK.set(STACK.get() + snapshot)
     try:
-        yield
+        with agent_control.scope(getattr(snapshot, "controls", ()), replace=False), agent_finance.scope(getattr(snapshot,"finance",())), agent_tokens.scope(getattr(snapshot,"tokens",())):
+            yield
     finally:
         STACK.reset(token)
 
 
 @contextmanager
 def attenuate(snapshot, rules):
+    from . import agent_control, agent_finance, agent_tokens
     token = STACK.set(STACK.get() + snapshot + (rules,))
     try:
-        yield
+        with agent_control.scope(getattr(snapshot, "controls", ()), replace=False), agent_finance.scope(getattr(snapshot,"finance",())), agent_tokens.scope(getattr(snapshot,"tokens",())):
+            yield
     finally:
         STACK.reset(token)
 

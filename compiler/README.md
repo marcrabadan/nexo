@@ -52,3 +52,10 @@ the LLVM IR next to the built program), `NEXO_PYTHON` (the Python whose
 libpython `use python` loads, default `python3`), `CC` (the preprocessor
 for C headers), `NEXO_WEB_LOCAL=1` (servers listen on 127.0.0.1 only),
 `PORT`, `NEXO_SQL_LOG=1`.
+
+The AI-native runtime increment (D184–D189) keeps parity with the interpreter for
+typed agent input/output, inherited control, conservative token/money admission,
+confined checkpoints and opt-in tracing. See the [lifecycle](../docs/agent-lifecycle.md)
+and [completion record](../docs/ai-native-phase3-completion.md). Native durable
+state currently requires Linux AMD64; unsupported hosts/profiles fail before
+dispatch. Generic Shield workflows retain their existing rejection.

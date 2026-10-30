@@ -33,7 +33,7 @@ pub fn shown(path: &str) -> String {
 /// The absolute path the system opens: each component in turn, a
 /// symbolic link replaced by its target before the `..` after it, so
 /// neither a link nor `link/..` can lead out of an allowed folder.
-fn resolve(path: &str) -> String {
+pub(crate) fn resolve(path: &str) -> String {
     let full = if path.starts_with('/') {
         path.to_string()
     } else {

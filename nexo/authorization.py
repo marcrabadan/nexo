@@ -11,6 +11,13 @@ STATE = None
 FILES = {}
 
 
+class Configuration(tuple):
+    def __new__(cls, agents, tools, state, fingerprint, path):
+        self = super().__new__(cls, (agents, tools))
+        self.state, self.fingerprint, self.path = state, fingerprint, path
+        return self
+
+
 def load(path):
     def unique(pairs):
         result = {}
@@ -53,8 +60,9 @@ def load(path):
                 raise ValueError("invalid permission targets")
             result.append((e[0], e[1], tuple(e[2:])))
         return tuple(result)
-    exact(doc, ("version", "agents", "tools"))
-    if type(doc["version"]) is not int or doc["version"] != 1:
+    version = doc.get("version") if isinstance(doc,dict) else None
+    exact(doc, ("version", "agents", "tools", "state") if version == 2 else ("version", "agents", "tools"))
+    if type(version) is not int or version not in (1,2):
         raise ValueError("unknown authorization version")
     if not isinstance(doc["agents"], dict) or not isinstance(doc["tools"], dict):
         raise ValueError("invalid grants")
@@ -74,7 +82,20 @@ def load(path):
         if key in agents or len(set(allowed)) != len(allowed) or any(n not in tools for n in allowed):
             raise ValueError("duplicate identity or unknown tool")
         agents[key] = permissions(grant["permissions"]), frozenset(allowed)
-    return agents, tools
+    from . import agent_state
+    state = {}
+    if version == 2:
+        if not isinstance(doc['state'],dict): raise ValueError('invalid state grants')
+        roots = {}
+        for name, value in doc['state'].items():
+            ident = identity(name)
+            if ident not in agents or ident in state: raise ValueError('invalid state identity')
+            grant = agent_state.parse(value, Path(path).parent)
+            if grant.directory in roots and roots[grant.directory] != grant: raise ValueError('conflicting state account')
+            if any(grant.directory != root and (grant.directory in root.parents or root in grant.directory.parents) for root in roots): raise ValueError('overlapping state grants')
+            roots[grant.directory] = grant
+            state[ident] = grant
+    return Configuration(agents,tools,state,agent_state.digest(text.decode()),Path(path).resolve(strict=True))
 
 
 def initialize(root):
@@ -85,6 +106,8 @@ def initialize(root):
         return
     try:
         STATE = load(path)
+        dependencies=os.environ.get("NEXO_SECURITY_DEPENDENCIES")
+        STATE.protected=(STATE.path,)+((Path(dependencies).resolve(strict=True),) if dependencies else ())
         FILES = {name: Path(name).resolve(strict=True) for name in (*SOURCES, root) if Path(name).is_file()}
     except (OSError, ValueError, TypeError, RecursionError):
         raise NexoError("security_authorization")
@@ -124,3 +147,46 @@ def enter_tool(agent, tool, span):
 def check_confirmation(required, span):
     if required and os.environ.get("NEXO_SECURITY_SANDBOX"):
         raise NexoError("security_dispatch", span)
+
+
+def protect(kind, value, span):
+    if STATE is None: return
+    from .stdlib.policy import resolve
+    if kind == "write" and STATE.state:
+        path=Path(resolve(value))
+        if any(path==file or path in file.parents for file in STATE.protected): raise NexoError("agent_state",span)
+    for grant in STATE.state.values():
+        denied = kind == 'env' and value == grant.key
+        if kind in ('read','write'):
+            path = Path(resolve(value))
+            denied |= path == grant.directory or grant.directory in path.parents or (kind == 'write' and path in grant.directory.parents)
+        if denied: raise NexoError('agent_state',span)
+
+
+def state_grant(seal, span):
+    if STATE is None or seal.identity not in STATE.state:
+        raise NexoError('agent_state',span)
+    return STATE.state[seal.identity]
+
+
+def context_identity(seal):
+    """Pin caller ceilings too: cached data must not cross into a weaker role."""
+    from .stdlib import policy
+    from .agent_state import digest
+    def rules(entries):
+        if entries is None: return None
+        rows=[]
+        for effect,kind,targets in entries:
+            values=[[target,policy.resolve(target)] if kind in ('read','write') else [target] for target in targets]
+            rows.append(json.dumps([effect,kind,sorted(values)],ensure_ascii=False,separators=(',',':')))
+        return sorted(set(rows))
+    def scopes(snapshot):
+        return sorted(set(json.dumps(rules(r),ensure_ascii=False,separators=(',',':')) for r in snapshot))
+    modules=security_context.RULES or {}
+    grants=[]
+    if STATE is not None:
+        grants=[(str(file)+'::'+name,rules(grant[0])) for entries in STATE for (file,name),grant in entries.items()]
+    value=[str(Path.cwd().resolve()),rules(policy.STATE['rules']),policy.STATE['release'],
+           scopes(security_context.capture()),scopes(seal.snapshot),
+           sorted((str(Path(file).resolve()),rules(entries)) for file,entries in modules.items()),sorted(grants)]
+    return digest(json.dumps(value,ensure_ascii=False,separators=(',',':')))

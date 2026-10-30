@@ -13,6 +13,7 @@ import json
 import math
 import os
 import threading
+import time
 import sys
 from datetime import date as _date
 from pathlib import Path
@@ -229,6 +230,7 @@ class Target:
 
     def __init__(self, shown, provider, name, url, key):
         self.shown, self.provider, self.name, self.url, self.key = shown, provider, name, url, key
+        self.budget = None
 
 
 def resolve(call, options: dict) -> tuple[list[Target], dict]:
@@ -276,16 +278,199 @@ def resolve(call, options: dict) -> tuple[list[Target], dict]:
         cheaper = target(call, over, provider, layers, aliases) if over is not None else None
         for t in targets + ([cheaper] if cheaper else []):
             price_of(call, t.provider + ":" + t.name, prices, amount.currency)
-        spent = spent_in(call, period, prices, amount.currency)
-        if spent >= amount.amount:
+        plan = _BudgetPlan(call, amount, period, prices)
+        spent, reserved = plan.inspect(call)
+        if spent + reserved >= amount.amount:
             if cheaper is None:
-                raise failure("AIError", call.span, key="AIError.budget", budget=cents(amount.amount, amount.currency),
-                              period=period, spent=cents(spent, amount.currency))
-            targets = [cheaper]
+                plan.refuse(call, spent, reserved)
+            targets = [cheaper]  # Explicit legacy when_over_budget escape.
+        else:
+            for t in targets:
+                t.budget = plan
+    from .. import agent_finance
+    inherited = agent_finance.inherited(call)
+    if inherited is not None:
+        for target_ in targets: target_.budget = inherited
     return targets, aliases
 
 
 # ---------------------------------------------------------------- budget
+
+class _BudgetPlan:
+    def __init__(self, call, amount, period, prices):
+        self.amount, self.period, self.prices = amount, period, dict(prices)
+        try:
+            config_dir().mkdir(parents=True, exist_ok=True)
+            self.scope = str(config_dir().resolve(strict=True))
+        except (OSError, RuntimeError):
+            raise failure("AIError", call.span, key="AIError.budget_history")
+
+    def history(self, call, day):
+        from decimal import Decimal
+        try:
+            text = (Path(self.scope) / "usage.csv").read_bytes().decode("utf-8")
+            lines = text.replace("\r\n", "\n").split("\n")
+            if lines[-1] == "":
+                lines.pop()
+        except FileNotFoundError:
+            return Decimal(0)
+        except (OSError, UnicodeError):
+            raise failure("AIError", call.span, key="AIError.budget_history")
+        total = Decimal(0)
+        for line in lines:
+            parts = line.split(",")
+            if len(parts) != 4:
+                raise failure("AIError", call.span, key="AIError.budget_history")
+            booked, model, inp, out = parts
+            try:
+                if _date.fromisoformat(booked).isoformat() != booked:
+                    raise ValueError()
+                if any(not v.isascii() or not v.isdigit() or int(v) > 9223372036854775807 for v in (inp, out)):
+                    raise ValueError()
+            except ValueError:
+                raise failure("AIError", call.span, key="AIError.budget_history")
+            if (booked != day) if self.period == "day" else (booked[:7] != day[:7]):
+                continue
+            price = price_of(call, model, self.prices, self.amount.currency)
+            if price is not None:
+                total += (int(inp) * price[0].amount + int(out) * price[1].amount) / 1000000
+        return total
+
+    def inspect(self, call):
+        from .. import ai_budget
+        day = _date.today().isoformat()
+        return ai_budget.inspect(self.scope, self.amount.currency, day, self.period, lambda: self.history(call, day))
+
+    def refuse(self, call, spent, reserved):
+        key = "AIError.budget_pending" if reserved > 0 and spent < self.amount.amount else "AIError.budget"
+        raise failure("AIError", call.span, key=key, budget=cents(self.amount.amount, self.amount.currency),
+                      period=self.period, spent=cents(spent, self.amount.currency))
+
+    def reserve(self, call, target):
+        from .. import ai_budget
+        price = price_of(call, target.provider + ":" + target.name, self.prices, self.amount.currency)
+        if price is None:
+            return None
+        day = _date.today().isoformat()
+        try:
+            ticket = ai_budget.reserve(self.scope, self.amount.currency, day, self.period, self.amount.amount,
+                                       lambda: self.history(call, day))
+        except ai_budget.Unavailable as error:
+            self.refuse(call, error.spent, error.reserved)
+        return _BudgetLease(self, target, ticket, price)
+
+
+class _BudgetLease:
+    def __init__(self, plan, target, ticket, price):
+        self.plan, self.target, self.ticket, self.price = plan, target, ticket, price
+        self.observed = [None, None]
+
+    def finish(self, call, tokens):
+        if tokens is None:
+            raise failure("AIError", call.span, key="AIError.budget_usage")
+        amount = (tokens[0] * self.price[0].amount + tokens[1] * self.price[1].amount) / 1000000
+        self.ticket.settle(amount, lambda: _record_usage_unlocked(
+            self.target.provider + ":" + self.target.name, tokens, self.plan.scope, self.ticket.day))
+
+    def response(self, call, text):
+        try:
+            data = _receipt_json(text)
+            tokens = _reported_usage(self.target.provider, data)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            tokens = None
+        self.finish(call, tokens)
+
+    def observe(self, line):
+        line = line.strip()
+        if self.target.provider != "ollama":
+            if not line.startswith("data:"):
+                return
+            line = line[5:].strip()
+        if not line or line == "[DONE]":
+            return
+        try:
+            data = _receipt_json(line)
+            if self.target.provider == "anthropic":
+                if data.get("type") == "message_start":
+                    self.observed[0] = _valid_tokens(data.get("message", {}).get("usage", {}).get("input_tokens"))
+                elif data.get("type") == "message_delta":
+                    self.observed[1] = _valid_tokens(data.get("usage", {}).get("output_tokens"))
+            elif any(key in data for key in ("usage", "usageMetadata", "prompt_eval_count")):
+                self.observed = _reported_usage(self.target.provider, data) or [None, None]
+        except (ValueError, KeyError, TypeError, AttributeError):
+            self.observed = [None, None]
+
+
+def _receipt_json(text):
+    _agent_json(text)  # Existing depth and finite-number validation.
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Ambiguous usage receipt")
+            result[key] = value
+        return result
+
+    return json.loads(text, object_pairs_hook=unique)
+
+
+def _valid_tokens(value):
+    return value if type(value) is int and 0 <= value <= 9223372036854775807 else None
+
+
+def _reported_usage(provider, data):
+    if provider == "anthropic":
+        usage, names = data.get("usage", {}), ("input_tokens", "output_tokens")
+    elif provider == "gemini":
+        usage, names = data.get("usageMetadata", {}), ("promptTokenCount", "candidatesTokenCount")
+    elif provider == "bedrock":
+        usage, names = data.get("usage", {}), ("inputTokens", "outputTokens")
+    elif provider in OPENAI_LIKE:
+        usage, names = data.get("usage", {}), ("prompt_tokens", "completion_tokens")
+    else:
+        usage, names = data, ("prompt_eval_count", "eval_count")
+    if not isinstance(usage, dict):
+        return None
+    values = [_valid_tokens(usage.get(name)) for name in names]
+    return values if all(value is not None for value in values) else None
+
+
+class _RequestLease(_BudgetLease):
+    def __init__(self,call,target,money,tokens):
+        self.call=call
+        self.target,self.money,self.tokens=target,money,tokens
+        self.observed=[None,None]
+        self.ticket=self
+
+    def settle(self,actual,write):
+        # This path is used only before an attempted transport.
+        if self.money is not None: self.money.ticket.settle(actual,write)
+        if self.tokens is not None: self.tokens.abort(self.call)
+
+    def finish(self,call,usage):
+        if self.money is not None: self.money.finish(call,usage)
+        elif usage is not None: record_usage(self.target.provider+":"+self.target.name,usage)
+        if self.tokens is not None: self.tokens.finish(call,usage)
+
+    def output_cap(self,requested=None):
+        cap=None if self.tokens is None else self.tokens.cap
+        return requested if cap is None else cap if requested is None else min(cap,requested)
+
+
+def _reserve(call, target):
+    from .. import agent_tokens
+    money=target.budget.reserve(call,target) if target.budget is not None else None
+    try:
+        tokens=agent_tokens.reserve(call)
+    except BaseException:
+        if money is not None:
+            from decimal import Decimal
+            money.ticket.settle(Decimal(0),lambda:False)
+        raise
+    return _RequestLease(call,target,money,tokens) if money is not None or tokens is not None else None
+
+
 
 def budget_of(call, value) -> tuple:
     """(money, "day" or "month") of `budget = 5 EUR per day` (D165)."""
@@ -313,21 +498,6 @@ def price_of(call, model: str, prices: dict, currency: str):
         raise failure("AIError", call.span, key="AIError.price_currency", model=model, currency=price[0].currency,
                       budget_currency=currency)
     return price
-
-
-def spent_in(call, period: str, prices: dict, currency: str):
-    """What the calls of this day (or month) cost, from usage.csv."""
-    from decimal import Decimal
-    today = _date.today().isoformat()
-    total = Decimal(0)
-    for day, model, inp, out in usage_lines():
-        if (day != today) if period == "day" else (day[:7] != today[:7]):
-            continue
-        if model.startswith("ollama:") or model not in prices:
-            continue
-        price = price_of(call, model, prices, currency)
-        total += inp * price[0].amount + out * price[1].amount
-    return total / 1000000
 
 
 def cents(amount, currency: str) -> str:
@@ -605,19 +775,31 @@ def event(t: Target, line: str, tokens: list) -> list[str]:
 def send(call, t: Target, system, messages, temperature, max_tokens, stream, limit, retries):
     from .http import send as http_send
     key = reveal(call, t)
-    url, body, headers = request_of(t, key, system, messages, temperature, max_tokens, stream)
-    data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    headers = signed(t, key, url, headers, data)
+    lease = _reserve(call,t)
+    try:
+        if lease is not None: max_tokens=lease.output_cap(max_tokens)
+        url, body, headers = request_of(t, key, system, messages, temperature, max_tokens, stream)
+        data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers = signed(t, key, url, headers, data)
+    except BaseException:
+        if lease is not None:
+            from decimal import Decimal
+            lease.settle(Decimal(0),lambda:False)
+        raise
+    transport_retries = 0 if lease is not None else retries
     if stream:
-        r = http_send(call, "POST", url, data, "application/json", headers, limit, retries, stream=True)
-        answer = Live(call, t, event_lines(r.raw()) if t.provider == "bedrock" else r.lines())
+        r = http_send(call, "POST", url, data, "application/json", headers, limit, transport_retries, stream=True)
+        answer = Live(call, t, event_lines(r.raw()) if t.provider == "bedrock" else r.lines(), lease)
         # the first piece is read here, so that a model that cannot answer
         # still goes to the next one of the fallback (D164)
         answer.pull()
         return answer
-    r = http_send(call, "POST", url, data, "application/json", headers, limit, retries)
+    r = http_send(call, "POST", url, data, "application/json", headers, limit, transport_retries)
+    if lease is not None:
+        lease.response(call, r.text())
     pieces, tokens = answer_of(call, t, r.text(), stream)
-    record_usage(f"{t.provider}:{t.name}", tokens)
+    if lease is None:
+        record_usage(f"{t.provider}:{t.name}", tokens)
     return pieces
 
 
@@ -660,8 +842,9 @@ class Live(Lazy):
     """The answer of `ask(..., stream: true)`: its pieces as they arrive
     (D164). Read once; a second loop over it gets the same pieces."""
 
-    def __init__(self, call, t: Target, lines):
+    def __init__(self, call, t: Target, lines, lease=None):
         self.call, self.t, self.lines = call, t, lines
+        self.lease = lease
         self.pieces: list[str] = []
         self.tokens = [0, 0]
         self.done = False
@@ -674,6 +857,8 @@ class Live(Lazy):
         before = len(self.pieces)
         try:
             for line in self.lines:
+                if self.lease is not None:
+                    self.lease.observe(line)
                 self.pieces += event(self.t, line, self.tokens)
                 if len(self.pieces) > before:
                     return True
@@ -686,7 +871,11 @@ class Live(Lazy):
         self.done = True
         if not self.pieces:
             raise failure("AIError", self.call.span, model=self.t.shown, detail=errors.msg("detail.ai_no_text"))
-        record_usage(f"{self.t.provider}:{self.t.name}", self.tokens)
+        if self.lease is not None:
+            tokens = self.lease.observed
+            self.lease.finish(self.call, tokens if all(v is not None for v in tokens) else None)
+        else:
+            record_usage(f"{self.t.provider}:{self.t.name}", self.tokens)
         return False
 
     def each(self):
@@ -706,17 +895,23 @@ class Live(Lazy):
 
 
 def record_usage(model: str, tokens) -> None:
+    from ..ai_budget import LOCK
+    with LOCK:
+        _record_usage_unlocked(model, tokens)
+
+
+def _record_usage_unlocked(model, tokens, scope=None, day=None):
     from .policy import enforcing
     if enforcing():
-        return
-    """One line per call in the user's usage.csv (`nexo ai usage`)."""
+        return False
     try:
-        d = config_dir()
+        d = Path(scope) if scope is not None else config_dir()
         d.mkdir(parents=True, exist_ok=True)
         with open(d / "usage.csv", "a", encoding="utf-8") as f:
-            f.write(f"{_date.today().isoformat()},{model},{int(tokens[0])},{int(tokens[1])}\n")
+            f.write(f"{day or _date.today().isoformat()},{model},{int(tokens[0])},{int(tokens[1])}\n")
+        return True
     except (OSError, ValueError, TypeError):
-        pass
+        return False
 
 
 # ------------------------------------------------------------------- ask
@@ -862,7 +1057,7 @@ def b_ask(call, instruction, input=None, model=None, profile=None, creativity=No
 
 # function -> (description, [parameter types]) of the @tool functions (D109)
 TOOLS: dict = {}
-AGENT_KEYS = ["model", "tools", "goal", "max_steps", "confirm"]
+AGENT_KEYS = ["model", "tools", "goal", "max_steps", "max_tokens", "input_type", "confirm"]
 STEPS = 10
 DENIED = "The user did not allow this call."
 APPROVAL = threading.Lock()
@@ -943,10 +1138,11 @@ class Tool:
 class Agent(Native):
     type_name = "agent"
 
-    def __init__(self, name, model, tools, goal, max_steps, confirm, seal, servers=(), confirm_servers=()):
+    def __init__(self, name, model, tools, goal, max_steps, confirm, seal, servers=(), confirm_servers=(), max_tokens=None, input_type=None):
         self.seal = seal
+        self.input_type = input_type
         self.name, self.model, self.tools, self.goal = name, model, tools, goal
-        self.max_steps, self.confirm = max_steps, confirm
+        self.max_steps, self.confirm, self.max_tokens = max_steps, confirm, max_tokens
         # MCP servers whose tools the agent also has, and those whose tools
         # need approval (D166)
         self.servers, self.confirm_servers = list(servers), list(confirm_servers)
@@ -959,10 +1155,35 @@ class Agent(Native):
             return Builtin("handle", self.handle, fallible=True)
         if name == "name":
             return self.name
-        return self.missing(call, name, ["handle", "name"])
+        if name == "control":
+            from ..agent_control import Control
+            return Builtin("control", lambda call: Control())
+        return self.missing(call, name, ["handle", "name", "control"])
 
-    def handle(self, call, input):
-        return run_agent(call, self, input)
+    def handle(self, call, input, as_=None, timeout=None, cancel=None, run=None):
+        from .core import expects
+        from .http import seconds
+        if as_ is not None and not isinstance(as_, (RecordType, BuiltinType)):
+            raise expects(call, "as", "JSON-compatible type", as_)
+        limit = None if timeout is None else seconds(call, timeout, "timeout")
+        if limit is not None and (not math.isfinite(limit) or not 0 < limit <= 86400):
+            raise NexoError("agent_timeout", call.span)
+        from .. import agent_control, agent_tokens
+        if cancel is not None and not isinstance(cancel, agent_control.Control):
+            raise expects(call, "cancel", "agent_control", cancel)
+        lifecycle = _AgentDeadline(limit)
+        meters=() if self.max_tokens is None else (agent_tokens.Meter(self.max_tokens),)
+        with agent_control.scope((lifecycle,) + ((cancel,) if cancel is not None else ())), agent_tokens.scope(meters):
+            lifecycle.gate(call)
+            if self.input_type is not None and not call.interp.is_type(input,self.input_type,call.span):
+                from ..types import type_name
+                raise failure("InvalidData",call.span,detail=errors.msg("detail.expected",type=self.input_type.name,vtype=type_name(input)))
+            from .. import agent_trace
+            from .. import agent_journal, agent_finance
+            with agent_trace.span(call, "nexo.agent.run"), agent_journal.open_run(call,self,run,input,as_) as journal:
+                stores=(journal.store,) if journal is not None and journal.store.grant.budget is not None else ()
+                with agent_finance.scope(stores):
+                    return run_agent(call, self, input, as_, lifecycle,journal)
 
 
 def b_ai_agent(call, name, **pairs):
@@ -983,6 +1204,12 @@ def b_ai_agent(call, name, **pairs):
     steps = pairs.get("max_steps", STEPS)
     if not isinstance(steps, int) or isinstance(steps, bool) or steps < 1:
         raise expects(call, "max_steps", "int", steps)
+    input_type = pairs.get("input_type")
+    if "input_type" in pairs and not isinstance(input_type,(RecordType,BuiltinType)):
+        raise expects(call,"input_type","JSON-compatible type",input_type)
+    max_tokens = pairs.get("max_tokens")
+    if "max_tokens" in pairs and (type(max_tokens) is not int or not 0 < max_tokens <= 9223372036854775807):
+        raise NexoError("agent_tokens",call.span)
     tools = []
     for key in ("tools", "confirm"):
         value = pairs.get(key, [])
@@ -1012,7 +1239,7 @@ def b_ai_agent(call, name, **pairs):
             raise NexoError("agent_confirm", call.span, name=n)
         confirm.append(n)
     from .. import authorization
-    return Agent(name, model, tools, goal, steps, confirm, authorization.seal(call.span.file, name), servers, confirm_servers)
+    return Agent(name, model, tools, goal, steps, confirm, authorization.seal(call.span.file, name), servers, confirm_servers,max_tokens,input_type)
 
 
 def tools_json(t: Target, tools: list):
@@ -1028,27 +1255,86 @@ def tools_json(t: Target, tools: list):
                                               "parameters": x.params()}} for x in tools]
 
 
-def agent_step(call, t: Target, system, messages, tools) -> tuple[str, list, Any]:
+class _AgentDeadline:
+    """Cooperative admission deadline; never preempts an executing tool."""
+    def __init__(self, limit):
+        self.expires = None if limit is None else time.monotonic() + limit
+
+    def check(self, call):
+        if self.expires is not None and time.monotonic() >= self.expires:
+            raise failure("Timeout", call.span, key="Timeout.agent")
+
+    def gate(self, call):
+        from .. import agent_control
+        agent_control.check(call)
+        self.check(call)
+
+    def request_timeout(self, call):
+        self.gate(call)
+        from .. import agent_control
+        expires=[c.expires for c in agent_control.capture() if getattr(c,"expires",None) is not None]
+        if self.expires is not None: expires.append(self.expires)
+        remaining=min(expires)-time.monotonic() if expires else 60.0
+        if remaining<=0: raise failure("Timeout",call.span,key="Timeout.agent")
+        return min(60.0,remaining)
+
+
+
+def _agent_json(text):
+    from ..json_limits import nesting_within
+    if not nesting_within(text):
+        raise ValueError("JSON nesting limit")
+
+    def non_json_constant(value):
+        raise ValueError("Non-JSON numeric constant")
+
+    def finite_number(text):
+        value = float(text)
+        if not math.isfinite(value):
+            raise ValueError("Nonfinite JSON number")
+        return value
+
+    return json.loads(text, parse_constant=non_json_constant, parse_float=finite_number)
+
+
+def agent_step(call, t: Target, system, messages, tools, lifecycle, durable=False) -> tuple[str, list, Any]:
     """One request: (text, [(id, name, arguments)], the assistant message)."""
     from .http import send as http_send
     key = reveal(call, t)
-    url, body, headers = request_of(t, key, system, messages, CREATIVITY["medium"], None, False)
-    if tools:
-        body["toolConfig" if t.provider == "bedrock" else "tools"] = tools_json(t, tools)
-    data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    headers = signed(t, key, url, headers, data)
-    r = http_send(call, "POST", url, data, "application/json", headers, 60.0, 1)
+    lease = _reserve(call,t)
+    try:
+        cap = None if lease is None else lease.output_cap()
+        url, body, headers = request_of(t, key, system, messages, CREATIVITY["medium"], cap, False)
+        if tools:
+            body["toolConfig" if t.provider == "bedrock" else "tools"] = tools_json(t, tools)
+        data = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        headers = signed(t, key, url, headers, data)
+        limit = lifecycle.request_timeout(call)
+    except BaseException:
+        if lease is not None:
+            from decimal import Decimal
+            lease.settle(Decimal(0),lambda:False)
+        raise
+    try:
+        r = http_send(call, "POST", url, data, "application/json", headers,
+                      limit, 1 if not durable and lifecycle.expires is None and lease is None else 0)
+    except NexoFailure:
+        lifecycle.gate(call)
+        raise
+    if lease is not None:
+        lease.response(call, r.text())
+    lifecycle.gate(call)
 
     def bad():
         return failure("AIError", call.span, model=t.shown, detail=errors.msg("detail.ai_no_text"))
 
     try:
-        answer = json.loads(r.text())
+        answer = _agent_json(r.text())
         calls = []
         if t.provider == "anthropic":
             content = answer["content"]
             text = "".join(b["text"] for b in content if b.get("type") == "text")
-            calls = [(b["id"], b["name"], b.get("input") or {}) for b in content if b.get("type") == "tool_use"]
+            calls = [(b["id"], b["name"], {} if b.get("input") is None else b["input"]) for b in content if b.get("type") == "tool_use"]
             message = {"role": "assistant", "content": content}
             u = answer.get("usage", {})
             tokens = [u.get("input_tokens", 0), u.get("output_tokens", 0)]
@@ -1056,25 +1342,30 @@ def agent_step(call, t: Target, system, messages, tools) -> tuple[str, list, Any
             parts = answer["candidates"][0]["content"]["parts"]
             text = "".join(p["text"] for p in parts if "text" in p)
             found = [p["functionCall"] for p in parts if "functionCall" in p]
-            calls = [(str(i), f["name"], f.get("args") or {}) for i, f in enumerate(found)]
+            calls = [(str(i), f["name"], {} if f.get("args") is None else f["args"]) for i, f in enumerate(found)]
             message = {"role": "model", "parts": parts}
             u = answer.get("usageMetadata") or {}
             tokens = [u.get("promptTokenCount", 0), u.get("candidatesTokenCount", 0)]
         elif t.provider == "bedrock":
             content = answer["output"]["message"]["content"]
             text = "".join(b["text"] for b in content if "text" in b)
-            calls = [(b["toolUse"]["toolUseId"], b["toolUse"]["name"], b["toolUse"].get("input") or {})
+            calls = [(b["toolUse"]["toolUseId"], b["toolUse"]["name"], {} if b["toolUse"].get("input") is None else b["toolUse"]["input"])
                      for b in content if "toolUse" in b]
             message = {"role": "assistant", "content": content}
             u = answer.get("usage") or {}
             tokens = [u.get("inputTokens", 0), u.get("outputTokens", 0)]
         else:
             message = answer["choices"][0]["message"] if t.provider in OPENAI_LIKE else answer["message"]
-            text = message.get("content") or ""
-            for i, c in enumerate(message.get("tool_calls") or []):
-                args = c["function"].get("arguments") or {}
+            text = message.get("content")
+            if text is None:
+                text = ""
+            tool_calls = message.get("tool_calls")
+            if tool_calls is not None and not isinstance(tool_calls, list):
+                raise bad()
+            for i, c in enumerate(tool_calls or []):
+                args = c["function"].get("arguments", {})
                 if isinstance(args, str):
-                    args = json.loads(args) if args.strip() else {}
+                    args = _agent_json(args) if args.strip() else {}
                 calls.append((c.get("id", str(i)), c["function"]["name"], args))
             if t.provider in OPENAI_LIKE:
                 u = answer.get("usage") or {}
@@ -1087,14 +1378,20 @@ def agent_step(call, t: Target, system, messages, tools) -> tuple[str, list, Any
         raise bad()
     if not text and not calls:
         raise bad()
-    record_usage(f"{t.provider}:{t.name}", tokens)
+    if any(not isinstance(cid, str) or not cid or not isinstance(name, str) or not name for cid, name, _ in calls):
+        raise bad()
+    if len({cid for cid, _, _ in calls}) != len(calls):
+        raise bad()
+    if lease is None:
+        record_usage(f"{t.provider}:{t.name}", tokens)
     return text, calls, message
 
 
-def use_tool(call, agent: Agent, tools: list, name: str, args: dict) -> tuple[str, bool]:
+def use_tool(call, agent: Agent, tools: list, name: str, args: dict, lifecycle,journal=None) -> tuple[str, bool]:
     """(the result for the model, whether it is an error)."""
     from .data import b_json_parse
     from ..types import repr_value
+    lifecycle.gate(call)
     tool = next((x for x in tools if x.name == name), None)
     if tool is None:
         return f"There is no tool {name}.", True
@@ -1102,18 +1399,25 @@ def use_tool(call, agent: Agent, tools: list, name: str, args: dict) -> tuple[st
     if isinstance(tool, McpTool):
         if tool.server.name in agent.confirm_servers:
             values = [(k, b_json_parse(call, json.dumps(v))) for k, v in args.items()]
-            if not confirmed(call, name, values):
+            if not confirmed(call, name, values, lifecycle):
                 return DENIED, False
+        lifecycle.gate(call)
         return tool.server.call_tool(call, name, args)
     from .. import authorization
     scope, required = authorization.enter_tool(agent.seal, tool.seal, call.span)
     needs_confirmation = required or name in agent.confirm
     authorization.check_confirmation(needs_confirmation, call.span)
-    early = needs_confirmation and authorization.STATE is not None
-    if early:
+    known = {p.name for p in tool.fn.decl.params}
+    extra = sorted(set(args) - known)
+    if extra:
+        return f"Error: {errors.msg('detail.tool_param', name=extra[0])}", True
+    if needs_confirmation:
+        if journal is not None: journal.phase("approval")
         shown = f"{name}(" + ", ".join(f"{p.name}: {json.dumps(args[p.name], ensure_ascii=False)}" for p in tool.fn.decl.params if p.name in args) + ")"
-        if not confirm_call(call, shown):
+        if not confirm_call(call, shown, lifecycle):
             return DENIED, False
+    lifecycle.gate(call)
+    if journal is not None: journal.phase("tool_pending")
     with scope:
         interp = call.interp
         values = []
@@ -1125,10 +1429,7 @@ def use_tool(call, agent: Agent, tools: list, name: str, args: dict) -> tuple[st
                     return f"Error: {errors.msg('detail.need_param', name=p.name)}", True
         except NexoFailure as f:
             return f"Error: {f.error.message}", True
-        if needs_confirmation and not early:
-            shown = f"{name}(" + ", ".join(f"{n}: {repr_value(v)}" for n, v in values) + ")"
-            if not confirm_call(call, shown):
-                return DENIED, False
+        lifecycle.gate(call)
         try:
             result = interp.bind_value(interp.call(tool.fn, values, tool.fn.decl))
         except NexoFailure as f:
@@ -1136,28 +1437,24 @@ def use_tool(call, agent: Agent, tools: list, name: str, args: dict) -> tuple[st
         return (result if isinstance(result, str) else show_hidden(result)), False
 
 
-def confirm_call(call, shown):
+def confirm_call(call, shown, lifecycle):
     import sys
     with APPROVAL:
+        lifecycle.gate(call)
         call.interp.write(errors.msg("info.ai_confirm", call=shown))
         try:
             call.interp.out.flush()
         except Exception:
             pass
-        return sys.stdin.readline().strip().lower() in ("y", "yes")
+        answer = sys.stdin.readline().strip().lower() in ("y", "yes")
+        lifecycle.gate(call)
+        return answer
 
 
-def confirmed(call, name: str, values: list) -> bool:
-    """Whether the user allows a call of a tool in `confirm` (D109)."""
+def confirmed(call, name: str, values: list, lifecycle) -> bool:
     from ..types import repr_value
-    interp = call.interp
     shown = f"{name}(" + ", ".join(f"{n}: {repr_value(v)}" for n, v in values) + ")"
-    interp.write(errors.msg("info.ai_confirm", call=shown))
-    try:
-        interp.out.flush()
-    except Exception:
-        pass
-    return sys.stdin.readline().strip().lower() in ("y", "yes")
+    return confirm_call(call, shown, lifecycle)
 
 
 def agent_tools(call, agent: Agent) -> list:
@@ -1173,25 +1470,70 @@ def agent_tools(call, agent: Agent) -> list:
     return tools
 
 
-def run_agent(call, agent: Agent, input):
+def run_agent(call, agent: Agent, input, as_=None, lifecycle=None,journal=None):
     """`agent.handle(input)` (D109): the conversation with the model, using
     its tools, until it answers without asking for one."""
     from .. import authorization
+    from .data import b_json_parse
+    lifecycle = lifecycle or _AgentDeadline(None)
+    lifecycle.gate(call)
+    typed = as_ is not None and not (isinstance(as_, BuiltinType) and as_.name == "str")
     with authorization.enter_agent(agent.seal, call.span):
         targets, _ = resolve(call, {"model": agent.model})
         t = targets[0]
         tools = agent_tools(call, agent)
+        if journal is not None:
+            from ..agent_finance import Plan
+            if journal.store.grant.budget is not None: t.budget = Plan(journal.store,call)
         system = "\n\n".join(x for x in (agent.goal, GUARD if input is not None else "") if x)
+        if typed:
+            system += "\n\nAnswer only with JSON of this form, and nothing else:\n" + shape(call.interp, as_, call.interp.globals)
+        if journal is not None: journal.bind(json.dumps([t.provider,t.name,t.url,system,tools_json(t,tools),agent.max_steps,agent.confirm],ensure_ascii=False,separators=(",",":")))
         content = "" if input is None else f"<input>\n{show_hidden(call.interp.bind_value(input))}\n</input>"
         messages: list = [{"role": "user", "content": content}]
-        for _ in range(agent.max_steps):
-            text, calls, message = agent_step(call, t, system, messages, tools)
-            if not calls:
-                return text
-            messages.append(message)
-            results = []
-            for cid, name, args in calls:
-                out, is_error = use_tool(call, agent, tools, name, args)
+        start = 0
+        replay = None if journal is None else journal.frame
+        if replay is not None:
+            start = replay['step']
+            messages = [json.loads(m) for m in replay['messages']]
+        for step in range(start,agent.max_steps):
+            lifecycle.gate(call)
+            from .. import agent_trace
+            if replay is not None and replay['phase'] in ('response','approval','complete'):
+                tool_turn=replay['tool_turn']
+                text=replay['text']
+                calls=[(c,n,json.loads(a)) for c,n,a in replay['calls']]
+                results=[json.loads(v) for v in replay['results']]
+                replay=None
+            else:
+                if journal is not None: journal.save('provider_pending',step,messages,[],[],"")
+                with agent_trace.span(call, "nexo.agent.provider"):
+                    text, calls, message = agent_step(call, t, system, messages, tools, lifecycle,journal is not None)
+                tool_turn=bool(calls)
+                if calls: messages.append(message)
+                results=[]
+                if journal is not None: journal.save('response',step,messages,calls,results,text,tool_turn)
+            lifecycle.gate(call)
+            if not tool_turn:
+                if typed:
+                    from .data import invalid
+                    payload = json_text(text)
+                    try:
+                        _agent_json(payload)
+                    except json.JSONDecodeError as exc:
+                        raise invalid(call, "detail.json", line=exc.lineno, col=exc.colno)
+                    except ValueError:
+                        raise invalid(call, "detail.json", line=1, col=1)
+                    result = b_json_parse(call, payload, as_=as_)
+                else:
+                    result = text
+                lifecycle.gate(call)
+                if journal is not None: journal.save("complete",step,messages,[],[],text)
+                return result
+            while calls:
+                cid, name, args = calls[0]
+                with agent_trace.span(call, "nexo.agent.tool"):
+                    out, is_error = use_tool(call, agent, tools, name, args, lifecycle,journal)
                 if t.provider == "anthropic":
                     r = {"type": "tool_result", "tool_use_id": cid, "content": out}
                     if is_error:
@@ -1208,9 +1550,13 @@ def run_agent(call, agent: Agent, input):
                     messages.append({"role": "tool", "tool_call_id": cid, "content": out})
                 else:
                     messages.append({"role": "tool", "content": out})
+                calls.pop(0)
+                if journal is not None: journal.save("response",step,messages,calls,results,text,tool_turn)
             if results:
                 messages.append({"role": "user", "parts": results} if t.provider == "gemini"
                                 else {"role": "user", "content": results})
+            if journal is not None and step + 1 < agent.max_steps: journal.save("ready",step+1,messages,[],[],"")
+        lifecycle.gate(call)
         raise failure("AIError", call.span, key="AIError.steps", agent=agent.name, n=agent.max_steps)
 
 

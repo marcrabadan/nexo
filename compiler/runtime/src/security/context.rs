@@ -85,31 +85,39 @@ pub fn allows(capability: Capability<'_>, file: u32) -> bool {
 }
 
 #[derive(Clone, Default)]
-pub struct Snapshot(Vec<Arc<Engine>>);
+pub struct Snapshot(Vec<Arc<Engine>>, crate::agent_control::Snapshot,crate::agent_finance::Snapshot,crate::agent_tokens::Snapshot);
 pub fn combine<'a>(snapshots: impl IntoIterator<Item = &'a Snapshot>) -> Snapshot {
     let mut engines = Vec::new();
+    let mut controls = crate::agent_control::Snapshot::default();
+    let mut finances=Vec::new();
+    let mut tokens=Vec::new();
     for snapshot in snapshots {
+        finances.push(snapshot.2.clone());tokens.push(snapshot.3.clone());
         for engine in &snapshot.0 {
             if !engines.iter().any(|old| Arc::ptr_eq(old, engine)) { engines.push(engine.clone()); }
         }
+        for control in &snapshot.1.0 {
+            if !controls.0.iter().any(|old| Arc::ptr_eq(old, control)) { controls.0.push(control.clone()); }
+        }
     }
-    Snapshot(engines)
+    let finance=crate::agent_finance::combine(finances);
+    Snapshot(engines, controls,finance,crate::agent_tokens::combine(tokens))
 }
-pub fn capture() -> Snapshot { STACK.with(|s| Snapshot(s.borrow().clone())) }
-pub struct Scope { old: Vec<Arc<Engine>>, _thread: std::marker::PhantomData<std::rc::Rc<()>> }
+pub fn capture() -> Snapshot { STACK.with(|s| Snapshot(s.borrow().clone(), crate::agent_control::capture(),crate::agent_finance::capture(),crate::agent_tokens::capture())) }
+pub struct Scope { old: Vec<Arc<Engine>>, _controls: crate::agent_control::Scope, _finance:crate::agent_finance::Scope, _tokens:crate::agent_tokens::Scope, _thread: std::marker::PhantomData<std::rc::Rc<()>> }
 impl Drop for Scope {
     fn drop(&mut self) { STACK.with(|s| *s.borrow_mut() = std::mem::take(&mut self.old)); }
 }
 pub fn inherit(snapshot: &Snapshot) -> Scope {
     let old = STACK.with(|s| std::mem::replace(&mut *s.borrow_mut(),snapshot.0.clone()));
-    Scope { old, _thread: std::marker::PhantomData }
+    Scope { old, _controls: crate::agent_control::enter(&snapshot.1, true), _finance:crate::agent_finance::enter(&snapshot.2,true),_tokens:crate::agent_tokens::enter(&snapshot.3,true), _thread: std::marker::PhantomData }
 }
 pub fn intersect(snapshot: &Snapshot) -> Scope {
     let old = STACK.with(|s| {
         let mut s = s.borrow_mut(); let old = s.clone();
         s.extend(snapshot.0.iter().cloned()); old
     });
-    Scope { old, _thread: std::marker::PhantomData }
+    Scope { old, _controls: crate::agent_control::enter(&snapshot.1, false), _finance:crate::agent_finance::enter(&snapshot.2,false),_tokens:crate::agent_tokens::enter(&snapshot.3,false), _thread: std::marker::PhantomData }
 }
 pub fn attenuate(snapshot: &Snapshot, engine: Arc<Engine>) -> Scope {
     let scope = intersect(snapshot);
@@ -164,8 +172,8 @@ mod tests {
     #[test]
     fn combined_publishers_deduplicate_without_widening_or_leaking() {
         let public = read("/tmp/public.txt");
-        let first = Snapshot(vec![public.clone(), public.clone()]);
-        let second = Snapshot(vec![read("/tmp"), public]);
+        let first = Snapshot(vec![public.clone(), public.clone()], Default::default(),Default::default(),Default::default());
+        let second = Snapshot(vec![read("/tmp"), public], Default::default(),Default::default(),Default::default());
         let combined = combine([&first, &second]);
         assert_eq!(combined.0.len(), 2);
         {
@@ -206,4 +214,11 @@ mod tests {
         }
         assert!(allows(cap,0));
     }
+}
+
+
+pub(crate) fn identity(snapshot:&Snapshot)->String {
+    let mut active=snapshot.0.iter().map(|e|e.identity()).collect::<Vec<_>>();active.sort();active.dedup();
+    let mut files=CONTEXTS.get().map(|c|c.files.iter().map(|(id,e)|format!("{id}:{}",e.identity())).collect::<Vec<_>>()).unwrap_or_default();files.sort();
+    format!("{:?}:{:?}",active,files)
 }

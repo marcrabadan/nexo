@@ -24,7 +24,7 @@ BUILTINS = [
     "print", "input", "len", "range", "set", "round", "split", "convert", "fail", "validate", "PI", "half_up",
     "half_even", "int", "float", "decimal", "money", "str", "bool", "list", "map",
     "Error", "NotFound", "IOError", "InvalidData", "Overflow", "DivisionByZero", "OutOfRange",
-    "ContractBroken", "Timeout", "InvalidValue",
+    "ContractBroken", "Timeout", "Cancelled", "InvalidValue",
     "read", "write", "read_lines", "save", "json", "csv",
     # the library of phase 4 (D89)
     "move_file", "now", "today", "date", "time", "regex", "render", "secret", "password", "key", "keypair",
@@ -38,7 +38,7 @@ BUILTIN_FUNCTIONS = {"print", "input", "len", "range", "set", "round", "split", 
 MEMBERS = ["add", "cause", "close", "count", "ends_with", "keys", "kind", "line", "lower", "message", "parse",
            "receive", "replace", "send", "split", "starts_with", "sum", "trim", "upper", "values",
            # members of the values of phase 4
-           "all", "find", "handle", "headers", "remove", "status", "text", "url"]
+           "all", "find", "handle", "control", "cancel", "cancelled", "headers", "remove", "status", "text", "url"]
 
 # LSP kinds
 SYMBOL = {"function": 12, "method": 6, "struct": 23, "enum": 10, "field": 8, "member": 22,

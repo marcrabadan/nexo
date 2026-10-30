@@ -245,8 +245,9 @@ class Workflow(Native):
             # a new file put in place of the old one, so a stop half way
             # through a save keeps the last state saved
             fresh = self.path.with_suffix(".tmp")
-            fresh.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
-            os.replace(fresh, self.path)
+            from ..checkpoints import commit
+            commit(lambda: fresh.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8"),
+                   lambda: os.replace(fresh, self.path), lambda: None)
         except OSError as exc:
             from .io import os_failure
             raise os_failure(call, str(self.path), exc)

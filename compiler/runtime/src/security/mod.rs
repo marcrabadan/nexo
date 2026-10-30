@@ -78,6 +78,15 @@ pub struct Engine { rules: Vec<Rule>, resolved_paths: bool }
 impl Engine {
     pub fn new(rules: Vec<Rule>) -> Self { Self { rules, resolved_paths: false } }
     pub(crate) fn with_resolved_paths(rules: Vec<Rule>) -> Self { Self { rules, resolved_paths: true } }
+    pub(crate) fn identity(&self)->String {
+        use crate::json::{Json,s,obj};
+        let mut rows=self.rules.iter().map(|r|{
+            let mut targets=r.targets.iter().map(|t|Json::Arr(if matches!(r.kind,Kind::Read|Kind::Write)&&!self.resolved_paths{vec![s(t.clone()),s(matching::resolve(t))]}else{vec![s(t.clone())]}).compact()).collect::<Vec<_>>();
+            targets.sort();targets.dedup();
+            Json::Arr(vec![s(if r.effect==Effect::Allow{"allow"}else{"deny"}),s(r.kind.as_str()),Json::Arr(targets.into_iter().map(s).collect())]).compact()
+        }).collect::<Vec<_>>();rows.sort();rows.dedup();
+        obj(vec![("resolved",Json::Bool(self.resolved_paths)),("rules",Json::Arr(rows.into_iter().map(s).collect()))]).compact()
+    }
     pub fn evaluate(&self, capability: Capability<'_>, release: bool, shield: bool) -> Decision<'_> {
         let mut allowed = false;
         for rule in &self.rules {

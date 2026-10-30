@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:nexo:agent-trace:1",
+  "title": "Nexo agent OTLP JSON profile v1",
+  "$comment": "Closed subset of ExportTraceServiceRequest, opentelemetry-proto v1.7.0; OTLP JSON hex IDs, numeric enums and decimal-string uint64 timestamps. No payload attributes.",
+  "type": "object",
+  "properties": {
+    "resourceSpans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "resource": {
+            "type": "object",
+            "properties": {
+              "attributes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "const": "service.name"
+                    },
+                    "value": {
+                      "type": "object",
+                      "properties": {
+                        "stringValue": {
+                          "const": "nexo"
+                        }
+                      },
+                      "required": [
+                        "stringValue"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "maxItems": 1
+              }
+            },
+            "required": [
+              "attributes"
+            ],
+            "additionalProperties": false
+          },
+          "scopeSpans": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "scope": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "const": "nexo.agent"
+                    },
+                    "version": {
+                      "const": "1"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "version"
+                  ],
+                  "additionalProperties": false
+                },
+                "spans": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "traceId": {
+                        "type": "string",
+                        "pattern": "^(?!0{32}$)[0-9a-f]{32}$"
+                      },
+                      "spanId": {
+                        "type": "string",
+                        "pattern": "^(?!0{16}$)[0-9a-f]{16}$"
+                      },
+                      "parentSpanId": {
+                        "type": "string",
+                        "pattern": "^(?!0{16}$)[0-9a-f]{16}$"
+                      },
+                      "name": {
+                        "enum": [
+                          "nexo.agent.run",
+                          "nexo.agent.provider",
+                          "nexo.agent.tool"
+                        ]
+                      },
+                      "kind": {
+                        "const": 1
+                      },
+                      "startTimeUnixNano": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]{0,19}$"
+                      },
+                      "endTimeUnixNano": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]{0,19}$"
+                      },
+                      "status": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "enum": [
+                              1,
+                              2
+                            ]
+                          }
+                        },
+                        "required": [
+                          "code"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "traceId",
+                      "spanId",
+                      "name",
+                      "kind",
+                      "startTimeUnixNano",
+                      "endTimeUnixNano",
+                      "status"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "minItems": 1,
+                  "maxItems": 1
+                }
+              },
+              "required": [
+                "scope",
+                "spans"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": [
+          "resource",
+          "scopeSpans"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 1
+    }
+  },
+  "required": [
+    "resourceSpans"
+  ],
+  "additionalProperties": false
+}

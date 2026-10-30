@@ -2992,3 +2992,128 @@ checks and explicit approval requirements, including pure tools. Runtime seals,
 ceilings, task contexts, contracts, approval and fail-closed enforcement remain
 unchanged; no grammar or dependency is added. See `docs/effects.md` and the Phase 2
 completion record for acceptance evidence and deliberate model limits.
+
+
+**D184. Start Phase 3 with typed agent results and cooperative admission.**
+`agent.handle(input, as: Type, timeout: duration)` reuses typed JSON conversion
+for final responses and a monotonic per-call deadline. No conversation replay
+is attempted to repair invalid output after tools may have run. Provider and
+Nexo tool boundaries reject malformed call metadata, duplicate response-local
+IDs and undeclared parameters before dispatch. Required approval precedes
+conversion in every execution profile, since record defaults can execute code.
+Deadline checks gate provider turns, conversion, dispatch, approval completion
+and final return; a deadline never claims to preempt an admitted operation or
+interrupt terminal input. Explicit cancellation, inherited concurrent scopes,
+budget reservations, confined durable workflows and opt-in tracing remain
+future Phase 3 increments. Existing Shield seals, permissions and persistence
+rejection remain enforced. See `docs/agent-lifecycle.md` for precise semantics.
+
+
+**D185. Reserve AI budget headroom atomically within the process.** Existing
+money-per-day/month configuration and trusted model prices are retained. Every
+paid provider request reserves all remaining headroom under one shared lock,
+then releases unused funds only after a valid usage report is accounted for.
+This conservative policy avoids guessing unrelated providers' input tokenizers.
+`ask`, typed repair attempts, agent turns and lazy streams share the ledger;
+a competitor is refused rather than queued. Missing/invalid usage, failure and
+abandonment never imply a refund; failed receipt writes retain the known debit.
+Receipt appends and settlement are atomic with respect to admission. Budgeted
+HTTP retries are disabled; explicit repair attempts require fresh admission.
+Day/month policies share overlapping holds, booked on their admission date.
+The existing `when_over_budget` model remains an explicit out-of-cap escape,
+including for paid models; configured prices/provider reports are trusted and
+actual cost is not clamped to the reservation. The ledger is process-local,
+not durable or tamper-proof. Cross-process billing coordination and finer-grained
+cost bounds remain pending. Existing Shield guards still reject accounting
+persistence, before admission. See `docs/ai-budget-reservations.md`.
+
+**D186. Inherited, irreversible cooperative agent cancellation.**
+`agent.control()` creates a control with `cancel()` and `cancelled`;
+`handle(..., cancel: control)` observes it and raises `Cancelled`. A fresh control
+is required for new work. Deadlines and controls follow the existing captured
+security contexts into tools, nested agents, tasks and callbacks. They can only
+reduce admission. Protected runtime API checks also observe these scopes, so an
+already-running tool cannot admit another protected operation after closure.
+An operation admitted before closure may finish; CPU work, blocking terminal
+input and syscalls are not forcibly interrupted. Nested provider timeouts use
+the earliest inherited deadline. Scope restoration keeps unrelated caller work
+independent. The error kind and catalog are shared by both backends.
+
+**D187. Confined checkpoints and durable reservations for agent runs.**
+Authorization version 2 retains version 1 dispatch grants and adds explicit
+agent state grants. Each grant pins a private, existing directory and an
+operator environment key; ordinary application file/environment APIs cannot
+access that state, its key, or overwrite the state-bearing manifest. State is
+bounded AES-256-GCM ciphertext committed through pinned directory descriptors,
+no-follow file opens, private regular files, nonblocking advisory locks, file
+fsync, atomic rename and directory fsync. The atomic replacement commit hooks are shared with
+D151 workflow persistence, whose existing unconfined behavior is retained. Generic `workflow` remains rejected under Shield:
+its general source-level undo/resume protocol is not granted this backend.
+
+`handle(..., run: "opaque-id")` uses a bounded agent recovery protocol instead:
+source, identity, manifest, input, result type, execution permission contexts
+and resolved target must match. Cached data cannot bypass narrower callers.
+A state-granted agent requires `run`. Inputs are text/none; durable output
+records cannot contain executable defaults; durable MCP tools are rejected.
+Completed results are revalidated and returned without replay. Saved remaining
+calls can resume, but approvals are always requested again. Provider/tool
+pending or terminal-failed states refuse recovery; neither a possible effect
+nor an uncertain paid request is repeated automatically. Transport retries are
+disabled for durable turns. Journal formats deliberately reject migration
+between backends, using the same namespace so migration cannot silently create
+a fresh run. Unix directory/file metadata is checked; native persistence is
+currently Linux AMD64 only. Unsupported hosts/profiles fail before dispatch.
+
+An optional immutable operator budget in the grant uses an encrypted shared
+ledger in that directory. Remaining headroom is reserved durably before HTTP;
+valid receipts settle actual configured cost, while unknown costs survive
+process death. The account follows provider work through Nexo's AI APIs in tools and captured tasks.
+Combining different inherited accounts refuses provider admission, rather than
+silently replacing the parent account. This does not constrain unrelated root
+provider calls or verify provider invoices. No source-level operation can
+refund uncertain holds. Price changes or recovery require deliberate operator
+reconciliation; no approval decision is serialized. See `docs/agent-recovery.md`.
+
+The D187 identity also pins root/caller/captured/dependency permission contexts,
+resolved filesystem targets and the working directory. State-granted execution
+protects its dependency manifest as well as its authorization manifest. This
+prevents cached privileged results from bypassing a narrower caller ceiling,
+while preserving the same permissions engine for actual dispatch.
+
+
+**D188. Opt-in, payload-free OTLP JSON tracing.**
+Only `NEXO_AGENT_TRACE=stderr` enables the exporter. Each line is an OTLP
+`ExportTraceServiceRequest` JSON envelope using the opentelemetry-proto v1.7.0
+trace mapping. A closed local JSON Schema restricts resource/scope fields,
+nonzero hexadecimal IDs, decimal-string timestamps, numeric enums and the three
+static span names for run/provider/tool. No prompts, outputs, arguments, model
+or application identifiers, URLs, exception messages, keys or arbitrary
+attributes enter the exporter. Synchronous nested spans share trace/parent IDs;
+a task without a current trace starts its own trace. Export failures/unknown
+configuration fail closed. There is no HTTP exporter, sampling decision,
+remote trace-header trust or GenAI semantic-conventions claim in this protocol.
+
+**D189. Typed input guards and invocation token admission.**
+Agent `input_type = Type` accepts a record/builtin runtime type and checks the
+argument with the existing `value is Type` semantics, before provider dispatch.
+It never implicitly constructs an input or evaluates record defaults. Omission
+preserves existing inputs; `@private` fields retain AI redaction. Durable inputs
+remain text/none, an explicit restriction of the checkpoint codec.
+
+Agent `max_tokens = N` is an optional positive integer limit on reported input
+plus output tokens per invocation. Inherited scopes share counters across agent
+turns, nested `ask`/repairs/streams and captured tasks. A request holds all
+remaining tokens, preventing concurrent reuse; its output limit uses the held
+headroom and any smaller existing request limit. Strict usage receipts debit
+actual totals; missing usage/failure/abandonment retains unknown holds. A reply
+that exceeds the remaining allowance fails before agent tool dispatch. Already
+admitted operations are not rolled back. Input is not locally tokenized, so no
+hard bound on provider ingestion or invoices is claimed.
+
+For durable runs, namespaced encrypted token ledgers reserve before transport
+and settle before returning a receipt. Recovery validates limits and identities
+and uses the ledger's latest debit, never replenishing from an older checkpoint.
+This includes child receipts received after an approval checkpoint. Pending
+ledger holds refuse recovery; a missing ledger cannot initialize an old run.
+Per-invocation token limits do not replace operator monetary accounts, Shield
+operation counters or `max_steps`. No dependency or grammar is added.

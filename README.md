@@ -471,7 +471,10 @@ same output; the decisions are D89 to D112.
   nexo.toml and `nexo ai setup`. `ask` works with Anthropic, OpenAI and
   Ollama; it validates typed answers with retries and has `fallback`,
   `stream`, `guard` and `redact`. There are also `@tool` functions,
-  `agent` blocks with `confirm`, and `nexo ai usage`.
+  `agent` blocks with `confirm`, and `nexo ai usage`. The
+  [AI-native lifecycle](docs/agent-lifecycle.md) adds typed input/output guards,
+  inherited cancellation/deadlines, token and monetary reservations,
+  operator-granted recovery and explicit opt-in OTLP tracing.
 - **Interoperability (section 18):** `use c "libz"` reads the header
   through the C preprocessor and calls with int, float, bool and text
   arguments. `use python statistics as stats` converts data at the
@@ -552,7 +555,7 @@ needs only glibc, into `debian:bookworm-slim`; secrets are passed with
 `-e` when the container starts.
 
 **Not yet:** `ml`, `ui`, `notify`, `every` and
-`lifecycle`, canary and blue/green releases, `nexo chaos`, AI budgets,
+`lifecycle`, canary and blue/green releases, `nexo chaos`,
 MCP tools, PostgreSQL, brokers on the network, `use rust`/`use wasm`,
 YAML/XML/Parquet (D89, D113). Using any of them gives a clear "not
 available in this phase" error; nothing is silently ignored.

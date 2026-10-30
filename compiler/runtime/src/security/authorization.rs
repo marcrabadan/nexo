@@ -10,7 +10,7 @@ use crate::state::{diag, R};
 type Identity = (PathBuf, String);
 struct AgentGrant { permissions: Arc<Engine>, tools: HashSet<Identity> }
 struct ToolGrant { permissions: Arc<Engine>, confirm: bool }
-pub struct Configuration { agents: HashMap<Identity, AgentGrant>, tools: HashMap<Identity, ToolGrant> }
+pub struct Configuration { agents: HashMap<Identity, AgentGrant>, tools: HashMap<Identity, ToolGrant>, state: HashMap<Identity,crate::agent_state::Grant>, fingerprint:String, path:PathBuf }
 fn exact(j: &Json, fields: &[&str]) -> Result<(), String> {
     let Json::Obj(pairs) = j else { return Err("Expected authorization object".into()) };
     if pairs.len() != fields.len() || fields.iter().any(|key| pairs.iter().filter(|(k,_)| k == key).count() != 1) {
@@ -95,8 +95,9 @@ impl Configuration {
             else if b == b']' || b == b'}' { depth-=1; if depth<0 { return Err("Invalid authorization JSON".into()); } }
         }
         let doc = crate::json::parse_unique(&text).ok_or("Invalid authorization JSON")?;
-        exact(&doc,&["version","agents","tools"])?;
-        if doc.get("version").int() != Some(1) { return Err("Unknown authorization version".into()); }
+        let version=doc.get("version").int();
+        exact(&doc,if version==Some(2){&["version","agents","tools","state"]}else{&["version","agents","tools"]})?;
+        if !matches!(version,Some(1|2)) { return Err("Unknown authorization version".into()); }
         let directory = path.parent().unwrap_or(Path::new("."));
         let Json::Obj(entries) = doc.get("tools") else { return Err("Invalid tool grants".into()) };
         let mut tools = HashMap::new();
@@ -120,10 +121,24 @@ impl Configuration {
             let grant = AgentGrant { permissions: permissions(grant.get("permissions"))?, tools: permitted };
             if agents.insert(id,grant).is_some() { return Err("Duplicate canonical agent identity".into()); }
         }
-        Ok(Self { agents, tools })
+        let mut state=HashMap::new();
+        if version==Some(2) {
+            let Json::Obj(entries)=doc.get("state") else{return Err("Invalid state grants".into())};
+            for (name,value) in entries {
+                let id=identity(name,directory)?;
+                if !agents.contains_key(&id)||state.contains_key(&id){return Err("Invalid state identity".into())}
+                let grant=crate::agent_state::parse(value,directory)?;
+                for old in state.values() {
+                    let old: &crate::agent_state::Grant=old;
+                    if (old.directory==grant.directory&&old!=&grant) || (old.directory!=grant.directory&&(old.directory.starts_with(&grant.directory)||grant.directory.starts_with(&old.directory))){return Err("Conflicting state roots".into())}
+                }
+                state.insert(id,grant);
+            }
+        }
+        Ok(Self { agents, tools, state, fingerprint:crate::agent_state::digest(&text),path:path.canonicalize().map_err(|_|"Invalid authorization path")? })
     }
 }
-struct State { config: Configuration, files: HashMap<u32,PathBuf> }
+struct State { config: Configuration, files: HashMap<u32,PathBuf>, protected:Vec<PathBuf> }
 static STATE: OnceLock<State> = OnceLock::new();
 pub fn active() -> bool { STATE.get().is_some() }
 pub fn initialize(root: &str) -> Result<(),String> {
@@ -131,7 +146,9 @@ pub fn initialize(root: &str) -> Result<(),String> {
     let config = Configuration::load(Path::new(&path))?;
     let mut files = nexo_diag::registered_files().into_iter().filter_map(|(id,name)| Path::new(name).canonicalize().ok().map(|p| (id,p))).collect::<HashMap<_,_>>();
     files.insert(0,Path::new(root).canonicalize().map_err(|_| "Cannot freeze root identity")?);
-    STATE.set(State { config, files }).map_err(|_| "Authorization already initialized".into())
+    let mut protected=vec![config.path.clone()];
+    if let Some(path)=std::env::var_os("NEXO_SECURITY_DEPENDENCIES"){protected.push(Path::new(&path).canonicalize().map_err(|_|"Cannot pin dependency configuration")?);}
+    STATE.set(State { config, files, protected }).map_err(|_| "Authorization already initialized".into())
 }
 fn identity_at(name: &str, span: u32) -> Option<Identity> {
     let state = STATE.get()?;
@@ -162,4 +179,36 @@ pub fn check_confirmation(required: bool, span: u32) -> R<()> {
     // OS-profile stdin carries broker/control IPC, never a human approval.
     if required && (std::env::var_os("NEXO_SECURITY_SANDBOX").is_some() || super::ingress::port().is_some()) { return Err(denied(span)); }
     Ok(())
+}
+
+pub fn state_grant(seal:&Seal,span:u32)->R<(crate::agent_state::Grant,String,String)>{
+    let state=STATE.get().ok_or_else(||state_error(span))?;
+    let id=seal.id.as_ref().ok_or_else(||state_error(span))?;
+    let grant=state.config.state.get(id).ok_or_else(||state_error(span))?;
+    Ok((grant.clone(),state.config.fingerprint.clone(),format!("{}::{}",id.0.display(),id.1)))
+}
+pub fn state_error(span:u32)->crate::state::Fail{diag(nexo_diag::Diagnostic::new_spanless("agent_state"),span)}
+pub fn protect(kind:&str,value:&str,span:u32)->R<()>{
+    let Some(state)=STATE.get() else{return Ok(())};
+    if kind=="write"&&!state.config.state.is_empty(){let path=PathBuf::from(super::matching::resolve(value));if state.protected.iter().any(|file|file.starts_with(&path)){return Err(state_error(span))}}
+    for grant in state.config.state.values(){
+        let mut denied=kind=="env"&&value==grant.key;
+        if kind=="read"||kind=="write" {
+            let path=PathBuf::from(super::matching::resolve(value));
+            denied |= path.starts_with(&grant.directory)||(kind=="write"&&grant.directory.starts_with(&path));
+        }
+        if denied{return Err(state_error(span))}
+    }
+    Ok(())
+}
+
+pub fn has_state(seal:&Seal)->bool{STATE.get().is_some_and(|s|seal.id.as_ref().is_some_and(|id|s.config.state.contains_key(id)))}
+
+
+pub(crate) fn context_identity(seal:&Seal)->String {
+    let mut grants=Vec::new();if let Some(state)=STATE.get(){
+        for (id,g) in &state.config.agents{grants.push(format!("{}::{}:{}",id.0.display(),id.1,g.permissions.identity()));}
+        for (id,g) in &state.config.tools{grants.push(format!("{}::{}:{}",id.0.display(),id.1,g.permissions.identity()));}
+    }grants.sort();
+    crate::agent_state::digest(&format!("{:?}:{}:{}:{}:{:?}",std::env::current_dir().ok(),crate::policy::identity(),context::identity(&context::capture()),context::identity(&seal.snapshot),grants))
 }

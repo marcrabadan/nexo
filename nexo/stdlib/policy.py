@@ -151,6 +151,10 @@ def security_event(kind: str, decision: str, reason: str) -> None:
 
 def check(call, kind: str, value: str) -> None:
     """Stop the program, warn or record before an access (D142)."""
+    from .. import agent_control
+    agent_control.check(call)
+    from .. import authorization
+    authorization.protect(kind,value,call.span)
     target = shown(value) if kind in ("read", "write") else value
     record = os.environ.get("NEXO_POLICY_RECORD")
     if record and not STATE["release"] and not enforcing():

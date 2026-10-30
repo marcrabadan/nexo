@@ -333,9 +333,9 @@ impl Workflow {
         // a new file put in place of the old one, so a stop half way through
         // a save keeps the last state saved
         let fresh = self.path.with_extension("tmp");
-        let written = std::fs::create_dir_all(WORKFLOW_DIR)
-            .and_then(|_| std::fs::write(&fresh, data.compact() + "\n"))
-            .and_then(|_| std::fs::rename(&fresh, &self.path));
+        let written = std::fs::create_dir_all(WORKFLOW_DIR).and_then(|_| crate::checkpoints::commit(
+            || std::fs::write(&fresh, data.compact() + "\n"),
+            || std::fs::rename(&fresh, &self.path), || Ok(())));
         written.map_err(|e| crate::data::os_failure(&self.path.display().to_string(), &e, span))
     }
 }

@@ -4,6 +4,14 @@
 
 pub mod abi;
 pub mod ai;
+mod ai_budget;
+mod agent_control;
+mod agent_tokens;
+mod agent_trace;
+mod agent_state;
+mod agent_journal;
+mod agent_finance;
+mod checkpoints;
 pub mod call;
 pub mod cfg;
 pub mod ci;

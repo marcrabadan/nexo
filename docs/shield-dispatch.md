@@ -78,7 +78,8 @@ manifest directory. Permission targets use the normal policy working-directory
 semantics. Paths are canonicalized during initialization and mapped to frozen
 source identities; dispatch never recanonicalizes a mutable module path.
 
-The authorization schema has its own version 1; it does not change the existing
+Version 1 remains the dispatch-only schema;
+[version 2](agent-recovery.md) adds explicit confined agent state grants. This does not change the existing
 dependency manifest schema. Agent/tool permissions can only reduce application
 and caller permissions. Empty permissions grant nothing. An agent also needs
 permission for its model destination and any environment-backed credentials
@@ -106,9 +107,12 @@ sandbox for a hostile application author who can change the root policy.
 ## Human approval
 
 `confirm: true` is an operator requirement for each dispatch. It combines with
-an agent's source-level `confirm` list; source code cannot disable it. In the
-authorization profile, the prompt shows the raw proposed arguments and runs
-before typed JSON conversion, since record defaults can execute Nexo code.
+an agent's source-level `confirm` list; source code cannot disable it. Whenever
+confirmation is required, the prompt shows raw proposed arguments before typed
+JSON conversion, since record defaults can execute Nexo code. This order also
+applies without an operator authorization manifest (D184). An explicit agent
+call deadline is checked after approval and before conversion/dispatch; see
+[the cooperative lifecycle limits](agent-lifecycle.md).
 Approval prompts are serialized across threads. Only `y` or `yes` on the
 trusted input channel approves the currently displayed call. EOF and every
 other answer deny it. Model text is never interpreted as approval.
@@ -144,3 +148,14 @@ agents cannot widen grants, joined tasks keep caller restrictions and root
 permissions return after completion. A Rust test explicitly transfers snapshots
 to another thread and checks restoration after an unwind. Docker validation
 includes this suite without enabling external network access.
+
+## Agent lifecycle, durable state and telemetry
+
+Controls and deadlines follow these same captured contexts into tools/tasks and
+are checked at protected runtime admissions. They reduce authority and never
+replace root/module/agent/tool permission intersections. [Durable agent runs](agent-recovery.md)
+require version 2 operator state grants, private directories and encryption keys;
+uncertain dispatch is never automatically replayed. The program cannot access
+the granted state/key or overwrite the state-bearing manifest. The generic
+`security_workflow` guard remains in force. [Tracing](agent-tracing.md) is opt-in
+and payload-free; telemetry never carries approval or permission authority.

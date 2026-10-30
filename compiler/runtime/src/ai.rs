@@ -344,6 +344,7 @@ struct Target {
     name: String,
     url: String,
     key: Option<Val>,
+    budget: Option<Arc<BudgetPlan>>,
 }
 
 fn resolve(model: Option<V>, profile: Option<V>, span: u32) -> R<Vec<Target>> {
@@ -413,19 +414,192 @@ fn resolve(model: Option<V>, profile: Option<V>, span: u32) -> R<Vec<Target>> {
         for t in targets.iter().chain(cheaper.iter()) {
             price_of(&format!("{}:{}", t.provider, t.name), &prices, &currency, span)?;
         }
-        let spent = spent_in(&period, &prices, &currency, span)?;
-        if spent.cmp(&amount) != std::cmp::Ordering::Less {
-            let Some(c) = cheaper else {
-                let args = [("budget", cents(&amount, &currency)), ("period", period), ("spent", cents(&spent, &currency))];
-                return Err(failure_as("AIError", "AIError.budget", span, &args));
-            };
-            targets = vec![c];
+        let plan = Arc::new(BudgetPlan::new(amount, currency, period, prices, span)?);
+        let (spent, reserved) = plan.inspect(span)?;
+        if spent.add(&reserved).cmp(&plan.amount) != std::cmp::Ordering::Less {
+            let Some(c) = cheaper else { return Err(plan.refuse(&spent, &reserved, span)) };
+            targets = vec![c]; // Explicit legacy when_over_budget escape.
+        } else {
+            for target in &mut targets { target.budget = Some(plan.clone()); }
         }
     }
+    if let Some(store)=crate::agent_finance::inherited(span)?{let plan=Arc::new(BudgetPlan::durable(store,span)?);for target in &mut targets{target.budget=Some(plan.clone())}}
     Ok(targets)
 }
 
 // ---------------------------------------------------------------- budget
+
+#[derive(Clone)]
+struct BudgetPlan {
+    amount: crate::dec::Dec,
+    currency: String,
+    period: String,
+    prices: Vec<(String, Price)>,
+    scope: PathBuf,
+    durable:Option<Arc<crate::agent_state::Store>>,
+}
+
+impl BudgetPlan {
+    fn durable(store:Arc<crate::agent_state::Store>,span:u32)->R<Self>{
+        let b=store.budget().ok_or_else(||crate::security::authorization::state_error(span))?;
+        let currency=b.get("currency").str().unwrap().to_string();
+        let crate::json::Json::Obj(prices)=b.get("prices") else{unreachable!()};
+        let prices=prices.iter().map(|(model,p)|{let crate::json::Json::Arr(p)=p else{unreachable!()};(model.clone(),(crate::dec::Dec::parse(p[0].str().unwrap()).unwrap(),crate::dec::Dec::parse(p[1].str().unwrap()).unwrap(),currency.clone()))}).collect();
+        Ok(Self{amount:crate::dec::Dec::parse(b.get("limit").str().unwrap()).unwrap(),currency,period:b.get("period").str().unwrap().into(),prices,scope:PathBuf::new(),durable:Some(store)})
+    }
+    fn new(amount: crate::dec::Dec, currency: String, period: String, prices: Vec<(String, Price)>, span: u32) -> R<Self> {
+        let path = config_dir();
+        let scope = std::fs::create_dir_all(&path).and_then(|_| path.canonicalize())
+            .map_err(|_| failure_as("AIError", "AIError.budget_history", span, &[]))?;
+        Ok(Self { amount, currency, period, prices, scope, durable:None })
+    }
+    fn history(&self, day: &str, span: u32) -> R<crate::dec::Dec> {
+        use crate::dec::Dec;
+        let text = match std::fs::read_to_string(self.scope.join("usage.csv")) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Dec::zero()),
+            Err(_) => return Err(failure_as("AIError", "AIError.budget_history", span, &[])),
+        };
+        let bad = || failure_as("AIError", "AIError.budget_history", span, &[]);
+        let mut total = Dec::zero();
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split(',').collect();
+            if parts.len() != 4 || parts[0].starts_with("0000") || crate::time::parse_date(parts[0]).is_none() {
+                return Err(bad());
+            }
+            let number = |text: &str| -> Option<i64> {
+                if text.is_empty() || !text.bytes().all(|c| c.is_ascii_digit()) { return None; }
+                text.parse().ok()
+            };
+            let (Some(input), Some(output)) = (number(parts[2]), number(parts[3])) else { return Err(bad()) };
+            let same = if self.period == "day" { parts[0] == day } else { parts[0].get(..7) == day.get(..7) };
+            if same {
+                if let Some(price) = price_of(parts[1], &self.prices, &self.currency, span)? {
+                    total = total.add(&cost(input, output, &price));
+                }
+            }
+        }
+        Ok(total)
+    }
+    fn inspect(&self, span: u32) -> R<(crate::dec::Dec, crate::dec::Dec)> {
+        let day = show(crate::time::clock("today").v());
+        crate::ai_budget::inspect(&self.scope, &self.currency, &day, &self.period, || self.history(&day, span))
+    }
+    fn refuse(&self, spent: &crate::dec::Dec, reserved: &crate::dec::Dec, span: u32) -> crate::state::Fail {
+        let key = if !reserved.is_zero() && spent.cmp(&self.amount) == std::cmp::Ordering::Less {
+            "AIError.budget_pending"
+        } else { "AIError.budget" };
+        failure_as("AIError", key, span, &[("budget", cents(&self.amount, &self.currency)),
+            ("period", self.period.clone()), ("spent", cents(spent, &self.currency))])
+    }
+    fn reserve(&self, target: &Target, span: u32) -> R<Option<BudgetLease>> {
+        let model = format!("{}:{}", target.provider, target.name);
+        let price=if self.durable.is_some(){self.prices.iter().find(|(m,_)|m==&model).map(|(_,p)|p.clone()).ok_or_else(||failure_as("AIError","AIError.budget_usage",span,&[]))?}else{
+            let Some(price)=price_of(&model,&self.prices,&self.currency,span)? else{return Ok(None)};price
+        };
+        let day = show(crate::time::clock("today").v());
+        if let Some(store)=&self.durable{
+            let ticket=LeaseTicket::Durable(crate::agent_finance::reserve(store.clone(),&day,span)?);
+            return Ok(Some(BudgetLease{plan:self.clone(),model,price,ticket}));
+        }
+        match crate::ai_budget::reserve(self.scope.clone(), &self.currency, day.clone(), &self.period,
+            &self.amount, || self.history(&day, span))? {
+            crate::ai_budget::Admission::Granted(ticket) => Ok(Some(BudgetLease {
+                plan: self.clone(), model, price, ticket:LeaseTicket::Local(ticket),
+            })),
+            crate::ai_budget::Admission::Full { spent, reserved } => Err(self.refuse(&spent, &reserved, span)),
+        }
+    }
+}
+
+enum LeaseTicket {Local(crate::ai_budget::Ticket),Durable(crate::agent_finance::Ticket)}
+impl LeaseTicket {
+    fn day(&self)->String{match self{Self::Local(t)=>t.day.clone(),Self::Durable(t)=>t.day.clone()}}
+    fn settle(&mut self,actual:crate::dec::Dec,write:impl FnOnce()->bool,span:u32)->R<()>{match self{Self::Local(t)=>{t.settle(actual,write);Ok(())},Self::Durable(t)=>t.settle(&actual,span)}}
+}
+struct BudgetLease {
+    plan: BudgetPlan,
+    model: String,
+    price: Price,
+    ticket: LeaseTicket,
+}
+
+impl BudgetLease {
+    fn finish(&mut self, tokens: Option<[i64; 2]>, span: u32) -> R<()> {
+        let Some(tokens) = tokens else { return Err(failure_as("AIError", "AIError.budget_usage", span, &[])) };
+        let actual = cost(tokens[0], tokens[1], &self.price);
+        let day = self.ticket.day();
+        self.ticket.settle(actual, || record_usage_unlocked(&self.model, tokens, Some(&self.plan.scope), Some(&day)),span)?;
+        Ok(())
+    }
+}
+
+struct RequestLease {
+    money:Option<BudgetLease>,tokens:Option<crate::agent_tokens::Lease>,
+    provider:String,model:String,observed:[Option<i64>;2],
+}
+impl RequestLease {
+    fn cap(&self,requested:Option<i64>)->Option<i64>{match (requested,self.tokens.as_ref().map(|t|t.cap)){(Some(a),Some(b))=>Some(a.min(b)),(a,b)=>a.or(b)}}
+    fn abort(&mut self,span:u32)->R<()>{if let Some(m)=&mut self.money{m.ticket.settle(crate::dec::Dec::zero(),||false,span)?}if let Some(t)=&mut self.tokens{t.abort(span)?}Ok(())}
+    fn finish(&mut self,usage:Option<[i64;2]>,span:u32)->R<()>{if let Some(m)=&mut self.money{m.finish(usage,span)?}else if let Some(usage)=usage{record_usage(&self.model,usage)}if let Some(t)=&mut self.tokens{t.finish(usage,span)?}Ok(())}
+    fn response(&mut self,text:&str,span:u32)->R<()>{let tokens=receipt_json(text).and_then(|v|reported_usage(&self.provider,&v));self.finish(tokens,span)}
+    fn observe(&mut self, line: &str) {
+        let mut text = line.trim();
+        if self.provider != "ollama" {
+            let Some(rest) = text.strip_prefix("data:") else { return };
+            text = rest.trim();
+        }
+        if text.is_empty() || text == "[DONE]" { return; }
+        let Some(value) = receipt_json(text) else { self.observed = [None, None]; return };
+        if self.provider == "anthropic" {
+            match text_of(at(&value, "type")).as_deref() {
+                Some("message_start") => self.observed[0] = at(&value, "message")
+                    .and_then(|m| at(m, "usage")).and_then(|u| valid_tokens(at(u, "input_tokens"))),
+                Some("message_delta") => self.observed[1] = at(&value, "usage")
+                    .and_then(|u| valid_tokens(at(u, "output_tokens"))),
+                _ => {}
+            }
+        } else if ["usage", "usageMetadata", "prompt_eval_count"].iter().any(|key| at(&value, key).is_some()) {
+            self.observed = reported_usage(&self.provider, &value).map(|v| [Some(v[0]), Some(v[1])]).unwrap_or([None, None]);
+        }
+    }
+}
+
+fn receipt_json(text: &str) -> Option<Json> {
+    fn unique(value: &Json) -> bool {
+        match value {
+            Json::Obj(pairs) => {
+                let mut names = std::collections::HashSet::new();
+                pairs.iter().all(|(name, value)| names.insert(name) && unique(value))
+            }
+            Json::List(values) => values.iter().all(unique),
+            _ => true,
+        }
+    }
+    let value = agent_json(text)?;
+    if unique(&value) { Some(value) } else { None }
+}
+
+fn valid_tokens(value: Option<&Json>) -> Option<i64> {
+    match value { Some(Json::Int(n)) => n.to_string().parse::<i64>().ok().filter(|n| *n >= 0), _ => None }
+}
+
+fn reported_usage(provider: &str, value: &Json) -> Option<[i64; 2]> {
+    let (usage, names) = match provider {
+        "anthropic" => (at(value, "usage")?, ["input_tokens", "output_tokens"]),
+        "gemini" => (at(value, "usageMetadata")?, ["promptTokenCount", "candidatesTokenCount"]),
+        "bedrock" => (at(value, "usage")?, ["inputTokens", "outputTokens"]),
+        _ if openai_like(provider) => (at(value, "usage")?, ["prompt_tokens", "completion_tokens"]),
+        _ => (value, ["prompt_eval_count", "eval_count"]),
+    };
+    Some([valid_tokens(at(usage, names[0]))?, valid_tokens(at(usage, names[1]))?])
+}
+
+fn reserve_budget(target:&Target,span:u32)->R<Option<RequestLease>>{
+    let mut money=match &target.budget{Some(plan)=>plan.reserve(target,span)?,None=>None};
+    let tokens=match crate::agent_tokens::reserve(span){Ok(v)=>v,Err(error)=>{if let Some(m)=money.as_mut(){m.ticket.settle(crate::dec::Dec::zero(),||false,span)?}return Err(error)}};
+    if money.is_none()&&tokens.is_none(){Ok(None)}else{Ok(Some(RequestLease{money,tokens,provider:target.provider.clone(),model:format!("{}:{}",target.provider,target.name),observed:[None,None]}))}
+}
 
 /// (amount, currency, "day" or "month") of `budget = 5 EUR per day` (D165).
 fn budget_of(v: V, span: u32) -> R<(crate::dec::Dec, String, String)> {
@@ -463,22 +637,6 @@ fn price_of(model: &str, prices: &[(String, Price)], currency: &str, span: u32) 
 fn cost(input: i64, output: i64, price: &Price) -> crate::dec::Dec {
     use crate::dec::Dec;
     Dec::from_i64(input).mul(&price.0).add(&Dec::from_i64(output).mul(&price.1)).div(&Dec::from_i64(1_000_000))
-}
-
-/// What the calls of this day (or month) cost, from usage.csv.
-fn spent_in(period: &str, prices: &[(String, Price)], currency: &str, span: u32) -> R<crate::dec::Dec> {
-    let today = show(crate::time::clock("today").v());
-    let mut total = crate::dec::Dec::zero();
-    for (day, model, input, output) in usage_lines() {
-        let this = if period == "day" { day == today } else { day.get(..7) == today.get(..7) };
-        if !this || model.starts_with("ollama:") || !prices.iter().any(|(m, _)| *m == model) {
-            continue;
-        }
-        if let Some(p) = price_of(&model, prices, currency, span)? {
-            total = total.add(&cost(input, output, &p));
-        }
-    }
-    Ok(total)
 }
 
 fn cents(amount: &crate::dec::Dec, currency: &str) -> String {
@@ -559,6 +717,7 @@ fn target(model: Option<String>, provider: Option<String>, layers: &[Layer], ali
         name,
         url: url.trim_end_matches('/').to_string(),
         key,
+        budget: None,
     })
 }
 
@@ -1073,6 +1232,7 @@ struct Live {
     tokens: [i64; 2],
     done: bool,
     span: u32,
+    lease: Option<RequestLease>,
 }
 
 impl Live {
@@ -1099,6 +1259,7 @@ impl Live {
                 }
             }
             let line = String::from_utf8_lossy(&raw).into_owned();
+            if let Some(lease) = self.lease.as_mut() { lease.observe(&line); }
             let mut tokens = self.tokens;
             let Some(found) = event(&self.t, &line, &mut tokens) else {
                 self.done = true;
@@ -1114,7 +1275,10 @@ impl Live {
         if self.pieces.is_empty() {
             return Err(self.no_text());
         }
-        record_usage(&format!("{}:{}", self.t.provider, self.t.name), self.tokens);
+        if let Some(lease) = self.lease.as_mut() {
+            let tokens = match lease.observed { [Some(a), Some(b)] => Some([a, b]), _ => None };
+            lease.finish(tokens, self.span)?;
+        } else { record_usage(&format!("{}:{}", self.t.provider, self.t.name), self.tokens); }
         Ok(false)
     }
 }
@@ -1131,12 +1295,15 @@ fn send_stream(
     span: u32,
 ) -> R<Val> {
     let key = reveal(t, span)?;
+    let mut lease=reserve_budget(t,span)?;
+    let max_tokens=lease.as_ref().map(|l|l.cap(max_tokens)).unwrap_or(max_tokens);
     let (url, body, headers) = request_of(t, key.clone(), system, messages, temperature, max_tokens, true);
-    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
-    let (reader, at) = crate::http::open("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, retries, span)?;
+    let headers=match signed(t,&key,&url,headers,body.as_bytes()){Ok(h)=>h,Err(error)=>{if let Some(l)=lease.as_mut(){l.abort(span)?;}return Err(error)}};
+    let transport_retries = if lease.is_some() { 0 } else { retries };
+    let (reader, at) = crate::http::open("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, transport_retries, span)?;
     let reader: Box<dyn std::io::Read + Send + Sync> =
         if t.provider == "bedrock" { Box::new(EventLines { inner: reader, buf: Vec::new(), out: Vec::new(), at: 0 }) } else { reader };
-    let mut live = Live { t: t.clone(), url: at, lines: std::io::BufReader::new(reader), pieces: Vec::new(), tokens: [0, 0], done: false, span };
+    let mut live = Live { t: t.clone(), url: at, lines: std::io::BufReader::new(reader), pieces: Vec::new(), tokens: [0, 0], done: false, span, lease };
     // the first piece is read here, so that a model that cannot answer
     // still goes to the next one of the fallback (D164)
     live.pull()?;
@@ -1175,29 +1342,34 @@ fn send(
     span: u32,
 ) -> R<Vec<String>> {
     let key = reveal(t, span)?;
+    let mut lease=reserve_budget(t,span)?;
+    let max_tokens=lease.as_ref().map(|l|l.cap(max_tokens)).unwrap_or(max_tokens);
     let (url, body, headers) = request_of(t, key.clone(), system, messages, temperature, max_tokens, stream);
-    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
-    let r = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, retries, span)?;
+    let headers=match signed(t,&key,&url,headers,body.as_bytes()){Ok(h)=>h,Err(error)=>{if let Some(l)=lease.as_mut(){l.abort(span)?;}return Err(error)}};
+    let transport_retries = if lease.is_some() { 0 } else { retries };
+    let r = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, limit, transport_retries, span)?;
+    if let Some(lease) = lease.as_mut() { lease.response(&r.text(), span)?; }
     let Some((pieces, tokens)) = answer_of(t, &r.text(), stream) else {
         let detail = msg("detail.ai_no_text", &[]);
         return Err(failure("AIError", span, &[("model", t.shown.clone()), ("detail", detail)]));
     };
-    record_usage(&format!("{}:{}", t.provider, t.name), tokens);
+    if lease.is_none() { record_usage(&format!("{}:{}", t.provider, t.name), tokens); }
     Ok(pieces)
 }
 
 /// One line per call in the user's usage.csv (`nexo ai usage`).
 fn record_usage(model: &str, tokens: [i64; 2]) {
-    if crate::security::enforcing() { return; }
-    let d = config_dir();
-    if std::fs::create_dir_all(&d).is_err() {
-        return;
-    }
-    let today = show(crate::time::clock("today").v());
+    crate::ai_budget::locked(|_| { record_usage_unlocked(model, tokens, None, None); });
+}
+
+fn record_usage_unlocked(model: &str, tokens: [i64; 2], scope: Option<&Path>, day: Option<&str>) -> bool {
+    if crate::security::enforcing() { return false; }
+    let d = scope.map(Path::to_path_buf).unwrap_or_else(config_dir);
+    if std::fs::create_dir_all(&d).is_err() { return false; }
+    let booked = day.map(str::to_string).unwrap_or_else(|| show(crate::time::clock("today").v()));
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(d.join("usage.csv")) {
-        let _ = writeln!(f, "{today},{model},{},{}", tokens[0], tokens[1]);
-    }
+    std::fs::OpenOptions::new().create(true).append(true).open(d.join("usage.csv"))
+        .is_ok_and(|mut f| writeln!(f, "{booked},{model},{},{}", tokens[0], tokens[1]).is_ok())
 }
 
 // ------------------------------------------------------------------- ask
@@ -1457,7 +1629,7 @@ pub fn ask(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
 /// Retaining the object prevents recycled addresses from impersonating a tool.
 struct RegisteredTool { func: Val, description: String, types: Vec<Val>, seal: crate::security::authorization::Seal }
 static TOOLS: Mutex<Vec<RegisteredTool>> = Mutex::new(Vec::new());
-const AGENT_KEYS: &[&str] = &["model", "tools", "goal", "max_steps", "confirm"];
+const AGENT_KEYS: &[&str] = &["model", "tools", "goal", "max_steps", "max_tokens", "input_type", "confirm"];
 const STEPS: i64 = 10;
 const DENIED: &str = "The user did not allow this call.";
 
@@ -1596,6 +1768,8 @@ pub struct Agent {
     tools: Vec<Tool>,
     goal: String,
     max_steps: i64,
+    max_tokens:Option<i64>,
+    input_type:Option<Val>,
     confirm: Vec<String>,
     /// MCP servers whose tools the agent also has, and the names of those
     /// whose tools need approval (D166)
@@ -1614,15 +1788,71 @@ impl Native for Agent {
         match name {
             "handle" => Ok(Val::new(Obj::BuiltinMethod(Val::from(me), "handle"))),
             "name" => Ok(Val::str(self.name.clone())),
-            _ => Err(crate::stdlib::missing_member("agent", name, &["handle", "name"], span)),
+            "control" => Ok(Val::new(Obj::BuiltinMethod(Val::from(me), "control"))),
+            _ => Err(crate::stdlib::missing_member("agent", name, &["handle", "name", "control"], span)),
         }
     }
-    fn call_method(&self, _me: V, _name: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
-        let a = crate::stdlib::method_args("handle", &["input"], 1, args, names, span)?;
-        run_agent(self, a[0], span)
+    fn call_method(&self, _me: V, method: &str, args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
+        if method == "control" {
+            crate::stdlib::method_args("control", &[], 0, args, names, span)?;
+            return Ok(native(crate::agent_control::Token(crate::agent_control::Control::new(None))));
+        }
+        let a = crate::stdlib::method_args("handle", &["input", "as", "timeout", "cancel", "run"], 1, args, names, span)?;
+        let as_ = Some(a[1]).filter(|v| v.tag != T_MISSING && !v.is_none());
+        if let Some(t) = as_ {
+            if !matches!(t.get(), Some(Obj::Type(TypeRef::Builtin(_) | TypeRef::Record(_)))) {
+                return Err(expects("as", "JSON-compatible type", t, span));
+            }
+        }
+        let limit = Some(a[2]).filter(|v| v.tag != T_MISSING && !v.is_none())
+            .map(|v| crate::http::seconds(v, "timeout", span)).transpose()?;
+        let cancel = if a[3].tag == T_MISSING || a[3].is_none() { None } else {
+            Some(a[3].native::<crate::agent_control::Token>().ok_or_else(|| expects("cancel", "agent_control", a[3], span))?.0.clone())
+        };
+        let lifecycle = AgentDeadline::new(limit, span)?;
+        let mut controls = crate::agent_control::Snapshot(vec![crate::agent_control::Control::new(lifecycle.0)]);
+        if let Some(cancel) = cancel { controls.0.push(cancel); }
+        let _scope = crate::agent_control::enter(&controls, false);
+        let tokens=crate::agent_tokens::Snapshot(self.max_tokens.map(|n|vec![crate::agent_tokens::Meter::new(n)]).unwrap_or_default());
+        let _tokens=crate::agent_tokens::enter(&tokens,false);
+        lifecycle.check(span)?;
+        if let Some(typ)=&self.input_type {let Some(Obj::Type(t))=typ.v().get() else{unreachable!()};if !crate::types::is_type(a[0],*t,span)?{let detail=msg("detail.expected",&[("type",crate::fmt::type_ref_name(t)),("vtype",crate::fmt::type_name(a[0]))]);return Err(failure("InvalidData",span,&[("detail",detail)]));}}
+        let run=if a[4].tag==T_MISSING||a[4].is_none(){None}else{Some(a[4].as_str().ok_or_else(||crate::security::authorization::state_error(span))?)};
+        if run.is_none()&&crate::security::authorization::has_state(&self.seal){return Err(crate::security::authorization::state_error(span))}
+        let mut journal=if let Some(run)=run {
+            let input=if a[0].is_none(){None}else{Some(a[0].as_str().ok_or_else(||crate::security::authorization::state_error(span))?)};
+            if !self.servers.is_empty() || as_.is_some_and(|t|!safe_journal_type(t,0)){return Err(crate::security::authorization::state_error(span))}
+            Some(crate::agent_journal::Journal::open(&self.seal,run,input,&as_.map(|t|show(t)).unwrap_or("str".into()),self.max_steps,span)?)
+        }else{None};
+        let finance=crate::agent_finance::Snapshot(journal.as_ref().filter(|j|j.store.budget().is_some()).map(|j|vec![j.store.clone()]).unwrap_or_default());
+        let _finance=crate::agent_finance::enter(&finance,false);
+        let result=crate::agent_trace::traced("nexo.agent.run", span, || run_agent(self, a[0], as_, &lifecycle, &mut journal, span));
+        if result.is_err(){if let Some(j)=&mut journal{j.fail(span)?}}
+        result
     }
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+fn safe_journal_type(v:V,depth:usize)->bool {
+    match v.get(){Some(Obj::Type(t))=>safe_journal_ref(*t,depth),_=>false}
+}
+fn safe_journal_ref(t:TypeRef,depth:usize)->bool {
+    if depth>16{return false}
+    match t {
+        TypeRef::Builtin(n)=>["str","int","float","decimal","bool","list","map","any"].contains(&n),
+        TypeRef::Record(r)=>r.fields.iter().all(|f|f.default.tag==T_UNDEF&&f.ty.is_none_or(|t|safe_journal_desc(t,depth+1))),
+        _=>false
+    }
+}
+fn safe_journal_desc(t:&TypeDesc,depth:usize)->bool {
+    if depth>16{return false}
+    match t {
+        TypeDesc::User{id,..}=>crate::types::lookup(*id).is_some_and(|t|safe_journal_ref(t,depth+1)),
+        TypeDesc::Named{name,params,..}=>["str","int","float","decimal","bool","list","map","any","date","time"].contains(&name.as_str())&&params.iter().all(|t|safe_journal_desc(t,depth+1)),
+        TypeDesc::Error{..}=>false,
+        _=>true
     }
 }
 
@@ -1661,6 +1891,8 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
             _ => return Err(expects("max_steps", "int", s, span)),
         },
     };
+    let input_type=match get("input_type"){None=>None,Some(v)=>{if !matches!(v.get(),Some(Obj::Type(TypeRef::Builtin(_)|TypeRef::Record(_)))){return Err(expects("input_type","JSON-compatible type",v,span))}Some(Val::from(v))}};
+    let max_tokens=match get("max_tokens"){None=>None,Some(v)=>Some(v.as_int().filter(|n|v.tag==T_INT&&*n>0).ok_or_else(||diag(Diagnostic::new_spanless("agent_tokens"),span))?)};
     let list_of = |k: &str| -> R<Vec<Val>> {
         match get(k) {
             None => Ok(Vec::new()),
@@ -1709,7 +1941,7 @@ pub fn agent(args: &[V], names: &[Option<&str>], span: u32) -> R<Val> {
     }
     let name = args.first().and_then(|n| n.as_str()).unwrap_or("").to_string();
     let seal = crate::security::authorization::seal(&name,span);
-    Ok(native(Agent { seal, name, model, tools, goal, max_steps, confirm, servers, confirm_servers }))
+    Ok(native(Agent { seal, name, model, tools, goal, max_steps, max_tokens, input_type, confirm, servers, confirm_servers }))
 }
 
 /// JSON text of a parsed value (to send back what the model sent).
@@ -1768,7 +2000,7 @@ fn tools_json(t: &Target, tools: &[Tool]) -> String {
 
 /// The body of an agent's request: the one of `ask` with structured
 /// messages and the tools.
-fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> String {
+fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool], max_tokens:Option<i64>) -> String {
     let temperature = float(0.7);
     if t.provider == "gemini" || t.provider == "bedrock" {
         let list = format!("[{}]", messages.join(","));
@@ -1778,13 +2010,13 @@ fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> 
             if !system.is_empty() {
                 body.push(("systemInstruction", obj(&[("parts", format!("[{}]", obj(&[("text", js(system))])))])));
             }
-            body.push(("generationConfig", obj(&[("temperature", temperature)])));
+            let mut config=vec![("temperature",temperature)];if let Some(n)=max_tokens{config.push(("maxOutputTokens",n.to_string()))}body.push(("generationConfig",obj(&config)));
         } else {
             body.push(("messages", list));
             if !system.is_empty() {
                 body.push(("system", format!("[{}]", obj(&[("text", js(system))]))));
             }
-            body.push(("inferenceConfig", obj(&[("temperature", temperature)])));
+            let mut config=vec![("temperature",temperature)];if let Some(n)=max_tokens{config.push(("maxTokens",n.to_string()))}body.push(("inferenceConfig",obj(&config)));
         }
         if !tools.is_empty() {
             body.push((if t.provider == "bedrock" { "toolConfig" } else { "tools" }, tools_json(t, tools)));
@@ -1800,7 +2032,7 @@ fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> 
     let messages = format!("[{}]", all.join(","));
     match t.provider.as_str() {
         "anthropic" => {
-            body.push(("max_tokens", MAX_TOKENS.to_string()));
+            body.push(("max_tokens", max_tokens.unwrap_or(MAX_TOKENS).to_string()));
             body.push(("temperature", temperature));
             if !system.is_empty() {
                 body.push(("system", js(system)));
@@ -1808,12 +2040,13 @@ fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> 
             body.push(("messages", messages));
         }
         p if openai_like(p) => {
+            if let Some(n)=max_tokens{body.push(("max_tokens",n.to_string()))}
             body.push(("temperature", temperature));
             body.push(("messages", messages));
         }
         _ => {
             body.push(("messages", messages));
-            body.push(("options", obj(&[("temperature", temperature)])));
+            let mut config=vec![("temperature",temperature)];if let Some(n)=max_tokens{config.push(("num_predict",n.to_string()))}body.push(("options",obj(&config)));
         }
     }
     if t.provider == "ollama" {
@@ -1829,18 +2062,94 @@ fn agent_body(t: &Target, system: &str, messages: &[String], tools: &[Tool]) -> 
 type ToolCall = (String, String, Json);
 
 /// One request: (text, the calls, the assistant message as JSON).
-fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], span: u32) -> R<(String, Vec<ToolCall>, String)> {
+/// A cooperative dispatch deadline, not preemption of an admitted tool.
+struct AgentDeadline(Option<std::time::Instant>);
+
+impl AgentDeadline {
+    fn new(limit: Option<f64>, span: u32) -> R<Self> {
+        if let Some(seconds) = limit {
+            if !seconds.is_finite() || seconds <= 0.0 || seconds > 86400.0 {
+                return Err(diag(Diagnostic::new_spanless("agent_timeout"), span));
+            }
+        }
+        Ok(Self(limit.map(|seconds| std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds))))
+    }
+    fn expired(&self) -> bool {
+        self.0.is_some_and(|deadline| std::time::Instant::now() >= deadline)
+    }
+    fn check(&self, span: u32) -> R<()> {
+        crate::agent_control::check(span)?;
+        if self.expired() {
+            return Err(failure_as("Timeout", "Timeout.agent", span, &[]));
+        }
+        Ok(())
+    }
+    fn request_timeout(&self, span: u32) -> R<f64> {
+        self.check(span)?;
+        let inherited=crate::agent_control::capture().0.iter().filter_map(|c|c.deadline).min();
+        let deadline=self.0.into_iter().chain(inherited).min();
+        match deadline {
+            None=>Ok(60.0),
+            Some(deadline)=>match deadline.checked_duration_since(std::time::Instant::now()){
+                Some(remaining) if !remaining.is_zero()=>Ok(remaining.as_secs_f64().min(60.0)),
+                _=>Err(failure_as("Timeout","Timeout.agent",span,&[]))
+            }
+        }
+    }
+}
+
+// The general JSON parser supports Nexo's nonfinite numeric extensions.
+// Provider and typed-agent boundaries deliberately accept only finite numbers.
+fn agent_json(text: &str) -> Option<Json> {
+    fn finite(value: &Json) -> bool {
+        match value {
+            Json::Float(value) => value.is_finite(),
+            Json::List(values) => values.iter().all(finite),
+            Json::Obj(pairs) => pairs.iter().all(|(_, value)| finite(value)),
+            _ => true,
+        }
+    }
+    let value = crate::data::parse_json(text).ok()?;
+    if finite(&value) { Some(value) } else { None }
+}
+
+fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], lifecycle: &AgentDeadline, durable:bool,span: u32) -> R<(String, Vec<ToolCall>, String)> {
     let key = reveal(t, span)?;
+    let mut lease=reserve_budget(t,span)?;
+    let cap=lease.as_ref().and_then(|l|l.cap(None));
     let (url, _, headers) = request_of(t, key.clone(), system, &[], 0.7, None, false);
-    let body = agent_body(t, system, messages, tools);
-    let headers = signed(t, &key, &url, headers, body.as_bytes())?;
-    let r = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers, 60.0, 1, span)?;
+    let body = agent_body(t, system, messages, tools,cap);
+    let headers=match signed(t,&key,&url,headers,body.as_bytes()){Ok(h)=>h,Err(error)=>{if let Some(l)=lease.as_mut(){l.abort(span)?;}return Err(error)}};
+    let limit = match lifecycle.request_timeout(span) {
+        Ok(limit) => limit,
+        Err(error) => {
+            if let Some(lease) = lease.as_mut() {
+                lease.abort(span)?; // No transport attempted.
+            }
+            return Err(error);
+        }
+    };
+    let response = crate::http::send("POST", &url, &Some((body.into_bytes(), "application/json")), &headers,
+        limit, if !durable && lifecycle.0.is_none() && lease.is_none() { 1 } else { 0 }, span);
+    if response.is_err() && lifecycle.expired() {
+        // Error state keeps its first failure. Replace only a recoverable
+        // transport error; never clear a fatal Shield diagnostic.
+        let network = crate::state::pending_error().is_some_and(|value|
+            matches!(value.get(), Some(Obj::Error(error)) if error.kind == "NetworkError"));
+        if network { crate::state::clear(); }
+    }
+    // Reconcile a received usage report even when admission has since expired.
+    if let Ok(response) = &response {
+        if let Some(lease) = lease.as_mut() { lease.response(&response.text(), span)?; }
+    }
+    lifecycle.check(span)?;
+    let r = response?;
     let bad = || {
         let detail = msg("detail.ai_no_text", &[]);
         failure("AIError", span, &[("model", t.shown.clone()), ("detail", detail)])
     };
     let parsed = (|| -> Option<(String, Vec<ToolCall>, String, [i64; 2])> {
-        let answer = crate::data::parse_json(&r.text()).ok()?;
+        let answer = agent_json(&r.text())?;
         let mut calls = Vec::new();
         if t.provider == "anthropic" {
             let content = at(&answer, "content")?;
@@ -1915,19 +2224,25 @@ fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], spa
             Some(Json::Null) | None => String::new(),
             _ => return None,
         };
+        if let Some(value) = at(message, "tool_calls") {
+            if !matches!(value, Json::List(_) | Json::Null) { return None; }
+        }
         if let Some(Json::List(tcs)) = at(message, "tool_calls") {
             for (i, c) in tcs.iter().enumerate() {
                 let f = at(c, "function")?;
                 let args = match at(f, "arguments") {
                     Some(Json::Str(s)) if s.trim().is_empty() => Json::Obj(Vec::new()),
-                    Some(Json::Str(s)) => crate::data::parse_json(s).ok()?,
+                    Some(Json::Str(s)) => agent_json(s)?,
                     Some(j) => clone_json(j),
                     None => Json::Obj(Vec::new()),
                 };
                 if !matches!(args, Json::Obj(_)) {
                     return None;
                 }
-                let id = text_of(at(c, "id")).unwrap_or_else(|| i.to_string());
+                let id = match at(c, "id") {
+                    None => i.to_string(),
+                    Some(value) => text_of(Some(value))?,
+                };
                 calls.push((id, text_of(at(f, "name"))?, args));
             }
         }
@@ -1943,7 +2258,11 @@ fn agent_step(t: &Target, system: &str, messages: &[String], tools: &[Tool], spa
     if text.is_empty() && calls.is_empty() {
         return Err(bad());
     }
-    record_usage(&format!("{}:{}", t.provider, t.name), tokens);
+    let mut ids = std::collections::HashSet::new();
+    for (id, name, _) in &calls {
+        if id.is_empty() || name.is_empty() || !ids.insert(id) { return Err(bad()); }
+    }
+    if lease.is_none() { record_usage(&format!("{}:{}", t.provider, t.name), tokens); }
     Ok((text, calls, message))
 }
 
@@ -1964,7 +2283,8 @@ fn clone_json(j: &Json) -> Json {
 }
 
 /// (the result for the model, whether it is an error).
-fn use_tool(agent: &Agent, tools: &[Tool], name: &str, args: &Json, span: u32) -> R<(String, bool)> {
+fn use_tool(agent: &Agent, tools: &[Tool], name: &str, args: &Json, lifecycle: &AgentDeadline, mut journal:Option<&mut crate::agent_journal::Journal>, span: u32) -> R<(String, bool)> {
+    lifecycle.check(span)?;
     let Some(tool) = tools.iter().find(|x| x.name == name) else {
         return Ok((format!("There is no tool {name}."), true));
     };
@@ -1977,25 +2297,35 @@ fn use_tool(agent: &Agent, tools: &[Tool], name: &str, args: &Json, span: u32) -
                     values.push((k.clone(), crate::data::json_parse(&dump(v), None, span)?));
                 }
             }
-            if !confirmed(name, &values) {
+            if !confirmed(name, &values, lifecycle, span)? {
                 return Ok((DENIED.to_string(), false));
             }
         }
+        lifecycle.check(span)?;
         return server.lock().unwrap().call_tool(name, args, span);
     }
     let (_tool_scope, required) = crate::security::authorization::enter_tool(&agent.seal,&tool.seal,span)?;
     let confirm = required || agent.confirm.iter().any(|c| c == name);
     crate::security::authorization::check_confirmation(confirm,span)?;
-    // In the authorization profile, approval precedes typed JSON conversion:
-    // record field defaults can execute Nexo code during that conversion.
-    let early = confirm && crate::security::authorization::active();
-    if early {
+    if let Json::Obj(pairs) = args {
+        let mut extras: Vec<&str> = pairs.iter().map(|(name, _)| name.as_str())
+            .filter(|name| !tool.params().iter().any(|p| p.name.get() == Some(*name))).collect();
+        extras.sort_unstable();
+        if let Some(name) = extras.first() {
+            return Ok((format!("Error: {}", msg("detail.tool_param", &[("name", name.to_string())])), true));
+        }
+    }
+    // Approval always precedes conversion: record defaults can execute code.
+    if confirm {
+        if let Some(j)=journal.as_deref_mut(){j.phase("approval",span)?}
         let shown = tool.params().iter().filter_map(|p| {
             let name = p.name.get().unwrap_or("");
             at(args,name).map(|value| format!("{name}: {}",dump(value)))
         }).collect::<Vec<_>>();
-        if !confirm_call(name,&shown) { return Ok((DENIED.to_string(),false)); }
+        if !confirm_call(name,&shown,lifecycle,span)? { return Ok((DENIED.to_string(),false)); }
     }
+    lifecycle.check(span)?;
+    if let Some(j)=journal.as_deref_mut(){j.phase("tool_pending",span)?}
     let message_of_failure = |f: crate::state::Fail| -> R<(String, bool)> {
         let Some(err) = crate::state::pending_error() else { return Err(f) };
         let text = match err.get() {
@@ -2023,14 +2353,8 @@ fn use_tool(agent: &Agent, tools: &[Tool], name: &str, args: &Json, span: u32) -
             None => {}
         }
     }
-    if confirm && !early {
-        let shown: Vec<String> =
-            values.iter().zip(&names).map(|(v, n)| format!("{}: {}", n.unwrap_or(""), repr(v.v()))).collect();
-        if !confirm_call(name,&shown) {
-            return Ok((DENIED.to_string(), false));
-        }
-    }
     let raw: Vec<V> = values.iter().map(|v| v.v()).collect();
+    lifecycle.check(span)?;
     let result = match crate::call::call(tool.func.v(), &raw, &names, span) {
         Ok(v) => v,
         Err(f) => return message_of_failure(f),
@@ -2042,9 +2366,10 @@ fn use_tool(agent: &Agent, tools: &[Tool], name: &str, args: &Json, span: u32) -
     })
 }
 
-fn confirm_call(name: &str, shown: &[String]) -> bool {
+fn confirm_call(name: &str, shown: &[String], lifecycle: &AgentDeadline, span: u32) -> R<bool> {
     static APPROVAL: Mutex<()> = Mutex::new(());
     let _approval = APPROVAL.lock().unwrap_or_else(|e| e.into_inner());
+    lifecycle.check(span)?;
     let call = format!("{name}({})",shown.join(", "));
     crate::state::write_out(&msg("info.ai_confirm", &[("call",call)]));
     crate::state::flush();
@@ -2053,12 +2378,13 @@ fn confirm_call(name: &str, shown: &[String]) -> bool {
         let _ = std::io::BufRead::read_line(&mut std::io::stdin().lock(),&mut line);
         line.trim().to_string()
     });
-    matches!(line.trim().to_lowercase().as_str(),"y" | "yes")
+    lifecycle.check(span)?;
+    Ok(matches!(line.trim().to_lowercase().as_str(),"y" | "yes"))
 }
 
-fn confirmed(name: &str, values: &[(String, Val)]) -> bool {
+fn confirmed(name: &str, values: &[(String, Val)], lifecycle: &AgentDeadline, span: u32) -> R<bool> {
     let shown: Vec<String> = values.iter().map(|(n,v)| format!("{n}: {}", repr(v.v()))).collect();
-    confirm_call(name, &shown)
+    confirm_call(name, &shown, lifecycle, span)
 }
 
 /// The agent's @tool functions and the tools of its MCP servers.
@@ -2082,15 +2408,29 @@ fn agent_tools(agent: &Agent, span: u32) -> R<Vec<Tool>> {
 
 /// `agent.handle(input)` (D109): the conversation with the model, using
 /// its tools, until it answers without asking for one.
-fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
+fn checkpoint(journal:&mut Option<crate::agent_journal::Journal>,phase:&str,step:i64,messages:&[String],calls:&[ToolCall],results:&[String],text:&str,tool_turn:bool,span:u32)->R<()>{
+    if let Some(j)=journal.as_mut(){
+        j.save(crate::agent_journal::Frame{tokens:crate::agent_tokens::states(),phase:phase.into(),step,messages:messages.to_vec(),calls:calls.iter().map(|(id,name,args)|(id.clone(),name.clone(),dump(args))).collect(),results:results.to_vec(),text:text.into(),tool_turn},span)?;
+    }Ok(())
+}
+
+fn run_agent(agent: &Agent, input: V, as_: Option<V>, lifecycle: &AgentDeadline, journal:&mut Option<crate::agent_journal::Journal>, span: u32) -> R<Val> {
+    lifecycle.check(span)?;
     let _agent_scope = crate::security::authorization::enter_agent(&agent.seal,span)?;
     let model = agent.model.as_ref().map(|m| Val::str(m.clone()));
-    let targets = resolve(model.as_ref().map(|m| m.v()), None, span)?;
+    let mut targets = resolve(model.as_ref().map(|m| m.v()), None, span)?;
+    if let Some(j)=journal.as_ref(){if j.store.budget().is_some(){targets[0].budget=Some(Arc::new(BudgetPlan::durable(j.store.clone(),span)?));}}
     let t = &targets[0];
     let tools = agent_tools(agent, span)?;
     let has_input = !input.is_none();
     let system: Vec<&str> = [agent.goal.as_str(), if has_input { GUARD } else { "" }].into_iter().filter(|x| !x.is_empty()).collect();
-    let system = system.join("\n\n");
+    let mut system = system.join("\n\n");
+    let type_ref = as_.and_then(|v| match v.get() { Some(Obj::Type(t)) => Some(*t), _ => None });
+    let typed = as_.is_some() && !matches!(type_ref, Some(TypeRef::Builtin("str")));
+    if typed {
+        system.push_str(&format!("\n\nAnswer only with JSON of this form, and nothing else:\n{}", shape(type_ref.unwrap(), 0)));
+    }
+    if let Some(j)=journal.as_mut(){j.bind(&format!("{}\n{}\n{}\n{}\n{}\n{}\n{:?}",t.provider,t.name,t.url,system,tools_json(t,&tools),agent.max_steps,agent.confirm),span)?;}
     let content = if has_input {
         let value = crate::pipe::bind(input)?;
         format!("<input>\n{}\n</input>", crate::fmt::show_hidden(value.v(), span)?)
@@ -2103,15 +2443,40 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
         _ => obj(&[("role", js("user")), ("content", js(&content))]),
     };
     let mut messages = vec![first];
-    for _ in 0..agent.max_steps {
-        let (text, calls, message) = agent_step(t, &system, &messages, &tools, span)?;
-        if calls.is_empty() {
-            return Ok(Val::str(text));
+    let mut replay=journal.as_mut().and_then(|j|j.frame.take());
+    let start=replay.as_ref().map(|f|f.step).unwrap_or(0);
+    if let Some(f)=&replay{messages=f.messages.clone();}
+    for step in start..agent.max_steps {
+        lifecycle.check(span)?;
+        let (text,mut calls,mut results,tool_turn)=if replay.as_ref().is_some_and(|f|["response","approval","complete"].contains(&f.phase.as_str())){
+            let f=replay.take().unwrap();
+            let mut calls=vec![];
+            for (id,name,args) in f.calls{calls.push((id,name,agent_json(&args).ok_or_else(||crate::security::authorization::state_error(span))?));}
+            (f.text,calls,f.results,f.tool_turn)
+        }else{
+            checkpoint(journal,"provider_pending",step,&messages,&[],&[],"",false,span)?;
+            let (text,calls,message)=crate::agent_trace::traced("nexo.agent.provider", span, || agent_step(t,&system,&messages,&tools,lifecycle,journal.is_some(),span))?;
+            let tool_turn=!calls.is_empty();if tool_turn{messages.push(message);}
+            checkpoint(journal,"response",step,&messages,&calls,&[],&text,tool_turn,span)?;
+            (text,calls,vec![],tool_turn)
+        };
+        lifecycle.check(span)?;
+        if !tool_turn {
+            let result = if typed {
+                let payload = json_text(&text);
+                if agent_json(&payload).is_none() {
+                    let detail = msg("detail.json", &[("line", "1".into()), ("col", "1".into())]);
+                    return Err(failure("InvalidData", span, &[("detail", detail)]));
+                }
+                crate::data::json_parse(&payload, as_, span)?
+            } else { Val::str(text.clone()) };
+            lifecycle.check(span)?;
+            checkpoint(journal,"complete",step,&messages,&[],&[],&text,false,span)?;
+            return Ok(result);
         }
-        messages.push(message);
-        let mut results = Vec::new();
-        for (id, name, args) in &calls {
-            let (out, is_error) = use_tool(agent, &tools, name, args, span)?;
+        while !calls.is_empty() {
+            let (id,name,args)=&calls[0];
+            let (out, is_error) = crate::agent_trace::traced("nexo.agent.tool", span, || use_tool(agent, &tools, name, args, lifecycle, journal.as_mut(),span))?;
             match t.provider.as_str() {
                 "anthropic" => {
                     let mut r = vec![("type", js("tool_result")), ("tool_use_id", js(id)), ("content", js(&out))];
@@ -2134,12 +2499,16 @@ fn run_agent(agent: &Agent, input: V, span: u32) -> R<Val> {
                 p if openai_like(p) => messages.push(obj(&[("role", js("tool")), ("tool_call_id", js(id)), ("content", js(&out))])),
                 _ => messages.push(obj(&[("role", js("tool")), ("content", js(&out))])),
             }
+            calls.remove(0);
+            checkpoint(journal,"response",step,&messages,&calls,&results,&text,true,span)?;
         }
         if !results.is_empty() {
             let field = if t.provider == "gemini" { "parts" } else { "content" };
             messages.push(obj(&[("role", js("user")), (field, format!("[{}]", results.join(",")))]));
         }
+        if step+1<agent.max_steps{checkpoint(journal,"ready",step+1,&messages,&[],&[],"",false,span)?;}
     }
+    lifecycle.check(span)?;
     Err(failure_as("AIError", "AIError.steps", span, &[("agent", agent.name.clone()), ("n", agent.max_steps.to_string())]))
 }
 

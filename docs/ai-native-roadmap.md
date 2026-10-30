@@ -7,7 +7,12 @@ are independent of the historical language phases and Shield phases.
 Phase 1 was committed and pushed as `d71ffca`; the user subsequently authorized
 Phase 2. Phase 2 is implemented as a bounded conservative analysis with configured
 ceilings and explicit unknowns; [the effect contract](effects.md) documents its
-coverage and [the completion record](ai-native-phase2-completion.md) its validation. Phases 3–5 remain future work.
+coverage and [the completion record](ai-native-phase2-completion.md) its validation.
+Phase 3 is complete within the documented boundaries: [typed agent boundaries and inherited control](agent-lifecycle.md),
+[token budgets](agent-token-budgets.md), [confined recovery](agent-recovery.md),
+monetary reservations and [opt-in tracing](agent-tracing.md). Its acceptance
+record is [Phase 3 completion](ai-native-phase3-completion.md). Phases 4–5 remain
+future work.
 
 ## Current implementation inventory
 
@@ -18,14 +23,14 @@ in the specification or README as implemented or production-validated.
 | --- | --- |
 | General-purpose language and native compilation | Implemented: Python AST interpreter (`nexo/interpreter.py`), Rust parsing/checking/resolution/type checking and LLVM generation (`compiler/nexoc/src/`), native runtime (`compiler/runtime/`). Existing numeric, module, concurrency and contract suites remain the compatibility baseline. |
 | Provider-neutral AI, local and remote | Implemented: `nexo/stdlib/ai.py`, `compiler/runtime/src/ai.rs`; OpenAI, Anthropic, Ollama, Mistral, Gemini, Azure and Bedrock adapters, profiles, aliases, fallback and credential resolution. `tests/test_ai.py` and `test_ai_providers.py` exercise local mock services in both backends. This is protocol regression coverage, not continuous certification against live providers. |
-| Typed structured output | Implemented for non-streaming `ask`: JSON parsing and type validation with repair retries. Typed streaming is explicitly rejected. Tool schemas have depth/type representation limits; do not infer unrestricted JSON Schema support. |
-| Streaming and cancellation | Incremental provider streaming exists and is tested. Transport timeouts and stream completion tracking are partial lifecycle mechanisms; a unified cancellation contract spanning providers, agent steps, tools and child processes is missing. |
-| Typed tools and agents | Implemented: `@tool`, agent configuration, schema generation, tool argument checking, bounded `max_steps`, failure handling and human confirmation. `run_agent` / `use_tool` and native equivalents are the extension points. Uniform typed agent input/result contracts need further design. |
+| Typed structured output | Implemented for non-streaming `ask`: JSON parsing and type validation with repair retries. D184 adds explicit typed final agent responses without conversation replay. Typed streaming is explicitly rejected. Tool schemas have depth/type representation limits; do not infer unrestricted JSON Schema support. |
+| Streaming and cancellation | Incremental streaming, transport timeouts, irreversible controls and inherited cooperative deadlines are implemented (D184/D186). Protected API admissions in tools/tasks observe closure. Terminal reads, CPU work and admitted syscalls are not forcibly interrupted; opaque child-process lifecycle remains an interoperability concern. |
+| Typed tools and agents | Implemented: typed tools, `input_type` guards, locally validated final `as:` results, strict tool parameters, `max_steps`, shared `max_tokens`, approval before conversion and cancellation propagation (D184–D189). Durable inputs/result types use an explicit codec subset; this is not unrestricted JSON Schema or static authorization proof. |
 | Permissions and authorization | Implemented: policies, deny precedence, strict Shield execution, module/dependency ceilings, task-context intersections and sealed operator-controlled agent/tool authorization (`nexo/authorization.py`, `security_context.py`, native `security/`, `docs/shield-dispatch.md`). These are the sole runtime authorization engine. |
 | Static effects | Partial foundations: linked AST, resolved calls in Rust, policy declarations and security checks. Opt-in transitive function/module summaries and explicit unknowns now exist (D182); configured dependency/caller/tool/agent comparisons, immutable aliases and record-method summaries are implemented (D183); unresolved dynamic/deferred behavior is explicitly unknown. `security check` validates a program/policy; it does not prove that every runtime operation is allowed. |
-| Budgets | Existing step limits, per-call token/timeout limits, AI spend accounting and configured daily/monthly budgets; Shield operation counters and process limits are separate. Atomic reservation across concurrent agent workflows, provider-independent actual-cost limits and durable reconciliation need work. See `docs/shield-budgets.md`. |
-| Durable workflow/retry | AI retry/fallback, circuit breakers, actions/undo and durable `workflow` steps already exist (`nexo/stdlib/patterns.py`, native `patterns.rs`, D150/D151; restart tests in `test_phase6.py`). State is saved after completed steps; it is not transactional with external effects. Enforcing policy/Shield rejects persistent workflows (`security_workflow`, `test_security.py`) because state confinement is unimplemented. Secure durable agent integration and exactly-once external effects are missing; reuse these workflows rather than adding another engine. |
-| Audit and tracing | Shield structured decisions, trace mode, source identities and redaction exist. A uniform OpenTelemetry-compatible workflow trace schema/exporter is not established by these events. The specification's broad automatic-observability statement is not evidence of complete coverage. No hidden exporter should be added. |
+| Budgets | D185 coordinates legacy CSV budgets within the process. D187 adds operator-granted encrypted monetary accounts across processes. D189 shares invocation input/output token reservations across inherited AI work and persists them before transport. Prices/usage are trusted; unknown holds survive restart. Provider invoices and opaque external clients are not globally bounded. |
+| Durable workflow/retry | D151 generic workflow behavior is retained and remains rejected under Shield. Its checkpoint commit hooks are shared with a confined, explicitly granted agent protocol (D187). Sources, execution authority, input, target and accounting state are validated; remaining calls resume with fresh approval, while uncertain dispatch/terminal failure refuses replay. No exactly-once external-effect claim is made. |
+| Audit and tracing | Existing Shield decision events remain. D188 adds an explicit stderr-only OTLP JSON agent profile, pinned mapping, closed schema and redaction tests. No exporter runs by default; no payloads/application identifiers are exported. This is not an audit of every external integration. |
 | MCP | Both `nexo mcp` developer-tool server (`nexo/mcp.py`, `compiler/nexoc/src/mcp.rs`) and agent MCP client support exist. Server advertises a protocol version; local transport/tool regressions exist (`tests/test_mcp.py`, `test_ai.py`). Current published-spec conformance, lifecycle, cancellation and optional transports need a separate compatibility audit. |
 | A2A | No dedicated implementation identified. Requires a justified use case and security mapping before an optional adapter is proposed. |
 | Native isolation and WASI | LLVM native compilation retained. Optional Shield Linux workers use actual kernel mechanisms and fail closed; Docker validation is separate. `build --target web` already has a wasm32-wasi compilation path and a constrained browser runtime (`compiler/scripts/web_*`, D175), not a complete standalone WASI deployment backend for the standard library. |
@@ -173,19 +178,29 @@ Acceptance criteria:
   1k/10k/100k lines; report elapsed time/memory and cap pathological analysis
   explicitly as unknown rather than hanging or claiming a complete result.
 
-### Phase 3 — incremental AI/agent lifecycle
+### Phase 3 — complete: bounded AI/agent lifecycle
 
-First unify typed agent boundaries and cancellation, then budget reservations,
-then integration with existing D151 workflow/recovery and opt-in tracing. Reuse
-providers, `@tool`, approval and Shield dispatch. First design explicitly granted,
-confined persistence with validated state/identity and crash consistency; preserve
-the current `security_workflow` rejection until enforcement is implemented and
-validated. Do not turn on existing persistence under Shield by removing its guard. Acceptance: local mocked-provider parity tests
-for malformed outputs/tools, denial, timeout/cancellation, exhausted concurrent
-budgets, crash/restart around dispatch, retry exhaustion and approval replay.
-No sensitive side effect occurs before approval or after cancellation admission
-closes. Exported traces validate against the chosen OpenTelemetry mapping and
-contain no secrets; no exporter runs unless configured.
+D184–D189 extend the existing AI runtime without new grammar or dependencies:
+
+- Typed input guards and final results, provider-neutral adapters, strict tool
+  arguments, and approval before conversion/defaults.
+- Inherited cancellation/deadline admissions plus step, token and monetary
+  budgets. Token and money reservations account for concurrent inherited work.
+- Version 2 operator state grants, encrypted/locked/atomic checkpoints and
+  durable accounting. Recovery binds execution authority as well as source,
+  input and target; cached results cannot bypass narrower callers.
+- D151 checkpoint hooks reused, with its generic Shield persistence guard
+  retained. Uncertain provider/tool dispatch and terminal failures do not replay;
+  pending approvals always need a new decision.
+- Explicit opt-in OTLP JSON tracing with schema validation and payload exclusion.
+
+Acceptance uses local mocked providers in both backends for malformed replies,
+typed/privacy boundaries, refusal, timeouts/cancellation, concurrent exhaustion,
+crash/restart, late child receipts, retry/step exhaustion, approval replay and
+changed source/grants/caller ceilings. [The completion record](ai-native-phase3-completion.md)
+contains results, artifact provenance, reproduction and host/profile limits.
+No hard preemption, invoice ceiling, unrestricted durable codec, generic Shield
+workflow enablement or exactly-once external effects are claimed.
 
 ### Phase 4 — optional interoperability and deployment
 

@@ -364,7 +364,7 @@ class Symbol:
 # ----------------------------------------------------------------- errors
 
 ERROR_KINDS = ["Error", "NotFound", "IOError", "InvalidData", "Overflow", "DivisionByZero",
-               "OutOfRange", "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError", "AIError",
+               "OutOfRange", "ContractBroken", "Timeout", "Cancelled", "InvalidValue", "NetworkError", "HTTPError", "AIError",
                "DatabaseError", "CircuitOpen"]
 
 

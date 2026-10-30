@@ -74,7 +74,7 @@ def test_outline(answers):
 
 def test_completion(answers):
     labels = [c["label"] for c in answers["completion"]]
-    for word in ("add", "Point", "total", "print", "while", "PI"):
+    for word in ("add", "Point", "total", "print", "while", "PI", "Cancelled"):
         assert word in labels
     assert labels == sorted(labels)
 

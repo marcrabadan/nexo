@@ -1,0 +1,124 @@
+# AI budget reservations — Phase 3 increment (D185)
+
+The existing `ai` budget now coordinates paid provider requests within one
+process. Configuration stays the same: money per day or month, model prices
+in `[ai.prices]`, and the optional `when_over_budget` model. No syntax,
+dependency or additional authorization engine is introduced.
+
+```nexo
+ai:
+    provider = "openai"
+    model = "openai:configured-model"
+    key = secret("NEXO_AI_KEY")
+    budget = 5 EUR per day
+```
+
+Configure that model's input and output prices per million tokens in the
+project's `nexo.toml`. The library trusts those configured prices and the
+provider's reported token counts; it does not verify an invoice.
+
+## Atomic admission
+
+A process-local ledger is shared by `ask`, its typed repair attempts, streaming
+calls and every agent provider turn. Before a paid request is sent, one lock
+covers reading the accounted history, checking outstanding reservations and
+creating the new reservation. The lock is released during provider I/O.
+Usage appends and settlement use that same lock, so another task cannot observe
+a released reservation before its receipt is accounted for.
+
+The reservation holds **all remaining headroom** for that request's configured
+cap. This deliberately avoids inventing a maximum input-token estimate for
+unrelated provider tokenizers. With equal budgets, one paid request can be in
+flight; a competitor fails with `AIError` explaining that funds are reserved
+by active or unreconciled requests. There is no waiting queue or automatic
+conversation replay. Fully consume a stream before starting another paid call
+against the same headroom.
+
+The scope is the canonical AI configuration directory and currency. Day and
+month policies see overlapping reservations in their respective accounting
+windows. Each admission uses its own configured cap: a higher-cap policy does
+not inherit another caller's lower cap. Different configuration directories
+are separate accounting scopes. This is not a permissions boundary against
+trusted application code changing its own configuration.
+
+## Reconciliation and uncertainty
+
+- Valid usage requires both input and output counts as nonnegative integer
+  values within the signed 64-bit range. Missing values, booleans, fractional
+  values, negative values and overflowing counts are not interpreted as zero.
+- Once a response supplies valid counts, its configured cost is recorded and
+  unused headroom is released. A valid explicit zero count can release the hold.
+  A malformed answer is still charged when its usage is known.
+- If recording the receipt fails, the known monetary debit stays in memory.
+  If usage is unknown, the entire reservation stays held and the call fails
+  with `AIError` before an agent can dispatch tools from that response.
+- A failed/disconnected request may have reached the provider. It is not
+  automatically refunded. Automatic HTTP retries are disabled for reserved
+  requests; typed `ask` repairs are separate admissions when earlier usage
+  was reconciled. Each agent turn likewise rechecks admission.
+- A complete stream settles once its consumption reaches EOF with valid usage.
+  Reading its cached pieces again does not charge it again. Abandonment, parse
+  failure or missing usage retains the hold. Earlier streamed text may already
+  have been delivered when a final accounting error occurs.
+- A deadline that expires before transport starts can release a known-unused
+  reservation. After dispatch, timeout or cancellation does not establish that
+  a request was free. A received valid report is reconciled even when the call
+  is about to fail its cooperative deadline.
+
+Budgeted receipts are dated at admission, matching the reservation window,
+including requests completing after midnight. A later-day daily budget ignores
+an earlier day's hold; a monthly budget still counts holds in that month.
+Historical receipts are repriced under the checking configuration's prices,
+as in the existing usage accounting. This is not immutable invoice storage.
+
+Malformed or unreadable history fails closed before a paid request, rather than
+silently discarding rows. Historical paid models in the selected window require
+known prices; incompatible currencies fail without an implicit exchange rate.
+The ordinary `ai usage` view retains its existing reporting interface. It reads
+persisted rows; a separate CLI process cannot display another process’s pending
+holds or failed-write debits.
+
+## Limits and compatibility
+
+A reservation is **not a guaranteed upper bound on actual provider cost**. A
+provider can report a cost above its hold: that full report is charged, without
+clamping it to the cap, and subsequent admissions are refused. Unknown hidden
+provider charges cannot be proven absent by token metadata. Finer-grained
+reservation policies and actual-cost bounds remain future work.
+
+The existing `when_over_budget` setting is an explicit escape to a configured
+model after the cap/reservation is exhausted. Its legacy behavior is preserved:
+that model is outside the exhausted cap, including if it has a configured paid
+price. It is not a way to claim a strict spending cap. Ollama models retain the
+existing zero-price treatment. A race discovered at final admission fails rather
+than automatically rerouting or replaying an agent conversation.
+
+Only calls with an effective budget participate in reservation admission.
+Unbudgeted calls are not limited by another caller's cap, though their usage
+receipts can affect subsequent checks. Successful serial budget/fallback behavior
+is preserved; contending calls and unaccountable receipts are intentionally
+stricter than the former check-then-send implementation.
+
+The pending ledger is not shared between processes and does not survive a
+restart. `usage.csv` is a trusted local accounting file, not a sealed ledger;
+concurrent external writers, tampering, crash consistency and restart recovery
+require a separate coordinator/durable-state design. Restarting must not be
+interpreted as proof that unresolved charges disappeared.
+
+Shield continues rejecting AI budget persistence through its existing connector
+guard, before creating the accounting directory or contacting a model. No
+persistent-workflow or isolation guard is removed. Financial admission does not
+authorize tool dispatch or bypass approval. Explicit cancellation, confined
+persistence and tracing remain pending Phase 3 work.
+
+See [budget validation](ai-native-phase3-budget-validation.md),
+[agent lifecycle](agent-lifecycle.md) and [the roadmap](ai-native-roadmap.md).
+
+## Operator-granted durable accounts (D187)
+
+[Agent recovery](agent-recovery.md) now provides a separate encrypted,
+cross-process account for granted agent invocations and provider work inherited
+by their tools/tasks. Unknown holds survive process death. This does not change
+the process-local CSV budget described above or enable its persistence under
+Shield. Operator accounts require explicit immutable prices and have no
+`when_over_budget` escape. See the [completion record](ai-native-phase3-completion.md).

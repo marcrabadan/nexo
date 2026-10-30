@@ -215,7 +215,7 @@ pub const ERROR_KINDS: &[&str] = &[
     "DivisionByZero",
     "OutOfRange",
     "ContractBroken",
-    "Timeout",
+    "Timeout", "Cancelled",
     "InvalidValue",
     "NetworkError",
     "HTTPError",

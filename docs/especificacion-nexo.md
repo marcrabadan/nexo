@@ -479,6 +479,15 @@ for chunk in ask("Tell me a story", stream: true):
 r = ask("Summarise the email", mail, guard: injection, redact: private)
 ```
 
+**Budget admission (D185).** Existing day/month budgets now reserve remaining
+headroom atomically within the process before paid provider requests, including
+agent turns, typed repairs and lazy streams. Valid usage is reconciled once;
+unknown usage/failure/abandonment retains its hold. Budgeted HTTP retries are
+disabled. This is conservative local accounting, not a hard provider-invoice
+bound or cross-process durable ledger. The existing `when_over_budget` model
+is outside the exhausted cap. Shield accounting-persistence rejection is retained.
+See [the reservation contract](ai-budget-reservations.md).
+
 **`ask` options**
 
 | Option | Values | Default |
@@ -509,6 +518,46 @@ agent support:
 
 answer = support.handle(mail)
 ```
+
+Agents can declare `input_type = Request` for a record/builtin input guard
+using the existing `value is Type` semantics (D189); mismatches raise
+`InvalidData` before dispatch. There is no implicit input construction/default
+evaluation. An optional positive integer `max_tokens = N` counts reported input
+plus output across inherited provider work, with conservative reservations and
+strict usage reconciliation. Durable counters use namespaced encrypted
+write-ahead ledgers; a restart cannot replenish them from a stale checkpoint.
+See [the token contract](agent-token-budgets.md), including the limits of
+provider-reported accounting and streamed partial text.
+
+`agent.handle(input, as: Type, timeout: 5s)` can validate a final JSON answer as
+a record or supported builtin type. Omitting `as:` retains text. Invalid typed
+output fails without replaying the conversation. An optional positive timeout
+(up to 24h) gates subsequent provider/tool admissions and final return; it does
+not preempt an admitted tool or interrupt terminal approval input. Required
+approval precedes typed tool-argument conversion, including record defaults.
+`agent.control()` creates an irreversible control with `cancel()` and
+`cancelled`; `handle(..., cancel: control)` raises `Cancelled` when admission
+closes (D186). Controls and deadlines follow captured execution contexts;
+protected APIs check them even inside an already-running tool. Already-admitted
+operations can finish, and terminal input/CPU work is not forcibly interrupted.
+
+`handle(..., run: "opaque-id")` uses operator-granted encrypted checkpoints
+(D187). Authorization version 2 adds private state-directory/key/bound grants
+and an optional durable financial account. State-granted agents require `run`.
+Text/none inputs and JSON result records without executable defaults are
+supported; durable MCP calls and cross-backend journal migration are rejected.
+Identity/source/config/input/target mismatch or uncertain provider/tool dispatch
+refuses recovery. Completed results return without replay; saved pending
+approvals always need a fresh decision. Durable transport retries are disabled.
+Unknown budget holds survive restarts and follow provider work in captured
+tools/tasks. Generic Shield workflows and legacy CSV-budget persistence remain
+rejected. See [the recovery contract](agent-recovery.md).
+
+`NEXO_AGENT_TRACE=stderr` explicitly enables a payload-free OTLP JSON profile
+(D188), pinned to opentelemetry-proto v1.7.0 with a closed checked-in schema.
+Otherwise no exporter runs. See [the tracing contract](agent-tracing.md) and
+[the lifecycle contract](agent-lifecycle.md) for the cooperative limits.
+
 
 An agent's tools inherit the program's `policy`, and any MCP server is connected with `tools = [mcp("name")]`. `nexo ai usage` shows spend per model and per day; keys never appear in logs or traces.
 

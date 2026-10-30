@@ -73,6 +73,8 @@ fn rule_text(rule: &str, kind: &str, target: Option<&str>) -> String {
 
 /// Stop the program, warn or record before an access (D142).
 pub fn check(kind: &str, value: &str, span: u32) -> R<()> {
+    crate::agent_control::check(span)?;
+    crate::security::authorization::protect(kind,value,span)?;
     let target = if kind == "read" || kind == "write" { shown(value) } else { value.to_string() };
     let what = msg(&format!("detail.policy_{kind}"), &[("target", target.clone())]);
     let allow_line = rule_text("allow", kind, if kind == "shell" { None } else { Some(&target) });
@@ -150,4 +152,10 @@ pub fn check_url(url: &str, span: u32) -> R<()> {
         return Err(diag(Diagnostic::new_spanless("security_url"), span));
     }
     check("net", &crate::http::url_host(url), span)
+}
+
+
+pub(crate) fn identity()->String {
+    let p=POLICY.lock().unwrap();
+    format!("{}:{}",p.release,p.engine.as_ref().map(|e|e.identity()).unwrap_or_default())
 }
