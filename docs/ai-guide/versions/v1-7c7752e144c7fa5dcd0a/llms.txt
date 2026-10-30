@@ -1,0 +1,37 @@
+# Nexo
+
+> Versioned, curated Nexo context. Fetch only the documentation needed for the task.
+
+Nexo AI Guide v1 | source sha256:7c7752e144c7fa5dcd0a38101395cde68230be4447caa58b9d4c63d0d5bfbae5
+Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component versions, not a stable 1.0 promise.
+
+## Availability boundaries
+- IMPLEMENTED [core]: Python interpreter and Rust/LLVM native compiler; records, explicit errors, contracts and tools. Package versions differ; do not infer a stable Nexo 1.0 release.
+- IMPLEMENTED [diagnostics]: Versioned check --json diagnostics and conservative --effects analysis. Unknown/dynamic effects remain unknown; static checks do not grant permissions.
+- IMPLEMENTED [agents]: Typed input/output, registered tools, approval before conversion, inherited cooperative cancellation/deadlines and reported token/money reservations. Counters trust configured prices/usage; they are not invoice guarantees or arbitrary-client metering.
+- IMPLEMENTED [recovery]: Explicit version 2 operator grants enable encrypted bounded agent recovery and cross-process accounting. Native persistence is Linux AMD64 only. Durable inputs are text/none; result defaults and durable MCP calls are rejected. Uncertain dispatch fails closed; no exactly-once external-effect guarantee.
+- IMPLEMENTED [shield]: Policy/API enforcement, dependency/dispatch ceilings and optional hardened containers/Linux workers exist. Kernel isolation requires supported host facilities; API-only tests prove no sandbox-escape guarantee. Generic workflow persistence remains rejected under Shield.
+- IMPLEMENTED [telemetry]: NEXO_AGENT_TRACE=stderr explicitly enables payload-free OTLP JSON agent spans. No exporter runs by default. It is not universal automatic telemetry or a monitoring service.
+- IMPLEMENTED [libraries]: The API catalog and working examples cover web/HTTP, SQL/document databases, streams, crypto, privacy, infrastructure and CI. Inspect exact signatures and connector/profile restrictions; an integration or emulator test is not a production certification.
+- IMPLEMENTED [mcp]: Developer MCP server and agent MCP client exist. Published-spec interoperability and lifecycle/authorization completeness remain unverified; the roadmap audit is not completed by their presence.
+- EXPERIMENTAL [web-target]: Browser playground and a platform-limited WebAssembly/web target exist. Do not describe them as production standalone WASI deployment or unrestricted native-library parity.
+- PLANNED [interop-roadmap]: AI-native Phase 4 interoperability work (including a justified A2A adapter and standalone WASI investigation) and Phase 5 Nexo Sentinel validation remain future work. ml/ui/notify are not available modules.
+- PLANNED [registry]: Signed packages/static registries exist, but an official registry service and reviewed-package ecosystem are not established.
+- UNVERIFIED [operations]: Live cloud readiness, HA/SLO achievement, local Kubernetes compatibility, independent security audits, current provider prices and model-specific token parity require separate evidence. Existing infra adapters/examples do not prove these outcomes.
+
+## Start here
+- [Syntax](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/nexo-syntax.txt)
+- [Full curated context](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/llms-full.txt)
+
+## Documentation
+- [Core syntax and errors](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/00-especificacion-nexo.md.txt): docs/especificacion-nexo.md
+- [Machine diagnostics](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/01-diagnostics.md.txt): docs/diagnostics.md
+- [Effects and unknowns](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/02-effects.md.txt): docs/effects.md
+- [Agent lifecycle](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/03-agent-lifecycle.md.txt): docs/agent-lifecycle.md
+- [Token budgets](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/04-agent-token-budgets.md.txt): docs/agent-token-budgets.md
+- [Monetary reservations](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/05-ai-budget-reservations.md.txt): docs/ai-budget-reservations.md
+- [Confined recovery](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/06-agent-recovery.md.txt): docs/agent-recovery.md
+- [Tracing](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/07-agent-tracing.md.txt): docs/agent-tracing.md
+- [Exact standard-library API catalog](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/08-api.json.txt): nexo/stdlib/api.json
+- [Working invoice example](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/09-functions.nexo.txt): docs/learn/functions.nexo
+- [Working typed/privacy example](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-7c7752e144c7fa5dcd0a/sources/10-signup.nexo.txt): examples/signup.nexo

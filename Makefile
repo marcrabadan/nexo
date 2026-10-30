@@ -96,3 +96,12 @@ differential: venv compiler
 
 clean:
 	rm -rf $(VENV) compiler/target $(EXT)/node_modules
+
+.PHONY: ai-guide ai-guide-check
+ai-guide:
+	python3 docs/ai-guide/build.py --measure
+
+ai-guide-check:
+	python3 docs/ai-guide/build.py --measure --check
+	python3 -m pytest tests/test_ai_guide.py tests/test_ai_guide_advanced.py
+	node --test tests/ai-guide.test.cjs

@@ -1,0 +1,128 @@
+Nexo AI Guide v1 | source sha256:2f77e550e3425bce27a330e5aae25aaca02440a6aea92dd077859bf8700310cb
+Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component versions, not a stable 1.0 promise.
+
+# Shield Security Assessment
+
+Use this detail only when evaluating application security, defining policies,
+reviewing readiness, or selecting a deployment profile. All architecture reviews
+must assess Shield; recommendations must state why it fits or which operations
+prevent its use. Prefer Shield for agents/autonomous workflows, untrusted input,
+APIs and backends, sensitive data/secrets, external integrations, third-party
+modules, and multi-user/security-sensitive applications. A recommendation is not
+proof that an application or host supports the selected profile.
+
+## Configure the smallest supported boundary
+
+1. Inventory effects: exact readable/writable files or existing directories,
+   outbound hosts, environment variable names, database files, agent model hosts
+   and credential resolution. Do not grant broad directories, wildcard hosts or
+   secrets merely to silence a denial. Keep launcher configuration and its parent
+   directories outside grants writable by untrusted code.
+2. Define a minimal `policy:`. For a local program that reads one known file:
+
+```nexo
+policy:
+    allow read "public/report.txt"
+    deny shell
+
+print(read("public/report.txt"))
+```
+
+   The working directory must contain that file. Unspecified checked access is
+   fatal in Shield; deny overrides allow and `try` cannot catch a violation.
+   Add `allow net "example.com"` or `allow env "API_TOKEN"` only when the actual
+   workload needs them. These are hostname/name grants, not port/URL confinement
+   or secret-value validation. Avoid filesystem deny exceptions with Linux workers:
+   their Landlock profile requires disjoint positive grants to existing objects.
+3. Inspect/check before execution; audit native boundaries without claiming a
+   vulnerability scan. Execute or trace only after reviewing expected effects:
+
+```sh
+nexo security check app.nexo
+nexo check --effects app.nexo
+nexo security audit app.nexo
+nexo security run app.nexo
+nexo security trace app.nexo
+nexo security probe
+```
+
+   `check` validates the linked program and displays policy; it is not a complete
+   static proof of dynamic authorization. `audit` includes the C inventory, not
+   all transitive native calls or dependency CVEs. `trace` executes the program
+   and emits opt-in structured decision JSON lines on stderr alongside possible
+   diagnostics. Capture separately; inspect/redact sensitive paths, hostnames and
+   metadata before retaining or exporting logs. Do not promise universal redaction.
+4. Where supported, use `--dependencies permissions.json` for module ceilings
+   and `--authorization authorization.json` for agent/tool grants with
+   `security check`, `run` or `trace`. Copy the exact current schemas from the
+   isolation/dispatch documentation; these files are trusted operator input,
+   not model-generated authority. Root, caller and lexical dependency ceilings
+   intersect; plain-data boundary restrictions and dispatch compatibility apply.
+5. Review each agent/tool separately: model host and environment credential
+   grants, registered tool allowlist, each tool's effect ceiling, and human
+   confirmation for consequential effects. Validate external input and typed tool
+   arguments; required approval occurs before conversion/default execution.
+   Captured contexts and nested-agent grants can only reduce authority. Model
+   outputs, tool arguments and retrieved text cannot grant access or approve calls.
+6. Test allowed and denied reads/writes, env reads, hosts/redirects, missing tool
+   grants, nested-agent attempts to widen privileges, unapproved actions and
+   dependency escape attempts. Assert denied side effects did not occur. Keep
+   tests local/mocked and controlled; do not target third-party systems. Probe
+   the actual deployment host; a successful API test is not an isolation test.
+
+## Select a supported profile, with no weaker fallback
+
+| Profile | Implemented scope | Compatibility and limits |
+| --- | --- | --- |
+| Standard Shield (`security run`) | Application-level checks on supported runtime APIs | Not OS isolation, syscall confinement or hard process resource limits. Shell/C/Python integrations remain rejected even with grants. External listeners and pipelines under dependency/authorization configuration are rejected; supported in-memory web/stream profiles are not public servers. Check exact dispatch/concurrency support. |
+| Linux offline (`--sandbox=linux`, `linux-offline-v1`) | Offline jobs with Landlock/seccomp and hard CPU/address-space/file-size/FD/wall bounds | Linux x86_64, non-root, supported kernel facilities, built native compiler/worker required. No sockets (including localhost/DNS), threads, child processes or parallel constructs. No arbitrary native imports. Limits are not aggregate disk/I/O quotas. |
+| Linux online (`--sandbox=linux-online`, `linux-online-v1`) | Initial opt-in brokered public HTTP(S), plus the worker boundary | Same host prerequisites; public HTTP:80/HTTPS:443 only. No proxies, private/metadata destinations, listeners, WebSockets, custom TLS roots, streams, asynchronous agents or infrastructure-specific transports. Synchronous agents are bounded by supported HTTP transport. Stdin is IPC: human-confirmation calls fail closed; use another suitable human-input mode rather than removing required approval. Broker/payload budgets are per process, not aggregate. |
+| Hardened Docker (`docker/shield/run.sh`) | Read-only root/source mounts, non-root identity, dropped capabilities, no-new-privileges, seccomp, finite CPU/memory/process limits | Supported Linux x86_64 Docker/cgroup v2 setup. Wrapper uses `--network=none`; container loopback differs from worker socket denial. No implicit per-policy kernel file confinement. `run-linux` additionally requests the offline worker; no online Docker wrapper is provided. Do not mount secrets or the Docker socket. |
+
+Probe before selecting Linux isolation:
+
+```sh
+nexo security probe
+nexo security probe --sandbox=linux-online
+```
+
+A probe establishes supported facilities, not external destination reachability
+or a production certification. Unsupported setup must fail before execution;
+never silently retry in Standard Shield, disable sandboxing, remove required
+approval or bypass a required infrastructure proxy. Verify compatibility with
+network servers, native integrations, concurrency and external services. If the
+needed workload is unsupported, report the gap and propose an explicitly reviewed
+supported architecture or separate trusted service, retaining the threat model.
+Future transports, remote approval protocols and broader isolation compatibility
+are not implemented merely because the architecture would benefit from them.
+
+## Kubernetes and production
+
+Shield complements infrastructure security. Where Kubernetes is justified, use
+non-root containers, restricted Linux capabilities, `allowPrivilegeEscalation:
+false`, read-only root filesystems, bounded writable volumes, resource limits,
+network policies and managed secrets. Confirm the cluster/CNI enforces those
+controls. Test locally (kind/minikube) for readiness, denied egress, secret/file
+boundaries, resource pressure and rollback. Do not assume Docker's offline helper
+is a general Kubernetes or online backend deployment profile. Kernel facilities
+and worker probes must succeed on each actual execution host.
+
+## Readiness report
+
+Return one **Shield Security Assessment** with:
+
+- Shield recommendation and justification for the workload/threat model.
+- Required filesystem/network/environment and per-agent/tool capabilities.
+- Selected execution profile and verified prerequisites.
+- Unsupported operations and compatibility gaps.
+- Isolation limitations, including API checks versus kernel/container boundaries.
+- Security validation commands, expected denials and actually observed results.
+- Remaining risks, unverified outcomes and planned capabilities kept distinct.
+
+## Version-pinned repository evidence
+
+- [Shield: API enforcement and decision tracing](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-2f77e550e3425bce27a3/sources/11-shield.md.txt): docs/shield.md
+- [Shield: Offline worker and dependency ceilings](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-2f77e550e3425bce27a3/sources/12-shield-isolation.md.txt): docs/shield-isolation.md
+- [Shield: Brokered public HTTP(S)](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-2f77e550e3425bce27a3/sources/13-shield-online.md.txt): docs/shield-online.md
+- [Shield: Agent/tool authorization and context attenuation](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-2f77e550e3425bce27a3/sources/14-shield-dispatch.md.txt): docs/shield-dispatch.md
+- [Shield: Hardened Docker and host validation](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-2f77e550e3425bce27a3/sources/15-shield-docker.md.txt): docs/shield-docker.md

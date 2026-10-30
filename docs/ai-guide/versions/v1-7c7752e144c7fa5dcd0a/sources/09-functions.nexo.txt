@@ -1,0 +1,11 @@
+# Working invoice example
+Origin: docs/learn/functions.nexo
+Source SHA256: 0bff6a03e984fb1047d31babe33dc0d93e75c5e07616b523da2290708c0b025b
+
+fn invoice_total(price, quantity):
+    subtotal = price * quantity
+    vat = subtotal * 21%
+    return subtotal + vat
+
+print(invoice_total(19.90 EUR, 3))
+print(invoice_total(49.90 EUR, 2))

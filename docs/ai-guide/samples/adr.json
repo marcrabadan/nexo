@@ -1,0 +1,9 @@
+{
+  "title":"Initial application structure",
+  "context":"Requirements and operational constraints still need review.",
+  "decision":"Propose a modular monolith for the first validated slice.",
+  "alternatives":"A single script; separate services if independent scaling is demonstrated.",
+  "consequences":"Simple deployment and boundaries; shared process and database failure domains.",
+  "cost_complexity":"One deployable component; verify hosting costs against the budget.",
+  "reconsider_when":"Measured workload or ownership constraints justify independently deployed services."
+}

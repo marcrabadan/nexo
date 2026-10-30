@@ -1,0 +1,39 @@
+# Compact Nexo syntax reference
+
+This is a bounded reference, not a replacement for the full grammar/API list.
+Use Nexo, not Python/TypeScript syntax. Four spaces; colon blocks; `#` comments.
+`x = 1` is immutable; `var x = 1` permits reassignment. Use `true`, `false`,
+`none`, `and`, `or`, `not`. Calls have parentheses and named arguments use `:`.
+Text interpolation uses `"Hello {name}"`; escape a literal `{` as `{{`.
+Optional values are `T?`; `value ?? fallback` supplies a default. `type` defines
+records, literal unions and enums; do not invent `class`, `struct`, `impl` or
+`let`. Functions use `fn name(arg: Type) -> Type:` and explicit `return`.
+A fallible return is `T!`; propagate with `?` only inside a fallible function,
+or handle with `try` / `else e` (`else e is InvalidData` narrows the error).
+Lists use `[a, b]`, maps use `{"key": value}`, pipelines use `|>`.
+Use explicit numeric literals such as `19.90 EUR`, `0.2%`, `5s`, `100ms` when
+appropriate. Do not assume floating-point arithmetic is exact money arithmetic.
+`expect`, `ensure` and `old()` express contracts. `test "name":` and `assert`
+are language constructs. `use nexo.sync` enables `spawn`, `channel`, `select`
+and `shared`; the interpreter's `parallel` is sequential, so do not promise
+parallel speedup there. Imports/exports use `use module` / `pub`.
+
+Fallible file I/O is `read(path)` / `write(path, text)`. JSON conversion is
+`json.parse(text, as: RecordType)`. Configure AI before `ask(...)` or agents;
+`@tool "description"` marks a registered function, not arbitrary model code.
+An `agent name:` block can set `tools`, `goal`, `max_steps`, `input_type`,
+`max_tokens` and `confirm`. Final output validation is
+`name.handle(input, as: RecordType, timeout: 5s)`; `cancel:` accepts a control
+created by `name.control()`. Durable `run:` requires an explicit operator grant
+and the restricted codec. Do not fabricate a `nexo.agent` import or `async/await`.
+
+Declare `policy:` with `allow`/`deny` rules (`read`, `write`, `net`, `env`,
+`shell`, `c`, `python`). It does not replace OS isolation. Ordinary trusted
+native integration differs from strict Shield, which rejects unsupported
+connectors. A passing check or a valid record is not permission to act.
+
+Checks: `nexo check app.nexo`; `nexo check --json app.nexo`;
+`nexo check --effects app.nexo`; `nexo test app.nexo`; `nexo fmt app.nexo`;
+`nexo lint app.nexo`; `nexo docs --for-ai app.nexo` supplies the supported API.
+Run/build with the selected backend; `.venv/bin/nexo` is the interpreter and
+`compiler/target/debug/nexo` is the native driver in a built checkout.

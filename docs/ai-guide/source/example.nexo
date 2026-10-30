@@ -1,0 +1,20 @@
+# A small, offline program: records, contracts, tests and explicit errors.
+type Request:
+    name: str
+
+fn welcome(request: Request) -> str!:
+    if len(request.name) == 0:
+        fail("name is required")
+    return "Hello {request.name}"
+
+fn total(price: money, quantity: int) -> money:
+    expect quantity > 0
+    return price * quantity
+
+test "invoice":
+    assert total(19.90 EUR, 2) == 39.80 EUR
+
+try:
+    print(welcome(Request("Ada")))
+else e:
+    print(e.message)

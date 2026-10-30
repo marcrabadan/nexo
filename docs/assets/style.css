@@ -547,3 +547,6 @@ footer .foot-brand p { font-size: 11px; }
 .native-setup summary { cursor: pointer; font-size: 15px; font-weight: 600; }
 .native-setup p { font-size: 15px; line-height: 1.8; color: var(--muted); margin: 18px 0; }
 .native-setup > p:last-child { margin-bottom: 0; }
+
+/* Keep the complete primary navigation within intermediate desktop widths. */
+@media (min-width: 1001px) and (max-width: 1250px) { .site-header .nav { gap: 10px; } .site-header .nav a { font-size: 11px; } .site-header .gh { display: none; } }

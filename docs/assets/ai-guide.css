@@ -1,0 +1,27 @@
+.ai-main { max-width: 1040px; padding-top: 64px; padding-bottom: 80px; }
+.ai-main h1 { font-size: clamp(2.4rem, 6vw, 4.8rem); line-height: 1.08; letter-spacing: -.045em; }
+.ai-main section { margin: 3rem 0; padding: 0; }
+.ai-main .revision { font-size: .8rem; overflow-wrap: anywhere; color: var(--muted); }
+.ai-controls { display: grid; gap: 1rem; margin: 1.5rem 0; }
+.ai-main select, .ai-main textarea { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font: inherit; width: 100%; }
+.ai-main textarea { font: .85rem/1.6 var(--mono); resize: vertical; margin-top: .6rem; }
+.ai-main fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.ai-main fieldset label { display: inline-block; margin: .3rem 1.2rem .3rem 0; }
+.ai-main input { accent-color: var(--accent); }
+.ai-main button { background: var(--accent); color: var(--on-accent); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; font: inherit; font-weight: 700; cursor: pointer; }
+.ai-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-top: 1rem; }
+.ai-main details { border-top: 1px solid var(--border); padding: 1rem 0; }
+.ai-main summary { cursor: pointer; font-weight: 600; }
+.ai-main details p { color: var(--muted); }
+#copy-status { min-height: 1.7em; }
+.ai-main :focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+
+.ai-main input:not([type=radio]) { display: block; width: 100%; padding: 10px; margin: .5rem 0 1rem; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+.ai-main pre { max-width: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-main label { overflow-wrap: anywhere; }
+.ai-main .verified-example[hidden] { display: none; }
+#readiness-categories fieldset { margin: 1rem 0; }
+.ai-controls { grid-template-columns: minmax(0, 1fr); }
+.ai-controls > * { min-width: 0; max-width: 100%; }
+.ai-main fieldset { min-inline-size: 0; }
+#version-status { overflow-wrap: anywhere; }

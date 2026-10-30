@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "categories": [
+    {
+      "id": "functional",
+      "label": "Functional correctness and testing",
+      "critical": true
+    },
+    {
+      "id": "security",
+      "label": "Security and privacy",
+      "critical": true
+    },
+    {
+      "id": "reliability",
+      "label": "Reliability and recovery",
+      "critical": true
+    },
+    {
+      "id": "observability",
+      "label": "Observability and alerting",
+      "critical": false
+    },
+    {
+      "id": "performance",
+      "label": "Scalability and performance",
+      "critical": false
+    },
+    {
+      "id": "deployment",
+      "label": "Deployment and rollback",
+      "critical": true
+    },
+    {
+      "id": "operations",
+      "label": "Documentation and operations",
+      "critical": false
+    },
+    {
+      "id": "cost",
+      "label": "Budget and cost controls",
+      "critical": false
+    }
+  ],
+  "statuses": [
+    "Passed",
+    "Failed",
+    "Unknown",
+    "Not applicable"
+  ],
+  "scoring": "Equal weights. Passed=1; Failed/Unknown=0; evidenced N/A excluded. All N/A: null. Critical Failed/Unknown blocks regardless of score. User-supplied evidence is not independently verified.",
+  "questions": {
+    "beginner": [
+      "What problem do you want to solve, and what do you still need to learn about it?",
+      "What should the first useful version do, and how will you know it helped?",
+      "Who will use it now, and could that number grow?",
+      "Will it handle private information or connect to other services?",
+      "What can you spend each month, and who will keep it running?"
+    ],
+    "developer": [
+      "What business outcome and product knowledge gaps drive the application?",
+      "What is the MVP boundary and measurable acceptance criteria?",
+      "What users, workload, latency and growth should the design support?",
+      "What data sensitivity, integrations, security and compliance constraints apply?",
+      "What budget, platform, deployment and maintenance constraints apply?"
+    ],
+    "expert": [
+      "What business outcomes, domain assumptions and product risks need validation?",
+      "What acceptance metrics, scope boundaries and consequential decisions are unresolved?",
+      "What workload envelope, SLOs, growth, RTO/RPO and failure domains apply?",
+      "What trust boundaries, data classification, integration and regulatory constraints apply?",
+      "What spend ceiling, regional/platform constraints and operational ownership apply?"
+    ]
+  }
+}

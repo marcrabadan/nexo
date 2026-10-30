@@ -1,0 +1,598 @@
+{
+  "claims": [
+    {
+      "evidence": [
+        [
+          "docs/especificacion-nexo.md",
+          "## 2. Basic syntax"
+        ],
+        [
+          "compiler/README.md",
+          "LLVM"
+        ],
+        [
+          "tests/conformance/s05_sync.nexo",
+          "use nexo.sync"
+        ]
+      ],
+      "id": "core",
+      "status": "implemented",
+      "summary": "Python interpreter and Rust/LLVM native compiler; records, explicit errors, contracts and tools. Package versions differ; do not infer a stable Nexo 1.0 release."
+    },
+    {
+      "evidence": [
+        [
+          "docs/diagnostics.md",
+          "schema_version"
+        ],
+        [
+          "docs/effects.md",
+          "unknown"
+        ],
+        [
+          "tests/test_check_json.py",
+          "def test_"
+        ]
+      ],
+      "id": "diagnostics",
+      "status": "implemented",
+      "summary": "Versioned check --json diagnostics and conservative --effects analysis. Unknown/dynamic effects remain unknown; static checks do not grant permissions."
+    },
+    {
+      "evidence": [
+        [
+          "docs/agent-lifecycle.md",
+          "input_type"
+        ],
+        [
+          "docs/agent-token-budgets.md",
+          "max_tokens"
+        ],
+        [
+          "compiler/runtime/src/ai.rs",
+          "input_type"
+        ],
+        [
+          "nexo/stdlib/ai.py",
+          "max_tokens"
+        ],
+        [
+          "tests/test_agent_tokens.py",
+          "def test_"
+        ]
+      ],
+      "id": "agents",
+      "status": "implemented",
+      "summary": "Typed input/output, registered tools, approval before conversion, inherited cooperative cancellation/deadlines and reported token/money reservations. Counters trust configured prices/usage; they are not invoice guarantees or arbitrary-client metering."
+    },
+    {
+      "evidence": [
+        [
+          "docs/agent-recovery.md",
+          "Linux AMD64"
+        ],
+        [
+          "tests/test_agent_recovery.py",
+          "execution_authority"
+        ],
+        [
+          "compiler/runtime/src/agent_state.rs",
+          "O_NOFOLLOW"
+        ]
+      ],
+      "id": "recovery",
+      "status": "implemented",
+      "summary": "Explicit version 2 operator grants enable encrypted bounded agent recovery and cross-process accounting. Native persistence is Linux AMD64 only. Durable inputs are text/none; result defaults and durable MCP calls are rejected. Uncertain dispatch fails closed; no exactly-once external-effect guarantee."
+    },
+    {
+      "evidence": [
+        [
+          "docs/shield.md",
+          "OS"
+        ],
+        [
+          "docs/shield-isolation.md",
+          "Landlock"
+        ],
+        [
+          "nexo/stdlib/patterns.py",
+          "security_workflow"
+        ],
+        [
+          "docs/shield-isolation.md",
+          "linux-offline-v1"
+        ],
+        [
+          "docs/shield-online.md",
+          "initial profile"
+        ],
+        [
+          "docs/shield-dispatch.md",
+          "A nested agent cannot widen"
+        ],
+        [
+          "docs/shield-docker.md",
+          "network isolation"
+        ]
+      ],
+      "id": "shield",
+      "status": "implemented",
+      "summary": "Policy/API enforcement, dependency/dispatch ceilings and optional hardened containers/Linux workers exist. Kernel isolation requires supported host facilities; API-only tests prove no sandbox-escape guarantee. Generic workflow persistence remains rejected under Shield."
+    },
+    {
+      "evidence": [
+        [
+          "docs/agent-tracing.md",
+          "opentelemetry-proto v1.7.0"
+        ],
+        [
+          "tests/unit/test_agent_trace_schema.py",
+          "def test_"
+        ]
+      ],
+      "id": "telemetry",
+      "status": "implemented",
+      "summary": "NEXO_AGENT_TRACE=stderr explicitly enables payload-free OTLP JSON agent spans. No exporter runs by default. It is not universal automatic telemetry or a monitoring service."
+    },
+    {
+      "evidence": [
+        [
+          "nexo/stdlib/api.json",
+          "edition"
+        ],
+        [
+          "docs/libraries/web/routes.nexo",
+          "server"
+        ],
+        [
+          "examples/deploy/shop.nexo",
+          ""
+        ],
+        [
+          "tests/test_ai_providers.py",
+          "def test_"
+        ]
+      ],
+      "id": "libraries",
+      "status": "implemented",
+      "summary": "The API catalog and working examples cover web/HTTP, SQL/document databases, streams, crypto, privacy, infrastructure and CI. Inspect exact signatures and connector/profile restrictions; an integration or emulator test is not a production certification."
+    },
+    {
+      "evidence": [
+        [
+          "docs/ai-native-roadmap.md",
+          "MCP"
+        ],
+        [
+          "nexo/mcp.py",
+          ""
+        ],
+        [
+          "tests/test_mcp.py",
+          "def test_"
+        ]
+      ],
+      "id": "mcp",
+      "status": "implemented",
+      "summary": "Developer MCP server and agent MCP client exist. Published-spec interoperability and lifecycle/authorization completeness remain unverified; the roadmap audit is not completed by their presence."
+    },
+    {
+      "evidence": [
+        [
+          "docs/decisions.md",
+          "D175"
+        ],
+        [
+          "tests/test_playground.py",
+          "wasm"
+        ]
+      ],
+      "id": "web-target",
+      "status": "experimental",
+      "summary": "Browser playground and a platform-limited WebAssembly/web target exist. Do not describe them as production standalone WASI deployment or unrestricted native-library parity."
+    },
+    {
+      "evidence": [
+        [
+          "docs/ai-native-roadmap.md",
+          "### Phase 4"
+        ],
+        [
+          "CLAUDE.md",
+          "Excluded (do not implement yet)"
+        ]
+      ],
+      "id": "interop-roadmap",
+      "status": "planned",
+      "summary": "AI-native Phase 4 interoperability work (including a justified A2A adapter and standalone WASI investigation) and Phase 5 Nexo Sentinel validation remain future work. ml/ui/notify are not available modules."
+    },
+    {
+      "evidence": [
+        [
+          "docs/guarantees.md",
+          "registry service needs people"
+        ],
+        [
+          "nexo/packages.py",
+          ""
+        ]
+      ],
+      "id": "registry",
+      "status": "planned",
+      "summary": "Signed packages/static registries exist, but an official registry service and reviewed-package ecosystem are not established."
+    },
+    {
+      "evidence": [
+        [
+          "docs/guarantees.md",
+          "No external audit"
+        ],
+        [
+          "docs/ai-native-phase3-completion.md",
+          "No live-provider certification"
+        ]
+      ],
+      "id": "operations",
+      "status": "unverified",
+      "summary": "Live cloud readiness, HA/SLO achievement, local Kubernetes compatibility, independent security audits, current provider prices and model-specific token parity require separate evidence. Existing infra adapters/examples do not prove these outcomes."
+    }
+  ],
+  "coverage": "Curated extracts and API catalog, not all repository documentation.",
+  "measurements": {
+    "counts": {
+      "agentic-compact-offline": 1893,
+      "agentic-compact-offline-beginner": 1893,
+      "agentic-compact-offline-expert": 1900,
+      "agentic-compact-url": 570,
+      "agentic-compact-url-beginner": 570,
+      "agentic-compact-url-expert": 577,
+      "agentic-full-offline": 17612,
+      "agentic-full-offline-beginner": 17612,
+      "agentic-full-offline-expert": 17619,
+      "agentic-full-url": 574,
+      "agentic-full-url-beginner": 574,
+      "agentic-full-url-expert": 581,
+      "architect-compact-offline": 1905,
+      "architect-compact-offline-beginner": 1905,
+      "architect-compact-offline-expert": 1912,
+      "architect-compact-url": 582,
+      "architect-compact-url-beginner": 582,
+      "architect-compact-url-expert": 589,
+      "architect-full-offline": 17624,
+      "architect-full-offline-beginner": 17624,
+      "architect-full-offline-expert": 17631,
+      "architect-full-url": 586,
+      "architect-full-url-beginner": 586,
+      "architect-full-url-expert": 593,
+      "beginner-compact-offline": 1874,
+      "beginner-compact-offline-beginner": 1874,
+      "beginner-compact-offline-expert": 1881,
+      "beginner-compact-url": 551,
+      "beginner-compact-url-beginner": 551,
+      "beginner-compact-url-expert": 558,
+      "beginner-full-offline": 17593,
+      "beginner-full-offline-beginner": 17593,
+      "beginner-full-offline-expert": 17600,
+      "beginner-full-url": 555,
+      "beginner-full-url-beginner": 555,
+      "beginner-full-url-expert": 562,
+      "developer-compact-offline": 1878,
+      "developer-compact-offline-beginner": 1878,
+      "developer-compact-offline-expert": 1885,
+      "developer-compact-url": 555,
+      "developer-compact-url-beginner": 555,
+      "developer-compact-url-expert": 562,
+      "developer-full-offline": 17597,
+      "developer-full-offline-beginner": 17597,
+      "developer-full-offline-expert": 17604,
+      "developer-full-url": 559,
+      "developer-full-url-beginner": 559,
+      "developer-full-url-expert": 566,
+      "engineering": 889,
+      "full-evidence-pack": 17300,
+      "index": 1709,
+      "shield-security": 1891,
+      "syntax": 915
+    },
+    "encoding": "cl100k_base",
+    "method": "encode_ordinary; prompt text only",
+    "payload_sha256": {
+      "agentic-compact-offline": "02cebf6987b4ab02162faa614116378a8d8082e26e8c50b628834f2d39acc5eb",
+      "agentic-compact-offline-beginner": "75274f2084d268994c96ecb87d5c86ba40a1f112618ba8626302413de90f801a",
+      "agentic-compact-offline-expert": "d92fdf157124e1673eed0fb18d93efcb9b65f8929d856714feee4c2c89d5d89f",
+      "agentic-compact-url": "7c5e57d516eee95327ecd00aaac45de621897df06231e951584ba9f3a3b7ce3e",
+      "agentic-compact-url-beginner": "1ede930fea3d55b49e90450f902d139cc56808a39d76362c472cb0d2538d6e50",
+      "agentic-compact-url-expert": "a28878969012b43d47869452b18fbfd65b2d8c939e4a597b2635a4059b0739d8",
+      "agentic-full-offline": "1b2360deccfd582d3e5f216ef10469fa659567c3a13ac25257b7c1e255f51e94",
+      "agentic-full-offline-beginner": "efde0431c6db17c9294e4674ae61e2bd7ed67cb7f46bd5b1a4ef02ee53efa086",
+      "agentic-full-offline-expert": "50cf5fd545d8451a1760665842665326cd7eae6934c5ddbde513c0a13f7498a5",
+      "agentic-full-url": "585b440ae68cfe6a57d7d97b0db7216918a0c900270f457c5a091b341f3e8aaf",
+      "agentic-full-url-beginner": "a75dddb55b65eca9bdbe9fb22f2be2c372fbdd0bb0ae1a6cf1fa85c23b794d8b",
+      "agentic-full-url-expert": "f3290685787d8df8188d6614f2e1d8670e34a8c4c2d4b101f6407a36fd6ecbf0",
+      "architect-compact-offline": "3e22307504f1438586de3ed2368bffbd4a1bce6b23302e537bc990358b34f1a8",
+      "architect-compact-offline-beginner": "edea3cb730b45005276c34bcc0288d0e26f0859d0f444e9f54e9c3450bda3572",
+      "architect-compact-offline-expert": "2163905f2f70be1531b062ddfa39bbc1bd06388fbd3654215322d04f84d6fd14",
+      "architect-compact-url": "19e664e2906d7dbd4d3ef9d257375a0e628af6c48093413adde6be947deac9b4",
+      "architect-compact-url-beginner": "5f38af2eb5dc16a0f4112283e99fab750c300e76b73067613354fbd687df1a89",
+      "architect-compact-url-expert": "1ecbe54879d619f9b778052136695f9eb57854fbe07ca69abe77141f766c1613",
+      "architect-full-offline": "3dc0618c467d523e40cb671e090748bc0d6611b96e6045799e490ffb8d4f3d54",
+      "architect-full-offline-beginner": "3c1a45f13c1933309e8ff4b63482bb24c44e948d129119fce4f173b915008b78",
+      "architect-full-offline-expert": "da43984d9524351c09949e61faf16b5708280c76e12c20e042f15c3445a2aab1",
+      "architect-full-url": "4f66dd0be22ff59a947c84dc3f9b56a2ac257c75bfb7387e266e00bc09909173",
+      "architect-full-url-beginner": "29049283498cf25d029dd4d8c4e6d5a62b3d3cb091c91ee9dbcc262dd34d8753",
+      "architect-full-url-expert": "3234bb21b43ec58a384db9eba736a3c42b7b62663732caf7bc02f8805e88e200",
+      "beginner-compact-offline": "6b9e7e80f0e21d98c0ed5b6f04a2269b77a2b05d467234efb10ce1d9c03d5cf8",
+      "beginner-compact-offline-beginner": "5f5d2b0bf632301561d6602340c25cfecafcb7f66f5ebeb6584169aaba94e17f",
+      "beginner-compact-offline-expert": "ea385750489985d19f38bbcc389dc7fe5c516578f87422add29922fd7ba765db",
+      "beginner-compact-url": "9bcb3a939ec4bb0848fbdb6b29db70c3078fc2eb88cb25b0f5c43a22ffa1524f",
+      "beginner-compact-url-beginner": "28dab50cc8ddc1a41413da2c335ed3e5f2628c32757e94ef9494e57ea79cb7aa",
+      "beginner-compact-url-expert": "ae420ad4134f2fdfc80d0612ae5a29b5c74e05eefde11678d8cb0417b94d5b9f",
+      "beginner-full-offline": "6d3f58b5a06222e31e3da41f49ee8b14d04bddd1637fc4623900367a92c3abd3",
+      "beginner-full-offline-beginner": "c047bc099fb6d4fd186f4fc5172e1408eee4e4d5e56e5808c4d70816da18822c",
+      "beginner-full-offline-expert": "401df0ce1dacc10d26755c50058fa1f373b38a3249ee6789e07d071799c0f512",
+      "beginner-full-url": "1a6d4aa61eabaa8b59d989a4936967dcf728b3d6c8231afdb90dcef91748aa89",
+      "beginner-full-url-beginner": "cfe8629352ad6fd318503c73913f7f3d4bb99605082ffc0ed5f7c294f4372b9c",
+      "beginner-full-url-expert": "20951243926589c6479eb90ae9926cdd85c2b6e81634f741ac4015cf59ab8b16",
+      "developer-compact-offline": "fabcd43359b4a16d86a14571ab5e5e99309e5326b121c483c225d94741b88dd1",
+      "developer-compact-offline-beginner": "7e00ba39f6164f10f9a8ae4324e58e779a1ce3ef553cefb6bda2da82a75969db",
+      "developer-compact-offline-expert": "ed19550490765c8f968d13495287d2260e551ad301223e4a1645f8be18829419",
+      "developer-compact-url": "b233be227f136d46477792d4a33d026c8589b3c015be45fce04122a28fad8a65",
+      "developer-compact-url-beginner": "771479af016e8ffef221e0f4a1c96699e0fed335cca538e18da6d74b3c8e7652",
+      "developer-compact-url-expert": "c06143fba678d33cd9ca9de97056411589969ac5462115de28b3081f483898b1",
+      "developer-full-offline": "b4aec5d12f3645211d471437a4ef7b988baecdb1862d33377e12eec6f22e5300",
+      "developer-full-offline-beginner": "2c59704be7f801a8cc2481f18a6e370fad72316789e3a861482c0b8dc82c0fe5",
+      "developer-full-offline-expert": "cb2213b4e83dfac01086822d7cb176a21695cb089f7937cd51d98870035ef523",
+      "developer-full-url": "7f2eef68b8d5d8fdaa0d611c4709ab4db81fa20288e0a0779a29d342e8fbf41d",
+      "developer-full-url-beginner": "ed63102f653d609df402ac5f8fa757c6cecfd33b8d43a16a19cecbc6fe90a90b",
+      "developer-full-url-expert": "a047e8279783c9592f6d7ef5aa811b89344709d9671aa065bf351f1cf13038ed",
+      "engineering": "4c5a8f8c2f67f4e32746f051b6334ac0d57efe91c11bb39c0de2e0b76025bc40",
+      "full-evidence-pack": "274187e156e3195be462abd483b7af3d94ef29370c02004d5341cb838be29a16",
+      "index": "235571fa430a6508f060fb4c70e2a2975510d583298cdc41720845997c9daa73",
+      "shield-security": "4dccb399acf490e2370f769cd909f743a2bc42f055c4989518694739c090c9bc",
+      "syntax": "760b5c1a2e277c1292c695e0b9fa912b7d55bbc60846704eec19a8068397d058"
+    },
+    "tokenizer": "tiktoken==0.12.0"
+  },
+  "revision": "849538ec8ec20af8ac37f41911a9b6c63866c899c873fb658a43e4534cd762ed",
+  "schema_version": 1,
+  "sources": {
+    "CLAUDE.md": "f9910a85bbd6cabbad5bda91517ebd7bfe766227193dffe21c9cbc1d9f63ee83",
+    "compiler/Cargo.toml": "41e247cb045875f726d7b3f3e137e1a070ed76a6020ee8728571a57cb53eb82d",
+    "compiler/README.md": "704cdd2120103d5f4e2d8358bbeac9134dd2e52a738cd8e6247b04914ddd82c8",
+    "compiler/diag/src/catalog.rs": "12e55b69e529d8b3ac2b11550c80173739ff95367fd95b107c343d74419474bb",
+    "compiler/diag/src/lib.rs": "83cae13783f50b59b26af87ae771e09dc47667cd10e86d327403afd443ef26ba",
+    "compiler/nexoc/src/ai_cmd.rs": "e9809451c626bbe81d1ece8d49411698529c8e4e98d80095dc2fb873fed3efe3",
+    "compiler/nexoc/src/ast.rs": "78e3fdd93bd015978775fb3130ebcd6d9bb94f40adaa434ac61dbc6896e4dbdc",
+    "compiler/nexoc/src/audit.rs": "23dc8eee0975ccfbed543aeda23d73f59721a5e0c8a8871b583ae73fda37f3ae",
+    "compiler/nexoc/src/cheader.rs": "61404637c27d52fe32edc7da49e44733de989441711cbcc6ab0c074268c9c89d",
+    "compiler/nexoc/src/checker.rs": "107e81c41edec38a2ef49be4fffd6e6e2fdc3aedb68e931685c9bf6b660f87c5",
+    "compiler/nexoc/src/codegen.rs": "d70cef3090dc3d8d37dea00e91e5133140fb2e40d63dde6252537ba461521ded",
+    "compiler/nexoc/src/cover.rs": "cd66ec38b5919c21f29972cdcc1d6ef106816a2b0d2890b557074ada5e47abb5",
+    "compiler/nexoc/src/diagnostics.rs": "1f394f154a70c8b427f98557236286ca1e6466fe8de9af0aed70de65af1cc622",
+    "compiler/nexoc/src/docs.rs": "5c324b5a6657ce623f64314a77f29874d8dfb90a5a710f2c62e0f45221ebfaaf",
+    "compiler/nexoc/src/effect_policy.rs": "0a08473d8effadc6fb665babc74563dc93a175e44f89c65f92ae26ca90071689",
+    "compiler/nexoc/src/effects.rs": "1b7b8ab8eed10deca8709361d61124c776bd26fb8f7a4a0d265b782621017e9e",
+    "compiler/nexoc/src/fast.rs": "3cd90a81f8ea53fcb35249b7474a7f2cec637ebb14a430906b8ec5c72dd89f84",
+    "compiler/nexoc/src/fmt.rs": "5278c08babf5d9ec42e4f7020800cd53f6c18ef354b6face3915ae6e983248cd",
+    "compiler/nexoc/src/intent.rs": "be2a6f40d8a57e33267231296a00af48a9b56f323259a2691c7b37b91af354f7",
+    "compiler/nexoc/src/json.rs": "cba4f27da3386b2622d7d3169401250a560d3b798047ef92ef180d490c5a293e",
+    "compiler/nexoc/src/lexer.rs": "a28cbd4f16c5ba5f7fe137e53b13cc9d373fd08e99a0dfab125e540e26e9a690",
+    "compiler/nexoc/src/lint.rs": "116c5efd6ace08eda7dd40583277e281232883e3f19376f7561bb2abbdca1dc0",
+    "compiler/nexoc/src/lsp.rs": "7e21e2bdb99928e0edbf181e490277672a785e91cb76c65269a617e3eaf37da1",
+    "compiler/nexoc/src/main.rs": "44e74a2c5b88989fde2cd599383e5725bd5ef33da21070d3528d427de20d2678",
+    "compiler/nexoc/src/mcp.rs": "e5397e84e9d53a2662cd3095c5aae6f211c443ba909bc93a61e375c53cca2ac0",
+    "compiler/nexoc/src/modules.rs": "6c13b625ab999f01a76e87b7f4018f495e71c278b9336195f9b03a27dd00c40d",
+    "compiler/nexoc/src/narrow.rs": "a7b6af024774376b6f2f8a4db5324ffdda224e216c0cd0a667905be48e21648f",
+    "compiler/nexoc/src/packages.rs": "0ac6cfda86719257077ec9628dab8ac643f47266632e93e2e435182a60742efc",
+    "compiler/nexoc/src/parser.rs": "000080a938ac002dd9f7dae9ee1265c2245770d659cf2b6b4eb94dba96a5e79a",
+    "compiler/nexoc/src/phase5.rs": "2e10f23fae493cfb1e48d2de15cd98b7ae276b59de33ed1f403052d6ce4945eb",
+    "compiler/nexoc/src/policy.rs": "e67676200c3b02a339ff95cf83f6ccee34be4b898b24ea51e844fe209b7076e8",
+    "compiler/nexoc/src/prove.rs": "3e102bdb90f7aef3bb0b8e4724a167e2295945959bf79d83573dbe90ccc8164f",
+    "compiler/nexoc/src/resolve.rs": "ef07915ce4ec2c401f92324ead7b565c3bf205d3599f76104aa0eae7123984c5",
+    "compiler/nexoc/src/sbom.rs": "e626b9b43089801a4c8bc179ef756c086485b0250fdb59971c720bb8c83632a2",
+    "compiler/nexoc/src/scalar.rs": "5004fa6f238186a8495212b899bf951de865ffa5d3229b89f2565afb8d52edf9",
+    "compiler/nexoc/src/security.rs": "fe5e1309d9b2ae8644ede3d3d99f5b5cd7791442866297d11fe0edfb3b71a5d3",
+    "compiler/nexoc/src/split.rs": "407b0d4deb13e996278a3757014f2fa0d5add1fbea965fc62acb537132e10840",
+    "compiler/nexoc/src/suggest.rs": "ccf40d5cc84c13527136491ded048c47e54f13d4769e19c2d71094f088803da6",
+    "compiler/nexoc/src/typecheck.rs": "8abcabf7e93731710841176a7ff71843f8c6a3775ba0d1952e705eae0831f626",
+    "compiler/nexoc/src/unbox.rs": "5ea15ab09c853985d68c3c9cfa331291ffd3eed6e9b5cf0db6efadcbe42fc802",
+    "compiler/runtime/src/abi.rs": "109a51900748435b5da7cfbd460a0bf10038871fa2e771d059f2d7ca3a310a30",
+    "compiler/runtime/src/agent_control.rs": "7cc7fbf97f8f0d059b80b1ac05872b9de94b49789820a9ddf706abdae1b9e55e",
+    "compiler/runtime/src/agent_finance.rs": "a0ce9c0dade4e0961a56a5d2f1da07151d741ba4827ebd1d16514cf2f8b51a29",
+    "compiler/runtime/src/agent_journal.rs": "bfa6995a990c0335a84a19b881c363155fae723daa59c16d2ddf52fa789ba985",
+    "compiler/runtime/src/agent_state.rs": "f3e0fb5a59b100818c538d8780c023a6f2f84014f8f22513b81eff681ad9e6b5",
+    "compiler/runtime/src/agent_tokens.rs": "bf3bd72d0bc82123146e90e2867280c2e9cebafdd9df620555f93b9422b0dc48",
+    "compiler/runtime/src/agent_trace.rs": "7040b0b1dee5f4c604c15c2aa2061e01dd8bb7152bd30aa7f0e1c35e019dd4cf",
+    "compiler/runtime/src/ai.rs": "bd3c2b6c13fb9613b5265cf9e79f8ca994cd6267d84ef92c2cb7143ae2661f7e",
+    "compiler/runtime/src/ai_budget.rs": "8ff69135d606ff9c51b6616c1a9ba38171c54b25a7c6b886a8f693572ec690ca",
+    "compiler/runtime/src/amqp.rs": "fde21a0a9136d98f06a522f869053374db681a28df13b31afffff82a404b4a9e",
+    "compiler/runtime/src/bin/nexo-shield-worker.rs": "465e0bccac504c72a5095cb34b89ef1e5d775406cbc4cbef5a61324d7ed944a0",
+    "compiler/runtime/src/call.rs": "dd0221ff2c40a26c95958badf5f43e5e4e725b372f27e77b39ffa94ac04b853f",
+    "compiler/runtime/src/cfg.rs": "fcc7e2abf763d4e8efc0a56c3d07a9eb88cf3ffa59f4b9b7a1525e1659b7b29c",
+    "compiler/runtime/src/checkpoints.rs": "6fa3cb829bf8e9e4989eff734a002b3e766e64da65fe1bb2bb9f0e86a485f26b",
+    "compiler/runtime/src/ci.rs": "c9e7385987ef3cb5d146a575e783bfb7f3955103522ffa68767955d1564ec15e",
+    "compiler/runtime/src/ci_export.rs": "fb885755f8df1b2bcdb14357bfcd0807b4439d6ce6bd8bfbf049d959b283dfc5",
+    "compiler/runtime/src/clib.rs": "4094e112e7332d9b9045ef6c4445bc2a62f0bb5d9ed2040b5b699b15a327ad74",
+    "compiler/runtime/src/coll.rs": "b037eeb2bf3f8b1c601d4ab7c6562e56935439eabd730250df6ed9c132fa9f7a",
+    "compiler/runtime/src/cow.rs": "d25a463de3c088a1887db476da69a82d12791521d5add2a5fcb19dd37527fc82",
+    "compiler/runtime/src/crypto.rs": "5d5da3b939fd95fe486b81f7d2c0e94f57b3cabbd7a03beabc74c308718b108d",
+    "compiler/runtime/src/data.rs": "60d672b3968b92cc3b67f608a3e2e15933ab08e52db1de34f64b40663bd7a93d",
+    "compiler/runtime/src/db.rs": "9c1d4186d672e307f07022c4d8160b57ade9f664b1f4073ceaabb0b6e65bbd92",
+    "compiler/runtime/src/dec.rs": "1685d8d4449c0854691a71b15adf743a921aa36e5446ad3bcb19194ce61f14a7",
+    "compiler/runtime/src/docdb.rs": "62a5b505589b3dd1ac47073be6b9bffc7688ebc6d8c70d697ee1ffdaf63ab931",
+    "compiler/runtime/src/elastic.rs": "fcfa3871e10485fd1b07d8ebbaf7873c9a0156bbf80ee653995713f4b664f00f",
+    "compiler/runtime/src/flags.rs": "6d33a6f719dfbe0226a2c5e833f8e62c8b351a2c6b629369ce45e54c80562edd",
+    "compiler/runtime/src/fmt.rs": "ee09aa9875c308cf2cd9ed293d9183d794abad17b4e4789ea1b8a7a8226d9197",
+    "compiler/runtime/src/http.rs": "8ea75036195a16742b3e5f3a35df1073d06d48d9f4ffc00b904fe47c036baad3",
+    "compiler/runtime/src/infra.rs": "43eeb6ce35e25911e7c57f1b4e6b3284bc4e725b022a3e075fa27c0f3c931405",
+    "compiler/runtime/src/infra_cloud.rs": "59e671f407cdd18974eb29589e4ac0c3beb967e0611c2b9fb6f203f2fe50b7cc",
+    "compiler/runtime/src/json.rs": "2b8d7827128879a214ef812a0c332609e6222b6e49d44ba580efc6e0bafc1c94",
+    "compiler/runtime/src/kafka.rs": "c25930cedbc95dbb81eaefa0993b6be3ccad6ca7b9426f0356a862406209febe",
+    "compiler/runtime/src/lib.rs": "e716b68384c95fa6b0f5b69c26384e98e3c1426252d53cf260cde42cbe61c3b0",
+    "compiler/runtime/src/library.rs": "c6986c9982f8b27a2486e614e49f6851e5fee230a6304d0bdc260d0cecbe7ef0",
+    "compiler/runtime/src/mongo.rs": "2922879a5d84f52d8242d08904bf8d6e04ffbd859d03b5bb878d07065fdf7745",
+    "compiler/runtime/src/mysql.rs": "28b5e951a4d96e872d48ea669f426140a900139250b9d7a924dfebe708c8b2c1",
+    "compiler/runtime/src/num.rs": "1b2538592de836e40b9e68fe4696eabbf8033e32571a6b22623958d72e4e6f74",
+    "compiler/runtime/src/par.rs": "1dab7e754b12611ba49483ac143696e180054290b38d10ac9d6c8346573294e7",
+    "compiler/runtime/src/patterns.rs": "cb1eb6a8d28dfdde2d10be5a624634b0bba9857811d7dbfdb725ebda993d6c24",
+    "compiler/runtime/src/pg.rs": "fa51d6792eef5aed1b4254e30599e0c454b70ade8d795ed00f12803db51caa71",
+    "compiler/runtime/src/pipe.rs": "ec72016af704086e7ba41709d78cd477b1ed9c0b5d3004bf7590300bb8519e70",
+    "compiler/runtime/src/policy.rs": "9c398dbe8443821edf4f893167ae32b8559aeead5191a9497620d142858ffa20",
+    "compiler/runtime/src/privacy.rs": "0ef2997c40e4d33044695217d998383101131a4e4bdfe723d3dc97526fa17965",
+    "compiler/runtime/src/pylib.rs": "c8f8fa7f270289e555462d3a8a06ea11461a5e059931f4eb2b6ed5d0d50942f4",
+    "compiler/runtime/src/repl.rs": "8fdfd6814f5ac665917c97bfae38665f0e82a6b9de2fdf5b2f5486abb9015508",
+    "compiler/runtime/src/security/audit.rs": "0667cb32b12bcca8189e743ef9343f5816bde9d386fee7b1bf562482a4a0d3ab",
+    "compiler/runtime/src/security/authorization.rs": "dd8f9533ff1d2ddfee8e269ff4e94e59789b7057ef1eb1210ce6242fda9db61c",
+    "compiler/runtime/src/security/budget.rs": "49a96f3753b798ff7689bf400440febf5fa70d18c1e20ae23bb5a856fe87efa4",
+    "compiler/runtime/src/security/context.rs": "23e44d32d59fae92aa27bf90978ccbc6b04e694373298855b52b1c1cafde81c0",
+    "compiler/runtime/src/security/ingress.rs": "e13cf02842f74b796a6652acbce4c66aa2ad49ed142461ef8136289eabca586e",
+    "compiler/runtime/src/security/ingress_permissions.rs": "884851c7e8c116a9b2d94214d1dc63dbfbd8b5c4cb96a9963cd378fd52fe8ee4",
+    "compiler/runtime/src/security/matching.rs": "3a63a404ef03450c3857fcb35a9c56ccccd43adeeb15192f634a77318d976db5",
+    "compiler/runtime/src/security/mod.rs": "facefec01b5f786a0d01ec9df179caf99ca30110dfcc67608a6751d4931f9251",
+    "compiler/runtime/src/security/online.rs": "2ef4293f40d75f0fdc0f4d3f44455172f2fa2152e3eaa089d7bbcffd41415d93",
+    "compiler/runtime/src/security/sandbox/linux.rs": "35111d96d932660bedbd13c87cd6cf18d80e300bdd7e89df6fa5aa8efea0c751",
+    "compiler/runtime/src/security/sandbox/mod.rs": "39a705739ccc1634952b9356febef050133c9dd8d5808a05e9db47570b48f309",
+    "compiler/runtime/src/state.rs": "afbadfe44aabdbdd64cccd96d78e0c0fe348d5284751d4340515748dcf62d018",
+    "compiler/runtime/src/stdlib.rs": "c22094f7db4c232b20aea12c0abd9fa12c9dca6389610762c01c9fb51dbcadfb",
+    "compiler/runtime/src/stream.rs": "579d51c6bea157b3708bfb4a30d9c2ad1ec39a68be20b7e4cfbae38e5c0d986a",
+    "compiler/runtime/src/stream_cloud.rs": "18bb7149351c90f897331a831f81fa2b5c7b54a8b0ea33b80714fad666b5291f",
+    "compiler/runtime/src/stream_net.rs": "914a186f227efaa41119d04377cb3e6fa7c4832a97cd0ee81d5882f9a1709442",
+    "compiler/runtime/src/sync.rs": "ebed5a4a783f532fc0dd86d6597e2d96dae7111dcc4b2d84f797ea29849b2e24",
+    "compiler/runtime/src/text.rs": "96ba39d5d5a40699712995aeff37f2b0f2c76cd925a00cf6234bf7330c1c8918",
+    "compiler/runtime/src/time.rs": "52dc066fbddb5bc21a2ddb28b0b16c0bd9af63c4cd7cf218ee5afa09ad27c79f",
+    "compiler/runtime/src/types.rs": "5a53a9e76bf66bbb5127b45d594ac7138ce1128dcd048c022a91e147fa479768",
+    "compiler/runtime/src/value.rs": "cfc7cee3f6f448cce1847e6f86320bc48b6777c17d58a6263f26901b336bd48d",
+    "compiler/runtime/src/web.rs": "65a2e1b3edcd1e878e1c6b7d54b8b2b72d9e8e690f98c21058f081abb4ea38ea",
+    "compiler/runtime/src/websocket.rs": "8f5870adf7e3ad0229663439a5b994bfdbec0c49f9fc4268b710ffbb2f0614e4",
+    "docs/agent-lifecycle.md": "3ea2e814aa8ec74591226922d91b1f5135683aa4f3174cbc92d72b692b686640",
+    "docs/agent-recovery.md": "3ee0dcdd467c1806c198d9eacf575b9893c6c9f3027f94c9ba267600cf3ab902",
+    "docs/agent-token-budgets.md": "a4416ca54734e4f53f1844fe703fcf3a8f31c1b30967f73bf03ff5369449063a",
+    "docs/agent-tracing.md": "795901d26d6a872d80cb9b43f13508cbf1b0fa8599ea0d8c4019ef6024de4da7",
+    "docs/ai-budget-reservations.md": "e38d1c110a41e3d0a1f2460d54eeb8ef3f1f26aa355c24e7aa8eb7d6673af29f",
+    "docs/ai-guide/build.py": "7bbdcba326a0a17e01337cf6dcc153063dd82fe80228fdb79f4ba47e9e18dc28",
+    "docs/ai-guide/evaluation.py": "70d0a582a03979b1fd709f6d4b247e6ab3cc8e5e8a6b869cbace6ecf28ebe543",
+    "docs/ai-guide/examples-verification.json": "2a7159e10dacd88686aebf0ed83010ee9cef300cfcb475f94d11f5a2588bc05a",
+    "docs/ai-guide/local.py": "840cc3b866959b3575d8b162821bdab2a3dc05202dd213755179163534fdf786",
+    "docs/ai-guide/page.tmpl": "36117b96bce59e228d000d12ea055410b038af75fa924c7f2f666d40ad859960",
+    "docs/ai-guide/source/advanced-brief.md": "45c679ef6642b257443ec4fc87ea1701b039b8ed823ebc7200db049436fa3504",
+    "docs/ai-guide/source/catalog.json": "ef67a33f157c06bfa786986723589add95123448c3e3c388671abc802036d3ce",
+    "docs/ai-guide/source/engineering-intelligence.md": "3ced83d3b50a58bac7ed45e0a00a68d0c3610530cc59bb2617ced55c24ff0866",
+    "docs/ai-guide/source/engineering.md": "79892bcdedccd9d45d454a03870d9b0ce0642bfd17dbe2ddf9a52d738cc02a48",
+    "docs/ai-guide/source/example.nexo": "c90942600510e781e36b3fd7006105e4a940c77c3c9674b4bafb657a1462ed8c",
+    "docs/ai-guide/source/examples.json": "7adce04d7845daf6b459e948d6c75f6ed52bd7a708f471f131ab658fcf0376be",
+    "docs/ai-guide/source/readiness.json": "5f9a74932a155c23249158c21df33aa9318b46cf461a622a8bb3f4e09245c099",
+    "docs/ai-guide/source/shield-brief.md": "bedcc3a4ee89a933b119f54db6b652dfd08638f1d41b458b8d6027fed1b398f6",
+    "docs/ai-guide/source/shield-security.md": "6e812344d7ccfd98354617104ca85adc7c73214773600c6c05d2ef9d1f2ce0bf",
+    "docs/ai-guide/source/syntax.md": "291f75c6b2a2e26412c341ea578ca5ce26da1ebb8ef060a578a4305d4dcec956",
+    "docs/ai-native-phase3-completion.md": "ab8cdb7c2df3bc5043ae0d39c1741060fc4f26a3454918e4efa13e5d773b2327",
+    "docs/ai-native-roadmap.md": "df42adfcbe41329d76ceff5ba21382eefc95811453da7b3a2d9c58dc6eee7f79",
+    "docs/assets/ai-engineering.js": "e66518cdd66574a7d02a4cd0535c0054a50aaf3943713c8de187b55c084ae956",
+    "docs/assets/ai-guide.css": "d088e73d1e2472f3e45e02e06031b43d9b7241abe40f67e427d4f977dce8c08b",
+    "docs/assets/ai-guide.js": "22f64c6cd7df318fa7283f158916d649930f0b3bb14e8dfa63984eece22ebb5e",
+    "docs/assets/style.css": "9cfa6cfb8c93dda2008ef5b59824a93c719ccac95209009626222819bc60815f",
+    "docs/decisions.md": "eff32bea743ed810827336b3bf86e229848544b6dc7fd4f43326fb975fc70aa2",
+    "docs/diagnostics.md": "7c6f0033a29f1f0563b6e9e8e2c70823880e7094593b44eca7e8f39ee751c3ee",
+    "docs/effects.md": "b840d428a1ebc0ce2bbe2fdf70dfed721394685e69c114952ab5d74efbdcf368",
+    "docs/especificacion-nexo.md": "bf59e94caa8222e59c7483d994d77aec75d87cf308fc605e95ba3c726baafc96",
+    "docs/guarantees.md": "83cc66b896427a7acded777a0e232373222cbe636687eb2451cd225af399b488",
+    "docs/learn/functions.nexo": "0bff6a03e984fb1047d31babe33dc0d93e75c5e07616b523da2290708c0b025b",
+    "docs/libraries/ai/agent.nexo": "2ab34abaa90a7a21cc901390b7fe439b603749f12558847b87d2cae4dc4ca791",
+    "docs/libraries/db/bank.nexo": "b1bf31c71d6028131e8039f81e526f1f7984a9d9242c388d878aba31b7d2bccd",
+    "docs/libraries/stream/windows.nexo": "e3235272bb93e480d6b476fe8f0fc64453ce4e0fec99990df84d4a30fd695e69",
+    "docs/libraries/web/routes.nexo": "d7f3820d962b899daf5acd6a37fd9f0766bb16b5be93abd946bd8ec068278268",
+    "docs/shield-dispatch.md": "9e461904ed695cf486f11f98828ae94e9a3d8c2ec7cdb67a35f0cedd32e59820",
+    "docs/shield-docker.md": "a971037087fc2dfefae99404c72fed5ae0a573576e795c3bdad839f41e9ec37b",
+    "docs/shield-isolation.md": "28df33c0c754eee415c8fabad47aa5e99b16063dd3c5ff3df2f7b81966a394f4",
+    "docs/shield-online.md": "b7ad68267ea0a39fa7546ba8e471dccdbb60ad7850414d28387ca8a80ed49ed5",
+    "docs/shield.md": "1fe64a4117f51d06cbdcf37a2a45c0864c74653cb1a84e52aa2e9dd9e3cc9dbe",
+    "examples/deploy/shop.nexo": "6919959e460040ce04c95caf36e90d9b1633fa96b37c97cd4b4e40fabd7f58d5",
+    "examples/signup.nexo": "5550e60d9fde15c82a1e14323c49e3596d89359883f504bce52763373a8144e0",
+    "nexo/__init__.py": "8bc060646506dc2d9a9758a3b540a64b5a8dd19195e15b0b9c40120cb90930ef",
+    "nexo/__main__.py": "748f1cc28451e70e33078a4bac78d5cc14ee0852938edff799646f9b2d612fea",
+    "nexo/agent_control.py": "bbd9e2ef7f9f2b785b818d0fa8b43fcf597c815dd1839035663275d7f9ab9e0f",
+    "nexo/agent_finance.py": "568d9fa5a66aa8f3db74cf37801aeafb7cd9808ffa2ad7257574023f8ab4f7cb",
+    "nexo/agent_journal.py": "2814725c13040eff7eb3bdcc6ff3a9f317060755f341becd0d624facbe09212c",
+    "nexo/agent_state.py": "370661150a4733e7b9ebbbf5f78740c4b7060867cda85502aad8fb7ff30df967",
+    "nexo/agent_tokens.py": "b62767bd78d1126c9124e1becc7e4b9b5ec259486eb7ac42daaeb4926e6ba350",
+    "nexo/agent_trace.py": "2bb79555786aa50905531ed3567736e7f24c8dc9ffac33b61a609f707371be6f",
+    "nexo/ai_budget.py": "2193a4b6b0467265f1e44898733bbeba60f4773724034f925acfd4ce8437715c",
+    "nexo/ast.py": "44a80f6f0b415b0c5607c67b7313b9b65153dc3a999956db0a53690c3566ecca",
+    "nexo/audit.py": "44b874e6a2c14bace8a3c9fbd7ae8773c46cbd81b88f75a183653cd293f6cb1c",
+    "nexo/authorization.py": "485e03684b0413294eae8e18bd16da4ee8ef25cde0a0499887a0668c7a083b77",
+    "nexo/checker.py": "65db9fad420ce029bfe20d35fc27ac8cd7012b69e1150780bfe5b5620a4cbef0",
+    "nexo/checkpoints.py": "08aac00bba5c3a6aa13533feccfb21f99339ddf77e3700c32136218050244894",
+    "nexo/cli.py": "0bba8bc6e3278139904a8b543bf6fec0ea80ef679dd820a201469c8ef2c2465b",
+    "nexo/cover.py": "a2f8f7cfe6e21f4a00c51a11fea5c6e2d9dd46379f4e851b8705c59a416ec23d",
+    "nexo/diagnostics.py": "d97f1d207f061c7b14247d47f8888e642e37f7eece5a531436b4291135673abd",
+    "nexo/docs.py": "5ae7d9cef03d48271647f75e0ae6609ba010232aa5e555a1b754280d1e5ed402",
+    "nexo/effect_policy.py": "d12d5b371d0df220bd74224e3e91eb39ef397ec3383e5d64930771224516a0a8",
+    "nexo/effects.py": "b088d8ecbc482b730134bb7754925bcfdd1b48cabe42f3d9687bfc6c218387b2",
+    "nexo/errors.py": "5613964cd6d66ed9d528018bd0faf2c4bdcd848cd9912c8028e0ecf74e5a95fe",
+    "nexo/fmt.py": "eee53670403701b0d7a3e28eaf0c6686c8c3256877d958cb8904c3aa8513321b",
+    "nexo/intent.py": "cdd4b3f3cc375ce130e7bac48ef756f37c69e8c8fd452328f831801a36e1796e",
+    "nexo/interpreter.py": "9a3f618bd9d781ec19ef6a759e8089a25b88ad2c205f81cdd8cfbf287adf7dac",
+    "nexo/json_limits.py": "6736fe24d4cb012d0033d500035c50953ba8b94d2212ea255130da91bbe2fdcd",
+    "nexo/lexer.py": "85cbfc4fbdda431fd7b5e52577d7f0cff382451a2abf933475a5e05be2376e32",
+    "nexo/lint.py": "f92799a3ceff77ab86527a10f8162542d48b7d8aba741c5a8e80d92c5efd7c0e",
+    "nexo/lsp.py": "05de25b9baed7e256166edb49b036776213480525e18a004ba643dc56ea96be9",
+    "nexo/mcp.py": "bd6a592acf9dfed16e48ad0f80eb33861f58277b42a1e62cf30d25b490b419e7",
+    "nexo/modules.py": "154f919e2657773e852f846f146fe30ab10134f307d93ca11b7923e4b0469296",
+    "nexo/numbers.py": "f84c1ab0d67e808093f7c205f5bca006b5bb55e11ecdb199bf9a3b82cb722e8b",
+    "nexo/packages.py": "2a5f191e7965e9a07df5d59af23b8b388677688743094ca0620d605110d8ec6d",
+    "nexo/parser.py": "320ff1e6bfe166b4a7ae26f44cec34e274ff35dcc0246db824403d413664b952",
+    "nexo/security.py": "ded44a0514b33eee1cead4f85e269cce2dca4129ca6e115fe5225060da0477c8",
+    "nexo/security_budget.py": "47755cfed7bea930bc6fddcdb4c88f529abc9311b8fed4b79b21c68540e73c14",
+    "nexo/security_context.py": "0ff5c02f51b6eaaf67e9a55eb0a2d77930d6975ec4553bc3a02161705068dcf6",
+    "nexo/stdlib/__init__.py": "4a944a263ddb17a7453cded1b609058a6f2b957ecef5a16740a8a964de2b2f81",
+    "nexo/stdlib/ai.py": "915d05edfa7443cd89fb10b077df2fe131c0c30a9bee05ff53f140e99f2e7836",
+    "nexo/stdlib/amqp.py": "75eca5c0c60c13865a5aff4df4c26dcd3ae2f3d41cfb86d809173bb1ee574f8e",
+    "nexo/stdlib/api.json": "cfae69d16e8007b30e2ee4abb6e39c496811268d6f736d4b68027bb6a7d5852a",
+    "nexo/stdlib/cfg.py": "8f85bdae89e322024739fb97678694a554f4f0815cc2c1c3374a7b64f7fd589f",
+    "nexo/stdlib/ci.py": "3c0ae84cdfd358d1952bd2c99b231aaa6120763ad9a09d629d7af0c8b769cf1f",
+    "nexo/stdlib/ci_export.py": "8335d1831cac7180f52334198b1dda5214db51be37d2d15a2761553f9cc63e01",
+    "nexo/stdlib/clib.py": "925ebf809a52664465b81d5e4d84f6a8c3d6f824bfa890dadce65dd53b1303ac",
+    "nexo/stdlib/clock.py": "228cb91e552462f39f531996ecd0122464c55ad0cd68d315dae4add6a24b0bea",
+    "nexo/stdlib/core.py": "8a78c85fe2d1c54505e9971fe18138b031d374ba6904858babb5142ccf35c5e6",
+    "nexo/stdlib/crypto.py": "d228b667641d62d178e15da8a64a9dc08f551d66d29ea453d6636b8611ebbcd7",
+    "nexo/stdlib/data.py": "10a55f14c01fff2f7be5cc78557fe8c014ffcd1b1c212e2613b54ac2ee8241f8",
+    "nexo/stdlib/db.py": "f98fc9fd476963843abecc7dbc5b7f4dfc80cc27fb4615ffcf93105f95f65c67",
+    "nexo/stdlib/docdb.py": "004616993506d46a7397d5c93994f8fe5bf6616bb3fb945f00799e1702854cbd",
+    "nexo/stdlib/elastic.py": "75590feb996163299cbaa44e6ce1871bf397327cb75c3dc33660a7cd176fd551",
+    "nexo/stdlib/flags.py": "f808b0cb432a80ef450fb9b2d10d83e42b6678b4b0bd5b5c733f4947bf29ef11",
+    "nexo/stdlib/http.py": "cfdd2d87164932778d542f87bfe6783ec51b4d209600dc3b85ab953dacec9538",
+    "nexo/stdlib/infra.py": "9aafe367161937c62dc046109aaf18bc0197f4c7a854f49abf918c5befdb0df9",
+    "nexo/stdlib/infra_cloud.py": "9f2010bd85f4361ac8d0edf3f1d44746c22e936690cf1a5946a63a1c3626c2a9",
+    "nexo/stdlib/io.py": "c7134971ee536163d5f4c01dfe4fe5331fb32e26ed70e5ef545be739d429a4b0",
+    "nexo/stdlib/kafka.py": "6690dae3320d0c052dbbab7c49eaa1c9d3cfda8fc88aa44cac64876e25366cdd",
+    "nexo/stdlib/mongo.py": "d3131d7c2f01e374b33761b44ed9ff0f81ce64fb6413fb862a62b5c1441aab80",
+    "nexo/stdlib/mysql.py": "5355c0f26797cd017caaaeefa7f5c26f84f1bea748273f6c96f77d9d7e92893e",
+    "nexo/stdlib/patterns.py": "061509f94d21537846989094cfb505bbf1970a53c63bcdac1d718efecc478b25",
+    "nexo/stdlib/pg.py": "dcc0c87eea970b87f8ad9eee05bed1350b39b3cbf46d1d19e43c8d7c724bc66b",
+    "nexo/stdlib/policy.py": "524e8dd8e483e8bbd0db10418de6e67aedc7988f298c473aa3bec0a7d42c5f0c",
+    "nexo/stdlib/privacy.py": "75fba12c5f96a7f8778f14f62d71b62c4bbbcb9bb52f0df7fb0ce3752661cf2b",
+    "nexo/stdlib/pylib.py": "1d9310ea1224acb5e429f209f3a1715af2dc0dcc73208b8b17651b7792cdeddc",
+    "nexo/stdlib/stream.py": "6c0f5c3af86b2bc83808fb467a0d666e459cc08d90526f661ef3e9bffbdb6c82",
+    "nexo/stdlib/stream_cloud.py": "8f79aec6896ab75fcab13ca3b154130583ab0898739af2c55af127f20fa6d6bd",
+    "nexo/stdlib/stream_net.py": "7c02e8d912ead5ae7acd0e432c6deb6bfba0a422a427e34ffc1a7dbf1af52146",
+    "nexo/stdlib/sync.py": "d9b3033bd99920fc64ec335098e48000801bf3a60047f8a3776d030ad3286117",
+    "nexo/stdlib/text.py": "6d228d2058c4aa66e628580c77d3181181ce20c9fac90dec14220997719a61f6",
+    "nexo/stdlib/web.py": "0d3bf6f3001b109a53b97e5d8a3bd46fabb73790865d2dec5142fb2786843065",
+    "nexo/stdlib/websocket.py": "73903c8aa1ab911cf25908d805c9a1aedc6fe42a90416d19b2e3558663bd3b8d",
+    "nexo/suggest.py": "dfa17b2b6476107fd78d67fa2ba649a905745f54badbfb01f342d564cd507f45",
+    "nexo/types.py": "df5bffad520848a074d44dacc21d7df989823ec98c5d24be8bbc3805fddb5025",
+    "pyproject.toml": "520b0f645a633778767d7a5fcfb73d5195784a2d39ddc86b6d5a85f849cda3c7",
+    "tests/conformance/s05_sync.nexo": "470666279d80f6beb08efa7ce70caf7f4cf6ad79439d3bfd40a674f955abae05",
+    "tests/test_agent_recovery.py": "24a456579de2f173d3b3081871dd5535d6eda89b3ec5cc64a7d59a0e1f218ab3",
+    "tests/test_agent_tokens.py": "6a2d7209b8b1fb471d9ceb3461d5c713ee75e63b178573fff1a0430558f88297",
+    "tests/test_ai_providers.py": "d7694186fc88a2c09f53fe45d69c8985aefe0b6d82d78fed1706ce497edcfdb5",
+    "tests/test_check_json.py": "915cf5845b279b3e6ab4425c8833a37c9a0c3536d03fa5772b65852ffe2838f2",
+    "tests/test_mcp.py": "bd3bba9c20b4f7ece3291fa68bbbc1c665559c3f230d9f1f3827a65bf0760193",
+    "tests/test_playground.py": "e35698675fdd2553b63f6c60767175edeece913824c4ee84b3361f00ced6eb6f",
+    "tests/unit/test_agent_trace_schema.py": "aec95e08d741a26526e41d69c481a4d2293645d1f219c273dc597570eb536306"
+  },
+  "versions": {
+    "edition": "0.1",
+    "python": "0.0.1",
+    "rust": "0.1.0"
+  }
+}

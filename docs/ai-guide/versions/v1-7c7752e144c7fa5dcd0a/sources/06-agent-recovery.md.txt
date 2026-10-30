@@ -1,0 +1,163 @@
+# Confined recovery
+Origin: docs/agent-recovery.md
+Source SHA256: 3ee0dcdd467c1806c198d9eacf575b9893c6c9f3027f94c9ba267600cf3ab902
+
+# Agent recovery and operator state grants (D187)
+
+Durable agent runs use explicit operator authority. Ordinary version 1
+agent/tool authorization remains supported. Version 2 adds a `state` map;
+its keys must already identify authorized agents. The state backend shares
+D151's atomic-replacement checkpoint machinery, with file and directory fsync
+provided by the confined backend. Generic
+`workflow` execution remains rejected under Shield; granting an agent journal
+does not authorize general workflow files or undo replay.
+
+## Configure a state account
+
+Create a directory owned by the runtime user with mode `0700`, before launch.
+Use an operator-controlled manifest. For an agent named `reviewer` in
+`main.nexo`, a minimal version 2 manifest is:
+
+```json
+{
+  "version": 2,
+  "agents": {
+    "main.nexo::reviewer": {
+      "permissions": [["allow", "net", "127.0.0.1"], ["allow", "env", "NEXO_AI_KEY"]],
+      "tools": []
+    }
+  },
+  "tools": {},
+  "state": {
+    "main.nexo::reviewer": {
+      "directory": "state",
+      "key": "NEXO_AGENT_STATE_KEY",
+      "max_bytes": 1048576,
+      "budget": null
+    }
+  }
+}
+```
+
+Directory paths resolve relative to the manifest. `key` names an environment
+variable containing a **64-character hexadecimal, 32-byte key** supplied by the
+operator. Generate it outside Nexo, keep it private and reuse it for recovery;
+changing it does not migrate old state. Do not commit the value. The state
+limit is an integer from 4096 to 16777216 bytes, applied to every state file.
+Permissions still come from the root policy and existing dispatch ceilings;
+a state grant cannot grant a tool network/file access or approval.
+
+```sh
+nexo security run --authorization authorization.json main.nexo
+```
+
+A grant reserves the directory and key for trusted runtime persistence.
+Application reads/writes inside it, writes to its ancestors, reads of the key,
+and writes to the state-bearing authorization/dependency manifests or their ancestors are denied even
+when an ordinary policy grants those paths. Shell/C/Python bypasses retain
+their existing Shield rejection. Distinct grants cannot overlap; sharing one
+exact directory requires the same key, bound and financial policy.
+
+The backend opens and verifies the pinned directory, uses generated hashed
+basenames, rejects links/nonregular files/multiple hardlinks and verifies owner,
+mode `0600` and size on opened files. Reads of a FIFO cannot block admission.
+Writes use exclusive temporary files, AES-256-GCM authentication with the
+basename as associated data, file fsync, atomic replacement and directory fsync.
+A crash can leave encrypted temporary files; they are never recovery inputs.
+Nonblocking locks refuse a busy run/account rather than waiting indefinitely.
+
+The Python backend requires Unix filesystem primitives; native persistence
+currently requires Linux AMD64. These are runtime/API confinement guarantees,
+not a sandbox against an operator or another hostile process of the same UID.
+OS profiles do not automatically acquire directory mounts or key environment
+access from this grant; a profile that cannot provide the required operations
+fails closed. No new positive kernel-isolation guarantee is claimed.
+
+## Invoke and resume
+
+```nexo
+finding = reviewer.handle("Review this text", run: "review-2026-001",
+                          as: Finding, timeout: 30s)
+```
+
+The existing agent must use a locally configured provider and registered Nexo
+tools. The `run` ID is a nonempty string of at most 256 UTF-8 bytes and never
+becomes a filesystem path. An agent with a state grant must supply it. Durable
+inputs are text or `none`. Supported JSON result types retain local validation;
+record types with defaults, including nested defaults, and non-record user types
+are rejected before provider dispatch. Durable MCP tools are currently rejected.
+Nondurable agents retain their existing broader input/default/MCP behavior.
+
+State binds the loaded source texts, canonical agent identity, exact manifest
+contents, caller/captured/dependency permission contexts (including resolved
+file targets and working directory), run ID, input, result type and resolved provider/model/URL/goal/tool
+schema/confirmation configuration. A mismatch refuses recovery. A cached result cannot bypass a narrower caller
+ceiling by avoiding the original tool checks. Editing even a
+manifest's whitespace deliberately invalidates the old run identity. Keys can
+rotate for provider authentication, but state-key rotation needs explicit
+operator migration. Protocol v1 deliberately refuses cross-backend journal
+migration; it uses the same run namespace so migration cannot execute it anew.
+
+| Saved phase | Behavior after restart |
+| --- | --- |
+| `ready` | Continue the next bounded provider turn. |
+| `response` | Continue only the saved remaining calls/results, or validate the final text. |
+| `approval` | Request a fresh decision for the pending call. No old yes is stored. |
+| `provider_pending` | Refuse: the request may have reached the provider. |
+| `tool_pending` | Refuse: defaults or the tool may have produced an effect. |
+| `complete` | Revalidate cached final text and return it without provider/tool replay. |
+| `failed` | Refuse: cancellation, invalid output, step exhaustion or another terminal error cannot silently restart the conversation. |
+
+Before conversion or tool entry, the runtime commits `tool_pending`. After each
+completed call, it saves its result and removes that call from the remaining
+queue. Thus a later approval checkpoint cannot reapprove/replay a completed
+call. Calls with unresolved effects are never automatically retried; a caller
+cannot infer that a pending tool did nothing. Durable provider HTTP turns have
+no automatic transport retries. A completed tool function does not prove that
+background jobs or external systems have completed; this protocol does not
+resume arbitrary source tasks or provide exactly-once external effects.
+
+After an uncertain or failed run, inspect actual external effects and provider
+receipts with the operator's tools before deliberately starting new work. Do
+not delete the budget ledger to recover headroom: uncertain charges remain
+financial obligations. Preserve the original state for reconciliation. There
+is no source API to approve, edit, reset or refund a persisted run/account.
+
+## Durable monetary account
+
+Replace `budget: null` in the grant with an operator policy, for example:
+
+```json
+{
+  "limit": "5",
+  "currency": "EUR",
+  "period": "day",
+  "prices": {"openai:configured-model": ["2.5", "10"]}
+}
+```
+
+Amounts are nonnegative decimal strings with at most six fractional places
+and values at most 1000000000000; `limit` must be positive. Currency is three
+uppercase ASCII letters; period is `day` or `month`. Every used model needs an
+explicit input/output price per million tokens, including zero-priced models.
+The ledger pins this policy. A changed account policy refuses existing-ledger
+admission instead of forgetting old charges.
+
+Before each request, a cross-process lock covers reading the encrypted ledger
+and durably reserving **all remaining headroom**. Valid strict usage receipts
+replace that hold with actual configured cost, on the admission date. Unknown
+usage, failed transport, an abandoned stream or process death retains the hold.
+A cached final result costs nothing again. [Token budgets](agent-token-budgets.md)
+use separate namespaced write-ahead ledgers in the same private directory, so
+late child receipts cannot be erased by a stale checkpoint. Active/unknown holds participate in
+concurrent admission and survive new run IDs. Known actual cost is never clamped
+to the cap. A full/busy/oversized/unreadable account fails closed; no queue or
+source-level refund operation is provided.
+
+This account follows provider work started by the invocation's tools, nested
+calls and captured tasks, including `ask` and streams. Combining different
+inherited accounts rejects provider admission. It is a coordinator for those
+invocations, not a global restriction on unrelated root provider calls or a
+verified provider-invoice ceiling. Prices and usage reports are trusted. It
+has no `when_over_budget` escape. The separate legacy CSV-backed `ai budget`
+remains process-local and remains rejected under Shield; its guard is unchanged.

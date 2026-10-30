@@ -669,3 +669,13 @@ python3 compiler/bench/languages.py                  # benchmarks: Nexo vs C, Ru
 To add a conformance test, put `NAME.nexo` and its exact output
 `NAME.expected` in `tests/conformance/`. Extra CLI arguments, such as
 `test`, go in `NAME.args`.
+
+### AI-assisted development
+
+The [Nexo AI Guide](https://marcrabadan.github.io/nexo/ai-guide.html) offers
+versioned, copyable prompts for beginners, developers, architects and AI/agent engineers.
+The guide includes verified examples, readiness/ADR tools and local token/cost profiling.
+Choose compact or full context, with self-contained and documentation-linked
+formats. Feature boundaries and measured reference token counts stay visible.
+See [generation, provenance and validation](docs/ai-guide/README.md) for maintenance
+and limitations.

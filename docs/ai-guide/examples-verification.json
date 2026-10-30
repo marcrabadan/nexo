@@ -1,0 +1,58 @@
+{
+  "python_package": "0.0.1",
+  "results": {
+    "ai": {
+      "backend": "Python interpreter",
+      "check": "Passed",
+      "command": "test",
+      "execution": "Passed",
+      "native_compilation": "Unknown",
+      "source_sha256": "2ab34abaa90a7a21cc901390b7fe439b603749f12558847b87d2cae4dc4ca791",
+      "stderr": "",
+      "stdout": "shipped\nthere is no order 99\n✓ the tools are ordinary functions\nOrder 7 has shipped.\n✓ the agent's answer can be faked\n2 tests: 2 passed, 0 failed\n"
+    },
+    "cli": {
+      "backend": "Python interpreter",
+      "check": "Passed",
+      "command": "test",
+      "execution": "Passed",
+      "native_compilation": "Unknown",
+      "source_sha256": "c90942600510e781e36b3fd7006105e4a940c77c3c9674b4bafb657a1462ed8c",
+      "stderr": "",
+      "stdout": "Hello Ada\n✓ invoice\n1 test: 1 passed, 0 failed\n"
+    },
+    "database": {
+      "backend": "Python interpreter",
+      "check": "Passed",
+      "command": "run",
+      "execution": "Passed",
+      "native_compilation": "Unknown",
+      "source_sha256": "b1bf31c71d6028131e8039f81e526f1f7984a9d9242c388d878aba31b7d2bccd",
+      "stderr": "",
+      "stdout": "sent 30.00 from Ana to Luis\nrefused (Error): Luis has 50.00, not 80.00\nrefused (NotFound): There is no Account with owner = \"Eva\"\nonly the first one happened:\n  Ana: 70.00\n  Luis: 50.00\n2 movements\n"
+    },
+    "events": {
+      "backend": "Python interpreter",
+      "check": "Passed",
+      "command": "test",
+      "execution": "Passed",
+      "native_compilation": "Unknown",
+      "source_sha256": "e3235272bb93e480d6b476fe8f0fc64453ce4e0fec99990df84d4a30fd695e69",
+      "stderr": "",
+      "stdout": "minute      {\"page\": \"/home\", \"count\": 2}\nminute      {\"page\": \"/cart\", \"count\": 1}\nlast 5 min  10\nlast 5 min  35\nlast 5 min  30\nvisit       pages: 3\nminute      {\"page\": \"/home\", \"count\": 1}\nvisit       pages: 1\n✓ windows\n1 test: 1 passed, 0 failed\n"
+    },
+    "rest": {
+      "backend": "Python interpreter",
+      "check": "Passed",
+      "command": "test",
+      "execution": "Passed",
+      "native_compilation": "Unknown",
+      "source_sha256": "d7f3820d962b899daf5acd6a37fd9f0766bb16b5be93abd946bd8ec068278268",
+      "stderr": "",
+      "stdout": "ready\n201 Ana\n✓ routes return text and JSON\nhello Ana, number 7\nGET URL/greet/not-a-number answered 400 Bad Request\n✓ path and query parameters are typed\nPOST URL/registrations answered 400 Bad Request\n✓ missing record fields fail validation\n3 tests: 3 passed, 0 failed\n"
+    }
+  },
+  "runtime_revision": "1b30f04e271d1175cdcc07c49be7ef496d1ac7f864e90c61324e6e567f6a4e18",
+  "schema_version": 1,
+  "tool_sha256": "840cc3b866959b3575d8b162821bdab2a3dc05202dd213755179163534fdf786"
+}

@@ -1,0 +1,32 @@
+name: AI guide
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  context:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -e '.[dev,ai-guide]'
+      - run: python docs/ai-guide/local.py verify-examples
+      - run: python docs/ai-guide/build.py --measure --check
+      - run: python -m pytest tests/test_ai_guide.py tests/test_ai_guide_advanced.py
+      - run: node --test tests/ai-guide.test.cjs
+      - run: python -m pip install playwright==1.56.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Browser regression
+        run: |
+          python -m http.server 8765 --bind 127.0.0.1 --directory docs > /tmp/nexo-guide-server.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid"' EXIT
+          python tests/ai_guide_browser.py
+      - name: Fixture-only evaluation harness regression
+        run: |
+          python docs/ai-guide/evaluation.py /tmp/nexo-evaluation.json
+          python docs/ai-guide/local.py benchmark /tmp/nexo-evaluation.json --execute --output /tmp/nexo-evaluation-results.json

@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "site_base": "https://marcrabadan.github.io/nexo/",
+  "claims": [
+    {
+      "id": "core",
+      "status": "implemented",
+      "summary": "Python interpreter and Rust/LLVM native compiler; records, explicit errors, contracts and tools. Package versions differ; do not infer a stable Nexo 1.0 release.",
+      "evidence": [
+        [
+          "docs/especificacion-nexo.md",
+          "## 2. Basic syntax"
+        ],
+        [
+          "compiler/README.md",
+          "LLVM"
+        ],
+        [
+          "tests/conformance/s05_sync.nexo",
+          "use nexo.sync"
+        ]
+      ]
+    },
+    {
+      "id": "diagnostics",
+      "status": "implemented",
+      "summary": "Versioned check --json diagnostics and conservative --effects analysis. Unknown/dynamic effects remain unknown; static checks do not grant permissions.",
+      "evidence": [
+        [
+          "docs/diagnostics.md",
+          "schema_version"
+        ],
+        [
+          "docs/effects.md",
+          "unknown"
+        ],
+        [
+          "tests/test_check_json.py",
+          "def test_"
+        ]
+      ]
+    },
+    {
+      "id": "agents",
+      "status": "implemented",
+      "summary": "Typed input/output, registered tools, approval before conversion, inherited cooperative cancellation/deadlines and reported token/money reservations. Counters trust configured prices/usage; they are not invoice guarantees or arbitrary-client metering.",
+      "evidence": [
+        [
+          "docs/agent-lifecycle.md",
+          "input_type"
+        ],
+        [
+          "docs/agent-token-budgets.md",
+          "max_tokens"
+        ],
+        [
+          "compiler/runtime/src/ai.rs",
+          "input_type"
+        ],
+        [
+          "nexo/stdlib/ai.py",
+          "max_tokens"
+        ],
+        [
+          "tests/test_agent_tokens.py",
+          "def test_"
+        ]
+      ]
+    },
+    {
+      "id": "recovery",
+      "status": "implemented",
+      "summary": "Explicit version 2 operator grants enable encrypted bounded agent recovery and cross-process accounting. Native persistence is Linux AMD64 only. Durable inputs are text/none; result defaults and durable MCP calls are rejected. Uncertain dispatch fails closed; no exactly-once external-effect guarantee.",
+      "evidence": [
+        [
+          "docs/agent-recovery.md",
+          "Linux AMD64"
+        ],
+        [
+          "tests/test_agent_recovery.py",
+          "execution_authority"
+        ],
+        [
+          "compiler/runtime/src/agent_state.rs",
+          "O_NOFOLLOW"
+        ]
+      ]
+    },
+    {
+      "id": "shield",
+      "status": "implemented",
+      "summary": "Policy/API enforcement, dependency/dispatch ceilings and optional hardened containers/Linux workers exist. Kernel isolation requires supported host facilities; API-only tests prove no sandbox-escape guarantee. Generic workflow persistence remains rejected under Shield.",
+      "evidence": [
+        [
+          "docs/shield.md",
+          "OS"
+        ],
+        [
+          "docs/shield-isolation.md",
+          "Landlock"
+        ],
+        [
+          "nexo/stdlib/patterns.py",
+          "security_workflow"
+        ],
+        [
+          "docs/shield-isolation.md",
+          "linux-offline-v1"
+        ],
+        [
+          "docs/shield-online.md",
+          "initial profile"
+        ],
+        [
+          "docs/shield-dispatch.md",
+          "A nested agent cannot widen"
+        ],
+        [
+          "docs/shield-docker.md",
+          "network isolation"
+        ]
+      ]
+    },
+    {
+      "id": "telemetry",
+      "status": "implemented",
+      "summary": "NEXO_AGENT_TRACE=stderr explicitly enables payload-free OTLP JSON agent spans. No exporter runs by default. It is not universal automatic telemetry or a monitoring service.",
+      "evidence": [
+        [
+          "docs/agent-tracing.md",
+          "opentelemetry-proto v1.7.0"
+        ],
+        [
+          "tests/unit/test_agent_trace_schema.py",
+          "def test_"
+        ]
+      ]
+    },
+    {
+      "id": "libraries",
+      "status": "implemented",
+      "summary": "The API catalog and working examples cover web/HTTP, SQL/document databases, streams, crypto, privacy, infrastructure and CI. Inspect exact signatures and connector/profile restrictions; an integration or emulator test is not a production certification.",
+      "evidence": [
+        [
+          "nexo/stdlib/api.json",
+          "edition"
+        ],
+        [
+          "docs/libraries/web/routes.nexo",
+          "server"
+        ],
+        [
+          "examples/deploy/shop.nexo",
+          ""
+        ],
+        [
+          "tests/test_ai_providers.py",
+          "def test_"
+        ]
+      ]
+    },
+    {
+      "id": "mcp",
+      "status": "implemented",
+      "summary": "Developer MCP server and agent MCP client exist. Published-spec interoperability and lifecycle/authorization completeness remain unverified; the roadmap audit is not completed by their presence.",
+      "evidence": [
+        [
+          "docs/ai-native-roadmap.md",
+          "MCP"
+        ],
+        [
+          "nexo/mcp.py",
+          ""
+        ],
+        [
+          "tests/test_mcp.py",
+          "def test_"
+        ]
+      ]
+    },
+    {
+      "id": "web-target",
+      "status": "experimental",
+      "summary": "Browser playground and a platform-limited WebAssembly/web target exist. Do not describe them as production standalone WASI deployment or unrestricted native-library parity.",
+      "evidence": [
+        [
+          "docs/decisions.md",
+          "D175"
+        ],
+        [
+          "tests/test_playground.py",
+          "wasm"
+        ]
+      ]
+    },
+    {
+      "id": "interop-roadmap",
+      "status": "planned",
+      "summary": "AI-native Phase 4 interoperability work (including a justified A2A adapter and standalone WASI investigation) and Phase 5 Nexo Sentinel validation remain future work. ml/ui/notify are not available modules.",
+      "evidence": [
+        [
+          "docs/ai-native-roadmap.md",
+          "### Phase 4"
+        ],
+        [
+          "CLAUDE.md",
+          "Excluded (do not implement yet)"
+        ]
+      ]
+    },
+    {
+      "id": "registry",
+      "status": "planned",
+      "summary": "Signed packages/static registries exist, but an official registry service and reviewed-package ecosystem are not established.",
+      "evidence": [
+        [
+          "docs/guarantees.md",
+          "registry service needs people"
+        ],
+        [
+          "nexo/packages.py",
+          ""
+        ]
+      ]
+    },
+    {
+      "id": "operations",
+      "status": "unverified",
+      "summary": "Live cloud readiness, HA/SLO achievement, local Kubernetes compatibility, independent security audits, current provider prices and model-specific token parity require separate evidence. Existing infra adapters/examples do not prove these outcomes.",
+      "evidence": [
+        [
+          "docs/guarantees.md",
+          "No external audit"
+        ],
+        [
+          "docs/ai-native-phase3-completion.md",
+          "No live-provider certification"
+        ]
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "path": "docs/especificacion-nexo.md",
+      "start": "## 2. Basic syntax",
+      "end": "## 4. Events",
+      "label": "Core syntax and errors"
+    },
+    {
+      "path": "docs/diagnostics.md",
+      "label": "Machine diagnostics"
+    },
+    {
+      "path": "docs/effects.md",
+      "label": "Effects and unknowns"
+    },
+    {
+      "path": "docs/agent-lifecycle.md",
+      "label": "Agent lifecycle"
+    },
+    {
+      "path": "docs/agent-token-budgets.md",
+      "label": "Token budgets"
+    },
+    {
+      "path": "docs/ai-budget-reservations.md",
+      "label": "Monetary reservations"
+    },
+    {
+      "path": "docs/agent-recovery.md",
+      "label": "Confined recovery"
+    },
+    {
+      "path": "docs/agent-tracing.md",
+      "label": "Tracing"
+    },
+    {
+      "path": "nexo/stdlib/api.json",
+      "label": "Exact standard-library API catalog"
+    },
+    {
+      "path": "docs/learn/functions.nexo",
+      "label": "Working invoice example"
+    },
+    {
+      "path": "examples/signup.nexo",
+      "label": "Working typed/privacy example"
+    },
+    {
+      "path": "docs/shield.md",
+      "label": "Shield: API enforcement and decision tracing",
+      "when": "security"
+    },
+    {
+      "path": "docs/shield-isolation.md",
+      "label": "Shield: Offline worker and dependency ceilings",
+      "when": "security"
+    },
+    {
+      "path": "docs/shield-online.md",
+      "label": "Shield: Brokered public HTTP(S)",
+      "when": "security"
+    },
+    {
+      "path": "docs/shield-dispatch.md",
+      "label": "Shield: Agent/tool authorization and context attenuation",
+      "when": "security"
+    },
+    {
+      "path": "docs/shield-docker.md",
+      "label": "Shield: Hardened Docker and host validation",
+      "when": "security"
+    }
+  ]
+}

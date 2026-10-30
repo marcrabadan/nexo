@@ -1,0 +1,33 @@
+{
+  "current": "849538ec8ec20af8ac37f41911a9b6c63866c899c873fb658a43e4534cd762ed",
+  "versions": [
+    {
+      "bundle": "ai-guide/versions/v1-2f77e550e3425bce27a3",
+      "profiles": [
+        "agentic",
+        "architect",
+        "developer"
+      ],
+      "revision": "2f77e550e3425bce27a330e5aae25aaca02440a6aea92dd077859bf8700310cb"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-7c7752e144c7fa5dcd0a",
+      "profiles": [
+        "agentic",
+        "architect",
+        "developer"
+      ],
+      "revision": "7c7752e144c7fa5dcd0a38101395cde68230be4447caa58b9d4c63d0d5bfbae5"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-849538ec8ec20af8ac37",
+      "profiles": [
+        "beginner",
+        "developer",
+        "architect",
+        "agentic"
+      ],
+      "revision": "849538ec8ec20af8ac37f41911a9b6c63866c899c873fb658a43e4534cd762ed"
+    }
+  ]
+}
