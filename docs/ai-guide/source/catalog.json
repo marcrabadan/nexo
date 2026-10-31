@@ -237,6 +237,53 @@
           "No live-provider certification"
         ]
       ]
+    },
+    {
+      "id": "nexo-web",
+      "status": "experimental",
+      "summary": "Python browser components/typed props/slots/context/routes/scoped CSS. Rust browser driver/APIs/HMR/SSR unavailable. Retrieve conditional Web guidance for UI.",
+      "evidence": [
+        [
+          "nexo/web_frontend.py",
+          "def compile_web"
+        ],
+        [
+          "nexo/web_runtime.js",
+          "function createOwner"
+        ],
+        [
+          "tests/test_web_frontend.py",
+          "def test_real_browser"
+        ],
+        [
+          "examples/web/counter.nexo",
+          "pub component Counter:"
+        ],
+        [
+          "docs/rfc/0001-nexo-web.md",
+          "## Implemented M1 grammar"
+        ],
+        [
+          "nexo/web_model.py",
+          "def load_program"
+        ],
+        [
+          "nexo/web_codegen.py",
+          "def analyze"
+        ],
+        [
+          "nexo/web_router.js",
+          "function createRouter"
+        ],
+        [
+          "tests/test_web_composition.py",
+          "def test_real_browser"
+        ],
+        [
+          "examples/web/composition/app.nexo",
+          "pub page User(id: int):"
+        ]
+      ]
     }
   ],
   "documents": [

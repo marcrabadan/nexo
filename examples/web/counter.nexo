@@ -1,0 +1,18 @@
+use nexo.web
+
+pub component Counter:
+    state count: int = 0
+
+    fn increment():
+        count += 1
+
+    view:
+        main:
+            h1("Nexo Web")
+            p("Count: {count}")
+            button("+", on_click: increment)
+
+    style:
+        main {
+            padding: 24px;
+        }

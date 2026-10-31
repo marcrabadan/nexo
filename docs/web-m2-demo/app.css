@@ -1,0 +1,39 @@
+@scope ([data-nexo="nw-804b7f926060a0b7"]) to ([data-nexo]) {
+.card {
+    padding: 16px;
+    border: 1px solid currentColor;
+    border-radius: 12px;
+}
+@media (min-width: 600px) {
+    .card { padding: 24px; }
+}
+
+}
+
+@scope ([data-nexo="nw-fe9041183efc03de"]) to ([data-nexo]) {
+
+}
+
+@scope ([data-nexo="nw-e6adcdfb51402355"]) to ([data-nexo]) {
+
+}
+
+@scope ([data-nexo="nw-2f5f1d1ffed02266"]) to ([data-nexo]) {
+
+}
+
+@scope ([data-nexo="nw-878dc295e1649c45"]) to ([data-nexo]) {
+
+}
+
+@scope ([data-nexo="nw-95ee121492c9755c"]) to ([data-nexo]) {
+
+}
+
+@scope ([data-nexo="nw-04b9779f18ad3651"]) to ([data-nexo]) {
+
+}
+
+@scope ([data-nexo="nw-7e444556fc374600"]) to ([data-nexo]) {
+
+}

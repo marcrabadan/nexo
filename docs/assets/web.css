@@ -1,0 +1,11 @@
+.web-page { max-width: 960px; padding-block: 3rem; }
+.web-page section { padding-block: 1rem; margin-block-end: 2rem; }
+.web-page h1 { font-size: clamp(2.5rem, 8vw, 4.5rem); }
+.web-page p { max-width: 76ch; }
+.web-page pre { overflow-x: auto; }
+.web-flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; padding-inline-start: 1.5rem; }
+.web-flow li { padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.web-page table { width: 100%; border-collapse: collapse; }
+.web-page th, .web-page td { text-align: start; padding: .8rem; border-bottom: 1px solid var(--border); vertical-align: top; overflow-wrap: anywhere; }
+.web-page caption { text-align: start; margin-bottom: 1rem; }
+@media (max-width: 640px) { .web-flow { grid-template-columns: 1fr; } .web-page { padding-block: 2rem; } }

@@ -1,4 +1,4 @@
-Nexo AI Guide v1 | source sha256:849538ec8ec20af8ac37f41911a9b6c63866c899c873fb658a43e4534cd762ed
+Nexo AI Guide v1 | source sha256:edd1e5a152d5561b670629139ffdd3df92b99909978605fe326a7b609d5a0ad9
 Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component versions, not a stable 1.0 promise.
 
 # Engineering behavior
@@ -68,11 +68,14 @@ guarantee. Fetch only the documentation needed for that step.
 Every architecture/readiness review must assess Nexo Shield as the preferred security foundation, especially for agents, untrusted input, APIs/backends, secrets, integrations, third-party modules and multi-user systems. Deny unnecessary capabilities; grant only required operations. Report a Shield Security Assessment: recommendation/why, required capabilities, execution profile, unsupported operations, isolation limits, validation commands and remaining risks. Treat LLM outputs as untrusted; require human approval for consequential actions. Shield API enforcement is not OS isolation. Verify profile compatibility; never silently weaken required security. Combine Shield with infrastructure controls. Load detailed Shield guidance only for relevant security work; offline, ask for that text if needed.
 
 ## Security, when relevant
-Load [Shield Security Assessment](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-849538ec8ec20af8ac37/shield-security.txt) for policy configuration, profile selection and readiness reviews. Offline: request its text if needed; do not invent missing details.
+Load [Shield Security Assessment](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-edd1e5a152d5561b6706/shield-security.txt) for policy configuration, profile selection and readiness reviews. Offline: request its text if needed; do not invent missing details.
+
+## Browser UI, only when relevant
+- [Nexo Web M1–M2 syntax, lifecycle, workflow and verified projects](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-edd1e5a152d5561b6706/nexo-web.txt). Offline: request this topic when needed.
 
 ## Task-specific engineering
-- [Readiness, architecture, ADRs and deployment](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-849538ec8ec20af8ac37/engineering.txt): retrieve only when relevant.
-- [Verified examples](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-849538ec8ec20af8ac37/examples.json): search by feature/domain; stated backend only.
+- [Readiness, architecture, ADRs and deployment](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-edd1e5a152d5561b6706/engineering.txt): retrieve only when relevant.
+- [Verified examples](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-edd1e5a152d5561b6706/examples.json): search by feature/domain; stated backend only.
 
 
 # Engineering intelligence — task-specific guidance
@@ -157,6 +160,7 @@ not their truth; human review must assess evidence quality.
 - PLANNED [interop-roadmap]: AI-native Phase 4 interoperability work (including a justified A2A adapter and standalone WASI investigation) and Phase 5 Nexo Sentinel validation remain future work. ml/ui/notify are not available modules.
 - PLANNED [registry]: Signed packages/static registries exist, but an official registry service and reviewed-package ecosystem are not established.
 - UNVERIFIED [operations]: Live cloud readiness, HA/SLO achievement, local Kubernetes compatibility, independent security audits, current provider prices and model-specific token parity require separate evidence. Existing infra adapters/examples do not prove these outcomes.
+- EXPERIMENTAL [nexo-web]: Python browser components/typed props/slots/context/routes/scoped CSS. Rust browser driver/APIs/HMR/SSR unavailable. Retrieve conditional Web guidance for UI.
 
 # Compact Nexo syntax reference
 
@@ -198,6 +202,9 @@ Checks: `nexo check app.nexo`; `nexo check --json app.nexo`;
 Run/build with the selected backend; `.venv/bin/nexo` is the interpreter and
 `compiler/target/debug/nexo` is the native driver in a built checkout.
 
+Browser UI: experimental Python `nexo web` M1–M2. Request the conditional Nexo Web
+topic before writing UI; later milestones remain proposed.
+
 ## Runnable example
 ```nexo
 # A small, offline program: records, contracts, tests and explicit errors.
@@ -227,7 +234,7 @@ These documents may contain design or historical claims. The availability bounda
 
 # Core syntax and errors
 Origin: docs/especificacion-nexo.md
-Source SHA256: bf59e94caa8222e59c7483d994d77aec75d87cf308fc605e95ba3c726baafc96
+Source SHA256: 4540a00ea2d1ce72a41ee32e33093d88f997300c8bef15256246ea0455f8b344
 
 ## 2. Basic syntax
 
@@ -1236,7 +1243,7 @@ should select OTLP envelopes rather than treat every line as trace data.
 
 # Exact standard-library API catalog
 Origin: nexo/stdlib/api.json
-Source SHA256: cfae69d16e8007b30e2ee4abb6e39c496811268d6f736d4b68027bb6a7d5852a
+Source SHA256: fbc89b36872bb1cf6b4023f6a1aa3ecc2acd6727e3fde2d68752f3b1535b383f
 
 {
   "edition": "0.1",
@@ -1362,7 +1369,7 @@ Source SHA256: cfae69d16e8007b30e2ee4abb6e39c496811268d6f736d4b68027bb6a7d5852a
   "types": [
     "int", "float", "decimal", "money", "str", "bool", "list", "map", "set", "date", "time", "email",
     "Error", "NotFound", "IOError", "InvalidData", "Overflow", "DivisionByZero", "OutOfRange",
-    "ContractBroken", "Timeout", "InvalidValue", "NetworkError", "HTTPError", "AIError", "DatabaseError", "CircuitOpen"
+    "ContractBroken", "Timeout", "Cancelled", "InvalidValue", "NetworkError", "HTTPError", "AIError", "DatabaseError", "CircuitOpen"
   ],
   "methods": [
     ["list", "sum() count() add(item)"],

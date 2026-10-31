@@ -1512,3 +1512,21 @@ The core has 39 words reserved everywhere in the code. Module words are only res
 **Removed compared with earlier drafts:** `let`, `struct`, `enum`, `impl`, `await`, `share`, `store`, `choose`, `make`, `with`, `view`, `move`, `copy`, `filter`, and the uses of `on` for clouds, CI and shutdown.
 
 **Open for edition 1.0:** the graphical syntax of `nexo.ui` and the exact format of the `nexo.db` migration file.
+
+## 28. Experimental browser frontend (RFC-0001)
+
+The Python CLI's `nexo web check|build` selects the bounded browser grammar in
+[rfc/0001-nexo-web.md](rfc/0001-nexo-web.md) (D190). Implemented M1 vocabulary:
+`pub component Name:`, typed `state`, parameterless `fn`, safe DOM `view` and
+scoped CSS `style`. The exact acceptance program is `examples/web/counter.nexo`.
+This does not extend the core grammar in section 24 or the server interpreter.
+`nexo build --target web` remains WASI (D175). Pages/layouts/context and typed scalar props are available in experimental M2
+(see the amendment below). Typed browser APIs, HMR and SSR remain proposed. Browser compilation through the
+Rust driver is not implemented. The RFC is the source of truth for this isolated
+experimental grammar until it is incorporated into a future language edition.
+
+Experimental browser M2 (D191) extends section 28 through the implemented M2
+amendment of RFC-0001: typed scalar props, qualified project component/CSS imports,
+lexical slot(), pages with typed fragment routes, persistent layouts and owned
+provide/inject context. Browser APIs, records/lists, HMR and SSR remain proposed.
+The Python browser domain remains separate from the core grammar and D175 WASI.

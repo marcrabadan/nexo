@@ -1,0 +1,21 @@
+use nexo.web
+
+pub component Card(heading: str):
+    view:
+        article(class: "card"):
+            h2(heading)
+            slot()
+
+    style:
+        @import "./card.css";
+
+pub component Counter(label: str, start: int = 0):
+    state count: int = start
+
+    fn increment():
+        count += 1
+
+    view:
+        section:
+            p("{label}: {count}")
+            button("Local +", on_click: increment)

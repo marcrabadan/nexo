@@ -1,0 +1,127 @@
+# Shield: Brokered public HTTP(S)
+Origin: docs/shield-online.md
+Source SHA256: b7ad68267ea0a39fa7546ba8e471dccdbb60ad7850414d28387ca8a80ed49ed5
+
+# Shield online profile
+
+`linux-online-v1` adds brokered public HTTP(S) to the existing Linux worker.
+It is an opt-in initial profile. The payload keeps the offline syscall filter:
+no sockets, fork, threads or arbitrary process execution. A separate trusted
+broker receives bounded requests over an inherited Unix stream. The supervisor
+owns both processes and stops/reaps the broker when the job completes, fails or
+exceeds its wall deadline, including while DNS or a remote peer is blocked.
+
+## Commands
+
+Build the native compiler/runtime and worker first:
+
+```sh
+cd compiler
+cargo build --locked --workspace
+cd ..
+nexo security probe --sandbox=linux-online
+nexo security run --sandbox=linux-online --wall-seconds 15 app.nexo
+nexo security trace --sandbox=linux-online --dependencies permissions.json app.nexo
+```
+
+An example program:
+
+```nexo
+policy:
+    allow net "example.com"
+print(http.get("https://example.com/", retries: 0).status)
+```
+
+Both CLIs route this profile through the native compiler and worker. It requires
+Linux x86_64, Landlock ABI >=3 with actual enforcement, seccomp, openat2, pidfds,
+a non-root identity and Unix stream IPC. The probe reports these facilities and
+whether proxies are unconfigured; it does not test destination reachability.
+Unsupported configuration fails before running the program, without a fallback.
+The existing `--sandbox=linux` remains completely offline.
+
+## Network contract
+
+- Only public HTTP on port 80 and HTTPS on port 443 are supported. A root-policy
+  hostname grant is necessary, but does not override address/port restrictions.
+  Explicit deny rules win. No arbitrary TCP, UDP, CONNECT or WebSocket tunnels.
+- The broker parses URLs with the same URL library as the HTTP transport.
+  Embedded credentials, fragments, backslashes and control bytes are rejected.
+  Alternative numeric IP encodings are canonicalized before authorization.
+- Every request resolves its target once. The entire answer set must contain
+  public unicast addresses; empty, excessive or mixed public/private answers
+  fail closed. The transport receives only this validated address set, with no
+  second DNS lookup or connection pool. Host, TLS SNI and certificate verification
+  continue to use the original hostname.
+- Loopback, private, link-local (including metadata services), shared address
+  space, multicast, reserved and documentation addresses are blocked. IPv6 is
+  conservatively limited to 2000::/3, excluding special assignments,
+  documentation and 6to4. IPv4-mapped and NAT64 addresses are rejected.
+- The broker never follows redirects. The runtime checks policy and dependency
+  ceilings on every hop and dispatches a fresh broker request; that request is
+  independently authorized and resolved. Scheme-relative redirects are handled
+  by the URL library. Authorization, Cookie and Proxy-Authorization headers are
+  removed when the origin changes.
+- Any nonempty HTTP_PROXY, HTTPS_PROXY, ALL_PROXY or lowercase equivalent causes
+  setup rejection, even if NO_PROXY is set. Proxy routing is not implemented.
+  Use a host whose operator has configured reviewed direct egress; do not remove
+  a required infrastructure proxy to make this profile run.
+- Host, proxy and hop-by-hop/HTTP framing headers cannot be supplied by the
+  payload. The broker constructs request routing and framing itself. HTTPS uses
+  the broker host's trusted certificate roots and normal hostname verification;
+  payload environment variables cannot replace its trust store.
+
+The broker independently checks the root network ceiling. Synchronous dependency
+ceilings are checked by the Nexo runtime before IPC. Arbitrary hostile native
+plugins remain unsupported: they could speak the broker protocol at the root
+ceiling, so this is not a per-dependency native RPC mechanism.
+
+## Resources and scope
+
+Request metadata and body each have a 1 MiB frame limit; response metadata has a
+1 MiB limit and the body is capped at 8 MiB. JSON nesting and header counts are
+bounded. Errors returned over IPC contain no URL, payload or credentials. The
+broker has its own hard CPU/address-space/file/descriptor limits; CPU and memory
+budgets are per process, not an aggregate job budget. The worker and broker share
+the supervisor's wall deadline. Individual HTTP operations are capped at 30 s;
+DNS may last longer, but the supervisor can kill its broker process at deadline.
+
+Stdin is reserved for the broker protocol; interactive input is unsupported.
+Synchronous agents can use [operator tool grants](shield-dispatch.md), but calls
+requiring human confirmation fail closed because stdin is not an approval channel.
+Only the shared runtime HTTP client (`http` and non-streaming AI requests that
+use it) is brokered. Infrastructure-specific transports, custom TLS roots,
+private services, servers, streams, asynchronous agents, native imports, shell
+commands and persistent workflows are outside this profile. Their direct socket
+attempts remain blocked. Filesystem and dependency restrictions are the same as
+[the existing isolation contract](shield-isolation.md).
+
+The existing Docker wrapper deliberately uses `--network=none`. This change does
+not relax it or add an online Docker deployment configuration. A container
+without egress cannot reach public destinations through the broker either.
+
+## Validation
+
+```sh
+cd compiler
+cargo test --locked --workspace
+cd ..
+pytest -q tests/test_security_online.py tests/test_security_isolation.py \
+    tests/test_security.py tests/test_policy.py tests/test_http.py
+```
+
+Rust tests cover address ranges, mixed DNS answers, canonical URL/policy checks,
+header tunnelling, bounded frames, a pinned transport against a local HTTP peer
+and rejection of an untrusted TLS certificate. Python tests exercise the actual
+broker process and framed IPC, both CLIs, and a compiled application's redirect
+and credential handling with a local broker peer. These transport/IPC tests do
+not pretend to establish kernel confinement.
+
+The real worker tests additionally check private-destination denial and killing
+both processes at the wall deadline on a compatible host. They skip with an
+explicit probe result on unsupported hosts. Docker strict validation includes
+this suite alongside the existing mandatory Landlock prerequisite check.
+
+The development host has Landlock ABI 0 and a required infrastructure proxy.
+Full online worker and live public-egress validation therefore remain pending
+on a compatible deployment/CI host. Do not claim a production-validated online
+sandbox based solely on the local transport and IPC results.

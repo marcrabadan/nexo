@@ -1,16 +1,143 @@
 {
   "schema_version": 1,
   "examples": [
-    {"id":"cli","path":"docs/ai-guide/source/example.nexo","purpose":"CLI output with records, explicit errors, contracts and a money assertion","features":["records","errors","contracts","tests","money"],"domains":["cli","language"],"modules":[],"dependencies":[],"command":"test","maturity":"implemented-and-tested","scope":"Interpreter check and local execution; native backend unverified"},
-    {"id":"rest","path":"docs/libraries/web/routes.nexo","purpose":"Typed local REST routes and validation failures","features":["server","http","validation","tests"],"domains":["api","backend"],"modules":["http"],"dependencies":["loopback socket permission"],"command":"test","maturity":"implemented-and-tested","scope":"Local interpreter HTTP tests; not public-server Shield or deployment certification"},
-    {"id":"database","path":"docs/libraries/db/bank.nexo","purpose":"In-memory SQLite atomic transfers and rollback","features":["transaction","table","decimal","errors"],"domains":["database","reliability"],"modules":["nexo.db"],"dependencies":["Python SQLite runtime"],"command":"run","maturity":"implemented-and-tested","scope":"Interpreter in-memory database output regression; no live database certification"},
-    {"id":"events","path":"docs/libraries/stream/windows.nexo","purpose":"Deterministic stream windows with explicit timestamps","features":["stream","window","tests"],"domains":["events","worker"],"modules":["nexo.stream"],"dependencies":[],"command":"test","maturity":"implemented-and-tested","scope":"Interpreter process-local test streams; no external Kafka broker tested"},
-    {"id":"ai","path":"docs/libraries/ai/agent.nexo","purpose":"Registered tools and a fake agent response without provider access","features":["agent","tool","fake","tests"],"domains":["ai","agentic"],"modules":[],"dependencies":[],"command":"test","maturity":"implemented-and-tested","scope":"Fake agent tests and direct tool calls; no live model, email or provider evaluated"}
+    {
+      "id": "cli",
+      "path": "docs/ai-guide/source/example.nexo",
+      "purpose": "CLI output with records, explicit errors, contracts and a money assertion",
+      "features": [
+        "records",
+        "errors",
+        "contracts",
+        "tests",
+        "money"
+      ],
+      "domains": [
+        "cli",
+        "language"
+      ],
+      "modules": [],
+      "dependencies": [],
+      "command": "test",
+      "maturity": "implemented-and-tested",
+      "scope": "Interpreter check and local execution; native backend unverified"
+    },
+    {
+      "id": "rest",
+      "path": "docs/libraries/web/routes.nexo",
+      "purpose": "Typed local REST routes and validation failures",
+      "features": [
+        "server",
+        "http",
+        "validation",
+        "tests"
+      ],
+      "domains": [
+        "api",
+        "backend"
+      ],
+      "modules": [
+        "http"
+      ],
+      "dependencies": [
+        "loopback socket permission"
+      ],
+      "command": "test",
+      "maturity": "implemented-and-tested",
+      "scope": "Local interpreter HTTP tests; not public-server Shield or deployment certification"
+    },
+    {
+      "id": "database",
+      "path": "docs/libraries/db/bank.nexo",
+      "purpose": "In-memory SQLite atomic transfers and rollback",
+      "features": [
+        "transaction",
+        "table",
+        "decimal",
+        "errors"
+      ],
+      "domains": [
+        "database",
+        "reliability"
+      ],
+      "modules": [
+        "nexo.db"
+      ],
+      "dependencies": [
+        "Python SQLite runtime"
+      ],
+      "command": "run",
+      "maturity": "implemented-and-tested",
+      "scope": "Interpreter in-memory database output regression; no live database certification"
+    },
+    {
+      "id": "events",
+      "path": "docs/libraries/stream/windows.nexo",
+      "purpose": "Deterministic stream windows with explicit timestamps",
+      "features": [
+        "stream",
+        "window",
+        "tests"
+      ],
+      "domains": [
+        "events",
+        "worker"
+      ],
+      "modules": [
+        "nexo.stream"
+      ],
+      "dependencies": [],
+      "command": "test",
+      "maturity": "implemented-and-tested",
+      "scope": "Interpreter process-local test streams; no external Kafka broker tested"
+    },
+    {
+      "id": "ai",
+      "path": "docs/libraries/ai/agent.nexo",
+      "purpose": "Registered tools and a fake agent response without provider access",
+      "features": [
+        "agent",
+        "tool",
+        "fake",
+        "tests"
+      ],
+      "domains": [
+        "ai",
+        "agentic"
+      ],
+      "modules": [],
+      "dependencies": [],
+      "command": "test",
+      "maturity": "implemented-and-tested",
+      "scope": "Fake agent tests and direct tool calls; no live model, email or provider evaluated"
+    }
   ],
   "maturity_definitions": {
-    "implemented-and-tested":"Recorded local tooling results for the stated backend and scope",
-    "experimental":"Present but limited; do not infer parity",
-    "documented-not-implemented":"Design only; not an available API",
-    "unsupported-or-unknown":"No verified executable evidence"
-  }
+    "implemented-and-tested": "Recorded local tooling results for the stated backend and scope",
+    "experimental": "Present but limited; do not infer parity",
+    "documented-not-implemented": "Design only; not an available API",
+    "unsupported-or-unknown": "No verified executable evidence"
+  },
+  "frontend_examples": [
+    {
+      "id": "web-counter",
+      "path": "examples/web/counter.nexo",
+      "purpose": "Independent reactive Counter components with scoped CSS",
+      "command": "python -m nexo web check --json examples/web/counter.nexo",
+      "associated_tests": [
+        "tests/test_web_frontend.py"
+      ],
+      "scope": "Experimental Python browser compiler M1. Build verification is separate from real-browser tests; a skipped browser test is not a pass."
+    },
+    {
+      "id": "web-composition",
+      "path": "examples/web/composition/app.nexo",
+      "purpose": "Typed component imports, lexical slots, persistent nested layouts, typed fragment routes and owner-scoped context",
+      "command": "python -m nexo web check --json examples/web/composition/app.nexo",
+      "associated_tests": [
+        "tests/test_web_composition.py"
+      ],
+      "scope": "Experimental Python browser compiler M2; all project files required. Compilation evidence is separate from mandatory real-browser tests."
+    }
+  ]
 }

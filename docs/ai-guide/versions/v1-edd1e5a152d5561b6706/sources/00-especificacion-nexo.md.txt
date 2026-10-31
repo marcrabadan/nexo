@@ -1,0 +1,147 @@
+# Core syntax and errors
+Origin: docs/especificacion-nexo.md
+Source SHA256: 4540a00ea2d1ce72a41ee32e33093d88f997300c8bef15256246ea0455f8b344
+
+## 2. Basic syntax
+
+Every construct has a single form. These are the decisions that close earlier inconsistencies:
+
+| Topic | Decision | Removed |
+| --- | --- | --- |
+| Variables | `x = 1` immutable, `var x = 1` mutable | `let` |
+| Types | optional and inferred; required only on `pub` functions | mandatory types everywhere |
+| Missing values | `T?` and the `??` operator for a default | unchecked `null` |
+| User-defined data | `type` for records, unions and enums | `struct`, `enum`, `impl` |
+| Calls | always with parentheses: `print(x)`, `ask("...")` | `print x` without parentheses |
+| Return | `return` is always explicit | implicit return of the last line |
+| Blocks | colon and 4-space indentation | braces |
+| Comments | `#`, and `##` for documentation | `//`, `/* */` |
+
+**Variables, text and collections**
+
+```nexo
+name = "Ana"
+var counter = 0
+age: int = 30                      # optional type
+email: str? = none                 # may be missing
+
+print("Hello {name}, you are {age}")
+print(email ?? "no email")
+
+fruits = ["pear", "grape"]         # list
+prices = {"pear": 1.2, "grape": 3} # map
+tags = set("new", "sale")          # set
+text = """
+    Several lines
+    with {name}
+"""
+```
+
+**User-defined types: one word, `type`**
+
+```nexo
+type User:
+    name: str
+    age: int
+    email: str?
+
+    fn is_adult(self) -> bool:
+        return self.age >= 18
+
+type Status = "active" | "closed"   # union of values
+
+type Event:                          # enum with data
+    Click(x: int, y: int)
+    Key(code: str)
+    Quit
+
+trait Shape:
+    fn area(self) -> float
+
+type Circle is Shape:
+    radius: float
+    fn area(self) -> float:
+        return PI * self.radius ** 2
+```
+
+**Functions**
+
+```nexo
+fn greet(person, greeting = "Hello"):
+    return "{greeting}, {person}"
+
+pub fn total(prices: list[float]) -> float:   # types required because it is pub
+    return prices.sum()
+
+double = x -> x * 2                            # lambda: a single expression
+```
+
+**Control flow**
+
+```nexo
+if age >= 18:
+    print("Adult")
+elif age >= 13:
+    print("Teenager")
+else:
+    print("Child")
+
+for fruit in fruits:
+    print(fruit)
+
+for i in 1..10:          # inclusive range
+    print(i)
+
+repeat 3:
+    print("Hello")
+
+while counter < 5:
+    counter += 1
+
+match event:
+    Click(x, y) if x > 100: print("right")
+    Key("q") or Quit:       close()
+    _:                      pass
+```
+
+`match` uses a colon like the rest of the language; the `=>` arrow is gone. Comprehensions such as `[n * 2 for n in list if n > 0]` remain the only short way to transform collections outside a pipeline.
+
+## 3. Errors
+
+An error is a value, never a hidden exception, and there are only two things you can do with it: pass it up with `?` or handle it with `try`. `match ok/err`, `or Error` and `try/else` without a variable are gone.
+
+**Rules**
+
+1. A function that can fail returns `T!` ("T or an error"). The compiler infers it; on `pub` functions it is written out.
+2. Ignoring a possible error is a compile error.
+3. `?` passes the error to the caller. It can only be used inside a function that also returns `!`.
+4. `try` + `else e` handles the error on the spot.
+5. `fail(...)` creates a custom error. System errors carry a message, a cause and a line.
+6. A program that ends with an unhandled error shows it in plain language and exits with code 1.
+
+```nexo
+pub fn load_config(path: str) -> Config!:
+    text = read(path)?                # if it fails, return the error
+    return json.parse(text, as: Config)?
+
+try:
+    cfg = load_config("app.json")
+    print("Port: {cfg.port}")
+else e:
+    print("Could not load the configuration: {e.message}")
+
+fn divide(a, b):
+    if b == 0:
+        fail("Cannot divide by zero")
+    return a / b
+
+try:
+    data = read("config.txt")
+else e is NotFound:                   # handle a specific type
+    data = ""
+else e:
+    log.error(e)
+```
+
+Missing values and errors never mix: `??` is only for `T?` values that may be missing; `?` and `try` are only for `T!` values that may fail.
+

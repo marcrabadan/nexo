@@ -1,0 +1,7 @@
+use nexo.web
+
+pub context Visits:
+    state count: int = 0
+
+    fn increment():
+        count += 1

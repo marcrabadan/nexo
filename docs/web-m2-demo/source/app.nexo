@@ -1,0 +1,84 @@
+use nexo.web
+use session
+use ui.widgets
+
+pub layout Shell:
+    provide session.Visits
+    visits = inject(session.Visits)
+    state opens: int = 0
+
+    fn open():
+        opens += 1
+
+    view:
+        header:
+            h1("Nexo Web M2")
+            p("Shared visits: {visits.count}; layout clicks: {opens}")
+            button("Layout +", on_click: open)
+            nav:
+                a("Home", href: "/")
+                a("User 7", href: "/users/7")
+        slot()
+
+pub layout Details:
+    layout = Shell
+    state opens: int = 0
+
+    fn open():
+        opens += 1
+
+    view:
+        section:
+            h2("Persistent nested layout")
+            p("Nested layout clicks: {opens}")
+            button("Nested +", on_click: open)
+            slot()
+
+pub page Home:
+    path = "/"
+    layout = Shell
+    title = "Nexo Web — Home"
+    description = "A compiled Nexo component, layout and context example."
+    visits = inject(session.Visits)
+    state label: str = "Local count"
+
+    fn rename():
+        label = "Updated count"
+
+    view:
+        main:
+            widgets.Card(heading: label):
+                p("Shared in slot: {visits.count}")
+                button("Shared +", on_click: visits.increment)
+                button("Rename", on_click: rename)
+                widgets.Counter(label: label)
+
+pub page User(id: int):
+    path = "/users/{id}"
+    layout = Details
+    title = "Nexo Web — User {id}"
+    visits = inject(session.Visits)
+
+    view:
+        main:
+            h2("User {id}")
+            p("Shared on another page: {visits.count}")
+            button("Shared +", on_click: visits.increment)
+
+pub page NotFound:
+    not_found = true
+    layout = Shell
+    title = "Nexo Web — Not found"
+
+    view:
+        main:
+            h2("Page not found")
+            a("Return home", href: "/")
+
+pub page Failure:
+    error = true
+    title = "Nexo Web — Error"
+
+    view:
+        main:
+            h2("Unable to render this page")

@@ -1,0 +1,265 @@
+{
+  "examples": [
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "test",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [],
+      "domains": [
+        "cli",
+        "language"
+      ],
+      "expected_output": "Hello Ada\n✓ invoice\n1 test: 1 passed, 0 failed\n",
+      "features": [
+        "records",
+        "errors",
+        "contracts",
+        "tests",
+        "money"
+      ],
+      "id": "cli",
+      "maturity": "implemented-and-tested",
+      "modules": [],
+      "path": "docs/ai-guide/source/example.nexo",
+      "purpose": "CLI output with records, explicit errors, contracts and a money assertion",
+      "scope": "Interpreter check and local execution; native backend unverified",
+      "source": "# A small, offline program: records, contracts, tests and explicit errors.\ntype Request:\n    name: str\n\nfn welcome(request: Request) -> str!:\n    if len(request.name) == 0:\n        fail(\"name is required\")\n    return \"Hello {request.name}\"\n\nfn total(price: money, quantity: int) -> money:\n    expect quantity > 0\n    return price * quantity\n\ntest \"invoice\":\n    assert total(19.90 EUR, 2) == 39.80 EUR\n\ntry:\n    print(welcome(Request(\"Ada\")))\nelse e:\n    print(e.message)\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "test",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "c90942600510e781e36b3fd7006105e4a940c77c3c9674b4bafb657a1462ed8c",
+        "stderr": "",
+        "stdout": "Hello Ada\n✓ invoice\n1 test: 1 passed, 0 failed\n"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "test",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [
+        "loopback socket permission"
+      ],
+      "domains": [
+        "api",
+        "backend"
+      ],
+      "expected_output": "ready\n201 Ana\n✓ routes return text and JSON\nhello Ana, number 7\nGET URL/greet/not-a-number answered 400 Bad Request\n✓ path and query parameters are typed\nPOST URL/registrations answered 400 Bad Request\n✓ missing record fields fail validation\n3 tests: 3 passed, 0 failed\n",
+      "features": [
+        "server",
+        "http",
+        "validation",
+        "tests"
+      ],
+      "id": "rest",
+      "maturity": "implemented-and-tested",
+      "modules": [
+        "http"
+      ],
+      "path": "docs/libraries/web/routes.nexo",
+      "purpose": "Typed local REST routes and validation failures",
+      "scope": "Local interpreter HTTP tests; not public-server Shield or deployment certification",
+      "source": "type Registration:\n    name: str\n    email: str\n\nserver signup:\n    port = 8080\n\n    get \"/health\"():\n        return \"ready\"\n\n    get \"/greet/{id}\"(id: int, name: str = \"visitor\"):\n        return \"hello {name}, number {id}\"\n\n    post \"/registrations\"(entry: Registration):\n        return entry\n\ntest \"routes return text and JSON\":\n    health = http.get(\"{signup.url}/health\")\n    assert health.status == 200\n    print(health.text)\n    reply = http.post(\"{signup.url}/registrations\", {\"name\": \"Ana\", \"email\": \"ana@example.com\"})\n    assert reply.status == 201\n    print(reply.status, reply.json()[\"name\"])\n\ntest \"path and query parameters are typed\":\n    reply = http.get(\"{signup.url}/greet/7?name=Ana\")\n    print(reply.text)\n    try:\n        http.get(\"{signup.url}/greet/not-a-number\", retries: 0)\n        fail(\"expected an invalid path parameter\")\n    else e is HTTPError:\n        assert e.message == \"GET {signup.url}/greet/not-a-number answered 400 Bad Request\"\n        print(e.message.replace(signup.url, \"URL\"))\n\ntest \"missing record fields fail validation\":\n    try:\n        http.post(\"{signup.url}/registrations\", {\"name\": \"Ana\"}, retries: 0)\n        fail(\"expected a missing email field\")\n    else e is HTTPError:\n        assert e.message == \"POST {signup.url}/registrations answered 400 Bad Request\"\n        print(e.message.replace(signup.url, \"URL\"))\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "test",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "d7f3820d962b899daf5acd6a37fd9f0766bb16b5be93abd946bd8ec068278268",
+        "stderr": "",
+        "stdout": "ready\n201 Ana\n✓ routes return text and JSON\nhello Ana, number 7\nGET URL/greet/not-a-number answered 400 Bad Request\n✓ path and query parameters are typed\nPOST URL/registrations answered 400 Bad Request\n✓ missing record fields fail validation\n3 tests: 3 passed, 0 failed\n"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "run",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [
+        "Python SQLite runtime"
+      ],
+      "domains": [
+        "database",
+        "reliability"
+      ],
+      "expected_output": "sent 30.00 from Ana to Luis\nrefused (Error): Luis has 50.00, not 80.00\nrefused (NotFound): There is no Account with owner = \"Eva\"\nonly the first one happened:\n  Ana: 70.00\n  Luis: 50.00\n2 movements\n",
+      "features": [
+        "transaction",
+        "table",
+        "decimal",
+        "errors"
+      ],
+      "id": "database",
+      "maturity": "implemented-and-tested",
+      "modules": [
+        "nexo.db"
+      ],
+      "path": "docs/libraries/db/bank.nexo",
+      "purpose": "In-memory SQLite atomic transfers and rollback",
+      "scope": "Interpreter in-memory database output regression; no live database certification",
+      "source": "## Transfers that either happen whole or not at all.\nuse nexo.db\n\ndb = connect(\":memory:\")\n\n@table\ntype Account:\n    id: id\n    owner: str @unique\n    balance: decimal\n\n@table\ntype Movement:\n    id: id\n    account: ref Account\n    amount: decimal\n    note: str\n\nfn transfer(from_owner: str, to_owner: str, amount: decimal) -> bool!:\n    expect amount > 0\n    db.transaction:\n        a = db.Account.find(owner: from_owner)?\n        if a.balance < amount:\n            fail(\"{from_owner} has {a.balance}, not {amount}\")\n        db.Account.update(a, balance: a.balance - amount)\n        db.Movement.add(account: a, amount: -amount, note: \"to {to_owner}\")\n        # a failure from here on undoes the lines above too\n        b = db.Account.find(owner: to_owner)?\n        db.Account.update(b, balance: b.balance + amount)\n        db.Movement.add(account: b, amount: amount, note: \"from {from_owner}\")\n    return true\n\nfn balances():\n    for a in db.Account.all():\n        print(\"  {a.owner}: {a.balance}\")\n\ndb.Account.add(owner: \"Ana\", balance: 100.00)\ndb.Account.add(owner: \"Luis\", balance: 20.00)\n\nfn attempt(from_owner: str, to_owner: str, amount: decimal):\n    try:\n        transfer(from_owner, to_owner, amount)\n        print(\"sent {amount} from {from_owner} to {to_owner}\")\n    else e:\n        print(\"refused ({e.kind}): {e.message}\")\n\nattempt(\"Ana\", \"Luis\", 30.00)\nattempt(\"Luis\", \"Ana\", 80.00)\nattempt(\"Ana\", \"Eva\", 10.00)\n\nprint(\"only the first one happened:\")\nbalances()\nprint(db.Movement.count(), \"movements\")\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "run",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "b1bf31c71d6028131e8039f81e526f1f7984a9d9242c388d878aba31b7d2bccd",
+        "stderr": "",
+        "stdout": "sent 30.00 from Ana to Luis\nrefused (Error): Luis has 50.00, not 80.00\nrefused (NotFound): There is no Account with owner = \"Eva\"\nonly the first one happened:\n  Ana: 70.00\n  Luis: 50.00\n2 movements\n"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "test",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [],
+      "domains": [
+        "events",
+        "worker"
+      ],
+      "expected_output": "minute      {\"page\": \"/home\", \"count\": 2}\nminute      {\"page\": \"/cart\", \"count\": 1}\nlast 5 min  10\nlast 5 min  35\nlast 5 min  30\nvisit       pages: 3\nminute      {\"page\": \"/home\", \"count\": 1}\nvisit       pages: 1\n✓ windows\n1 test: 1 passed, 0 failed\n",
+      "features": [
+        "stream",
+        "window",
+        "tests"
+      ],
+      "id": "events",
+      "maturity": "implemented-and-tested",
+      "modules": [
+        "nexo.stream"
+      ],
+      "path": "docs/libraries/stream/windows.nexo",
+      "purpose": "Deterministic stream windows with explicit timestamps",
+      "scope": "Interpreter process-local test streams; no external Kafka broker tested",
+      "source": "## Group the messages of a stream by time.\nuse nexo.stream\n\nfn per_minute(row):\n    print(\"minute     \", row)\n\nfn last_five(total):\n    print(\"last 5 min \", total)\n\nfn visit(pages):\n    print(\"visit       pages:\", pages)\n\n# tumbling: one result per minute and page\nkafka(\"clicks\")\n  |> window 1m\n  |> group by page\n  |> count\n  |> each per_minute\n\n# sliding: on every message, over the messages of the last 5 minutes\nkafka(\"sales\")\n  |> sliding 5m\n  |> map amount\n  |> sum\n  |> each last_five\n\n# session: the pages of a visit, which ends after 30 seconds without a click\nkafka(\"visits\")\n  |> session 30s\n  |> count\n  |> each visit\n\ntest \"windows\":\n    t = time(2026, 10, 28, 9, 0, zone: \"UTC\")\n    clicks = kafka(\"clicks\")\n    clicks.send({\"page\": \"/home\"}, at: t)\n    clicks.send({\"page\": \"/cart\"}, at: t + 15s)\n    clicks.send({\"page\": \"/home\"}, at: t + 40s)\n    clicks.send({\"page\": \"/home\"}, at: t + 65s)\n\n    sales = kafka(\"sales\")\n    sales.send({\"amount\": 10}, at: t)\n    sales.send({\"amount\": 25}, at: t + 2m)\n    sales.send({\"amount\": 5}, at: t + 6m)\n\n    visits = kafka(\"visits\")\n    visits.send({\"page\": \"/home\"}, at: t)\n    visits.send({\"page\": \"/shoes\"}, at: t + 10s)\n    visits.send({\"page\": \"/pay\"}, at: t + 20s)\n    visits.send({\"page\": \"/home\"}, at: t + 5m)\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "test",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "e3235272bb93e480d6b476fe8f0fc64453ce4e0fec99990df84d4a30fd695e69",
+        "stderr": "",
+        "stdout": "minute      {\"page\": \"/home\", \"count\": 2}\nminute      {\"page\": \"/cart\", \"count\": 1}\nlast 5 min  10\nlast 5 min  35\nlast 5 min  30\nvisit       pages: 3\nminute      {\"page\": \"/home\", \"count\": 1}\nvisit       pages: 1\n✓ windows\n1 test: 1 passed, 0 failed\n"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "test",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [],
+      "domains": [
+        "ai",
+        "agentic"
+      ],
+      "expected_output": "shipped\nthere is no order 99\n✓ the tools are ordinary functions\nOrder 7 has shipped.\n✓ the agent's answer can be faked\n2 tests: 2 passed, 0 failed\n",
+      "features": [
+        "agent",
+        "tool",
+        "fake",
+        "tests"
+      ],
+      "id": "ai",
+      "maturity": "implemented-and-tested",
+      "modules": [],
+      "path": "docs/libraries/ai/agent.nexo",
+      "purpose": "Registered tools and a fake agent response without provider access",
+      "scope": "Fake agent tests and direct tool calls; no live model, email or provider evaluated",
+      "source": "## An agent that answers order questions with the program's own functions.\ntype Order:\n    id: int\n    status: \"paid\" | \"shipped\" | \"delivered\"\n    email: str\n\norders = [\n    Order(id: 7, status: \"shipped\", email: \"ana@mail.com\"),\n    Order(id: 8, status: \"paid\", email: \"luis@mail.com\")]\n\n@tool \"Looks up an order by its number\"\nfn find_order(id: int) -> Order!:\n    for o in orders:\n        if o.id == id:\n            return o\n    fail(\"there is no order {id}\")\n\n@tool \"Sends a short email to the customer of an order\"\nfn email_customer(id: int, text: str) -> str!:\n    o = find_order(id)?\n    return \"sent to {o.email}\"\n\nagent support:\n    model = \"anthropic:claude-opus\"\n    tools = [find_order, email_customer]\n    goal = \"Answer questions about orders, politely and briefly\"\n    max_steps = 5\n    confirm = [email_customer]\n\ntest \"the tools are ordinary functions\":\n    print(find_order(7).status)\n    try:\n        find_order(99)\n    else e:\n        print(e.message)\n\ntest \"the agent's answer can be faked\":\n    fake support.handle returns \"Order 7 has shipped.\"\n    print(support.handle(\"Where is my order 7?\"))\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "test",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "2ab34abaa90a7a21cc901390b7fe439b603749f12558847b87d2cae4dc4ca791",
+        "stderr": "",
+        "stdout": "shipped\nthere is no order 99\n✓ the tools are ordinary functions\nOrder 7 has shipped.\n✓ the agent's answer can be faked\n2 tests: 2 passed, 0 failed\n"
+      }
+    }
+  ],
+  "frontend_examples": [
+    {
+      "associated_tests": [
+        "tests/test_web_frontend.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/counter.nexo",
+      "id": "web-counter",
+      "path": "examples/web/counter.nexo",
+      "purpose": "Independent reactive Counter components with scoped CSS",
+      "scope": "Experimental Python browser compiler M1. Build verification is separate from real-browser tests; a skipped browser test is not a pass.",
+      "source": "use nexo.web\n\npub component Counter:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n\n    view:\n        main:\n            h1(\"Nexo Web\")\n            p(\"Count: {count}\")\n            button(\"+\", on_click: increment)\n\n    style:\n        main {\n            padding: 24px;\n        }\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "00d46661bf299c085b5003db44f49018b4fa6df2eca35566b0caedb06dee07e5",
+        "exports": [
+          "Counter"
+        ],
+        "javascript_sha256": "bb491be7f7e63cbefc17baf37577393cd08b32358701e55c97e93dd5fd0176f8",
+        "source_sha256": "d3425db45e931139fdc14533465ade634a3662404b83d379dab738f3d749823f"
+      }
+    }
+  ],
+  "maturity_definitions": {
+    "documented-not-implemented": "Design only; not an available API",
+    "experimental": "Present but limited; do not infer parity",
+    "implemented-and-tested": "Recorded local tooling results for the stated backend and scope",
+    "unsupported-or-unknown": "No verified executable evidence"
+  },
+  "revision": "bb4af04aa8978df30670270b1d3e872f723bcb089c19f3ed0a707bc450d9666f",
+  "schema_version": 1
+}

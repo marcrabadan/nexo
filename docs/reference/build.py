@@ -35,7 +35,7 @@ def session(steps, here=HERE, env=None, errors_only=False):
     one copy of the folder of the first NAME, step by step; a step with a
     number of seconds is stopped with Ctrl-C after them (a consumer)."""
     source = here / steps[0][1]
-    commands = [[sys.executable, "-m", "nexo.cli"]] + ([[str(COMPILER)]] if COMPILER.exists() else [])
+    commands = [[sys.executable, "-m", "nexo.cli"]] + ([[str(COMPILER)]] if COMPILER.exists() and shutil.which(os.environ.get("NEXO_CC", "clang")) else [])
     outputs = []
     for command in commands:
         with tempfile.TemporaryDirectory() as tmp:
@@ -47,6 +47,7 @@ def session(steps, here=HERE, env=None, errors_only=False):
                                      stdout=subprocess.DEVNULL if errors_only else subprocess.PIPE,
                                      stderr=subprocess.PIPE if errors_only else subprocess.STDOUT, start_new_session=True,
                                      env={"PYTHONPATH": str(ROOT), "PYTHONIOENCODING": "utf-8", "PATH": "/usr/bin:/bin",
+                                          **{key: os.environ[key] for key in ("NEXO_CC", "NEXO_RUNTIME") if key in os.environ},
                                           **(env or {})})
                 try:
                     data, err = p.communicate(timeout=stop or 120)

@@ -258,3 +258,31 @@ is performed. Verify hosting prices and platform support before real deployment.
 Executed checks, reference token counts and fixture-only results for this change
 are recorded in [validation.md](validation.md). They are local evidence, not a
 claim that the GitHub Actions job or live model comparisons have already run.
+
+## Nexo Web (RFC-0001, experimental M1)
+
+`source/nexo-web.md` is a conditional frontend topic, emitted as versioned
+`nexo-web.txt`. Compact syntax carries a discovery pointer; unrelated tasks do
+not include the complete RFC. All 48 existing profiles/modes are preserved.
+`source/examples.json` registers the browser Counter separately in
+`frontend_examples`, because the interpreter verifier cannot parse UI. Generation
+compiles it with the browser target and records source/JS/CSS hashes; real-browser
+execution is checked separately by `tests/test_web_frontend.py` and must never be
+inferred from compilation. The topic embeds the exact canonical example.
+
+Rebuild the public page/demo with `python docs/web/build.py`; validate with
+`python docs/web/build.py --check` and `python -m pytest tests/test_web_frontend.py`.
+The Rust driver and D175 WASI compiler are unchanged. Future frontend features
+are explicitly proposed. Frontend topic tokens use the existing pinned tokenizer.
+
+### M2 composition and routing
+
+The same conditional Nexo Web topic now covers experimental M1–M2. Its separate
+versioned `web-examples.json` carries every module/CSS/config file needed by the
+composition project, avoiding unrelated backend examples in targeted retrieval.
+The generator resolves project dependencies with the actual browser loader,
+hashes them and compiles each entry with its source path. It never promotes a
+compile result into a browser pass. Props, slots, fragment routes, layout/context
+ownership and cleanup are tested by `tests/test_web_composition.py`; the existing
+Counter and four profiles remain intact. `docs/web/build.py` builds both live
+demos from canonical Nexo sources. Browser API loading/mutation remains M3 design.

@@ -50,3 +50,17 @@ cannot approve deployment. Generic agent guidance is available. Tool-specific
 Codex/Claude adapters remain optional future work pending documented formats and
 validation. Host probes, native build evidence, held-out acceptance/security tests
 and real model trials remain necessary for stronger claims.
+
+## Nexo Web M1 follow-up
+
+The original measurements above describe the earlier advanced-guide revision.
+Current M1 context, commands, token deltas, focused browser checks and full-suite
+limitations are recorded in [Nexo Web delivery validation](../web/validation.md).
+The guide now generates 81 artifacts and preserves all 48 prompt variants; the
+frontend topic is retrieved separately. No native toolchain or production result
+is inferred from the passing browser compiler checks.
+
+## Nexo Web M2
+
+Current composition/routing implementation, generated artifacts, token measurements
+and browser validation are recorded in [M2 delivery](../web/validation-m2.md).

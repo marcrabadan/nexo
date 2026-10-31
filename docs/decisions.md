@@ -3117,3 +3117,26 @@ This includes child receipts received after an approval checkpoint. Pending
 ledger holds refuse recovery; a missing ledger cannot initialize an old run.
 Per-invocation token limits do not replace operator monetary accounts, Shield
 operation counters or `max_steps`. No dependency or grammar is added.
+
+**D190. Browser components are a separate compilation domain (RFC-0001).**
+`nexo web check|build` in the Python CLI selects the experimental browser frontend
+in nexo/web_frontend.py, sharing core expression parsing but isolating contextual
+component/state/view/style blocks. The interpreter's nexo.web servers, D124 module
+semantics and D175 WASI target remain unchanged; Rust browser-driver parity is
+not yet implemented. M1 accepts scalar local state, parameterless assignment
+handlers, safe DOM elements and native @scope CSS; future vocabulary is design
+only. RFC-0001 defines lifecycle, deterministic binding order, capability limits,
+error codes and later milestones. This avoids silently repurposing --target web
+or accepting arbitrary server code in public browser assets.
+
+**D191. M2 browser composition, ownership and static-host routing.**
+RFC-0001's M2 amendment implements scalar read-only props, qualified D124 project
+imports, lexical slots with receiver-owned disposal, nearest-owner provide/inject,
+local scoped CSS imports, public pages, metadata and persistent nested layouts.
+Canonical route URLs use fragments so GitHub Pages needs no server rewrites;
+path braces denote typed segment placeholders. Overlapping equally specific
+routes fail compilation. Providers are fresh per owner/root, never global. Shared
+state mutations go through context actions; batches span owners and prop updates.
+Error pages are layout-free mount/navigation fallbacks; event errors are separate.
+The Python frontend remains isolated from core/server and D175 WASI. Browser
+APIs, conditional/lists, HMR, SSR and Rust browser-driver parity remain future work.

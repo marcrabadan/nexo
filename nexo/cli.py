@@ -870,6 +870,9 @@ def run_docs(args: list[str]) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     rest = args
+    if rest[:1] == ["web"]:
+        from .web_frontend import main as web_main
+        return web_main(rest[1:])
     if rest[:1] == ["security"]:
         from .security import run_security
         return run_security(rest[1:])

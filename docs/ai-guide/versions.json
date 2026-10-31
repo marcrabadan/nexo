@@ -1,5 +1,5 @@
 {
-  "current": "849538ec8ec20af8ac37f41911a9b6c63866c899c873fb658a43e4534cd762ed",
+  "current": "edd1e5a152d5561b670629139ffdd3df92b99909978605fe326a7b609d5a0ad9",
   "versions": [
     {
       "bundle": "ai-guide/versions/v1-2f77e550e3425bce27a3",
@@ -9,6 +9,16 @@
         "developer"
       ],
       "revision": "2f77e550e3425bce27a330e5aae25aaca02440a6aea92dd077859bf8700310cb"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-646ce0460aed00bd00cc",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "646ce0460aed00bd00cc546d0b1f9cb62b2340721adf16358784b53fe21fe8ea"
     },
     {
       "bundle": "ai-guide/versions/v1-7c7752e144c7fa5dcd0a",
@@ -22,12 +32,52 @@
     {
       "bundle": "ai-guide/versions/v1-849538ec8ec20af8ac37",
       "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "849538ec8ec20af8ac37f41911a9b6c63866c899c873fb658a43e4534cd762ed"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-a88c2cfb35a816524ca3",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "a88c2cfb35a816524ca3e68131393b498163d79a56ea12c3537c9277069d1da9"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-bb4af04aa8978df30670",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "bb4af04aa8978df30670270b1d3e872f723bcb089c19f3ed0a707bc450d9666f"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-d8d5873d21d72ae93b89",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "d8d5873d21d72ae93b8963a7253df11ac85f1157b40a39c6365e682260cd31f2"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-edd1e5a152d5561b6706",
+      "profiles": [
         "beginner",
         "developer",
         "architect",
         "agentic"
       ],
-      "revision": "849538ec8ec20af8ac37f41911a9b6c63866c899c873fb658a43e4534cd762ed"
+      "revision": "edd1e5a152d5561b670629139ffdd3df92b99909978605fe326a7b609d5a0ad9"
     }
   ]
 }

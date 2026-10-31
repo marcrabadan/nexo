@@ -20,7 +20,7 @@ build-backend = "setuptools.build_meta"
 include = ["nexo*"]
 
 [tool.setuptools.package-data]
-nexo = ["stdlib/*.json"]
+nexo = ["stdlib/*.json", "web_runtime.js", "web_router.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

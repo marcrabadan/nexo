@@ -37,7 +37,13 @@ def inputs():
                 raise ValueError(f'Missing evidence: {path}: {needle}')
             paths.add(path)
     paths.update(doc['path'] for doc in catalog['documents'])
-    paths.update(e['path'] for e in json.loads((HERE/'source/examples.json').read_text())['examples'])
+    examples = json.loads((HERE/'source/examples.json').read_text())
+    paths.update(e['path'] for e in examples['examples'] + examples.get('frontend_examples', []))
+    paths.update(['nexo/web_runtime.js','nexo/web_router.js'])
+    from nexo.web_model import load_program
+    for example in examples.get('frontend_examples', []):
+        entry=ROOT/example['path']
+        paths.update(str(p.relative_to(ROOT)) for p in load_program(entry.read_text(),entry).dependencies)
     # Capability changes invalidate context even before their prose is updated.
     for directory, pattern in [('nexo', '*.py'), ('compiler/nexoc/src', '*.rs'), ('compiler/diag/src', '*.rs'), ('compiler/runtime/src', '*.rs')]:
         paths.update(str(p.relative_to(ROOT)) for p in (ROOT/directory).rglob(pattern))
@@ -75,13 +81,35 @@ def generate(measure=False):
         example['component_versions'] = versions
         example['expected_output'] = result['stdout']
         example['associated_tests'] = ['tests/test_ai_guide_advanced.py', 'python docs/ai-guide/local.py verify-examples']
+    # Browser fixtures use their own target; the interpreter verifier cannot parse UI.
+    from nexo.web_frontend import compile_web
+    for example in example_catalog.get('frontend_examples', []):
+        example['source'] = (ROOT/example['path']).read_text()
+        js, css, exports = compile_web(example['source'], ROOT/example['path'])
+        from nexo.web_model import load_program
+        entry=ROOT/example['path']
+        from nexo.modules import project_root
+        folder=project_root(str(entry))
+        example['entry_file']=str(entry.relative_to(folder))
+        example['files']={str(path.relative_to(folder)):path.read_text() for path in sorted(load_program(example['source'],entry).dependencies) if path!=entry}
+        example['verification'] = {'compilation': 'Passed', 'browser_execution': 'Run associated tests; not asserted by this generator', 'source_sha256': digest(example['source'].encode()), 'javascript_sha256': digest(js.encode()), 'css_sha256': digest(css.encode()), 'exports': exports}
+    web_examples=serialized({'schema_version':1,'revision':revision,'examples':example_catalog.get('frontend_examples', [])})
+    outputs[f'docs/{bundle}/web-examples.json']=web_examples
+    web_topic = identity + '\n' + (HERE/'source/nexo-web.md').read_text().replace('@@WEB_EXAMPLES@@',base+'web-examples.json')
+    for example in example_catalog.get('frontend_examples', []):
+        web_topic += '\n## '+example['id']+' — '+example['path']+'\n'
+        if example['files']:
+            web_topic += 'Complete compiler-checked project: '+base+'web-examples.json. Write entry_file from source, then every files mapping entry at the same project root. All files are required; do not treat the entry alone as runnable.\n'
+        else:
+            web_topic += '\n```nexo\n' + example['source'] + '```\n'
+    outputs[f'docs/{bundle}/nexo-web.txt'] = web_topic
     example_catalog.update(revision=revision, schema_version=1)
     outputs[f'docs/{bundle}/examples.json'] = serialized(example_catalog)
     intelligence = identity + '\n' + (HERE/'source/engineering-intelligence.md').read_text()
     outputs[f'docs/{bundle}/engineering.txt'] = intelligence
     outputs[f'docs/{bundle}/readiness.json'] = (HERE/'source/readiness.json').read_text()
     advanced_brief = (HERE/'source/advanced-brief.md').read_text()
-    engineering_discovery = f'\n## Task-specific engineering\n- [Readiness, architecture, ADRs and deployment]({base}engineering.txt): retrieve only when relevant.\n- [Verified examples]({base}examples.json): search by feature/domain; stated backend only.\n'
+    engineering_discovery = f'\n## Browser UI, only when relevant\n- [Nexo Web M1–M2 syntax, lifecycle, workflow and verified projects]({base}nexo-web.txt). Offline: request this topic when needed.\n\n## Task-specific engineering\n- [Readiness, architecture, ADRs and deployment]({base}engineering.txt): retrieve only when relevant.\n- [Verified examples]({base}examples.json): search by feature/domain; stated backend only.\n'
 
     links = []
     sections = []
@@ -122,7 +150,7 @@ def generate(measure=False):
                         prompt += ('Fetch only relevant linked syntax/API evidence as needed.\n' if mode == 'compact' else 'Read the curated context; its availability boundaries govern historical/design prose.\n')
                         prompt += 'If retrieval fails, ask me for context; do not claim you read it. Planned/experimental/unverified features must retain their status.\n'
                     prompts[key] = {'text': prompt + '\nMy task: [describe the application or change]\n', 'label': f'{label} / {mode} / {access}', 'download': f'{bundle}/prompts/{key}.txt'}
-    measured_texts = {key: value['text'] for key, value in prompts.items()} | {'full-evidence-pack': full, 'syntax': syntax, 'index': index, 'shield-security': security, 'engineering': intelligence}
+    measured_texts = {key: value['text'] for key, value in prompts.items()} | {'full-evidence-pack': full, 'syntax': syntax, 'index': index, 'shield-security': security, 'engineering': intelligence, 'nexo-web': web_topic, 'web-examples': web_examples}
     payload_hashes = {key: digest(value.encode()) for key, value in measured_texts.items()}
     metrics_path = HERE/'token-counts.json'
     if measure:

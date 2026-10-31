@@ -1,0 +1,113 @@
+Nexo AI Guide v1 | source sha256:edd1e5a152d5561b670629139ffdd3df92b99909978605fe326a7b609d5a0ad9
+Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component versions, not a stable 1.0 promise.
+
+# Nexo Web — RFC-0001 / M1–M2 experimental
+
+For browser UI, use the Python CLI: `python -m nexo web check --json app.nexo`;
+`python -m nexo web build app.nexo -o dist`; serve dist over local HTTP.
+The Rust browser driver is unavailable. `build --target web` remains D175 WASI.
+No React/JSX/hooks, independently imported view fragments or server modules.
+
+M1 remains supported: `component Name:`, scalar `state name: int|str|bool = value`,
+parameterless `fn action():`, `view:`, `style:`. Four-space indentation, uppercase
+UI/context names, no core reserved words as local names. Expressions: scalar
+literals/reads/interpolation, checked int + - *, unary minus, str +, bool not.
+Int64 uses BigInt; overflow throws without rolling back earlier assignments.
+Events on_click/on_input/on_change name a local or injected context action.
+No event payload, two-way input, conditionals or keyed lists yet.
+
+## M2 canonical composition
+
+`component Badge(label: str, start: int = 0):` declares read-only typed scalar
+props. Call `Badge(label: title)`; only named props, no unknown/missing required
+props or implicit coercion. Defaults are constant. Local state may initialize
+from props once; later prop updates preserve local state. The CLI auto-mounts the
+first public component when no pages exist; that entry needs defaults for all
+props. Reusable imported components may have required props.
+
+`Card(heading: title):` with indented children projects content into its one
+`slot()`. Slots retain caller lexical bindings/context/CSS and have a receiver-owned
+lifetime. Nested components/slots/listeners/subscriptions are destroyed together.
+Use `use ui.widgets` then `widgets.Card(...)`, or an explicit `as` alias. D124
+project-root lookup, qualified access, pub privacy, once-per-file loading and
+cycle rejection apply. M2 supports project files, not package/server imports.
+
+`context Visits:` owns scalar state and assignment actions. `provide Visits`
+creates a fresh provider on a component/layout/page. `visits = inject(Visits)`
+resolves the nearest provider. Read `visits.count`; call `visits.increment()` in
+an action, or use `on_click: visits.increment`. Consumers cannot assign shared
+fields. No process-global singleton. Each root/router has isolated providers;
+future SSR must also allocate fresh request-owned context.
+
+## M2 pages and layouts
+
+`page User(id: int):` with `path = "/users/{id}"` defines a screen. Path braces
+are typed parameter placeholders, not runtime interpolation. Parameters must
+match exactly; int/str/bool conversion is strict. `layout = Shell` selects a
+layout; a layout can select a parent with the same spelling. Every layout has
+one slot, no props. Shared layout prefixes and their providers persist; leaving
+pages/layouts are destroyed. Changing route parameters remounts the page.
+
+Routing uses URL fragments (`#/users/7`) for static hosting. Native anchors
+`a("User", href: "/users/7")` and action `navigate("/users/7")` accept only local
+route strings. No external URLs, query API, wildcard routes or history-server
+rewrite requirement. Static routes precede parameters; equally specific overlaps
+are compile errors. Title/description metadata can interpolate page parameters.
+`not_found = true` declares a parameterless fallback page; `error = true` declares
+a parameterless, layout-free mount/navigation error page. Event-action errors
+are not caught by that page. Navigation focuses the new main/heading.
+
+Bindings batch across local/context owners, run deterministically and skip equal
+rendered values. Text uses text nodes. CSS uses native @scope, standard selectors,
+custom properties, media/container/supports queries. Local `@import "./card.css";`
+inside style is expanded and scoped; imports stay inside the project root and
+cycles are rejected. No remote resources (url/image-set/image/src), global
+at-rules, escapes or minifier. Native @scope browser support is required.
+
+## Workflow and security
+
+Understand requirements; ask essential missing questions; choose page/layout/
+component/context boundaries; define typed backend contracts; implement supported
+state/view/style; apply security/a11y; compile; test; inspect JSON diagnostics;
+correct and verify. Keep SOLID/simple boundaries. Use kind/k3d only when justified,
+and choose hosting by budget/reliability/operations. Never fabricate results.
+NW2001 modules; NW2002 props/composition; NW2003 routes; NW2004 context;
+NW2005 slot ownership. Missing providers and cycles fail before browser execution.
+
+Bundles are public. Keep secrets, authentication, resource authorization, CSRF,
+sessions and rate controls on supported backends; browser visibility grants no
+permission. Assess actual Shield profiles: bounded loopback ingress is not a
+persistent production server. Production needs HTTPS/header CSP. No ASVS 5.0
+certification is claimed. Native controls still need meaningful labels/contrast.
+
+Proposed only: browser APIs/load/mutation, records/lists, Vite/HMR, source maps, SSR/hydration/SSG
+remain proposed. Do not generate them as runnable M2 code. Retrieve only the
+relevant project from https://marcrabadan.github.io/nexo/ai-guide/versions/v1-edd1e5a152d5561b6706/web-examples.json; it includes every required source file,
+compiler hashes and associated test commands. The entries below are generated
+from real compiler-checked sources; actual browser results come from their tests.
+
+## web-counter — examples/web/counter.nexo
+
+```nexo
+use nexo.web
+
+pub component Counter:
+    state count: int = 0
+
+    fn increment():
+        count += 1
+
+    view:
+        main:
+            h1("Nexo Web")
+            p("Count: {count}")
+            button("+", on_click: increment)
+
+    style:
+        main {
+            padding: 24px;
+        }
+```
+
+## web-composition — examples/web/composition/app.nexo
+Complete compiler-checked project: https://marcrabadan.github.io/nexo/ai-guide/versions/v1-edd1e5a152d5561b6706/web-examples.json. Write entry_file from source, then every files mapping entry at the same project root. All files are required; do not treat the entry alone as runnable.

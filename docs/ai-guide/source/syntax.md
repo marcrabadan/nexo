@@ -37,3 +37,6 @@ Checks: `nexo check app.nexo`; `nexo check --json app.nexo`;
 `nexo lint app.nexo`; `nexo docs --for-ai app.nexo` supplies the supported API.
 Run/build with the selected backend; `.venv/bin/nexo` is the interpreter and
 `compiler/target/debug/nexo` is the native driver in a built checkout.
+
+Browser UI: experimental Python `nexo web` M1–M2. Request the conditional Nexo Web
+topic before writing UI; later milestones remain proposed.

@@ -1,0 +1,70 @@
+Nexo AI Guide v1 | source sha256:bb4af04aa8978df30670270b1d3e872f723bcb089c19f3ed0a707bc450d9666f
+Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component versions, not a stable 1.0 promise.
+
+# Nexo Web — RFC-0001 / M1 experimental
+
+Use this topic only for browser UI tasks. Use the Python CLI, not the Rust driver:
+`python -m nexo web check --json app.nexo`; `python -m nexo web build app.nexo -o dist`;
+serve dist over local HTTP. `nexo build --target web` is the separate WASI target.
+
+Available: `use nexo.web`, `[pub] component Name:`, scalar `state name: int|str|bool
+= constant`, parameterless `fn action():`, `view:`, `style:`. Four-space blocks;
+uppercase component names; state/action names cannot be core reserved words. Declare state before its uses. Actions assign local
+state with = or int +=/-=/*=. Expressions: literals, state names, text interpolation,
+checked int + - *, unary minus and str +. Other core expressions are rejected.
+Events on_click/on_input/on_change name actions; no event argument yet. DOM text
+is always escaped; HTML/URL/inline style sinks and server modules are rejected.
+Each mount owns its state/listeners/bindings; destroy disposes them. Actions batch
+binding updates once in source order and skip unchanged rendered values; unrelated text/element identities persist.
+Signed int64 uses BigInt; overflow throws, without rolling back prior assignments.
+CSS uses native @scope ownership boundaries. Standard declarations/selectors,
+custom properties, media/container/supports queries work. External CSS, resource functions such as url/image-set/image/src,
+global at-rules, escapes and minification are unsupported. Use a modern browser.
+Supply accessible names, native controls, landmarks and keyboard access.
+
+Proposed only: page/path/typed route parameters/metadata/error pages; layout/slot();
+context/provide/inject(); typed read-only props; component imports; conditional and
+keyed list rendering; load/api.get; mutation/api.post/put/patch/delete; async API
+validation/cancellation/retries/cache/invalidation; HMR/Vite; SSR/hydration/SSG.
+Do not generate these as runnable M1 code. Design pages as routable screens,
+layouts as persistent shared structures with slots, ordinary components as
+reusable UI, and context as provider-owned state. Future SSR context must be
+request-isolated. No standalone importable view fragments or React hooks/JSX.
+
+Workflow: understand requirements; ask essential missing business/technical
+questions; choose boundaries (mark unavailable features); define typed backend
+contracts; implement M1 state/view/style; check security/a11y; compile; run tests;
+inspect JSON diagnostics; fix and verify again. Prefer local checks and simple
+SOLID architecture. Recommend kind/k3d only when architecture warrants it, and
+cloud hosting according to budget/reliability/operations. Never fabricate tests.
+
+Browser bundles are public; protect secrets on the server. Frontend visibility
+is never authorization. Use supported Shield backend profiles with explicit
+resource authorization, input validation, rate limits, HTTPS and secure HttpOnly
+cookies/CSRF defenses. Shield's bounded loopback ingress is not a persistent
+production server. No M1 browser Shield integration or ASVS 5.0 certification.
+
+Verified acceptance source follows; compiler and optional real-browser tests:
+`python -m pytest tests/test_web_frontend.py` (report browser skips honestly).
+The full language/lifecycle/diagnostics/troubleshooting reference is RFC-0001.
+
+```nexo
+use nexo.web
+
+pub component Counter:
+    state count: int = 0
+
+    fn increment():
+        count += 1
+
+    view:
+        main:
+            h1("Nexo Web")
+            p("Count: {count}")
+            button("+", on_click: increment)
+
+    style:
+        main {
+            padding: 24px;
+        }
+```

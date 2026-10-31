@@ -1,0 +1,57 @@
+{
+  "examples": [
+    {
+      "associated_tests": [
+        "tests/test_web_frontend.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/counter.nexo",
+      "entry_file": "counter.nexo",
+      "files": {},
+      "id": "web-counter",
+      "path": "examples/web/counter.nexo",
+      "purpose": "Independent reactive Counter components with scoped CSS",
+      "scope": "Experimental Python browser compiler M1. Build verification is separate from real-browser tests; a skipped browser test is not a pass.",
+      "source": "use nexo.web\n\npub component Counter:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n\n    view:\n        main:\n            h1(\"Nexo Web\")\n            p(\"Count: {count}\")\n            button(\"+\", on_click: increment)\n\n    style:\n        main {\n            padding: 24px;\n        }\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "8a1d202bdafc1d4701aab0cf8e121e426233745f5180e1503d43d313e1ecbc15",
+        "exports": [
+          "Counter"
+        ],
+        "javascript_sha256": "b7cd0c0b1f8ce51338624f10db31ad56212dc210a1edafaca805818a1841fc3c",
+        "source_sha256": "d3425db45e931139fdc14533465ade634a3662404b83d379dab738f3d749823f"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_composition.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/composition/app.nexo",
+      "entry_file": "app.nexo",
+      "files": {
+        "nexo.toml": "[project]\nname = \"nexo-web-composition\"\nversion = \"0.0.1\"\n",
+        "session.nexo": "use nexo.web\n\npub context Visits:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n",
+        "ui/card.css": ".card {\n    padding: 16px;\n    border: 1px solid currentColor;\n    border-radius: 12px;\n}\n@media (min-width: 600px) {\n    .card { padding: 24px; }\n}\n",
+        "ui/widgets.nexo": "use nexo.web\n\npub component Card(heading: str):\n    view:\n        article(class: \"card\"):\n            h2(heading)\n            slot()\n\n    style:\n        @import \"./card.css\";\n\npub component Counter(label: str, start: int = 0):\n    state count: int = start\n\n    fn increment():\n        count += 1\n\n    view:\n        section:\n            p(\"{label}: {count}\")\n            button(\"Local +\", on_click: increment)\n"
+      },
+      "id": "web-composition",
+      "path": "examples/web/composition/app.nexo",
+      "purpose": "Typed component imports, lexical slots, persistent nested layouts, typed fragment routes and owner-scoped context",
+      "scope": "Experimental Python browser compiler M2; all project files required. Compilation evidence is separate from mandatory real-browser tests.",
+      "source": "use nexo.web\nuse session\nuse ui.widgets\n\npub layout Shell:\n    provide session.Visits\n    visits = inject(session.Visits)\n    state opens: int = 0\n\n    fn open():\n        opens += 1\n\n    view:\n        header:\n            h1(\"Nexo Web M2\")\n            p(\"Shared visits: {visits.count}; layout clicks: {opens}\")\n            button(\"Layout +\", on_click: open)\n            nav:\n                a(\"Home\", href: \"/\")\n                a(\"User 7\", href: \"/users/7\")\n        slot()\n\npub layout Details:\n    layout = Shell\n    state opens: int = 0\n\n    fn open():\n        opens += 1\n\n    view:\n        section:\n            h2(\"Persistent nested layout\")\n            p(\"Nested layout clicks: {opens}\")\n            button(\"Nested +\", on_click: open)\n            slot()\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Nexo Web — Home\"\n    description = \"A compiled Nexo component, layout and context example.\"\n    visits = inject(session.Visits)\n    state label: str = \"Local count\"\n\n    fn rename():\n        label = \"Updated count\"\n\n    view:\n        main:\n            widgets.Card(heading: label):\n                p(\"Shared in slot: {visits.count}\")\n                button(\"Shared +\", on_click: visits.increment)\n                button(\"Rename\", on_click: rename)\n                widgets.Counter(label: label)\n\npub page User(id: int):\n    path = \"/users/{id}\"\n    layout = Details\n    title = \"Nexo Web — User {id}\"\n    visits = inject(session.Visits)\n\n    view:\n        main:\n            h2(\"User {id}\")\n            p(\"Shared on another page: {visits.count}\")\n            button(\"Shared +\", on_click: visits.increment)\n\npub page NotFound:\n    not_found = true\n    layout = Shell\n    title = \"Nexo Web — Not found\"\n\n    view:\n        main:\n            h2(\"Page not found\")\n            a(\"Return home\", href: \"/\")\n\npub page Failure:\n    error = true\n    title = \"Nexo Web — Error\"\n\n    view:\n        main:\n            h2(\"Unable to render this page\")\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "882737dc12cb4ba59496985b7bc0476dcd1e9c836613a98f86e59d732276e934",
+        "exports": [
+          "mountApp"
+        ],
+        "javascript_sha256": "a015af4c088ac91e8879fed18bb3cc95fa60ebf8f1f8ed3d30f31eb8dd8480f5",
+        "source_sha256": "353c07372c953fee5aa0e3235f10a0136a99f1d473772ce9b412d740832da18e"
+      }
+    }
+  ],
+  "revision": "edd1e5a152d5561b670629139ffdd3df92b99909978605fe326a7b609d5a0ad9",
+  "schema_version": 1
+}
