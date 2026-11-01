@@ -1,4 +1,4 @@
-# Nexo Web — RFC-0001 / M1–M3 experimental
+# Nexo Web — RFC-0001 / M1–M5 experimental
 
 For browser UI, use the Python CLI: `python -m nexo web check --json app.nexo`;
 `python -m nexo web build app.nexo -o dist`; serve dist over local HTTP.
@@ -110,6 +110,85 @@ production/Shield ingress. The public static demo supports reads only.
 Run tests/test_web_data.py with real Chromium. NW3001 contracts; NW3002
 requests/readiness; NW3003 URL boundary. No invented backend or browser passes.
 
+## M4 development, diagnostics and source audit
+
+`python -m nexo web new my-app`; enter the project; `npm ci`; then
+`python -m nexo web dev app.nexo`. Dev uses optional locked Vite 8.3.5 and Node
+22.12 or 24+, invokes Python for semantics, binds only 127.0.0.1 (port 5173).
+For repository examples: `npm ci --prefix nexo/web_tools`; then web dev with the
+existing entry path. No automatic network installs. Build/check/audit/preview
+work without Node. Do not invent a React wrapper, project JS config or API proxy.
+
+CSS-only HMR retains state when JS/mapped lines stay unchanged; logic changes
+destroy/remount the root and reset state/context/requests. Compile errors retain
+last good UI and expose text diagnostics. Initial compile must succeed. Dev
+checks Host/Origin, serves no project .env/public/arbitrary files and uses external
+styles under CSP. Loopback is not authentication; never deploy dev/preview.
+The M3 full API example still uses its dedicated loopback server, not Vite.
+
+`web build app.nexo --sourcemap -o dist` emits deterministic line-level JS maps
+with embedded Nexo source; opt in to publishing them. Default builds omit maps.
+`web preview dist` serves only built assets on loopback port 4173. Dev/preview
+accept --port 0..65535 (0 ephemeral). M5 adds --release optimization below; CSS maps remain unavailable.
+check --json keeps schema_version 1 and adds statement column/end_column/snippet.
+
+Editor server: `python -m nexo web lsp`. It supports UTF-16 diagnostics for unsaved
+entry text, saved imports, local hover/definition, outline and browser completions.
+Core/Rust nexo lsp remains unchanged. No frontend formatting/code actions,
+cross-file navigation or unsaved-import overlays. Do not claim those features.
+
+`web audit --security --json app.nexo` compiles first, then flags possible literal
+credentials (NW4101) and opt-in cache needing sensitivity/identity review (NW4102).
+Findings redact values; exit 1 for findings, 0 for none. Heuristics have false
+positives/negatives; never call a clean audit a security proof. Backend authorization
+is Not assessed. The report links actual Shield backend profiles/limits; memory
+dispatch and bounded loopback do not provide browser isolation or persistent
+production hosting. Use existing nexo security workflows separately on supported
+backend workloads; never generate fictitious browser Shield policy enforcement.
+NW4001 missing/incompatible tooling; NW4002 invalid dev boundary/path/port.
+Run tests/test_web_tooling.py with NEXO_WEB_REQUIRE_VITE=1 and
+NEXO_WEB_REQUIRE_BROWSER=1; report skipped checks honestly.
+
+## M5 release and production-quality workflow
+
+`web build app.nexo --release -o dist` uses pinned Vite to minify/tree-shake the
+application and CSS, emit hashed assets/SRI HTML and nexo-manifest.json. Node is
+required for release, not ordinary builds. This is CSR static hosting, not SSR/SSG
+or a reusable library bundle. Dedicated output directories prevent deleting user
+files; rebuilding or switching back to ordinary build removes old owned assets.
+Preview validates manifest integrity. --sourcemap composes Nexo line mappings but
+embeds source; publish deliberately. --observe is an explicit optional local event
+hook, never automatic analytics. Default builds emit no observations.
+
+`web audit --security --accessibility --json app.nexo` combines existing security
+heuristics with control-name/tabindex/aria-hidden checks (NW5101–NW5103). It is not
+a WCAG/security proof. Real tests use locked axe-core 4.14.0 in Chromium with CSP
+and keyboard/status/focus checks; disclose browser/state coverage and incompletes.
+NW5001 reports release optimizer/manifest/output failures. Never bypass failures.
+
+Run `python scripts/web/measure.py --output /tmp/web-quality.json --check` for
+local fixture byte/DOM/axe budgets. Five fresh-context samples plus a warmup record
+DCL and 100-click timing; shared host/loopback/uncompressed HTTP limit conclusions.
+Do not invent universal SLOs, framework speed comparisons or production load results.
+CI enforces deterministic bytes/DOM/axe budgets, not timing. Published measurements
+have compiler-input/optimizer/method fingerprints; remeasure explicitly on drift.
+
+examples/web/production supplies an accessible client and digest-pinned static
+Nginx container. Tests verify non-root/read-only/no-capability/no-new-privileges,
+headers/cache, health and minimized access logs. TLS edge, backend auth/CSRF/session/
+permissions, image scanning, workload SLOs, log retention and rollback qualification
+remain operator responsibilities. No cloud deployment is implied. Static sites
+rarely need Kubernetes; justify it from service architecture/budget/reliability.
+Shield's bounded backend listener is not production hosting or browser enforcement.
+
+Optional local nexo:web events allow only version/kind/phase/request operation,
+sanitized error code/status and finite duration; no URLs/params/names/messages/
+payloads/tokens or external transport. Operators own listener cleanup and any
+explicit monitoring/consent. Client events are forgeable, not authorization/billing
+records. See the production project's README for deployment/observability steps.
+Run tests/test_web_production.py with required browser/Vite/Docker flags for full
+verification. Report unavailable environments as unverified; M6 is not implemented.
+
 ## Workflow and security
 
 Understand requirements; ask essential missing questions; choose page/layout/
@@ -126,7 +205,7 @@ permission. Assess actual Shield profiles: bounded loopback ingress is not a
 persistent production server. Production needs HTTPS/header CSP. No ASVS 5.0
 certification is claimed. Native controls still need meaningful labels/contrast.
 
-Proposed only: keyed reconciliation, Vite/HMR, source maps, SSR/hydration/SSG. Do not generate those as runnable code. Retrieve only the
-relevant project from @@WEB_EXAMPLES@@; it includes every required source file,
+Proposed only: keyed reconciliation, CSS maps, frontend formatting, SSR/hydration/SSG. Do not generate those as runnable code. Use the individual project payloads linked below; the optional compatibility pack
+at @@WEB_EXAMPLES@@ includes every required source file,
 compiler hashes and associated test commands. The entries below are generated
 from real compiler-checked sources; actual browser results come from their tests.

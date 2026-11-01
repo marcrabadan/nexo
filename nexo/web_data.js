@@ -106,11 +106,13 @@ function createResource(scope,owner,dep,readSpec,kind,invalidate){
   let disposed=false,generation=0,active=null;
   const resource={loading:false,ready:false,success:false,data:null,error:null,reload:()=>start(true),run:()=>start(false),cancel};
   function publish(values){if(disposed)return;owner.batch(()=>{Object.assign(resource,values);owner.invalidate(dep);});}
-  function cancel(){if(disposed)return;generation++;active?.release();active=null;publish({loading:false,ready:false,success:false,data:null,error:requestError('Cancelled','Request cancelled')});}
+  function cancel(){if(disposed)return;nexoObserve('request',{operation:kind,phase:'cancelled'});generation++;active?.release();active=null;publish({loading:false,ready:false,success:false,data:null,error:requestError('Cancelled','Request cancelled')});}
   async function start(force){
     if(disposed)return;
     if(kind==='mutation'&&active)return; // One explicit write at a time; never replay it.
     const current=++generation;active?.release();active=null;
+    const started=performance.now();
+    nexoObserve('request',{operation:kind,phase:'loading'});
     publish({loading:true,ready:false,success:false,error:null,data:null});
     let lease;
     try{
@@ -118,9 +120,14 @@ function createResource(scope,owner,dep,readSpec,kind,invalidate){
       const data=await lease.promise;
       if(disposed||current!==generation)return;
       if(kind==='mutation'){scope.invalidate();for(const reload of invalidate)reload();}
+      nexoObserve('request',{operation:kind,phase:'ready',duration_ms:Math.round(performance.now()-started)});
       publish({loading:false,ready:true,success:kind==='mutation',data,error:null});
     }catch(error){
-      if(!disposed&&current===generation)publish({loading:false,ready:false,success:false,data:null,error:error?.kind?error:requestError('Network','Request could not be completed')});
+      if(!disposed&&current===generation){
+        const failure=error?.kind?error:requestError('Network','Request could not be completed');
+        nexoObserve('request',{operation:kind,phase:'error',code:failure.kind,status:Number(failure.status),duration_ms:Math.round(performance.now()-started)});
+        publish({loading:false,ready:false,success:false,data:null,error:failure});
+      }
     }finally{lease?.release();if(current===generation)active=null;}
   }
   // Initial reads honor an optional cache; reload deliberately bypasses it.

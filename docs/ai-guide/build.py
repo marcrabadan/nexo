@@ -39,7 +39,8 @@ def inputs():
     paths.update(doc['path'] for doc in catalog['documents'])
     examples = json.loads((HERE/'source/examples.json').read_text())
     paths.update(e['path'] for e in examples['examples'] + examples.get('frontend_examples', []))
-    paths.update(['nexo/web_runtime.js','nexo/web_router.js','nexo/web_data.js'])
+    paths.update(['nexo/web_runtime.js','nexo/web_router.js','nexo/web_data.js','nexo/web_observe.js'])
+    paths.update(str(p.relative_to(ROOT)) for p in (ROOT/'nexo/web_tools').iterdir() if p.is_file() and p.suffix in ('.json','.mjs','.nexo'))
     from nexo.web_model import load_program
     for example in examples.get('frontend_examples', []):
         entry=ROOT/example['path']
@@ -99,11 +100,13 @@ def generate(measure=False):
         example['verification'] = {'compilation': 'Passed', 'browser_execution': 'Run associated tests; not asserted by this generator', 'source_sha256': digest(example['source'].encode()), 'javascript_sha256': digest(js.encode()), 'css_sha256': digest(css.encode()), 'exports': exports}
     web_examples=serialized({'schema_version':1,'revision':revision,'examples':example_catalog.get('frontend_examples', [])})
     outputs[f'docs/{bundle}/web-examples.json']=web_examples
+    for example in example_catalog.get('frontend_examples', []):
+        outputs[f'docs/{bundle}/web-examples/{example["id"]}.json']=serialized({'schema_version':1,'revision':revision,'example':example})
     web_topic = identity + '\n' + (HERE/'source/nexo-web.md').read_text().replace('@@WEB_EXAMPLES@@',base+'web-examples.json')
     for example in example_catalog.get('frontend_examples', []):
         web_topic += '\n## '+example['id']+' — '+example['path']+'\n'
         if example['files']:
-            web_topic += 'Complete compiler-checked project: '+base+'web-examples.json. Write entry_file from source, then every files mapping entry at the same project root. All files are required; do not treat the entry alone as runnable.\n'
+            web_topic += 'Complete compiler-checked project: '+base+'web-examples/'+example['id']+'.json. Write entry_file from source, then every files mapping entry at the same project root. All files are required; do not treat the entry alone as runnable.\n'
         else:
             web_topic += '\n```nexo\n' + example['source'] + '```\n'
     outputs[f'docs/{bundle}/nexo-web.txt'] = web_topic
@@ -155,6 +158,7 @@ def generate(measure=False):
                         prompt += 'If retrieval fails, ask me for context; do not claim you read it. Planned/experimental/unverified features must retain their status.\n'
                     prompts[key] = {'text': prompt + '\nMy task: [describe the application or change]\n', 'label': f'{label} / {mode} / {access}', 'download': f'{bundle}/prompts/{key}.txt'}
     measured_texts = {key: value['text'] for key, value in prompts.items()} | {'full-evidence-pack': full, 'syntax': syntax, 'index': index, 'shield-security': security, 'engineering': intelligence, 'nexo-web': web_topic, 'web-examples': web_examples}
+    measured_texts.update({'web-project:'+e['id']:outputs[f'docs/{bundle}/web-examples/{e["id"]}.json'] for e in example_catalog.get('frontend_examples', [])})
     payload_hashes = {key: digest(value.encode()) for key, value in measured_texts.items()}
     metrics_path = HERE/'token-counts.json'
     if measure:

@@ -1,0 +1,222 @@
+{
+  "accessibility": {
+    "engine": "axe-core",
+    "incomplete": [],
+    "passed_rules": 22,
+    "scope": "Production example, initial state, Chromium",
+    "version": "4.14.0",
+    "violations": []
+  },
+  "benchmark": "nexo-web-local-m5",
+  "budgets": {
+    "axe_violations_max": 0,
+    "counter_clicks": 100,
+    "counter_text_mutations_max": 100,
+    "css_gzip_bytes_max": 4096,
+    "javascript_gzip_bytes_max": 16384,
+    "schema_version": 1
+  },
+  "counter": {
+    "development": {
+      "clicks_ms": {
+        "median": 1.2,
+        "p95": 1.5,
+        "samples": [
+          1.3,
+          1.5,
+          1.1,
+          1.1,
+          1.2
+        ]
+      },
+      "dcl_ms": {
+        "median": 80.9,
+        "p95": 95.1,
+        "samples": [
+          88.1,
+          72.1,
+          39.4,
+          95.1,
+          80.9
+        ]
+      },
+      "js_css_requests": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "node_identity_preserved": true,
+      "text_mutations": [
+        100,
+        100,
+        100,
+        100,
+        100
+      ]
+    },
+    "release": {
+      "clicks_ms": {
+        "median": 1.1,
+        "p95": 1.4,
+        "samples": [
+          1.1,
+          1.4,
+          1.1,
+          1,
+          1.2
+        ]
+      },
+      "dcl_ms": {
+        "median": 34.4,
+        "p95": 75.1,
+        "samples": [
+          49.7,
+          34.4,
+          34.4,
+          75.1,
+          30.1
+        ]
+      },
+      "js_css_requests": [
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "node_identity_preserved": true,
+      "text_mutations": [
+        100,
+        100,
+        100,
+        100,
+        100
+      ]
+    }
+  },
+  "environment": {
+    "browser": "154.0.8037.57",
+    "machine": "x86_64",
+    "node": "v24.19.0",
+    "platform": "Linux-6.18.57-x86_64-with-glibc2.41",
+    "python": "3.12.14"
+  },
+  "failures": [],
+  "fixtures": {
+    "composition": {
+      "development": {
+        "css": {
+          "bytes": 676,
+          "gzip_bytes": 276
+        },
+        "javascript": {
+          "bytes": 23703,
+          "gzip_bytes": 5382
+        }
+      },
+      "entry": "examples/web/composition/app.nexo",
+      "input_sha256": "2c8a7f4eda4ac10a1fd9ffbc15dba7837c0d7cb57dc30ccc4547c4d4b8a33693",
+      "release": {
+        "css": {
+          "bytes": 562,
+          "gzip_bytes": 243
+        },
+        "javascript": {
+          "bytes": 13403,
+          "gzip_bytes": 3953
+        }
+      },
+      "source_sha256": "353c07372c953fee5aa0e3235f10a0136a99f1d473772ce9b412d740832da18e"
+    },
+    "counter": {
+      "development": {
+        "css": {
+          "bytes": 92,
+          "gzip_bytes": 96
+        },
+        "javascript": {
+          "bytes": 6469,
+          "gzip_bytes": 2409
+        }
+      },
+      "entry": "examples/web/counter.nexo",
+      "input_sha256": "956e31a857718b28991bbf5daf624c28af384e3993aaa1cf4225b53125702903",
+      "release": {
+        "css": {
+          "bytes": 77,
+          "gzip_bytes": 88
+        },
+        "javascript": {
+          "bytes": 2670,
+          "gzip_bytes": 1259
+        }
+      },
+      "source_sha256": "d3425db45e931139fdc14533465ade634a3662404b83d379dab738f3d749823f"
+    },
+    "data": {
+      "development": {
+        "css": {
+          "bytes": 273,
+          "gzip_bytes": 214
+        },
+        "javascript": {
+          "bytes": 21050,
+          "gzip_bytes": 6582
+        }
+      },
+      "entry": "examples/web/data/app.nexo",
+      "input_sha256": "8f14312712446de470104aa049dd69ab862bfc3095199d2a370eff44b2d936ce",
+      "release": {
+        "css": {
+          "bytes": 225,
+          "gzip_bytes": 188
+        },
+        "javascript": {
+          "bytes": 12658,
+          "gzip_bytes": 4550
+        }
+      },
+      "source_sha256": "f254f984bbb8bf7498748af498fe525235c8bc970aa8cce748e4a5179606ee53"
+    },
+    "production": {
+      "development": {
+        "css": {
+          "bytes": 407,
+          "gzip_bytes": 269
+        },
+        "javascript": {
+          "bytes": 6533,
+          "gzip_bytes": 2443
+        }
+      },
+      "entry": "examples/web/production/app.nexo",
+      "input_sha256": "adf1512b5fde3339b99adce219af78f3279e7634b624a786953966384884751a",
+      "release": {
+        "css": {
+          "bytes": 330,
+          "gzip_bytes": 245
+        },
+        "javascript": {
+          "bytes": 2718,
+          "gzip_bytes": 1290
+        }
+      },
+      "source_sha256": "354b0d6e0df4ef75dd488ab53a9a51239b19a2b3cf70109e5f08b46a32942cbf"
+    }
+  },
+  "measurement_sha256": "83d5cdd57907fd980fa85687ae221fc54debb4e0e630009bd78ea68b27825a8f",
+  "method": {
+    "browser_cache": "new context per run",
+    "cpu_throttle": "none added",
+    "gzip": "estimated per-file gzip mtime=0, not transferred compressed bytes",
+    "iterations": 5,
+    "network": "loopback HTTP without compression",
+    "os_cache": "not controlled",
+    "timings": "browser NavigationTiming DCL and synchronous event loop; no timing CI threshold",
+    "warmup_runs": 1
+  },
+  "optimizer_sha256": "fb198c6d400ee987f04b5b7ee2258acca6fee6afae92b67330fb1d22b41b2ecd",
+  "schema_version": 1
+}

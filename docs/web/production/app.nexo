@@ -1,0 +1,25 @@
+use nexo.web
+
+pub component App:
+    state count: int = 0
+
+    fn increment():
+        count += 1
+
+    view:
+        main:
+            h1("Nexo Web release")
+            p("Count: {count}", role: "status")
+            button("Increment", on_click: increment)
+
+    style:
+        main {
+            max-width: 48rem;
+            margin: 2rem auto;
+            padding: 1rem;
+            color: #172033;
+            background: #ffffff;
+            font: 1.1rem/1.5 system-ui;
+        }
+        button { padding: 0.7rem 1rem; color: #ffffff; background: #0d47a1; border: 0; border-radius: 0.4rem; font: inherit; }
+        button:focus-visible { outline: 3px solid #0d47a1; outline-offset: 4px; }

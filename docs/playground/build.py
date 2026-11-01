@@ -16,7 +16,7 @@ def interpreter() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         files = sorted(p for p in (ROOT / "nexo").rglob("*") if p.suffix in (".py", ".json")
-                       and "__pycache__" not in p.parts)
+                       and "__pycache__" not in p.parts and "web_tools" not in p.parts and "node_modules" not in p.parts)
         for p in files:
             info = zipfile.ZipInfo(p.relative_to(ROOT).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED

@@ -184,6 +184,16 @@ def parse_view(items, i, indent):
     return nodes,i
 
 
+def scope_source(source):
+    # CSS edits must not change DOM scope IDs during style-only HMR.
+    out=[];inside=False
+    for text in source.splitlines():
+        if len(text)-len(text.lstrip(' '))==4 and text.strip()=='style:':inside=True;continue
+        if inside and (not text.strip() or len(text)-len(text.lstrip())>4):continue
+        inside=False;out.append(text)
+    return '\n'.join(out)
+
+
 def parse_unit(unit):
     lines = unit.source.splitlines()
     for line, text in enumerate(lines, 1):
@@ -219,6 +229,7 @@ def parse_unit(unit):
             if any(p.default is not None or p.marks for p in node.fields) or len({p.name for p in node.fields})!=len(node.fields):
                 F.fail(line,'JSON record fields require unique explicit types without defaults/annotations.', 'NW3001')
             if node.name in unit.contracts or node.name in unit.declarations or any(node.name==a for _,a,_ in uses):F.fail(line,'Duplicate type/declaration name.', 'NW3001')
+            node.web_line=line
             unit.contracts[node.name]=node
             continue
         match = re.fullmatch(r'(pub )?(component|page|layout|context) ([A-Z][A-Za-z_0-9]*)(?:\((.*)\))?:', text)
@@ -319,7 +330,7 @@ def parse_unit(unit):
             F.fail(d.line,'A context requires typed state.', 'NW2004')
         suffix=hashlib.sha256((unit.key+'\n'+name).encode()).hexdigest()[:16]
         d.symbol='_nw_'+suffix
-        d.scope='nw-'+hashlib.sha256((unit.key+'\n'+name+'\n'+unit.source).encode()).hexdigest()[:16]
+        d.scope='nw-'+hashlib.sha256((unit.key+'\n'+name+'\n'+scope_source(unit.source)).encode()).hexdigest()[:16]
     return uses
 
 

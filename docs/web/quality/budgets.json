@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "javascript_gzip_bytes_max": 16384,
+  "css_gzip_bytes_max": 4096,
+  "counter_clicks": 100,
+  "counter_text_mutations_max": 100,
+  "axe_violations_max": 0
+}

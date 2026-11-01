@@ -1,4 +1,4 @@
-Nexo AI Guide v1 | source sha256:38e671ccbcfdd43ed34036e86fe61ccac51bca21fe50b73a97140fe99885c64b
+Nexo AI Guide v1 | source sha256:f7a070ec6dbd4b04b4db1b221038e10dc97b5c047ef15f7923c78b9f17620a00
 Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component versions, not a stable 1.0 promise.
 
 # Compact Nexo syntax reference
@@ -41,7 +41,7 @@ Checks: `nexo check app.nexo`; `nexo check --json app.nexo`;
 Run/build with the selected backend; `.venv/bin/nexo` is the interpreter and
 `compiler/target/debug/nexo` is the native driver in a built checkout.
 
-Browser UI: experimental Python `nexo web` M1–M3. Request the conditional Nexo Web
+Browser UI: experimental Python `nexo web` M1–M5. Request the conditional Nexo Web
 topic before writing UI; later milestones remain proposed.
 
 ## Runnable example

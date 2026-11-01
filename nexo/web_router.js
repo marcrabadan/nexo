@@ -55,6 +55,7 @@ function createRouter(target, routes, fallbacks) {
     const focus=page.element.querySelector("main,h1,h2") || page.element;
     if(!focus.hasAttribute("tabindex"))focus.tabIndex=-1;
     focus.focus();
+    nexoObserve('navigation',{phase:'ready'});
   }
   function message(text) {
     fallback=document.createElement('p');fallback.setAttribute('role','alert');fallback.textContent=text;target.append(fallback);
@@ -65,12 +66,14 @@ function createRouter(target, routes, fallbacks) {
     const path=window.location.hash.slice(1)||'/';
     if(current===path)return;
     current=path;
+    nexoObserve('navigation',{phase:'started'});
     try {
       const found=match(path);
       if(found)renderRoute(found.route,found.props);
       else if(fallbacks.not_found)renderRoute(fallbacks.not_found,{});
       else {clearPage();clearLayouts();message('Page not found.');}
     } catch {
+      nexoObserve('navigation',{phase:'error'});
       clearPage();clearLayouts();
       if(fallbacks.error) {
         try {renderRoute(fallbacks.error,{});return;} catch {clearPage();clearLayouts();}

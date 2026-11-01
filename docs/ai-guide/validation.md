@@ -69,3 +69,15 @@ and browser validation are recorded in [M2 delivery](../web/validation-m2.md).
 
 Current typed async data, generated guidance, measurements and browser checks are
 recorded in [M3 delivery](../web/validation-m3.md). Prior results above are historical.
+
+## Nexo Web M4
+
+Current optional Vite/HMR, maps, browser LSP, source audit, generated artifacts
+and executed validation are recorded in [M4 delivery](../web/validation-m4.md).
+Prior milestone records above remain historical.
+
+## Nexo Web M5
+
+Current release artifacts, measured quality, accessibility/deployment checks and
+individual versioned project context are recorded in [M5 delivery](../web/validation-m5.md).
+Prior milestone results remain historical.

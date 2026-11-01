@@ -1,4 +1,4 @@
-"""Nexo Web M1–M3: a separate, deliberately bounded browser compiler (RFC-0001).
+"""Nexo Web M1–M5: a separate, deliberately bounded browser compiler (RFC-0001).
 
 Core expression parsing is shared with Nexo. Browser-only contextual blocks do
 not change the core grammar, interpreter, HTTP module, or WASI build target.
@@ -21,7 +21,7 @@ from .errors import NexoError
 
 IDENT = r'[A-Za-z_][A-Za-z_0-9]*'
 TAGS = set('main section article header footer nav div span h1 h2 h3 h4 h5 h6 p button label input ul ol li strong em small form fieldset legend output pre code br hr'.split())
-ATTRS = {'class', 'id', 'title', 'role', 'type', 'name', 'placeholder', 'disabled', 'aria_label', 'aria_live', 'aria_describedby', 'aria_hidden', 'tabindex', 'for'}
+ATTRS = {'class', 'id', 'title', 'role', 'type', 'name', 'placeholder', 'disabled', 'aria_label', 'aria_live', 'aria_describedby', 'aria_labelledby', 'aria_hidden', 'tabindex', 'for'}
 VOID = {'input', 'br', 'hr'}
 
 
@@ -188,14 +188,33 @@ def compile_web(source, source_path=None):
     return compile_program(load_program(source, source_path))
 
 
-def build(source_path, output):
-    source = Path(source_path).read_text(encoding='utf-8')
-    js, css, exports = compile_web(source, source_path)
-    directory = Path(output)
-    directory.mkdir(parents=True, exist_ok=True)
-    files = browser_assets(js, css, exports)
-    for name, content in files.items():
-        (directory/name).write_text(content, encoding='utf-8')
+def artifacts(source_path, sourcemap=False, observe=False):
+    from .web_model import load_program
+    from .web_codegen import compile_program
+    source=Path(source_path).read_text(encoding='utf-8')
+    program=load_program(source,source_path);mapping={} if sourcemap else None
+    js,css,exports=compile_program(program,mapping,observe)
+    files=browser_assets(js,css,exports)
+    if sourcemap:
+        files['app.js']+='//# sourceMappingURL=./app.js.map\n'
+        files['app.js.map']=json.dumps(mapping,sort_keys=True,ensure_ascii=True)+'\n'
+    return files,program
+
+
+def build(source_path, output, sourcemap=False, release=False, observe=False):
+    files,program=artifacts(source_path,sourcemap,observe)
+    if release:
+        from .web_release import optimize,write_release
+        from .modules import project_root
+        return write_release(optimize(files,project_root(str(program.root.path)),sourcemap,observe),output)
+    directory=Path(output)
+    if (directory/'nexo-manifest.json').exists():
+        from .web_release import write_release
+        return write_release(files,directory)
+    directory.mkdir(parents=True,exist_ok=True)
+    for name,content in files.items():(directory/name).write_text(content,encoding='utf-8')
+    # Rebuilding without maps must not leave a previous source-bearing map behind.
+    if not sourcemap:(directory/'app.js.map').unlink(missing_ok=True)
     return files
 
 
@@ -206,7 +225,7 @@ def browser_assets(js, css, exports):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='nexo web', description='Experimental M1–M3 browser compiler; independent of WASI.')
+    parser = argparse.ArgumentParser(prog='nexo web', description='Experimental M1–M5 browser compiler; independent of WASI.')
     sub = parser.add_subparsers(dest='command', required=True)
     check = sub.add_parser('check')
     check.add_argument('--json', action='store_true')
@@ -214,17 +233,42 @@ def main(argv=None):
     compile_cmd = sub.add_parser('build')
     compile_cmd.add_argument('file')
     compile_cmd.add_argument('-o', '--output', default='dist')
+    compile_cmd.add_argument('--sourcemap',action='store_true')
+    compile_cmd.add_argument('--release',action='store_true')
+    compile_cmd.add_argument('--observe',action='store_true')
+    dev=sub.add_parser('dev');dev.add_argument('file');dev.add_argument('--port',type=int,default=5173)
+    preview=sub.add_parser('preview');preview.add_argument('directory',nargs='?',default='dist');preview.add_argument('--port',type=int,default=4173)
+    new=sub.add_parser('new');new.add_argument('directory')
+    audit=sub.add_parser('audit');audit.add_argument('--security',action='store_true');audit.add_argument('--accessibility',action='store_true');audit.add_argument('--json',action='store_true');audit.add_argument('file')
+    sub.add_parser('lsp')
     args = parser.parse_args(argv)
+    if args.command=='audit' and not (args.security or args.accessibility):parser.error('audit requires --security and/or --accessibility')
     try:
+        if args.command in ('new','dev','preview'):
+            from .web_tooling import command
+            return command(args)
+        if args.command=='audit':
+            from .web_audit import audit as security_audit
+            report=security_audit(args.file,security=args.security,accessibility=args.accessibility)
+            if args.json:print(json.dumps(report,sort_keys=True))
+            else:
+                for finding in report['diagnostics']:print(f"{finding['file']}:{finding['line']}: {finding['code']}: {finding['message']}")
+                print('Frontend source audit only; backend authorization, sessions and Shield runtime profiles are not assessed.')
+            return int(bool(report['diagnostics']))
+        if args.command=='lsp':
+            from .web_lsp import serve
+            return serve()
         if args.command == 'check':
             compile_web(Path(args.file).read_text(encoding='utf-8'), args.file)
             if args.json:
                 print(json.dumps({'schema_version': 1, 'diagnostics': []}, sort_keys=True))
         else:
-            build(args.file, args.output)
+            build(args.file,args.output,args.sourcemap,args.release,args.observe)
         return 0
     except (WebError, OSError, UnicodeError) as error:
-        diagnostic = {'code': getattr(error, 'code', 'NW1000'), 'file': getattr(error, 'file', None) or args.file, 'line': getattr(error, 'line', 1), 'severity': 'error', 'message': str(error)}
+        from .web_diagnostics import diagnostic as render_diagnostic
+        diagnostic=render_diagnostic(error,getattr(args,'file',getattr(args,'directory','<web>')))
+        if args.command=='audit':diagnostic['snippet']='[redacted: security review location]'
         if getattr(args, 'json', False):
             print(json.dumps({'schema_version': 1, 'diagnostics': [diagnostic]}, sort_keys=True))
         else:

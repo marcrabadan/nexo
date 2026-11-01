@@ -125,9 +125,10 @@
       "purpose": "Independent reactive Counter components with scoped CSS",
       "command": "python -m nexo web check --json examples/web/counter.nexo",
       "associated_tests": [
-        "tests/test_web_frontend.py"
+        "tests/test_web_frontend.py",
+        "tests/test_web_tooling.py"
       ],
-      "scope": "Experimental Python browser compiler M1. Build verification is separate from real-browser tests; a skipped browser test is not a pass."
+      "scope": "Experimental Python browser compiler M1–M4; same Counter source as web new scaffold. Compiler evidence is separate from mandatory Chromium/Vite HMR tests."
     },
     {
       "id": "web-composition",
@@ -151,6 +152,22 @@
       "support_files": [
         "examples/web/data/server.py"
       ]
+    },
+    {
+      "id": "web-production",
+      "path": "examples/web/production/app.nexo",
+      "purpose": "Accessible release client and verified static Nginx deployment/operations example",
+      "command": "python -m nexo web check --json examples/web/production/app.nexo",
+      "associated_tests": [
+        "tests/test_web_production.py",
+        "python scripts/web/measure.py --output /tmp/nexo-web-quality.json --check"
+      ],
+      "support_files": [
+        "examples/web/production/Dockerfile",
+        "examples/web/production/nginx.conf",
+        "examples/web/production/README.md"
+      ],
+      "scope": "Experimental Python browser M5. Release requires installed pinned Vite/Node; container checks require local Docker. Compiler evidence is not a browser/deployment pass; TLS and public cloud deployment are unverified."
     }
   ]
 }

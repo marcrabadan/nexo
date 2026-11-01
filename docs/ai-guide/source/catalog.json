@@ -241,7 +241,7 @@
     {
       "id": "nexo-web",
       "status": "experimental",
-      "summary": "Python browser UI, composition/routes/context and typed async load/mutation JSON with scoped CSS. Rust browser driver/HMR/SSR unavailable. Retrieve conditional Web guidance for UI.",
+      "summary": "Python browser UI/data, Vite/HMR/LSP, optimized releases and measured quality tools. Rust browser/SSR unavailable. Retrieve conditional Web guidance.",
       "evidence": [
         [
           "nexo/web_frontend.py",
@@ -298,6 +298,70 @@
         [
           "examples/web/data/app.nexo",
           "    mutation create = api.post("
+        ],
+        [
+          "nexo/web_tools/plugin.mjs",
+          "export function plugin"
+        ],
+        [
+          "nexo/web_tooling.py",
+          "def preview_server"
+        ],
+        [
+          "nexo/web_maps.py",
+          "def source_map"
+        ],
+        [
+          "nexo/web_lsp.py",
+          "class Server"
+        ],
+        [
+          "nexo/web_audit.py",
+          "def audit"
+        ],
+        [
+          "tests/test_web_tooling.py",
+          "def test_real_browser_vite"
+        ],
+        [
+          "nexo/web_tools/app.nexo",
+          "pub component Counter:"
+        ],
+        [
+          "nexo/web_release.py",
+          "def optimize"
+        ],
+        [
+          "nexo/web_accessibility.py",
+          "def findings"
+        ],
+        [
+          "nexo/web_observe.js",
+          "function nexoObserve"
+        ],
+        [
+          "scripts/web/measure.py",
+          "def measure"
+        ],
+        [
+          "tests/test_web_production.py",
+          "def test_real_browser"
+        ],
+        [
+          "examples/web/production/Dockerfile",
+          "USER 101:101"
+        ],
+        [
+          "docs/web/quality-report.json",
+          "\"violations\": []"
+        ],
+        [
+          "docs/web/quality/budgets.json",
+          "\"counter_clicks\": 100"
+        ],
+        [
+          ".github/workflows/web-production.yml",
+          "name: Web production quality"
         ]
       ]
     }

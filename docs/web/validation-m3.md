@@ -1,5 +1,8 @@
 # Nexo Web M3 delivery — 2026-11-01
 
+For the next milestone see [M4 delivery](validation-m4.md). This report preserves
+the M3 validation record.
+
 M3 is implemented as an experimental Python browser frontend, with matching
 website and versioned AI Guide. This extends [M2](validation-m2.md). No production
 certification, public deployment, full native-suite rerun or M4 implementation is

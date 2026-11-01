@@ -1521,17 +1521,32 @@ The Python CLI's `nexo web check|build` selects the bounded browser grammar in
 scoped CSS `style`. The exact acceptance program is `examples/web/counter.nexo`.
 This does not extend the core grammar in section 24 or the server interpreter.
 `nexo build --target web` remains WASI (D175). Pages/layouts/context and typed scalar props are available in experimental M2
-(see the amendment below). Typed browser APIs are available in experimental M3; HMR and SSR remain proposed. Browser compilation through the
+(see the amendment below). Typed browser APIs are available in experimental M3; M4 adds optional Vite/HMR and browser tools; SSR remains proposed. Browser compilation through the
 Rust driver is not implemented. The RFC is the source of truth for this isolated
 experimental grammar until it is incorporated into a future language edition.
 
 Experimental browser M2 (D191) extends section 28 through the implemented M2
 amendment of RFC-0001: typed scalar props, qualified project component/CSS imports,
 lexical slot(), pages with typed fragment routes, persistent layouts and owned
-provide/inject context. M3 (D192) adds typed async load/mutation, JSON records/lists and conditional snapshot views; HMR and SSR remain proposed.
+provide/inject context. M3 (D192) adds typed async load/mutation, JSON records/lists and conditional snapshot views; M4 adds optional Vite/HMR and browser tools; SSR remains proposed.
 The Python browser domain remains separate from the core grammar and D175 WASI.
 
 Experimental browser M3 is specified by RFC-0001 edition 3: same-origin async
 fetch, exact JSON contracts, owned cancellation/deduplication/cache, explicit
 mutation invalidation and readiness-checked views. It does not change server HTTP,
 core fallible errors or D175 WASI. See [M3 reference](rfc/0001-nexo-web.md#m3).
+
+Experimental browser M4 (D193) extends RFC-0001 edition 4 with optional locked
+Vite development/HMR, offline scaffolding, artifact-only loopback preview,
+statement diagnostics, opt-in line-level JS maps, an explicit Python browser LSP
+and heuristic frontend source audit. Core/Rust LSP and D175 WASI are unchanged.
+See [M4 tools and boundaries](rfc/0001-nexo-web.md#m4); these are not production
+hosting, Shield browser enforcement, release optimization or SSR.
+
+Experimental browser M5 (D194), RFC-0001 edition 5, adds --release optimization,
+hashed assets/SRI/integrity manifests, composed optional maps, source accessibility
+checks, fixture byte/DOM/axe quality gates, verified local static Nginx deployment
+and opt-in allowlisted local observations. Production authorization/TLS/load and
+accessibility certification remain workload-specific; this is not SSR/SSG. See
+[M5 release semantics and evidence](rfc/0001-nexo-web.md#m5). Core Rust/WASI remain
+unchanged; M6 is not implemented.

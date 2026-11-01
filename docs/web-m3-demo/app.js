@@ -1,4 +1,4 @@
-// Nexo Web M1–M2: direct DOM ownership, typed values and synchronous batches.
+// Nexo Web M1–M5: direct DOM ownership, typed values and synchronous batches.
 function int(value) {
   if (value < -(1n << 63n) || value >= (1n << 63n)) throw new RangeError('Nexo int overflow');
   return value;
@@ -123,6 +123,8 @@ function createRegion(parent, owner) {
   }};
 }
 
+function nexoObserve(){}
+
 // M3: bounded asynchronous same-origin JSON, scoped to one mounted application.
 const DATA_SCOPE=Symbol('Nexo Web request scope');
 function requestError(kind,message,status=0){return Object.freeze({kind,message,status:BigInt(status)});}
@@ -231,11 +233,13 @@ function createResource(scope,owner,dep,readSpec,kind,invalidate){
   let disposed=false,generation=0,active=null;
   const resource={loading:false,ready:false,success:false,data:null,error:null,reload:()=>start(true),run:()=>start(false),cancel};
   function publish(values){if(disposed)return;owner.batch(()=>{Object.assign(resource,values);owner.invalidate(dep);});}
-  function cancel(){if(disposed)return;generation++;active?.release();active=null;publish({loading:false,ready:false,success:false,data:null,error:requestError('Cancelled','Request cancelled')});}
+  function cancel(){if(disposed)return;nexoObserve('request',{operation:kind,phase:'cancelled'});generation++;active?.release();active=null;publish({loading:false,ready:false,success:false,data:null,error:requestError('Cancelled','Request cancelled')});}
   async function start(force){
     if(disposed)return;
     if(kind==='mutation'&&active)return; // One explicit write at a time; never replay it.
     const current=++generation;active?.release();active=null;
+    const started=performance.now();
+    nexoObserve('request',{operation:kind,phase:'loading'});
     publish({loading:true,ready:false,success:false,error:null,data:null});
     let lease;
     try{
@@ -243,9 +247,14 @@ function createResource(scope,owner,dep,readSpec,kind,invalidate){
       const data=await lease.promise;
       if(disposed||current!==generation)return;
       if(kind==='mutation'){scope.invalidate();for(const reload of invalidate)reload();}
+      nexoObserve('request',{operation:kind,phase:'ready',duration_ms:Math.round(performance.now()-started)});
       publish({loading:false,ready:true,success:kind==='mutation',data,error:null});
     }catch(error){
-      if(!disposed&&current===generation)publish({loading:false,ready:false,success:false,data:null,error:error?.kind?error:requestError('Network','Request could not be completed')});
+      if(!disposed&&current===generation){
+        const failure=error?.kind?error:requestError('Network','Request could not be completed');
+        nexoObserve('request',{operation:kind,phase:'error',code:failure.kind,status:Number(failure.status),duration_ms:Math.round(performance.now()-started)});
+        publish({loading:false,ready:false,success:false,data:null,error:failure});
+      }
     }finally{lease?.release();if(current===generation)active=null;}
   }
   // Initial reads honor an optional cache; reload deliberately bypasses it.
@@ -256,7 +265,7 @@ function createResource(scope,owner,dep,readSpec,kind,invalidate){
 
 function _nw_d10137633b46a682(target,props={},parentEnv=new Map(),renderSlot=null){
 const s=checkedProps({["endpoint"]: {type:"str", default: () => ("/api/products")},["writable"]: {type:"bool", default: () => true}},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
-const root=document.createElement("div"); root.dataset.nexo="nw-5a5238ba2d5c48a4";
+const root=document.createElement("div"); root.dataset.nexo="nw-50906aabea7df467";
 try{
 const dataScope=useDataScope(env,owner);
 r["products"]=createResource(dataScope,owner,"$products",()=>({method:"GET",schema:JSON.parse("{\"kind\": \"list\", \"item\": {\"kind\": \"record\", \"fields\": {\"id\": {\"kind\": \"int\"}, \"name\": {\"kind\": \"str\"}}}}"),url:s["endpoint"],timeout_ms:5000,retries:1,cache_ms:1000,dedupe:true}),"load",[]);
@@ -359,6 +368,7 @@ _api29.bind(["$create"],()=>String(("Created: "+String(r["create"].data["name"])
 {const v=String(("status"));_node35.setAttribute("role",v);}
 }
 }));
-target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({["endpoint"]: {type:"str", default: () => ("/api/products")},["writable"]: {type:"bool", default: () => true}},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
+target.append(root);
+return {element:root,env,outlet,update(props){const next=checkedProps({["endpoint"]: {type:"str", default: () => ("/api/products")},["writable"]: {type:"bool", default: () => true}},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 export { _nw_d10137633b46a682 as App };

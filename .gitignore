@@ -8,3 +8,7 @@ build/
 editors/vscode/node_modules/
 *.vsix
 compiler/tests/fuzz/
+
+# Optional Nexo Web development tooling
+node_modules/
+dist/

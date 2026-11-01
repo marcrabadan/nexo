@@ -1,4 +1,4 @@
-// Nexo Web M1–M2: direct DOM ownership, typed values and synchronous batches.
+// Nexo Web M1–M5: direct DOM ownership, typed values and synchronous batches.
 function int(value) {
   if (value < -(1n << 63n) || value >= (1n << 63n)) throw new RangeError('Nexo int overflow');
   return value;
@@ -125,10 +125,12 @@ function createRegion(parent, owner) {
 
 function _nw_05804ee1abc73468(target,props={},parentEnv=new Map(),renderSlot=null){
 const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
-const root=document.createElement("div"); root.dataset.nexo="nw-805c40a21d979f3b";
+const root=document.createElement("div"); root.dataset.nexo="nw-6869afce4d80efa9";
 try{
 s["count"]=0n;
-const a_increment=()=>owner.batch(()=>{api.set("count", int(s["count"]+(1n)));});
+const a_increment=()=>owner.batch(()=>{
+api.set("count", int(s["count"]+(1n)));
+});
 const _node1=document.createElement("main");
 root.append(_node1);
 const _node2=document.createElement("h1");
@@ -145,6 +147,7 @@ _node1.append(_node6);
 const _text7=document.createTextNode(""); _node6.append(_text7);
 _text7.data=String(("+"));
 api.listen(_node6,"click",a_increment);
-target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
+target.append(root);
+return {element:root,env,outlet,update(props){const next=checkedProps({},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 export { _nw_05804ee1abc73468 as Counter };

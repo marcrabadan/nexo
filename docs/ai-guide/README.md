@@ -259,7 +259,7 @@ Executed checks, reference token counts and fixture-only results for this change
 are recorded in [validation.md](validation.md). They are local evidence, not a
 claim that the GitHub Actions job or live model comparisons have already run.
 
-## Nexo Web (RFC-0001, experimental M1)
+## Nexo Web (RFC-0001, experimental M1–M5)
 
 `source/nexo-web.md` is a conditional frontend topic, emitted as versioned
 `nexo-web.txt`. Compact syntax carries a discovery pointer; unrelated tasks do
@@ -277,7 +277,7 @@ are explicitly proposed. Frontend topic tokens use the existing pinned tokenizer
 
 ### M2 composition and routing
 
-The same conditional Nexo Web topic now covers experimental M1–M2. Its separate
+M2 added composition and routing to the same conditional Nexo Web topic. Its separate
 versioned `web-examples.json` carries every module/CSS/config file needed by the
 composition project, avoiding unrelated backend examples in targeted retrieval.
 The generator resolves project dependencies with the actual browser loader,
@@ -285,15 +285,46 @@ hashes them and compiles each entry with its source path. It never promotes a
 compile result into a browser pass. Props, slots, fragment routes, layout/context
 ownership and cleanup are tested by `tests/test_web_composition.py`; the existing
 Counter and four profiles remain intact. `docs/web/build.py` builds both live
-demos from canonical Nexo sources. Browser API loading/mutation remains M3 design.
+demos from canonical Nexo sources. M3 API loading/mutation and M4 tools are described below.
 
 
 ### M3 asynchronous typed data
 
-The conditional Web topic covers M1–M3. The `web-data` project carries its local
+M3 extended the conditional Web topic with asynchronous data. The `web-data` project carries its local
 API development server as an explicit support file in versioned web-examples.json;
 compiler dependencies and support sources are hashed by the existing generator.
 The server is loopback-only and does not claim production Shield integration.
 `tests/test_web_data.py` verifies contracts, resource states, transport and real
 browser lifecycle/security behavior. The public M3 demo reads static JSON; local
-server execution verifies writes separately. Future HMR/SSR remain proposed.
+server execution verifies writes separately. M4 adds HMR below; SSR remains proposed.
+
+
+### M4 development tools
+
+Optional pinned Vite tooling is packaged under nexo/web_tools. Its package lock,
+plugin/runner and compiler-checked scaffold participate in the existing guide
+hash. No separate prompt system is introduced. The conditional Web topic teaches
+new/dev/preview, opt-in line maps, browser check/audit/LSP and conservative HMR.
+The existing web-counter example is the actual scaffold source; no duplicate
+application is added to every prompt. Run tests/test_web_tooling.py with both
+NEXO_WEB_REQUIRE_VITE=1 and NEXO_WEB_REQUIRE_BROWSER=1 after npm ci in the tooling
+directory. The browser-only Python LSP preserves the core/Rust server. Source
+audit findings are heuristic, redacted and explicitly do not assess backend auth.
+Shield profile guidance reflects actual bounded backend support, not invented
+browser enforcement. M5 adds production-oriented optimization below; M6 rendering remains deferred.
+
+
+### M5 measured release quality
+
+The conditional Web topic covers release optimization, SRI/manifest verification,
+static accessibility checks, local observations and explicitly bounded production
+examples. The web-production project is compiler-checked and registered with its
+Nginx/Docker/operations support sources. Versioned web-examples/<id>.json now permits
+retrieving only one frontend project; the combined payload remains compatible.
+Measured fixture results are persisted with input/optimizer/method fingerprints,
+not regenerated nondeterministically by docs checks. Regenerate them with
+scripts/web/measure.py --output docs/web/quality-report.json --check, then explicitly
+rebuild the optimized public demo with docs/web/build.py --release. The normal
+--check path verifies current measured/release artifacts without requiring Node.
+Tests/CI cover actual release/browser/axe/container behavior; no production TLS,
+public deployment, full WCAG/ASVS certification or M6 claim is implied.

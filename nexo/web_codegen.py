@@ -1,4 +1,4 @@
-"""Browser semantic analysis and deterministic direct-DOM lowering (M1–M3)."""
+"""Browser semantic analysis and deterministic direct-DOM lowering (M1–M5)."""
 from __future__ import annotations
 
 import json
@@ -266,12 +266,14 @@ def analyze(program):
 
 
 class Emitter:
-    def __init__(self,d):self.d=d;self.lines=[];self.index=0
-    def add(self,text):self.lines.append(text)
+    def __init__(self,d):self.d=d;self.lines=[];self.origins=[];self.index=0;self.line=d.line
+    def add(self,text):
+        self.lines.extend(text.split("\n"));self.origins.extend([(self.d.unit.key,self.line)]*len(text.split("\n")))
     def next(self,prefix):self.index+=1;return f'_{prefix}{self.index}'
     def view(self,nodes,parent,owner='owner',api='api'):
         d=self.d
         for node in nodes:
+            self.line=node.line
             symbols=node.symbols
             if node.tag in ('#if','#for'):
                 region=self.next('region');o=self.next('owner');a=self.next('api');host=self.next('host')
@@ -357,9 +359,16 @@ class Emitter:
             for name in ctx.states:
                 key=f'@{alias}.{name}'
                 self.add(f'owner.link({json.dumps(key)},x[{json.dumps(alias)}],{json.dumps(name)});')
-        for name,js in d.initials.items():self.add(f's[{json.dumps(name)}]={js};')
-        for name,body in d.action_js.items():self.add(f'const a_{name}=()=>owner.batch(()=>{{{" ".join(body)}}});')
+        for name,js in d.initials.items():
+            self.line=d.states[name].line;self.add(f's[{json.dumps(name)}]={js};')
+        for name,body in d.action_js.items():
+            self.line=d.actions[name][0][1]-1
+            self.add(f'const a_{name}=()=>owner.batch(()=>{{')
+            for statement,(_,line) in zip(body,d.actions[name]):
+                self.line=line;self.add(statement)
+            self.add('});')
         for name,req in d.requests.items():
+            self.line=req.line
             invalid='['+','.join('()=>r['+json.dumps(n)+'].reload()' for n in req.invalid)+']'
             self.add(f'r[{json.dumps(name)}]=createResource(dataScope,owner,{json.dumps("$"+name)},()=>{req.spec},{json.dumps(req.kind)},{invalid});')
         for name,req in d.requests.items():
@@ -370,19 +379,26 @@ class Emitter:
             self.add('}catch(e){owner.destroy(); throw e;} }')
         else:
             self.view(d.view,'root')
-            self.add('target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps('+schema(d)+',props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};')
+            if self.observe:self.add('owner.cleanup(()=>nexoObserve("mount",{phase:"disposed"}));')
+            self.add('target.append(root);')
+            if self.observe:self.add('nexoObserve("mount",{phase:"ready"});')
+            self.add('return {element:root,env,outlet,update(props){const next=checkedProps('+schema(d)+',props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};')
             self.add('}catch(e){owner.destroy();root.remove();throw e;} }')
         return '\n'.join(self.lines)
 
 
-def compile_program(program):
+def compile_program(program, mapping=None, observe=False):
     declarations,roots,routes,fallbacks=analyze(program)
     runtime=Path(__file__).with_name('web_runtime.js').read_text()
     has_data=any(d.requests for d in declarations)
-    js=[runtime];css=[]
-    if has_data:js.append(Path(__file__).with_name('web_data.js').read_text())
+    has_router=any(d.public and d.kind=='page' for d in declarations)
+    if observe:runtime+='\n'+Path(__file__).with_name('web_observe.js').read_text()
+    elif has_data or has_router:runtime+='\nfunction nexoObserve(){}\n'
+    js=[runtime];origins=[None]*len(runtime.split("\n"));css=[]
+    if has_data:
+        data=Path(__file__).with_name('web_data.js').read_text();js.append(data);origins.extend([None]*len(data.split('\n')))
     for d in declarations:
-        emitter=Emitter(d);emitter.has_data=has_data;js.append(emitter.emit())
+        emitter=Emitter(d);emitter.has_data=has_data;emitter.observe=observe;js.append(emitter.emit());origins.extend(emitter.origins)
         if d.kind!='context':css.append(F.scoped_css(d.css,d.scope,d.line))
     for d in program.root.declarations.values():
         if d.public and d.kind!='context':js.append(f'export {{ {d.symbol} as {d.name} }};')
@@ -402,4 +418,7 @@ def compile_program(program):
         js.append('export function mountApp(target){return createRouter(target,['+','.join(descriptor(p) for p in routes)+'],{'+','.join(f'{key}:{descriptor(p)}' for key,p in fallbacks.items())+'});}')
         exports=['mountApp']
     else:exports=[d.name for d in roots]
+    if mapping is not None:
+        from .web_maps import source_map
+        mapping.update(source_map(program,origins))
     return '\n'.join(js)+'\n','\n'.join(css),exports

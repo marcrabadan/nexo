@@ -1,0 +1,36 @@
+name: Web production quality
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -e '.[dev]' playwright==1.56.0
+      - run: python -m playwright install --with-deps chromium
+      - run: npm ci --prefix nexo/web_tools
+      - run: npm audit --prefix nexo/web_tools --audit-level=high
+      - name: Source gates
+        run: python -m nexo web audit --security --accessibility --json examples/web/production/app.nexo
+      - name: Release, browser accessibility and deployment
+        env:
+          NEXO_WEB_REQUIRE_BROWSER: "1"
+          NEXO_WEB_REQUIRE_VITE: "1"
+          NEXO_WEB_REQUIRE_DOCKER: "1"
+        run: python -m pytest tests/test_web_production.py -q
+      - name: Measured byte and DOM budgets
+        run: python scripts/web/measure.py --output /tmp/nexo-web-quality.json --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nexo-web-quality
+          path: /tmp/nexo-web-quality.json
+          if-no-files-found: warn

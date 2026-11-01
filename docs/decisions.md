@@ -3163,3 +3163,54 @@ Credentials are same-origin; redirects, arbitrary headers and token storage are
 not exposed. Writes require a server-injected CSRF meta token. Backends still
 must validate origin/token, sessions, permissions and rate limits. No authentication
 or production Shield ingress is inferred. No new production dependency.
+
+**D193. M4 uses optional pinned Vite tooling with conservative HMR.**
+The Python browser compiler remains the source of syntax, types and assets.
+Vite 8.3.5 is an optional locked development dependency, not a production runtime
+or a replacement compiler. A subprocess JSON bridge invokes the installed Python
+interpreter without a shell; Vite owns watching/module transport. No project JS
+config, .env, public directory or arbitrary project file is served. Dev binds
+127.0.0.1 and validates Host/Origin, including WebSocket upgrades. JS changes
+replace the root after destroying its owned listeners, contexts and requests;
+local state resets. CSS-only changes retain the root when JS and mapped line
+positions are unchanged. CSS scope identity excludes style text so stylesheet
+edits do not require changing DOM scope attributes. CSS is an external link,
+keeping CSP free of unsafe-inline/eval. Compilation errors preserve the last
+valid UI and show text diagnostics. New dependencies are found by watching source
+changes under the project root, with node_modules/.git/dist excluded.
+Offline web new scaffolding, local artifact-only preview, explicit source maps
+and a browser source audit complete this bounded tooling slice. JS maps use v3
+line mappings and embedded source; they are opt-in for builds and default in dev.
+Diagnostic locations identify the source statement, not exact expression spans.
+web lsp is an explicit Python frontend server; core/Rust LSP behavior is unchanged.
+It offers diagnostics, local symbols/hover/definitions and canonical completions,
+not frontend formatting, cross-file definitions or unsaved dependency overlays.
+The audit is heuristic and reports backend authorization as Not assessed. It
+references actual Shield memory/bounded-loopback limits rather than inventing
+browser Shield enforcement or persistent production ingress. No API proxy,
+production auth/TLS integration, release optimizer or M5/M6 work is implied.
+
+**D194. M5 ships measured, bounded client-rendered production artifacts.**
+web build --release reuses pinned Vite/Rolldown/Lightning CSS in an empty root,
+with no project config/env/public imports. It minifies and tree-shakes the
+application entry, hashes assets, adds SRI and a deterministic integrity/size
+manifest. Builds stage a complete owned directory before replacement; unrelated
+files and modified manifests fail rather than being removed. Switching back to
+a normal build removes owned release assets/maps. Optional composed line maps
+retain original Nexo identities; map-bearing JS uses a separate source-map prefix
+to avoid immutable-cache/SRI collisions with unmapped builds. This is CSR static
+hosting, not SSR/SSG or a reusable optimized library export target.
+Source accessibility checks are bounded heuristics; actual fixture rendering is
+checked with pinned axe-core in Chromium plus keyboard/focus tests. Performance
+reports separate deterministic byte/DOM budgets from noisy local timing samples;
+CI never enforces a universal latency SLO from shared runners. Versioned measured
+artifacts identify compiler inputs/optimizer. They are not regenerated during
+ordinary documentation checks; stale fingerprints require an explicit remeasure.
+A digest-pinned Nginx example runs non-root/read-only with no capabilities and
+no-new-privileges, static health, privacy-minimized access logs, cache/CSP headers
+and rate controls. Production TLS, auth and backend integration remain operator
+work. Shield's existing profiles are unchanged. --observe opts into allowlisted
+local browser events only; default builds emit none, and no collector/upload,
+raw message/URL/token logging or authoritative client security record is implied.
+Frontend projects gain individually retrievable versioned AI payloads so added
+production context does not inflate every unrelated task. M6 is not started.

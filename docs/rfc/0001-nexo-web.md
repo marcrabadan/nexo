@@ -1,7 +1,7 @@
 # RFC-0001: Nexo Web
 
-Status: M0 accepted design; M1–M3 experimental implementation. Edition: 3.
-The M2 and M3 amendments below are implemented; M4–M6 remain future work.
+Status: M0 accepted design; M1–M5 experimental implementation. Edition: 5.
+M1–M5 are experimental implementations; M6 remains future work.
 
 ## Decision and compatibility
 
@@ -150,12 +150,12 @@ grammar above records the preserved subset, not a separate compiler mode.
 M3 asynchronous typed requests are implemented by the [M3 amendment](#m3).
 It supersedes the original API design sketch; no server HTTP behavior changes.
 
-M4 should evaluate a Vite plugin that invokes the Nexo compiler, then module HMR
-with owner cleanup. Do not build a new bundler before measuring this option.
-Source maps, HMR, `web new/dev/preview/audit`, `--release` optimization, LSP/fmt
-frontend support and automated security/a11y audits are not implemented.
-M5 requires measured performance, supported browsers, deployment/CI gates and
-operational evidence. M6 SSR/hydration/SSG/PWA/WASM interop/subscriptions each need
+M4 uses an optional pinned Vite integration with conservative root HMR,
+line-level JS source maps, diagnostics, source audit and an explicit browser LSP.
+See the [M4 amendment](#m4). M5 adds release optimization below; full security/a11y certification remains
+workload-specific.
+M5 adds release optimization, measured quality gates and a verified static deployment
+example; see the M5 amendment. Broader production qualification remains workload-specific. M6 SSR/hydration/SSG/PWA/WASM interop/subscriptions each need
 separate RFCs; no automatic implementation is authorized here.
 
 ## Security
@@ -197,7 +197,7 @@ message. Exit status is zero on success, one on compile/I/O failure; CLI argumen
 errors use argparse's status two. NW1000: I/O; NW1001: grammar/unsupported feature;
 NW1002: name/type/expression; NW1003: CSS boundary; NW1004: unsafe DOM construct.
 Compile diagnostics carry a fix sentence. Locations refer to the original source
-line for expressions and declarations, without source maps or column spans yet.
+line for expressions and declarations, with M4 statement columns/snippets and opt-in line-level JS source maps.
 These codes are browser-specific; core catalogs/diagnostics remain untouched.
 
 Troubleshooting: use the Python entry point, serve over loopback HTTP instead of
@@ -510,4 +510,257 @@ Validation check exact JSON fields, Content-Type and safe integer range. For
 Timeout adjust bounded timeout and backend latency; explicit Retry is optional.
 Server.py serves session-isolated in-memory products and verifies Host, Origin,
 CSRF and request schema; it deliberately has no production TLS/auth/observability.
-M4 Vite/HMR, source maps, production security audit and M6 SSR remain future work.
+M4 development tools are specified below. Production security certification and M6 SSR remain future work.
+
+
+<a id="m4"></a>
+## M4 amendment — development and security tooling (edition 4)
+
+M4 adds tools without new application syntax. Python remains the only browser
+compiler; Rust/browser support and the existing D175 WASI target are unchanged.
+
+### Canonical development workflow
+
+```sh
+python -m nexo web new my-app
+cd my-app
+npm ci
+python -m nexo web dev app.nexo
+# Open the printed http://127.0.0.1:5173/ URL.
+python -m nexo web check --json app.nexo
+python -m nexo web audit --security --json app.nexo
+python -m nexo web build app.nexo --sourcemap -o dist
+python -m nexo web preview dist
+# Editor server: python -m nexo web lsp
+```
+
+new creates an offline Nexo Counter application, nexo.toml, package.json, exact
+package-lock.json and .gitignore in a new directory; existing destinations are
+never overwritten. npm ci is explicit, never automatically invoked. Node 22.12
+or supported 24+ and pinned Vite 8.3.5 are optional development requirements.
+For repository examples install with `npm ci --prefix nexo/web_tools`, then run
+`python -m nexo web dev examples/web/counter.nexo`. The runner resolves Vite from
+the project's installation, falling back to the installed Nexo tooling directory;
+an incompatible Vite version fails instead of silently selecting a global tool.
+Build/check/audit/LSP/preview do not require Node or Vite. No React/TypeScript DSL
+or new production dependency is introduced.
+
+Available ports: dev defaults 5173, preview 4173; --port accepts 0..65535, with 0
+selecting an ephemeral loopback port. Ports in use fail; no automatic public
+binding or port fallback. SIGINT/SIGTERM close the development listener and owned
+compiler subprocess group on the tested Linux platform. No automatic open-browser,
+remote bind, backend proxy or deployment command is supplied. The M3 full API
+demo continues to use its separate loopback server; Vite preview/dev do not
+invent backend endpoints or CSRF/session metadata.
+
+### HMR and trust boundary
+
+Vite is a development transport and watcher; a compiler-only JSON bridge invokes
+Python without a shell, with a 30-second compilation timeout and bounded stdout.
+Source changes under the project root trigger compilation; imported modules/CSS
+and nexo.toml are included. node_modules/.git/dist are excluded. Changes serialize
+through a short debounce. There is no frontend bundler/compiler implemented in
+Vite and no automatic execution of application server code.
+
+When emitted JS and line mappings are unchanged, CSS updates replace an external
+stylesheet without remounting components. Scope identities depend on Nexo logic
+and declaration identity, excluding style text. Logic edits remount the complete
+root: destroy old routes/providers/effects/listeners/requests before creating the
+new app. Local/context state resets. This conservative module HMR does not claim
+state migration, per-component replacement, request replay or zero lost state.
+Compile failures retain the last good UI and display an accessible text diagnostic;
+a corrected edit clears it. Runtime mount failure displays an error, with cleanup
+performed by the generated ownership boundaries. Initial compilation must succeed
+before the dev listener starts. Manual reload may be required after a server
+restart; CSP can block Vite's optional blob-worker reconnection fallback.
+
+The listener is 127.0.0.1 only. HTTP Host and Origin and WebSocket upgrade origin
+are checked. Vite runs against an empty temporary root with no public directory,
+no project config and no .env loading. Filesystem allowlisting permits only that
+root and Vite's own installed resources. Project source is deliberately available
+through compiler maps, not arbitrary HTTP file paths. There is no CORS or API
+proxy. Development CSP keeps external scripts/styles and an explicit same-origin
+WebSocket endpoint, without unsafe-inline or unsafe-eval. Overlays use text nodes;
+no CSS injection dependency is needed. Loopback is not per-user authentication:
+other local processes can still access the dev site. Dev/preview are not
+production hosting, OS isolation or Shield profiles.
+
+### Maps, diagnostics and editor tools
+
+build --sourcemap adds app.js.map and sourceMappingURL. Without the flag, builds
+emit no map and remove a stale app.js.map in the output directory. Map v3 uses
+project-relative nexo://project names, embedded sourcesContent and line-level
+statement/action/view mappings; runtime/helper code is unmapped. It is deterministic
+across relocated copies of a project. Columns default to the source line start;
+expression-level stepping, CSS maps, minified-bundle composition and mapped runtime
+error diagnostics are not implemented. Maps disclose source: publish them only
+when intended. Vite consumes the same compiler map rather than inventing one.
+
+check --json retains schema_version 1 and adds column, end_column and snippet to
+code/file/line/severity/message. These spans identify a source statement, not a
+precise token range. Imported-module errors refer to the actual dependency.
+NW4001 reports missing/incompatible development tools; NW4002 invalid tooling
+boundaries, paths or ports. CLI argument errors remain status 2.
+
+web lsp is a separate stdio JSON-RPC server reusing the protocol infrastructure.
+Point a frontend editor configuration at `python -m nexo web lsp`; the core
+`nexo lsp` and Rust LSP preserve existing behavior. Browser LSP supports compile
+diagnostics for unsaved entry text, UTF-16 positions, document outline, local
+hover/definition and browser-only keyword/member completions. Saved project
+imports are checked; imported diagnostics carry relatedInformation. Unsaved
+import overlays, cross-file navigation, frontend formatting/code actions and
+automatic file-mode selection are deferred. No misleading core formatter is
+applied to style/view syntax.
+
+### Frontend audit and Shield
+
+web audit --security [--json] file first applies browser syntax/type/capability
+checks, then flags literal credential-like names/arguments/URL queries (NW4101)
+and opt-in cache requiring sensitivity/identity review (NW4102). It returns 1
+for findings and 0 for none. Audit findings redact snippets and never repeat a
+credential value. These are bounded heuristics with false positives/negatives,
+not entropy scanning, dataflow analysis, dependency auditing or a proof that no
+secret exists. The report explicitly marks backend authorization as Not assessed.
+
+The machine-readable boundary report links actual Shield profiles: memory is
+backend in-process dispatch; loopback has at most 8 connections, a 3-second accept
+window and a 6-second hard payload lifetime. Neither is a browser execution
+sandbox or persistent production listener. Use the existing `nexo security`
+workflow separately for supported backend workloads. Browser audit never runs
+backend code, grants permissions or claims end-to-end authorization/CSRF/rate
+validation. ASVS 5.0 browser/session/authorization/validation guidance remains
+relevant; production assessment and deployment are M5 work.
+
+### Validation and remaining scope
+
+`tests/test_web_tooling.py` runs compiler maps/scaffolding/audit/LSP tests and real
+Vite/Chromium HMR and boundary checks. Set NEXO_WEB_REQUIRE_VITE=1 and
+NEXO_WEB_REQUIRE_BROWSER=1 in CI so unavailable tools fail rather than silently
+skip. Existing M1–M3, website and AI Guide checks remain required. The locked
+optional tooling and sources participate in the AI Guide's content hash.
+
+M5 adds release optimization, measured fixture quality and a local deployment example
+below. Accessibility/security certification and production qualification remain unimplemented. M6 advanced rendering requires
+separate RFCs. No SSR, hydration or production-ready claim follows from HMR.
+
+<a id="m5"></a>
+## M5 amendment — release artifacts and measured quality (edition 5)
+
+This experimental milestone qualifies the included fixtures and static deployment
+example, not every possible application or production environment. M6 is unchanged.
+
+### Optimized application builds
+
+```sh
+npm ci --prefix nexo/web_tools
+python -m nexo web audit --security --accessibility --json examples/web/production/app.nexo
+python -m nexo web build examples/web/production/app.nexo --release -o dist
+python -m nexo web preview dist
+```
+
+--release uses the same optional pinned Vite 8.3.5 toolchain with Rolldown and
+Lightning CSS. Node 22.12/24+ is required for release/dev; ordinary build, check,
+audit, LSP and preview remain Node-free. No project config, env or public directory
+is loaded. The compiled application entry is minified/tree-shaken; CSS is minified
+with native @scope preserved. HTML references hashed assets using relative URLs
+and SHA-384 SRI. This is client rendering on static hosting, not SSG/SSR, and the
+optimized entry is an application bundle rather than reusable library exports.
+The existing WASI build --target web and Rust/compiler behavior are unchanged.
+
+nexo-manifest.json schema_version 1 records format=nexo-web-release, entry,
+compiler/Vite versions, source-map/observation flags, compiler-input/optimizer
+fingerprints and per-file SHA-256/SHA-384 integrity, UTF-8 size and estimated gzip
+size (mtime=0). It excludes timestamps and absolute build locations. Assets are
+deterministic for a fixed compiler/toolchain across relocated project copies.
+This manifest detects modification/staleness, not an authenticated signature or
+proof that the build machine/dependencies are trustworthy.
+
+Build into a dedicated directory. A complete staging directory is prepared before
+replacing an existing owned build; unrelated files, symlink outputs or modified
+release manifests fail closed. Rebuilding release drops old owned assets/maps;
+switching to an ordinary build also removes the old release tree/manifest. A
+failed optimization leaves prior output intact. Deployment must retain previous
+hashed assets during a rolling switch or roll back the complete build/image;
+local replacement is not an atomic multi-file CDN deployment protocol.
+
+--sourcemap composes original Nexo line mappings through optimization and embeds
+sourcesContent. Source identity is retained through Vite normalization, and mapped
+entry filenames have a separate fingerprint prefix to prevent immutable-cache/SRI
+collisions with unmapped assets. Runtime helpers remain partially/unmapped. Maps
+disclose source and are opt-in; no CSS maps or expression-level stepping is implied.
+Preview validates the manifest and serves only its listed assets on loopback.
+NW5001 identifies optimizer/output/manifest failures; tooling availability retains
+NW4001. Argument errors still return status 2.
+
+### Accessibility and quality gates
+
+web audit --accessibility [--security] [--json] file uses the compiler's semantic
+model to flag missing statically available control names (NW5101), positive
+tabindex (NW5102) and aria-hidden interactive controls (NW5103). Labels can use
+text, aria_label, associated label/for, or aria_labelledby. Dynamic/component
+output cannot be proven by these bounded checks. Findings return 1, none 0;
+absence is never a WCAG certification. Contrast, rendered IDs, focus order,
+conditional states and assistive technology still require browser/manual review.
+
+Pinned axe-core 4.14.0 is a development/test tool only. Tests load it as a same-origin
+external script while CSP stays enabled. The production example is checked under
+WCAG 2 A/AA, 2.1 AA, 2.2 AA and best-practice tags, plus explicit keyboard/status/
+focus/scoped-style tests. Scan scope and incomplete results are recorded rather
+than claiming all states/devices are covered. The shipped site/app does not load axe.
+
+```sh
+python scripts/web/measure.py --output docs/web/quality-report.json --check
+python docs/web/build.py --release
+python docs/web/build.py --check
+```
+
+The measurement script builds development/release fixtures, records raw/per-file
+gzip sizes, and runs a Counter in Chromium with one warmup and five fresh-context
+samples per mode. It measures NavigationTiming DCL, synchronous 100-click duration,
+request counts, text mutations and node identity. HTTP is loopback/uncompressed;
+OS cache and shared-host load are uncontrolled, with no added CPU throttling.
+Timing is local observational evidence, not a universal SLO or framework comparison.
+Versioned byte/DOM/axe budgets in docs/web/quality/budgets.json fail CI; no timing
+threshold is imposed on shared runners. Published reports retain input/optimizer/
+measurement fingerprints; ordinary docs checks validate freshness without silently
+rerunning nondeterministic timings. Explicit remeasurement is required after drift.
+
+The Web production quality workflow installs locked tools, enforces source audits,
+runs real release/browser/accessibility/container tests, evaluates budgets and
+uploads a machine-readable report. A local pass does not claim a GitHub Actions
+run or required branch protection has been configured remotely.
+
+### Deployment and operations
+
+examples/web/production supplies Nexo source, digest-pinned Dockerfile, Nginx
+config and instructions. The tested static container runs UID 101, read-only root,
+no capabilities/no-new-privileges and writable bounded tmpfs. Headers include CSP,
+nosniff, referrer/permissions policy and HTML-no-cache/hashed-asset-immutable cache
+rules plus gzip/Vary negotiation. It rejects dotfiles and writes, applies a sample rate limit, and exposes
+/healthz for static-server liveness. JSON access logs contain only status, bytes,
+duration and method; critical native diagnostics still need protected/redacted
+retention. This is not a backend health/business-flow probe or production load test.
+
+The internal listener is HTTP on 8080. Production needs a trusted TLS edge,
+HTTPS redirects/HSTS, image/dependency scanning/updates, application-specific SLOs,
+log retention, rollback tests and a separately verified backend for APIs, sessions,
+CSRF and resource permissions. No cloud deployment or end-to-end TLS qualification
+is claimed. Static sites usually do not justify Kubernetes; choose topology from
+budget/reliability/service needs. Shield profiles remain backend-only and bounded;
+they are not promoted to persistent production ingress by this example.
+
+### Optional local observation
+
+build --observe (ordinary or release) opts into `nexo:web` CustomEvents on the
+browser global. Default builds emit none. The fixed detail allowlist is:
+schema_version=1; kind=mount/request/navigation; phase=started/loading/ready/error/
+cancelled/disposed; request operation=load/mutation; sanitized error code/status;
+rounded finite duration_ms when available. Unknown codes become Unknown. No URLs,
+route params, component/user names, payloads, messages, stack traces or tokens are
+included. There is no external destination, network upload, persistence or global
+unhandled-error capture. Consumers own their listener lifecycle and must explicitly
+add any authorized monitoring integration. Client events can be forged and are
+not security/billing evidence. Monitoring failures cannot change application flow.
+
+M5 measured evidence and remaining limits are in docs/web/validation-m5.md.
+M6 SSR/hydration/SSG/PWA/WASM interoperability/realtime still require separate RFCs.

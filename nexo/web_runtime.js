@@ -1,4 +1,4 @@
-// Nexo Web M1–M2: direct DOM ownership, typed values and synchronous batches.
+// Nexo Web M1–M5: direct DOM ownership, typed values and synchronous batches.
 function int(value) {
   if (value < -(1n << 63n) || value >= (1n << 63n)) throw new RangeError('Nexo int overflow');
   return value;
