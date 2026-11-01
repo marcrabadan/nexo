@@ -11,15 +11,20 @@ permissions:
 
 jobs:
   security:
-    name: security (${{ matrix.suite }})
+    name: security (${{ matrix.suite }}, shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # The full Python suite alone took 43 minutes on a hosted runner.
-    # Give each gate its own budget rather than sharing it with later gates.
+    # Isolated runners avoid shared ports/files between Python shards.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        suite: [python, conformance, differential]
+        include:
+          - {suite: python, shard: 0}
+          - {suite: python, shard: 1}
+          - {suite: python, shard: 2}
+          - {suite: python, shard: 3}
+          - {suite: conformance, shard: 0}
+          - {suite: differential, shard: 0}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,12 +40,12 @@ jobs:
         working-directory: compiler
         run: |
           cargo build --locked
-          if [ "${{ matrix.suite }}" = python ]; then
+          if [ "${{ matrix.suite }}" = python ] && [ "${{ matrix.shard }}" = 0 ]; then
             cargo test --locked
           fi
       - name: Full Python suite in both backends
         if: matrix.suite == 'python'
-        run: python -m pytest -v --durations=30 -o faulthandler_timeout=300
+        run: python scripts/ci/pytest_shard.py ${{ matrix.shard }} 4 -v --durations=30 -o faulthandler_timeout=300
       - name: Compiler conformance
         if: matrix.suite == 'conformance'
         run: python -u compiler/scripts/conformance.py
