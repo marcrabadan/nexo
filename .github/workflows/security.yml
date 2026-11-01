@@ -11,8 +11,15 @@ permissions:
 
 jobs:
   security:
+    name: security (${{ matrix.suite }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The full Python suite alone took 43 minutes on a hosted runner.
+    # Give each gate its own budget rather than sharing it with later gates.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [python, conformance, differential]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,13 +35,18 @@ jobs:
         working-directory: compiler
         run: |
           cargo build --locked
-          cargo test --locked
+          if [ "${{ matrix.suite }}" = python ]; then
+            cargo test --locked
+          fi
       - name: Full Python suite in both backends
-        run: python -m pytest -q
+        if: matrix.suite == 'python'
+        run: python -m pytest -v --durations=30 -o faulthandler_timeout=300
       - name: Compiler conformance
-        run: python compiler/scripts/conformance.py
+        if: matrix.suite == 'conformance'
+        run: python -u compiler/scripts/conformance.py
       - name: Interpreter/compiler differential checks
-        run: python compiler/scripts/differential.py
+        if: matrix.suite == 'differential'
+        run: python -u compiler/scripts/differential.py
 
   docker:
     runs-on: ubuntu-24.04
