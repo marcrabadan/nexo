@@ -286,3 +286,14 @@ compile result into a browser pass. Props, slots, fragment routes, layout/contex
 ownership and cleanup are tested by `tests/test_web_composition.py`; the existing
 Counter and four profiles remain intact. `docs/web/build.py` builds both live
 demos from canonical Nexo sources. Browser API loading/mutation remains M3 design.
+
+
+### M3 asynchronous typed data
+
+The conditional Web topic covers M1–M3. The `web-data` project carries its local
+API development server as an explicit support file in versioned web-examples.json;
+compiler dependencies and support sources are hashed by the existing generator.
+The server is loopback-only and does not claim production Shield integration.
+`tests/test_web_data.py` verifies contracts, resource states, transport and real
+browser lifecycle/security behavior. The public M3 demo reads static JSON; local
+server execution verifies writes separately. Future HMR/SSR remain proposed.

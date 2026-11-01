@@ -1,0 +1,86 @@
+{
+  "examples": [
+    {
+      "associated_tests": [
+        "tests/test_web_frontend.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/counter.nexo",
+      "entry_file": "counter.nexo",
+      "files": {},
+      "id": "web-counter",
+      "path": "examples/web/counter.nexo",
+      "purpose": "Independent reactive Counter components with scoped CSS",
+      "scope": "Experimental Python browser compiler M1. Build verification is separate from real-browser tests; a skipped browser test is not a pass.",
+      "source": "use nexo.web\n\npub component Counter:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n\n    view:\n        main:\n            h1(\"Nexo Web\")\n            p(\"Count: {count}\")\n            button(\"+\", on_click: increment)\n\n    style:\n        main {\n            padding: 24px;\n        }\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "8a1d202bdafc1d4701aab0cf8e121e426233745f5180e1503d43d313e1ecbc15",
+        "exports": [
+          "Counter"
+        ],
+        "javascript_sha256": "5bf622d4a12cc8798bb3ba66284eae4f8931f302ef0320d43c212bac339149c5",
+        "source_sha256": "d3425db45e931139fdc14533465ade634a3662404b83d379dab738f3d749823f"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_composition.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/composition/app.nexo",
+      "entry_file": "app.nexo",
+      "files": {
+        "nexo.toml": "[project]\nname = \"nexo-web-composition\"\nversion = \"0.0.1\"\n",
+        "session.nexo": "use nexo.web\n\npub context Visits:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n",
+        "ui/card.css": ".card {\n    padding: 16px;\n    border: 1px solid currentColor;\n    border-radius: 12px;\n}\n@media (min-width: 600px) {\n    .card { padding: 24px; }\n}\n",
+        "ui/widgets.nexo": "use nexo.web\n\npub component Card(heading: str):\n    view:\n        article(class: \"card\"):\n            h2(heading)\n            slot()\n\n    style:\n        @import \"./card.css\";\n\npub component Counter(label: str, start: int = 0):\n    state count: int = start\n\n    fn increment():\n        count += 1\n\n    view:\n        section:\n            p(\"{label}: {count}\")\n            button(\"Local +\", on_click: increment)\n"
+      },
+      "id": "web-composition",
+      "path": "examples/web/composition/app.nexo",
+      "purpose": "Typed component imports, lexical slots, persistent nested layouts, typed fragment routes and owner-scoped context",
+      "scope": "Experimental Python browser compiler M2; all project files required. Compilation evidence is separate from mandatory real-browser tests.",
+      "source": "use nexo.web\nuse session\nuse ui.widgets\n\npub layout Shell:\n    provide session.Visits\n    visits = inject(session.Visits)\n    state opens: int = 0\n\n    fn open():\n        opens += 1\n\n    view:\n        header:\n            h1(\"Nexo Web M2\")\n            p(\"Shared visits: {visits.count}; layout clicks: {opens}\")\n            button(\"Layout +\", on_click: open)\n            nav:\n                a(\"Home\", href: \"/\")\n                a(\"User 7\", href: \"/users/7\")\n        slot()\n\npub layout Details:\n    layout = Shell\n    state opens: int = 0\n\n    fn open():\n        opens += 1\n\n    view:\n        section:\n            h2(\"Persistent nested layout\")\n            p(\"Nested layout clicks: {opens}\")\n            button(\"Nested +\", on_click: open)\n            slot()\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Nexo Web — Home\"\n    description = \"A compiled Nexo component, layout and context example.\"\n    visits = inject(session.Visits)\n    state label: str = \"Local count\"\n\n    fn rename():\n        label = \"Updated count\"\n\n    view:\n        main:\n            widgets.Card(heading: label):\n                p(\"Shared in slot: {visits.count}\")\n                button(\"Shared +\", on_click: visits.increment)\n                button(\"Rename\", on_click: rename)\n                widgets.Counter(label: label)\n\npub page User(id: int):\n    path = \"/users/{id}\"\n    layout = Details\n    title = \"Nexo Web — User {id}\"\n    visits = inject(session.Visits)\n\n    view:\n        main:\n            h2(\"User {id}\")\n            p(\"Shared on another page: {visits.count}\")\n            button(\"Shared +\", on_click: visits.increment)\n\npub page NotFound:\n    not_found = true\n    layout = Shell\n    title = \"Nexo Web — Not found\"\n\n    view:\n        main:\n            h2(\"Page not found\")\n            a(\"Return home\", href: \"/\")\n\npub page Failure:\n    error = true\n    title = \"Nexo Web — Error\"\n\n    view:\n        main:\n            h2(\"Unable to render this page\")\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "882737dc12cb4ba59496985b7bc0476dcd1e9c836613a98f86e59d732276e934",
+        "exports": [
+          "mountApp"
+        ],
+        "javascript_sha256": "d94fd0fa7b3b8e1f5e2997590dc60cf3c27157be2c4b41e9a58909410bd22c8f",
+        "source_sha256": "353c07372c953fee5aa0e3235f10a0136a99f1d473772ce9b412d740832da18e"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_data.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/data/app.nexo",
+      "entry_file": "app.nexo",
+      "files": {
+        "nexo.toml": "[project]\nname = \"nexo-web-data\"\n",
+        "server.py": "\"\"\"Loopback-only M3 development API. Not a production server or Shield profile.\n\nBuild app.nexo to dist, then: python examples/web/data/server.py --directory dist\n\"\"\"\nimport argparse\nfrom http.cookies import SimpleCookie\nfrom http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer\nimport json\nfrom pathlib import Path\nimport secrets\nimport threading\n\n\ndef create_server(directory, port=8765):\n    sessions={};lock=threading.Lock()\n    class Handler(SimpleHTTPRequestHandler):\n        def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(directory),**kwargs)\n        def session(self):\n            cookie=SimpleCookie()\n            try:cookie.load(self.headers.get('Cookie',''))\n            except Exception:pass\n            key=cookie['nexo_demo'].value if 'nexo_demo' in cookie else ''\n            with lock:\n                if key not in sessions:\n                    if len(sessions)>=100:return None,None,False\n                    key=secrets.token_urlsafe(24)\n                    sessions[key]={'csrf':secrets.token_urlsafe(24),'products':[{'id':1,'name':'Nexo guide'}]}\n                    return key,sessions[key],True\n                return key,sessions[key],False\n        def reply(self,value,status=200):\n            body=json.dumps(value).encode();self.send_response(status)\n            self.send_header('Content-Type','application/json');self.send_header('Cache-Control','no-store')\n            self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Length',str(len(body)))\n            self.end_headers();self.wfile.write(body)\n        def trusted_host(self):\n            return self.headers.get('Host') in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}')\n        def do_GET(self):\n            if not self.trusted_host():return self.reply({'error':'Host denied'},403)\n            if self.path not in ('/','/index.html','/api/products'):return super().do_GET()\n            key,session,new=self.session()\n            if session is None:return self.reply({'error':'Restart demo: session limit reached'},503)\n            if self.path=='/api/products':\n                if new:return self.reply({'error':'Open the application first'},403)\n                with lock:products=list(session['products'])\n                return self.reply(products)\n            body=(directory/'index.html').read_text().replace('<title>','<meta name=\"nexo-csrf-token\" content=\"'+session['csrf']+'\"><title>').encode()\n            self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8')\n            self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')\n            if new:self.send_header('Set-Cookie',f'nexo_demo={key}; HttpOnly; SameSite=Strict; Path=/')\n            self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)\n        def do_POST(self):\n            if not self.trusted_host() or self.path!='/api/products':return self.reply({'error':'Denied'},403)\n            key,session,new=self.session()\n            origin='http://'+self.headers.get('Host','')\n            if session is None or new or self.headers.get('Origin')!=origin or not secrets.compare_digest(self.headers.get('X-CSRF-Token',''),session['csrf']):return self.reply({'error':'CSRF denied'},403)\n            if self.headers.get('Content-Type')!='application/json':return self.reply({'error':'JSON required'},415)\n            try:\n                length=int(self.headers.get('Content-Length','0'))\n                if not 0<length<=65536:return self.reply({'error':'Body too large'},413)\n                value=json.loads(self.rfile.read(length))\n                if not isinstance(value,dict) or set(value)!={'name'} or not isinstance(value['name'],str) or not 1<=len(value['name'])<=100:return self.reply({'error':'Invalid product'},422)\n            except (ValueError,UnicodeError):return self.reply({'error':'Invalid JSON'},400)\n            with lock:\n                if len(session['products'])>=100:return self.reply({'error':'Demo product limit'},429)\n                product={'id':len(session['products'])+1,'name':value['name']};session['products'].append(product)\n            self.reply(product,201)\n    return ThreadingHTTPServer(('127.0.0.1',port),Handler)\n\n\ndef serve(directory,port=8765):\n    server=create_server(directory,port)\n    print(f'Local development only: http://127.0.0.1:{server.server_port}/',flush=True)\n    try:server.serve_forever()\n    finally:server.server_close()\n\n\nif __name__=='__main__':\n    parser=argparse.ArgumentParser(description=__doc__)\n    parser.add_argument('--directory',type=Path,default=Path('dist'))\n    parser.add_argument('--port',type=int,default=8765)\n    args=parser.parse_args();serve(args.directory.resolve(),args.port)\n"
+      },
+      "id": "web-data",
+      "path": "examples/web/data/app.nexo",
+      "purpose": "Typed async GET, explicit CSRF-protected mutation, loading/error rendering, immutable snapshot lists and invalidation",
+      "scope": "Experimental Python browser M3. Build app.nexo then run examples/web/data/server.py --directory dist for a local API. Static public demo is read-only. Compilation does not establish browser execution.",
+      "source": "use nexo.web\n\npub type Product:\n    id: int\n    name: str\n\npub type NewProduct:\n    name: str\n\npub component App(endpoint: str = \"/api/products\", writable: bool = true):\n    load products = api.get(\n        endpoint,\n        as: list[Product],\n        timeout_ms: 5000,\n        retries: 1,\n        cache_ms: 1000\n    )\n\n    mutation create = api.post(\n        endpoint,\n        body: NewProduct(name: \"Nexo handbook\"),\n        as: Product,\n        invalidate: [products]\n    )\n\n    view:\n        main:\n            h1(\"Nexo Web — typed data\")\n            if products.loading:\n                p(\"Loading...\", role: \"status\")\n            elif products.error != none:\n                p(\"{products.error.kind}: {products.error.message}\", role: \"alert\")\n                button(\"Retry\", on_click: products.reload)\n            elif products.ready:\n                ul:\n                    for product in products.data:\n                        li(product.name)\n            button(\"Reload\", on_click: products.reload)\n            button(\"Cancel read\", on_click: products.cancel)\n            button(\"Create product\", on_click: create.run, disabled: not writable or create.loading)\n            if create.loading:\n                p(\"Saving...\", role: \"status\")\n            elif create.error != none:\n                p(\"{create.error.kind}: {create.error.message}\", role: \"alert\")\n            elif create.success:\n                p(\"Created: {create.data.name}\", role: \"status\")\n\n    style:\n        main { max-width: 48rem; margin: 2rem auto; padding: 1rem; font-family: system-ui; }\n        button { margin: 0.25rem; padding: 0.5rem; }\n        button:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }\n",
+      "support_files": [
+        "examples/web/data/server.py"
+      ],
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "6fda9d9663146f39b21ff94bd0a416a55d41252f873745e63ed01e61451e5f5d",
+        "exports": [
+          "App"
+        ],
+        "javascript_sha256": "bffa885cebceb6f3b6c53e2c8a4353f7e0594adf74e11613f5dd5952aedbae1f",
+        "source_sha256": "f254f984bbb8bf7498748af498fe525235c8bc970aa8cce748e4a5179606ee53"
+      }
+    }
+  ],
+  "revision": "ddc039de936d902a97d781815595c660542ee992899d01659ba3d777962d0241",
+  "schema_version": 1
+}

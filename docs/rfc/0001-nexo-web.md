@@ -1,7 +1,7 @@
 # RFC-0001: Nexo Web
 
-Status: M0 accepted design; M1–M2 experimental implementation. Edition: 2.
-The M2 amendment below is implemented; M3–M6 remain future work.
+Status: M0 accepted design; M1–M3 experimental implementation. Edition: 3.
+The M2 and M3 amendments below are implemented; M4–M6 remain future work.
 
 ## Decision and compatibility
 
@@ -41,8 +41,8 @@ No independently importable `view` fragments are introduced.
 | Routable screen | `page Name:` with `path` | M2 (amendment) |
 | Shared structure | `layout Name:` and `slot()` | M2 (amendment) |
 | Shared state | `context Name:`, `provide`, `inject()` | M2 (amendment) |
-| Reactive read | `load result = api.get(...)` | Proposed M3 |
-| Explicit write | `mutation` with `api.post/put/patch/delete` | Proposed M3 |
+| Reactive read | `load result = api.get(...)` | Experimental M3 |
+| Explicit write | `mutation` with `api.post/put/patch/delete` | Experimental M3 |
 
 Future vocabulary is reserved by this RFC, **not accepted by the M1 compiler**.
 Properties, module imports, conditionals, keyed lists, routing and composition
@@ -147,17 +147,8 @@ implemented by the [M2 amendment](#m2). Its concrete grammar, lifecycle, routing
 security limits and tests supersede the original M2 design-only roadmap. The M1
 grammar above records the preserved subset, not a separate compiler mode.
 
-M3 APIs will use async fetch, never the synchronous server `http` implementation.
-`load` owns reads; `mutation` owns user-triggered writes. Typed request and
-response contracts validate both boundaries. Reads expose loading/ready/error,
-validated data and reload; mutations expose loading/success/error. A request has
-explicit timeout/cancellation, bounded retries for approved idempotent operations,
-deduplication by canonical request identity, opt-in cache and explicit mutation
-invalidation. Owner destruction aborts requests; stale completions cannot update
-newer owners. Default credentials are same-origin; cookies, CSRF tokens, cache
-partitioning and permissions must never leak between identities. The detailed
-grammar and state transitions require an M3 design review; these APIs do not run
-in M1.
+M3 asynchronous typed requests are implemented by the [M3 amendment](#m3).
+It supersedes the original API design sketch; no server HTTP behavior changes.
 
 M4 should evaluate a Vite plugin that invokes the Nexo compiler, then module HMR
 with owner cleanup. Do not build a new bundler before measuring this option.
@@ -356,7 +347,167 @@ sentences. CLI commands remain web check [--json] and web build [-o directory].
 A routed build auto-starts mountApp; a component-only build mounts its first
 public component. Run tests/test_web_frontend.py and tests/test_web_composition.py.
 
-M3 APIs/load/mutation, records/lists/conditional rendering, Vite/HMR, source maps,
+In the historical M2 subset, APIs/load/mutation and records/lists/conditions were
+not yet supported; the M3 amendment below implements them. Vite/HMR, source maps,
 SSR/hydration/SSG, package imports and production certification remain outside
 this amendment. It supersedes the corresponding M2 design-only statements above;
 the M1 subset and historical roadmap remain recorded for provenance.
+
+
+<a id="m3"></a>
+## M3 amendment — asynchronous typed data (edition 3)
+
+This experimental Python browser implementation extends M1–M2. There is no Rust
+browser driver. D175 WASI and the synchronous server HTTP library are unchanged.
+
+### Grammar and types
+
+```nexo
+use nexo.web
+
+type Product:
+    id: int
+    name: str
+
+type NewProduct:
+    name: str
+
+pub component Products:
+    load products = api.get("/api/products", as: list[Product])
+    mutation create = api.post(
+        "/api/products",
+        body: NewProduct(name: "Guide"),
+        as: Product,
+        invalidate: [products]
+    )
+    view:
+        main:
+            if products.loading:
+                p("Loading...", role: "status")
+            elif products.error != none:
+                p(products.error.message, role: "alert")
+                button("Retry", on_click: products.reload)
+            elif products.ready:
+                for product in products.data:
+                    p(product.name)
+            button("Create", on_click: create.run, disabled: create.loading)
+```
+
+Contracts use existing `type` field syntax and `pub`/qualified project imports.
+Allowed types: int, str, bool, nonempty field-only records and nested lists of
+these. No defaults, annotations, methods, recursion, union/optional/float types,
+unknown or missing fields. Record constructors require every named field exactly
+once; list literals are nonempty and homogeneous. JSON contracts are immutable
+snapshots, not local writable state or new component property types. Runtime
+validation checks both body and response recursively (maximum depth 32, maximum
+10,000 items per list). JSON wire integers must be exact safe integers within
+±9,007,199,254,740,991 and become Nexo BigInt internally. Larger wire integers are
+rejected rather than rounded; represent identifiers outside this range as str.
+Only JSON media types and UTF-8 are accepted; empty/204/non-JSON responses are
+validation failures. Response errors never expose raw backend bodies.
+
+```text
+load name = api.get(url: str, as: T,
+    timeout_ms: int-literal = 10000, retries: int-literal = 0,
+    cache_ms: int-literal = 0, dedupe: bool-literal = true)
+mutation name = api.post|put|patch(url: str, body: TypedValue, as: T,
+    timeout_ms: int-literal = 10000, invalidate: [localLoadNames] = [])
+mutation name = api.delete(url: str, as: T, body: TypedValue (optional),
+    timeout_ms: int-literal = 10000, invalidate: [localLoadNames] = [])
+```
+
+The URL is one positional argument; options are named and unique. Requests are
+UI members, not context members or general await expressions. timeout_ms is
+1..120000, retries 0..3 and cache_ms 0..60000. GET has no body. Mutation retry/cache
+must stay zero; disabling deduplication is a GET option. Only GET coalesces calls.
+Mutation `body` may be a scalar, immutable list or record constructor with matching
+static types. Context fields, local state and props can supply URL/body values;
+requests cannot depend on other request results. GET reacts to changes in its
+scalar URL inputs; mutation inputs are evaluated once when explicitly run.
+
+### Resource states, errors and rendering
+
+Reads start on mount; mutations start idle. Both expose loading, ready, success,
+error and data. Start clears old data/error and sets loading. Success sets ready,
+validated data, loading=false, error=none; only a mutation sets success=true.
+Failure/cancel clears data/ready/success and sets a typed error. No stale-data
+rendering is implied. Read data only under `if/elif resource.ready:`; mutation
+`success` also narrows data. Error message/kind/status are available after
+`if/elif resource.error != none:`. Compound conditions do not narrow yet.
+
+Error fields: kind:str, message:str, status:int (0 except HTTP errors).
+Kinds: Http, Network, Timeout, Cancelled, Validation, Limit, Security. Runtime
+resource errors are explicit values to render/retry, not thrown into page error
+boundaries. They do not introduce implicit `?` propagation or change core T!.
+`load.reload()` bypasses cache, `load.cancel()` cancels that consumer;
+`mutation.run()` explicitly starts a write, `mutation.cancel()` cancels it.
+Use method references directly as event handlers or zero-argument calls inside
+an action. Repeated mutation.run during an active write is ignored. Cancelling a
+write cannot undo a server commit and does not automatically invalidate reads.
+
+Views now accept if/elif/else and `for item in typedList:`. Conditions require
+bool; scalar equality/order and bool and/or/not are supported. Each branch/list
+snapshot owns descendant state, subscriptions/listeners and requests. Changing
+branch or replacing a list destroys those owners before rendering replacements.
+Items are immutable and loop bindings cannot shadow existing names. There is no
+keyed diff: replacing a list resets descendant local state. Structural updates
+settle parent owners before descendant effects, preventing reads of invalidated
+data. Slot content retains its caller's narrowed/item bindings and receiver
+lifetime. Regions use comment anchors and document fragments, preserving semantic ul/li
+parentage without extra wrapper elements. Inspect application accessibility.
+
+### Transport, ownership and security
+
+fetch is asynchronous. Timeout covers retries and streaming body reads. GET
+retries opt in to bounded 100/200/400 ms delays, only on network, 429 and 5xx;
+validation/security/other 4xx and writes do not retry. Streaming response maximum
+is 1 MiB; serialized request maximum 64 KiB. No progress/upload/binary/streaming
+API, user headers, cross-origin access or redirects are exposed.
+
+Each mounted logical application root owns a request scope inherited by its
+components/slots/layout descendants. Deduplication keys include canonical URL,
+response schema and transport options; each consumer holds an independent lease.
+Last-consumer release aborts fetch. Generation tokens block completions after
+reload/cancel/destruction. Root destruction clears cache and subscriptions.
+Opt-in memory cache is bounded to 64 entries, TTL <=60 seconds; reload bypasses
+it. It is never process-global, browser persistent or shared across root mounts.
+Mutation success clears the root cache, advances its epoch and reloads only the
+explicitly named local reads. The epoch prevents coalescing with pre-mutation
+requests. Other already-rendered resources are not implicitly reloaded. Change
+user/session by destroying and remounting the root; no login/logout API or token
+storage is implemented.
+
+Only same-origin absolute paths are accepted, including queries; no fragment,
+backslash, control/space or protocol-relative URL. Production fetch requires
+HTTPS; plain HTTP is permitted on localhost/127.0.0.1/::1. Credentials are fixed
+to same-origin, HTTP cache disabled, redirect:error, referrerPolicy:same-origin.
+Generated CSP adds connect-src 'self'. Writes require a server-injected
+`<meta name="nexo-csrf-token" content="...">`, sent as X-CSRF-Token. The compiler
+never generates a secret/token. A backend must verify token AND Origin, enforce
+authentication/resource authorization, secure HttpOnly/SameSite cookies (Secure
+in production), validate input and apply rate controls. CSRF and client validation
+are layers, not proof of server authorization. A missing token fails before
+network. Keep cache TTL zero for sensitive data and remount on identity change.
+
+This aligns with relevant OWASP ASVS 5.0 areas for validation, browser security,
+session management, access control and secure communications; it is not an ASVS
+certification. Shield's bounded loopback ingress is not promoted to a persistent
+production server. The bundled Python API is loopback development only.
+
+### Commands, diagnostics and verification
+
+```sh
+python -m nexo web check --json examples/web/data/app.nexo
+python -m nexo web build examples/web/data/app.nexo -o dist
+python examples/web/data/server.py --directory dist
+python -m pytest tests/test_web_data.py
+```
+
+NW3001: JSON contracts/fields; NW3002: resource declaration/options/readiness;
+NW3003: API origin/URL boundary. Runtime failures appear through resource.error.
+For a Security error check same-origin URL, HTTPS and server CSRF metadata. For
+Validation check exact JSON fields, Content-Type and safe integer range. For
+Timeout adjust bounded timeout and backend latency; explicit Retry is optional.
+Server.py serves session-isolated in-memory products and verifies Host, Origin,
+CSRF and request schema; it deliberately has no production TLS/auth/observability.
+M4 Vite/HMR, source maps, production security audit and M6 SSR remain future work.

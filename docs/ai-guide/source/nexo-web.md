@@ -1,4 +1,4 @@
-# Nexo Web — RFC-0001 / M1–M2 experimental
+# Nexo Web — RFC-0001 / M1–M3 experimental
 
 For browser UI, use the Python CLI: `python -m nexo web check --json app.nexo`;
 `python -m nexo web build app.nexo -o dist`; serve dist over local HTTP.
@@ -11,7 +11,7 @@ UI/context names, no core reserved words as local names. Expressions: scalar
 literals/reads/interpolation, checked int + - *, unary minus, str +, bool not.
 Int64 uses BigInt; overflow throws without rolling back earlier assignments.
 Events on_click/on_input/on_change name a local or injected context action.
-No event payload, two-way input, conditionals or keyed lists yet.
+No event payload or two-way input. M3 adds conditions and snapshot lists; no keyed reconciliation.
 
 ## M2 canonical composition
 
@@ -61,6 +61,55 @@ inside style is expanded and scoped; imports stay inside the project root and
 cycles are rejected. No remote resources (url/image-set/image/src), global
 at-rules, escapes or minifier. Native @scope browser support is required.
 
+## M3 typed data
+
+Declare field-only `type Product:` records with required int/str/bool, nested
+record/list fields; export with pub and import through existing project modules.
+No optional/union/float/default/recursive contracts. JSON fields match exactly;
+wire int range is ±9007199254740991 (BigInt internally). Use str for larger IDs.
+
+`load products = api.get("/api/products", as: list[Product])` starts on mount and
+reacts to its scalar URL inputs. `mutation create = api.post("/api/products",
+body: NewProduct(name: title), as: Product, invalidate: [products])` runs only
+through create.run (event reference) or create.run() in an action. PUT/PATCH use
+the same typed body; DELETE body is optional. No general await or server http.
+
+Read products.data only in `if/elif products.ready:`. Render loading with
+role: "status"; after `elif products.error != none:` read error.kind/message/status
+and offer products.reload. Mutations expose loading/success/error; success also
+narrows data. `if/elif/else` conditions require bool; `for product in products.data:`
+iterates an immutable snapshot. Replacing a list destroys child state/listeners;
+no keyed diff. Conditions and regions preserve semantic DOM parentage. Compound
+conditions do not narrow data. Keep request error handling explicit; core T! and
+page error boundaries do not catch these resource values.
+
+Options: timeout_ms 1..120000 (default 10000), GET retries 0..3 (default 0),
+GET cache_ms 0..60000 (default 0), GET dedupe bool (default true). Bounds are
+literals. GET retries network/429/5xx with bounded delays, never validation/4xx.
+Writes never retry/cache; repeated run during a write is ignored. Requests accept
+one positional URL, named options and required as: type. Bodies are validated
+scalars/record constructors/nonempty homogeneous lists. No arbitrary headers.
+
+products.reload() bypasses cache; products.cancel()/create.cancel() cancel one
+consumer. Cancellation cannot undo a committed write. Last-consumer disposal
+aborts transport; generation checks suppress stale results. Each mounted root
+owns deduplication/cache (64 entries max), never global/persistent. Mutation
+success clears that cache and reloads only named local loads. Destroy/remount
+on session/user changes; use cache_ms: 0 for sensitive data. Timeouts include
+retries/body reads; request limit 64 KiB, response 1 MiB, nesting 32/list 10000.
+Kinds: Http, Network, Timeout, Cancelled, Validation, Limit, Security.
+
+Use same-origin absolute paths only; HTTPS in production, loopback HTTP for dev.
+Credentials are same-origin, redirects disabled, generated CSP connect-src 'self'.
+Writes require server-provided meta nexo-csrf-token; server must verify Origin and
+X-CSRF-Token, secure cookies, authentication and resource permissions. Browser
+checks never authorize. No token is generated or persisted by the compiler.
+Run `python -m nexo web build examples/web/data/app.nexo -o dist` then
+`python examples/web/data/server.py --directory dist`; loopback demo only, not a
+production/Shield ingress. The public static demo supports reads only.
+Run tests/test_web_data.py with real Chromium. NW3001 contracts; NW3002
+requests/readiness; NW3003 URL boundary. No invented backend or browser passes.
+
 ## Workflow and security
 
 Understand requirements; ask essential missing questions; choose page/layout/
@@ -77,8 +126,7 @@ permission. Assess actual Shield profiles: bounded loopback ingress is not a
 persistent production server. Production needs HTTPS/header CSP. No ASVS 5.0
 certification is claimed. Native controls still need meaningful labels/contrast.
 
-Proposed only: browser APIs/load/mutation, records/lists, Vite/HMR, source maps, SSR/hydration/SSG
-remain proposed. Do not generate them as runnable M2 code. Retrieve only the
+Proposed only: keyed reconciliation, Vite/HMR, source maps, SSR/hydration/SSG. Do not generate those as runnable code. Retrieve only the
 relevant project from @@WEB_EXAMPLES@@; it includes every required source file,
 compiler hashes and associated test commands. The entries below are generated
 from real compiler-checked sources; actual browser results come from their tests.

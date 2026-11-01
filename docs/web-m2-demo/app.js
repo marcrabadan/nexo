@@ -10,9 +10,10 @@ function flushOwners() {
   flushing = true;
   try {
     while (pendingOwners.size) {
-      const owners = [...pendingOwners].sort((a,b) => a.id-b.id);
-      pendingOwners.clear();
-      for (const owner of owners) owner.flush();
+      // A parent invalidated while flushing must settle before its descendants.
+      const owner = [...pendingOwners].sort((a,b) => a.id-b.id)[0];
+      pendingOwners.delete(owner);
+      owner.flush();
     }
   } finally { flushing = false; }
 }
@@ -107,16 +108,30 @@ function routeHref(path) {
   return '#'+path;
 }
 function navigate(path) { window.location.hash=routeHref(path); }
+// Conditional/list regions own every descendant and release it before replacement.
+function createRegion(parent, owner) {
+  const start=document.createComment('nexo'),end=document.createComment('/nexo');
+  parent.append(start,end);let current=null;
+  function clear(){
+    if(current){current.destroy();current=null;}
+    while(start.nextSibling&&start.nextSibling!==end)start.nextSibling.remove();
+  }
+  owner.cleanup(()=>{clear();start.remove();end.remove();});
+  return {replace(render){
+    clear();const next=createOwner(),fragment=document.createDocumentFragment();current=next;
+    try{render(fragment,next);end.before(fragment);}catch(e){clear();throw e;}
+  }};
+}
 
 function _nw_e9c1d14ae985fc95(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 try{
 s["count"]=0n;
 const a_increment=()=>owner.batch(()=>{api.set("count", int(s["count"]+(1n)));});
 return {values:s,actions:{["increment"]:a_increment},subscribe:owner.subscribe,destroy:()=>owner.destroy()};
 }catch(e){owner.destroy(); throw e;} }
 function _nw_16d0639fd57925d4(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({["heading"]: {type:"str"}},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({["heading"]: {type:"str"}},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-804b7f926060a0b7";
 try{
 const _node1=document.createElement("article");
@@ -131,7 +146,7 @@ if(renderSlot){ const content=renderSlot(_outlet4); owner.cleanup(()=>content.de
 target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({["heading"]: {type:"str"}},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 function _nw_7a89dfcabf245f9c(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({["label"]: {type:"str"},["start"]: {type:"int", default: () => 0n}},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({["label"]: {type:"str"},["start"]: {type:"int", default: () => 0n}},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-fe9041183efc03de";
 try{
 s["count"]=s["start"];
@@ -151,7 +166,7 @@ api.listen(_node4,"click",a_increment);
 target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({["label"]: {type:"str"},["start"]: {type:"int", default: () => 0n}},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 function _nw_856f187f9f88710f(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-e6adcdfb51402355";
 try{
 {const provided=_nw_e9c1d14ae985fc95(); env.set("_nw_e9c1d14ae985fc95",provided); owner.cleanup(()=>provided.destroy());}
@@ -192,7 +207,7 @@ if(renderSlot){ const content=renderSlot(_outlet13); owner.cleanup(()=>content.d
 target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 function _nw_d5f423e9782b0a43(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-2f5f1d1ffed02266";
 try{
 s["opens"]=0n;
@@ -218,7 +233,7 @@ if(renderSlot){ const content=renderSlot(_outlet8); owner.cleanup(()=>content.de
 target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 function _nw_c0fb999e591baaae(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-878dc295e1649c45";
 try{
 x["visits"]=injected(env,"_nw_e9c1d14ae985fc95");
@@ -254,7 +269,7 @@ api.bind(["label"],()=>({["heading"]: s["label"]}),v=>_child13.update(v));
 target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 function _nw_8a074904e9bfd7d6(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({["id"]: {type:"int"}},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({["id"]: {type:"int"}},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-95ee121492c9755c";
 try{
 x["visits"]=injected(env,"_nw_e9c1d14ae985fc95");
@@ -278,7 +293,7 @@ api.listen(_node6,"click",x["visits"].actions["increment"]);
 target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({["id"]: {type:"int"}},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 function _nw_0d578415a6de1f54(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-04b9779f18ad3651";
 try{
 const _node1=document.createElement("main");
@@ -295,7 +310,7 @@ _text5.data=String(("Return home"));
 target.append(root); return {element:root,env,outlet,update(props){const next=checkedProps({},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }
 function _nw_afc8ac8d9e84d15b(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-7e444556fc374600";
 try{
 const _node1=document.createElement("main");

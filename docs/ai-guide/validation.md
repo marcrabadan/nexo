@@ -64,3 +64,8 @@ is inferred from the passing browser compiler checks.
 
 Current composition/routing implementation, generated artifacts, token measurements
 and browser validation are recorded in [M2 delivery](../web/validation-m2.md).
+
+## Nexo Web M3
+
+Current typed async data, generated guidance, measurements and browser checks are
+recorded in [M3 delivery](../web/validation-m3.md). Prior results above are historical.

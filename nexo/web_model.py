@@ -47,6 +47,7 @@ class Declaration:
     scope: str = ''
     symbol: str = ''
     slots: int = 0
+    requests: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -56,6 +57,7 @@ class Unit:
     source: str
     declarations: dict = field(default_factory=dict)
     imports: dict = field(default_factory=dict)
+    contracts: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -143,6 +145,45 @@ def element(text, line):
     return node, block
 
 
+def parse_view(items, i, indent):
+    nodes=[]
+    while i<len(items) and items[i][1]>=indent:
+        line,ind,text=items[i]
+        if ind!=indent: F.fail(line,'View indentation requires four spaces per level.')
+        if text.startswith(('elif ','else:')): break
+        if text.startswith('if ') and text.endswith(':'):
+            node=F.Element('#if',line=line)
+            node.branches=[]
+            condition=F.expression(text[3:-1],line)
+            i+=1
+            body,i=parse_view(items,i,indent+4)
+            if not body: F.fail(line,'A conditional branch requires a view.')
+            node.branches.append((condition,body))
+            while i<len(items) and items[i][1]==indent and (items[i][2].startswith('elif ') or items[i][2]=='else:'):
+                ln,_,branch=items[i]
+                cond=F.expression(branch[5:-1],ln) if branch.startswith('elif ') and branch.endswith(':') else None
+                if branch!='else:' and cond is None:F.fail(ln,'Invalid elif branch.')
+                i+=1;body,i=parse_view(items,i,indent+4)
+                if not body:F.fail(ln,'A conditional branch requires a view.')
+                node.branches.append((cond,body))
+                if cond is None:break
+            node.children=[child for _,body in node.branches for child in body]
+        elif text.startswith('for ') and text.endswith(':'):
+            m=re.fullmatch(r'for ('+F.IDENT+r') in (.+):',text)
+            if not m:F.fail(line,'Use for item in resource.data: inside its ready branch.')
+            identifier(m[1],line)
+            node=F.Element('#for',F.expression(m[2],line),line=line);node.variable=m[1]
+            i+=1;node.children,i=parse_view(items,i,indent+4)
+            if not node.children:F.fail(line,'A for block requires a view.')
+        else:
+            node,block=element(text,line);i+=1
+            if block:
+                node.children,i=parse_view(items,i,indent+4)
+                if not node.children:F.fail(line,'An element block requires a child.')
+        nodes.append(node)
+    return nodes,i
+
+
 def parse_unit(unit):
     lines = unit.source.splitlines()
     for line, text in enumerate(lines, 1):
@@ -155,7 +196,7 @@ def parse_unit(unit):
     while i < len(items):
         line, indent, text = items[i]
         if not indent and text.startswith('use '):
-            if unit.declarations:
+            if unit.declarations or unit.contracts:
                 F.fail(line, 'Place imports before declarations.', 'NW2001')
             node = F.core(text, line)
             if not isinstance(node, A.Use) or node.lang or node.name == 'nexo' or node.name.startswith('nexo.'):
@@ -167,11 +208,24 @@ def parse_unit(unit):
             uses.append((node.name, alias, line))
             i += 1
             continue
+        record=re.fullmatch(r'(pub )?type ([A-Z][A-Za-z_0-9]*):',text)
+        if record and not indent:
+            start=i;i+=1
+            while i<len(items) and items[i][1]:i+=1
+            end=items[i][0]-1 if i<len(items) else len(lines)
+            node=F.core('\n'.join(lines[line-1:end]),line)
+            if not isinstance(node,A.TypeDef) or not node.fields or node.alias or node.variants or node.methods or node.settings or node.annotations or node.trait:
+                F.fail(line,'Browser JSON types are nonempty field-only records.', 'NW3001')
+            if any(p.default is not None or p.marks for p in node.fields) or len({p.name for p in node.fields})!=len(node.fields):
+                F.fail(line,'JSON record fields require unique explicit types without defaults/annotations.', 'NW3001')
+            if node.name in unit.contracts or node.name in unit.declarations or any(node.name==a for _,a,_ in uses):F.fail(line,'Duplicate type/declaration name.', 'NW3001')
+            unit.contracts[node.name]=node
+            continue
         match = re.fullmatch(r'(pub )?(component|page|layout|context) ([A-Z][A-Za-z_0-9]*)(?:\((.*)\))?:', text)
         if indent or not match:
             F.fail(line, 'Expected component, page, layout or context with an uppercase name.')
         public, kind, name, params = match.groups()
-        if name in unit.declarations or any(name == alias for _,alias,_ in uses):
+        if name in unit.declarations or name in unit.contracts or any(name == alias for _,alias,_ in uses):
             F.fail(line, 'Duplicate declaration/import name.', 'NW2001')
         if params is not None and kind not in ('component','page'):
             F.fail(line, 'Only components and pages declare scalar properties.', 'NW2002')
@@ -185,7 +239,17 @@ def parse_unit(unit):
                 F.fail(line, 'Declaration members require four spaces.')
             state = re.fullmatch(r'state ('+F.IDENT+r'): (int|str|bool) = (.+)', text)
             action = re.fullmatch(r'fn ('+F.IDENT+r')\(\):', text)
-            if state:
+            request=re.fullmatch(r'(load|mutation) ('+F.IDENT+r') = (.+)',text)
+            if request:
+                from .web_data import Request
+                kind,key,expr=request.groups(); identifier(key,line)
+                if key in seen or d.kind=='context':F.fail(line,'Requests require a unique UI member name.', 'NW3002')
+                seen.add(key);i+=1
+                # Reuse the core parser for multiline call syntax.
+                while i<len(items) and (items[i][1]>4 or (items[i][1]==4 and items[i][2]==')')):
+                    expr+='\n'+items[i][2];i+=1
+                d.requests[key]=Request(kind,F.expression(expr,line),line)
+            elif state:
                 key,typ,initial = state.groups()
                 identifier(key, line)
                 if key in seen:
@@ -215,18 +279,7 @@ def parse_unit(unit):
                     F.fail(line, 'Contexts have no view; UI declarations have one view.')
                 seen.add('view')
                 i += 1
-                stack = [(4,d.view)]
-                while i < len(items) and items[i][1] > 4:
-                    ln,ind,statement = items[i]
-                    while stack and ind <= stack[-1][0]:
-                        stack.pop()
-                    if not stack or ind != stack[-1][0]+4:
-                        F.fail(ln, 'View indentation requires four spaces per level.')
-                    node,block = element(statement,ln)
-                    stack[-1][1].append(node)
-                    if block:
-                        stack.append((ind,node.children))
-                    i += 1
+                d.view,i=parse_view(items,i,8)
             elif text == 'style:':
                 if d.kind == 'context' or 'style' in seen:
                     F.fail(line, 'Contexts have no style; UI declarations have at most one style.')

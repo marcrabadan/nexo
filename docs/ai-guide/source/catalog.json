@@ -241,7 +241,7 @@
     {
       "id": "nexo-web",
       "status": "experimental",
-      "summary": "Python browser components/typed props/slots/context/routes/scoped CSS. Rust browser driver/APIs/HMR/SSR unavailable. Retrieve conditional Web guidance for UI.",
+      "summary": "Python browser UI, composition/routes/context and typed async load/mutation JSON with scoped CSS. Rust browser driver/HMR/SSR unavailable. Retrieve conditional Web guidance for UI.",
       "evidence": [
         [
           "nexo/web_frontend.py",
@@ -282,6 +282,22 @@
         [
           "examples/web/composition/app.nexo",
           "pub page User(id: int):"
+        ],
+        [
+          "nexo/web_data.py",
+          "def request"
+        ],
+        [
+          "nexo/web_data.js",
+          "function createResource"
+        ],
+        [
+          "tests/test_web_data.py",
+          "def test_real_browser"
+        ],
+        [
+          "examples/web/data/app.nexo",
+          "    mutation create = api.post("
         ]
       ]
     }

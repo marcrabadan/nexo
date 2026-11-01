@@ -10,9 +10,10 @@ function flushOwners() {
   flushing = true;
   try {
     while (pendingOwners.size) {
-      const owners = [...pendingOwners].sort((a,b) => a.id-b.id);
-      pendingOwners.clear();
-      for (const owner of owners) owner.flush();
+      // A parent invalidated while flushing must settle before its descendants.
+      const owner = [...pendingOwners].sort((a,b) => a.id-b.id)[0];
+      pendingOwners.delete(owner);
+      owner.flush();
     }
   } finally { flushing = false; }
 }
@@ -107,9 +108,23 @@ function routeHref(path) {
   return '#'+path;
 }
 function navigate(path) { window.location.hash=routeHref(path); }
+// Conditional/list regions own every descendant and release it before replacement.
+function createRegion(parent, owner) {
+  const start=document.createComment('nexo'),end=document.createComment('/nexo');
+  parent.append(start,end);let current=null;
+  function clear(){
+    if(current){current.destroy();current=null;}
+    while(start.nextSibling&&start.nextSibling!==end)start.nextSibling.remove();
+  }
+  owner.cleanup(()=>{clear();start.remove();end.remove();});
+  return {replace(render){
+    clear();const next=createOwner(),fragment=document.createDocumentFragment();current=next;
+    try{render(fragment,next);end.before(fragment);}catch(e){clear();throw e;}
+  }};
+}
 
 function _nw_05804ee1abc73468(target,props={},parentEnv=new Map(),renderSlot=null){
-const s=checkedProps({},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
+const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
 const root=document.createElement("div"); root.dataset.nexo="nw-805c40a21d979f3b";
 try{
 s["count"]=0n;

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexo Web — compiler-first browser UI</title>
-<meta name="description" content="Build a working Counter with native Nexo components, reactive state and scoped CSS. Experimental M1–M2 compiler, typed composition, routes, context and honest feature status.">
+<meta name="description" content="Build a working Counter with native Nexo components, reactive state and scoped CSS. Experimental M1–M3 compiler, typed composition, routes, context and honest feature status.">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
@@ -42,7 +42,7 @@
   </div>
 </header>
 <main id="main" class="wrap web-page">
-<section><p class="eyebrow">RFC-0001 · Experimental M1–M2</p><h1>Nexo Web</h1>
+<section><p class="eyebrow">RFC-0001 · Experimental M1–M3</p><h1>Nexo Web</h1>
 <p>Readable Nexo components compiled to JavaScript, HTML and scoped CSS. Local state updates the DOM directly, with no virtual DOM or React dependency.</p>
 <p><a href="web-demo/">Try two Counters</a> · <a href="web-m2-demo/">Try M2 composition and routing</a> · <a href="https://github.com/marcrabadan/nexo/blob/main/docs/rfc/0001-nexo-web.md">Language and lifecycle reference</a></p>
 <p>M1 and M2 run through the <strong>Python CLI</strong>. The Rust driver does not compile browser components. The existing WASI command <code>nexo build --target web</code> keeps its established behavior.</p></section>
@@ -58,7 +58,7 @@
 <p><a href="web-m2-demo/">Run the complete project</a> · <a href="web-m2-demo/source/app.nexo">Download the entry</a> · <a href="https://github.com/marcrabadan/nexo/tree/main/examples/web/composition">All project files</a>. This entry requires its <code>session.nexo</code>, <code>ui/widgets.nexo</code>, <code>ui/card.css</code> and <code>nexo.toml</code> files; it is not a standalone snippet.</p>
 <div class="code"><div class="code-bar"><span>composition/app.nexo · M2</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">@@COMPOSITION@@</code></pre></div>
 <p>Shared layout state survives navigation through a common layout prefix. Page state resets when leaving a page or changing parameters. Context updates batch across owners. Slots retain caller bindings and CSS, while their listeners and subscriptions are cleaned up with the receiving component.</p>
-<p>Props and route parameters support <code>int</code>, <code>str</code> and <code>bool</code>. Layouts require exactly one slot and have no props yet. Local project modules/CSS are supported; package imports, conditional/keyed-list rendering, browser APIs and SSR remain future work. Error pages handle mount/navigation failures, not arbitrary event exceptions.</p>
+<p>Props and route parameters support <code>int</code>, <code>str</code> and <code>bool</code>. Layouts require exactly one slot and have no props yet. Local project modules/CSS are supported; package imports, keyed-list reconciliation and SSR remain future work. Error pages handle mount/navigation failures, not arbitrary event exceptions.</p>
 <div class="code"><pre><code>python -m nexo web check --json examples/web/composition/app.nexo
 python -m nexo web build examples/web/composition/app.nexo -o /tmp/nexo-composition
 python -m http.server 8765 --bind 127.0.0.1 --directory /tmp/nexo-composition
@@ -70,18 +70,31 @@ python -m http.server 8765 --bind 127.0.0.1 --directory /tmp/nexo-counter
 # Open http://127.0.0.1:8765/
 python -m pytest tests/test_web_frontend.py</code></pre></div>
 <p>Install Nexo from the repository first. Build emits <code>index.html</code>, <code>main.js</code>, <code>app.js</code> and <code>app.css</code>. Serve over HTTP; file URLs cannot reliably load ES modules. <code>web new/dev/preview/audit</code>, <code>--release</code>, source maps and frontend LSP support are not available.</p>
-<p>Diagnostics: NW1001 grammar, NW1002 names/types, NW1003 CSS boundaries, NW1004 unsafe DOM, NW1000 I/O. M2 adds NW2001 modules, NW2002 props/composition, NW2003 routes, NW2004 context and NW2005 slots. Each compile error gives a fix. Inspect JSON diagnostics before changing code.</p></section>
+<p>Diagnostics: NW1001 grammar, NW1002 names/types, NW1003 CSS boundaries, NW1004 unsafe DOM, NW1000 I/O. M2 adds NW2001 modules, NW2002 props/composition, NW2003 routes, NW2004 context and NW2005 slots. M3 adds NW3001 JSON contracts, NW3002 request/readiness rules and NW3003 API URL boundaries. Each compile error gives a fix. Inspect JSON diagnostics before changing code.</p></section>
+<section id="data"><h2>M3: typed asynchronous data</h2>
+<p><code>load</code> owns a reactive GET; <code>mutation</code> owns an explicit POST, PUT, PATCH or DELETE. Both use nonblocking browser fetch, exact JSON contracts and visible loading/error states. A successful mutation reloads its explicitly named reads.</p>
+<p><a href="web-m3-demo/">Try the read-only M3 demo</a>. It fetches a real static JSON file. Writes are disabled there; run the complete local project below to test CSRF-protected creation and invalidation.</p>
+<div class="code"><div class="code-bar"><span>data/app.nexo · M3</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">@@DATA@@</code></pre></div>
+<p>Data is available only inside a <code>ready</code> or mutation <code>success</code> branch. Errors expose kind, message and HTTP status. <code>reload</code>, <code>cancel</code> and mutation <code>run</code> are explicit operations. Views support conditions and immutable list snapshots; replacing a list resets its child state. Keyed reconciliation remains future work.</p>
+<p>GET supports bounded timeouts/retries, consumer-aware deduplication and opt-in memory caching. Requests and cache belong to one mounted application; unmount cancels its work. Changing user/session requires destroying and remounting the root. JSON int values must fit the safe wire integer range; use str for larger identifiers.</p>
+<div class="code"><pre><code>python -m nexo web check --json examples/web/data/app.nexo
+python -m nexo web build examples/web/data/app.nexo -o dist
+python examples/web/data/server.py --directory dist
+# Open http://127.0.0.1:8765/
+python -m pytest tests/test_web_data.py</code></pre></div>
+<p><a href="web-m3-demo/source/app.nexo">Nexo source</a> · <a href="web-m3-demo/source/server.py">Local demo server</a> · <a href="web-m3-demo/source/nexo.toml">Project config</a> · <a href="https://github.com/marcrabadan/nexo/blob/main/docs/rfc/0001-nexo-web.md#m3">Full M3 reference</a></p>
+<p>Requests allow same-origin paths only, with HTTPS in production. Writes require a server-injected CSRF token and backend Origin/token validation. Credentials use same-origin cookies. The bundled Python server binds loopback and demonstrates session isolation; it has no production authentication, TLS or deployment support. Backend authorization and rate limits remain essential.</p></section>
 <section><h2>What comes next</h2><table><caption>Implementation status</caption><thead><tr><th scope="col">Capability</th><th scope="col">Status</th></tr></thead><tbody>
 <tr><th scope="row">Component, local state, actions, text/attribute bindings, scoped CSS</th><td>Experimental M1</td></tr>
 <tr><th scope="row">Pages with explicit paths and typed parameters; layouts with slot(); context with provide/inject()</th><td>Experimental M2</td></tr>
 <tr><th scope="row">Typed scalar props, project component/CSS imports</th><td>Experimental M2</td></tr>
-<tr><th scope="row">Conditional and keyed-list rendering</th><td>Proposed; not implemented</td></tr>
-<tr><th scope="row">Async api.get/post/put/patch/delete, load/mutation, cancellation and cache</th><td>Proposed M3</td></tr>
+<tr><th scope="row">Conditions, JSON records and snapshot lists</th><td>Experimental M3; keyed reconciliation remains proposed</td></tr>
+<tr><th scope="row">Async api.get/post/put/patch/delete, load/mutation, cancellation and cache</th><td>Experimental M3</td></tr>
 <tr><th scope="row">Vite/HMR and browser Shield tooling</th><td>Proposed M4</td></tr>
 <tr><th scope="row">SSR, hydration and static generation</th><td>Separate future RFCs</td></tr></tbody></table>
-<p>Pages represent routable screens; layouts own persistent shared structure and a slot; context belongs to the provider subtree. Future typed API reads will use load and explicit writes will use mutation; those M3 APIs are not available.</p></section>
-<section><h2>Security and accessibility</h2><p>Browser compilation rejects server imports, arbitrary calls, HTML injection, script elements, URL attributes and inline event code. Generated demo assets use a restrictive CSP. Never put secrets in a browser bundle. Visibility checks never replace server authorization.</p><p><a href="shield.html">Shield</a> remains a backend security foundation: use supported policy, authentication, authorization, rate-limit and CSRF controls. Its bounded loopback ingress is not a persistent production web server. Production needs HTTPS, secure HttpOnly sessions and a separately validated backend. OWASP ASVS 5.0 guides future reviews; M1 is not a certification.</p><p>Native elements support keyboard interaction. Authors remain responsible for meaningful labels, focus, headings, contrast and ARIA. The compiler does not yet perform an accessibility audit.</p></section>
-<section><h2>For AI coding agents</h2><p>The <a href="ai-guide.html">AI Guide</a> includes a versioned, separately retrievable Nexo Web topic with this exact Counter source. It distinguishes implemented M1–M2 from future syntax and teaches local compile/test/diagnostic workflows.</p></section>
+<p>Pages represent routable screens; layouts own persistent shared structure and a slot; context belongs to the provider subtree. Typed API reads use load and explicit writes use mutation in experimental M3.</p></section>
+<section><h2>Security and accessibility</h2><p>Browser compilation rejects server imports, arbitrary calls, HTML injection, script elements, unsafe URL attributes and inline event code. Generated demo assets use a restrictive CSP. Never put secrets in a browser bundle. Visibility checks never replace server authorization.</p><p><a href="shield.html">Shield</a> remains a backend security foundation: use supported policy, authentication, authorization, rate-limit and CSRF controls. Its bounded loopback ingress is not a persistent production web server. Production needs HTTPS, secure HttpOnly sessions and a separately validated backend. OWASP ASVS 5.0 guides future reviews; M1–M3 are not a certification.</p><p>Native elements support keyboard interaction. Authors remain responsible for meaningful labels, focus, headings, contrast and ARIA. The compiler does not yet perform an accessibility audit.</p></section>
+<section><h2>For AI coding agents</h2><p>The <a href="ai-guide.html">AI Guide</a> includes a versioned, separately retrievable Nexo Web topic with this exact Counter source. It distinguishes implemented M1–M3 from future syntax and teaches local compile/test/diagnostic workflows.</p></section>
 </main>
 <footer>
   <div class="wrap">

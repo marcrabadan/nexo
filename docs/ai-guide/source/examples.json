@@ -138,6 +138,19 @@
         "tests/test_web_composition.py"
       ],
       "scope": "Experimental Python browser compiler M2; all project files required. Compilation evidence is separate from mandatory real-browser tests."
+    },
+    {
+      "id": "web-data",
+      "path": "examples/web/data/app.nexo",
+      "purpose": "Typed async GET, explicit CSRF-protected mutation, loading/error rendering, immutable snapshot lists and invalidation",
+      "command": "python -m nexo web check --json examples/web/data/app.nexo",
+      "associated_tests": [
+        "tests/test_web_data.py"
+      ],
+      "scope": "Experimental Python browser M3. Build app.nexo then run examples/web/data/server.py --directory dist for a local API. Static public demo is read-only. Compilation does not establish browser execution.",
+      "support_files": [
+        "examples/web/data/server.py"
+      ]
     }
   ]
 }

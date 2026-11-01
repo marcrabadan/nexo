@@ -1,4 +1,4 @@
-"""Browser semantic analysis and deterministic direct-DOM lowering (M1–M2)."""
+"""Browser semantic analysis and deterministic direct-DOM lowering (M1–M3)."""
 from __future__ import annotations
 
 import json
@@ -9,6 +9,7 @@ from urllib.parse import unquote
 from . import ast as A
 from . import web_frontend as F
 from .web_model import Binding, reference
+from . import web_data as D
 
 
 def at(declaration,message,code,line=None):
@@ -76,6 +77,8 @@ def action_statements(d):
                 out.append(f'api.set({json.dumps(target)}, {js});')
             elif isinstance(node,A.ExprStmt):
                 js=context_action(node.expr,d.symbols,line)
+                resource=D.method(node.expr.func,d.symbols,line) if isinstance(node.expr,A.Call) and not node.expr.args else None
+                if resource:js=resource+'()'
                 if js:
                     out.append(js+';')
                 elif isinstance(node.expr,A.Call) and isinstance(node.expr.func,A.Name) and node.expr.func.name=='navigate' and len(node.expr.args)==1 and not node.expr.args[0].name and d.kind!='context':
@@ -136,7 +139,7 @@ def analyze(program):
     declarations=[d for unit in program.units for d in unit.declarations.values()]
     for d in declarations:
         try:
-            if (set(d.props)|set(d.states)|set(d.actions)|set(d.injections)) & set(d.unit.imports):
+            if (set(d.props)|set(d.states)|set(d.actions)|set(d.injections)|set(d.requests)) & set(d.unit.imports):
                 F.fail(d.line,'A module alias cannot be rebound by a local member.','NW2001')
             d.symbols={name:Binding(p.type,f's[{json.dumps(name)}]',name) for name,p in d.props.items()}
             d.providers=[];d.injects={};seen=set()
@@ -155,32 +158,54 @@ def analyze(program):
                 if typ!=p.type:F.fail(p.line,'State initializer type mismatch.','NW1002')
                 d.initials[name]=js
                 d.symbols[name]=Binding(p.type,f's[{json.dumps(name)}]',name,True)
+            D.install_contracts(program,d)
+            for name,req in d.requests.items():
+                d.symbols[name]=Binding('resource',f'r[{json.dumps(name)}]','$'+name,context=req)
+            for name,req in d.requests.items():D.request(program,d,name,req)
             d.action_js=action_statements(d)
             d.children={};d.slots=0
-            for node in members(d.view):
-                if node.tag=='slot':
-                    if node.text is not None or node.attrs or node.children or d.kind=='page':F.fail(node.line,'Use slot() without arguments in a component/layout.','NW2005')
-                    d.slots+=1
-                elif node.tag in F.TAGS or node.tag=='a':
-                    if node.tag in F.VOID and (node.text is not None or node.children):F.fail(node.line,'Void elements have no children.')
-                    if node.text is not None:F.value(node.text,d.symbols,node.line)
-                    for key,expr in node.attrs:
-                        if key.startswith('on_'):
-                            if key not in ('on_click','on_input','on_change') or not ((isinstance(expr,A.Name) and expr.name in d.actions) or (isinstance(expr,A.Attr) and isinstance(expr.obj,A.Name) and expr.obj.name in d.injects and expr.name in d.injects[expr.obj.name].actions)):
-                                F.fail(node.line,'Event handlers must name a declared local/context action.','NW1002' if key in ('on_click','on_input','on_change') else 'NW1004')
-                        elif key in F.ATTRS or (key=='href' and node.tag=='a'):
-                            _,typ,_=F.value(expr,d.symbols,node.line)
-                            if (key=='disabled' and typ!='bool') or (key!='disabled' and typ not in ('str','int')) or (key=='href' and typ!='str'):
-                                F.fail(node.line,'HTML attribute type mismatch.','NW1002')
-                            if key=='href' and isinstance(expr,A.Str) and all(isinstance(p,str) for p in expr.parts):
-                                path=''.join(expr.parts)
-                                if not path.startswith('/') or path.startswith('//') or any(c in path for c in '\\?#') or any(ord(c)<32 or ord(c)==127 for c in path):F.fail(node.line,'Links must use local route paths.','NW1004')
-                        else:F.fail(node.line,'Unsupported or unsafe HTML attribute.','NW1004')
-                else:
-                    if '.' not in node.tag and not node.tag[0].isupper():F.fail(node.line,'Unsupported or unsafe HTML element.','NW1004')
-                    child=program.resolve(d.unit,node.tag,node.line,'component')
-                    prop_object(node,child,d.symbols)
-                    d.children[id(node)]=child
+            def check_view(nodes,symbols,structural=False):
+                for node in nodes:
+                    node.symbols=symbols
+                    if node.tag=='#if':
+                        for condition,body in node.branches:
+                            if condition is not None and F.value(condition,symbols,node.line)[1]!='bool':F.fail(node.line,'View condition requires bool.', 'NW3002')
+                            check_view(body,D.narrowed(symbols,condition),True)
+                        continue
+                    if node.tag=='#for':
+                        _,typ,_=F.value(node.text,symbols,node.line)
+                        if not isinstance(typ,tuple) or typ[0]!='list':F.fail(node.line,'View for requires a typed JSON list.', 'NW3001')
+                        if node.variable in symbols or node.variable in d.unit.imports:F.fail(node.line,'Loop item cannot shadow an existing binding.', 'NW3001')
+                        node.item_symbol=f'_item{node.line}'
+                        local=dict(symbols);local[node.variable]=Binding(typ[1],node.item_symbol)
+                        check_view(node.children,local,True)
+                        continue
+                    if node.tag=='slot':
+                        if d.kind=='layout' and structural:F.fail(node.line,'A layout slot must be unconditional and outside loops.', 'NW2005')
+                        if node.text is not None or node.attrs or node.children or d.kind=='page':F.fail(node.line,'Use slot() without arguments in a component/layout.','NW2005')
+                        d.slots+=1
+                    elif node.tag in F.TAGS or node.tag=='a':
+                        if node.tag in F.VOID and (node.text is not None or node.children):F.fail(node.line,'Void elements have no children.')
+                        if node.text is not None and F.value(node.text,symbols,node.line)[1] not in ('str','int','bool'):F.fail(node.line,'Element text requires scalar data.', 'NW3001')
+                        for key,expr in node.attrs:
+                            if key.startswith('on_'):
+                                if key not in ('on_click','on_input','on_change') or not (D.method(expr,symbols,node.line) or (isinstance(expr,A.Name) and expr.name in d.actions) or (isinstance(expr,A.Attr) and isinstance(expr.obj,A.Name) and expr.obj.name in d.injects and expr.name in d.injects[expr.obj.name].actions)):
+                                    F.fail(node.line,'Event handlers must name a declared local/context action.','NW1002' if key in ('on_click','on_input','on_change') else 'NW1004')
+                            elif key in F.ATTRS or (key=='href' and node.tag=='a'):
+                                _,typ,_=F.value(expr,symbols,node.line)
+                                if (key=='disabled' and typ!='bool') or (key!='disabled' and typ not in ('str','int')) or (key=='href' and typ!='str'):
+                                    F.fail(node.line,'HTML attribute type mismatch.','NW1002')
+                                if key=='href' and isinstance(expr,A.Str) and all(isinstance(p,str) for p in expr.parts):
+                                    path=''.join(expr.parts)
+                                    if not path.startswith('/') or path.startswith('//') or any(c in path for c in '\\?#') or any(ord(c)<32 or ord(c)==127 for c in path):F.fail(node.line,'Links must use local route paths.','NW1004')
+                            else:F.fail(node.line,'Unsupported or unsafe HTML attribute.','NW1004')
+                    else:
+                        if '.' not in node.tag and not node.tag[0].isupper():F.fail(node.line,'Unsupported or unsafe HTML element.','NW1004')
+                        child=program.resolve(d.unit,node.tag,node.line,'component')
+                        prop_object(node,child,symbols)
+                        d.children[id(node)]=child
+                    check_view(node.children,symbols,structural)
+            check_view(d.view,d.symbols)
             if d.slots>1 or (d.kind=='layout' and d.slots!=1):F.fail(d.line,'Layouts require exactly one slot(); components allow at most one.','NW2005')
             d.layout=None
             if 'layout' in d.metadata:
@@ -247,20 +272,47 @@ class Emitter:
     def view(self,nodes,parent,owner='owner',api='api'):
         d=self.d
         for node in nodes:
-            if node.tag=='slot':
+            symbols=node.symbols
+            if node.tag in ('#if','#for'):
+                region=self.next('region');o=self.next('owner');a=self.next('api');host=self.next('host')
+                self.add(f'const {region}=createRegion({parent},{owner});')
+                if node.tag=='#if':
+                    read='-1';deps=set()
+                    for index,(condition,_) in reversed(list(enumerate(node.branches))):
+                        if condition is None:read=str(index)
+                        else:
+                            js,_,names=F.value(condition,symbols,node.line);deps|=names;read=f'({js}?{index}:{read})'
+                    self.add(f'{api}.bind({json.dumps(sorted(deps))},()=>{read},choice=>{region}.replace(({host},{o})=>{{const {a}={o}.state(s);')
+                else:
+                    read,_,deps=F.value(node.text,symbols,node.line)
+                    self.add(f'{api}.bind({json.dumps(sorted(deps))},()=>{read},items=>{region}.replace(({host},{o})=>{{const {a}={o}.state(s);')
+                for b in symbols.values():
+                    if isinstance(b,Binding) and b.dep:self.add(f'{o}.link({json.dumps(b.dep)},{owner},{json.dumps(b.dep)});')
+                    elif isinstance(b,Binding) and b.type=='context':
+                        for field in b.context.states:
+                            key=next((name for name,val in symbols.items() if val is b),'')
+                            dep='@'+key+'.'+field;self.add(f'{o}.link({json.dumps(dep)},{owner},{json.dumps(dep)});')
+                if node.tag=='#if':
+                    for index,(_,body) in enumerate(node.branches):
+                        self.add(f'if(choice==={index}){{');self.view(body,host,o,a);self.add('}')
+                else:
+                    self.add(f'for(const {node.item_symbol} of items){{');self.view(node.children,host,o,a);self.add('}')
+                self.add('}));')
+            elif node.tag=='slot':
                 n=self.next('outlet')
                 self.add(f'const {n}=document.createElement("div"); {parent}.append({n}); outlet={n};')
                 self.add(f'if(renderSlot){{ const content=renderSlot({n}); {owner}.cleanup(()=>content.destroy()); }}')
             elif id(node) in d.children:
-                child=d.children[id(node)];props,deps=prop_object(node,child,d.symbols)
+                child=d.children[id(node)];props,deps=prop_object(node,child,symbols)
                 slot='null'
                 if node.children:
                     fn=self.next('slot');o=self.next('owner');a=self.next('api');r=self.next('root')
                     self.add(f'const {fn}=(host)=>{{const {o}=createOwner(); const {a}={o}.state(s); const {r}=document.createElement("div"); {r}.dataset.nexo={json.dumps(d.scope)}; try{{')
                     # Lexical slot scope with its own lifetime. Link parent dependencies;
                     # no copy of state and no retention after the receiving owner dies.
-                    for name,b in d.symbols.items():
-                        if b.type!='context':self.add(f'{o}.link({json.dumps(name)},{owner},{json.dumps(name)});')
+                    for name,b in symbols.items():
+                        if not isinstance(b,Binding):continue
+                        if b.type!='context':self.add(f'{o}.link({json.dumps(b.dep or name)},{owner},{json.dumps(b.dep or name)});')
                         else:
                             for field in b.context.states:
                                 key=f'@{name}.{field}';self.add(f'{o}.link({json.dumps(key)},{owner},{json.dumps(key)});')
@@ -276,15 +328,15 @@ class Emitter:
                 if node.tag=='button':self.add(f'{n}.type="button";')
                 self.add(f'{parent}.append({n});')
                 if node.text is not None:
-                    value,_,deps=F.value(node.text,d.symbols,node.line);t=self.next('text')
+                    value,_,deps=F.value(node.text,symbols,node.line);t=self.next('text')
                     self.add(f'const {t}=document.createTextNode(""); {n}.append({t});')
                     self.add(f'{api}.bind({json.dumps(sorted(deps))},()=>String({value}),v=>{{{t}.data=v;}});' if deps else f'{t}.data=String({value});')
                 for key,expr in node.attrs:
                     if key.startswith('on_'):
-                        handler='a_'+expr.name if isinstance(expr,A.Name) else f'x[{json.dumps(expr.obj.name)}].actions[{json.dumps(expr.name)}]'
+                        handler=D.method(expr,symbols,node.line) or ('a_'+expr.name if isinstance(expr,A.Name) else f'x[{json.dumps(expr.obj.name)}].actions[{json.dumps(expr.name)}]')
                         self.add(f'{api}.listen({n},{json.dumps(key[3:])},{handler});')
                     else:
-                        value,_,deps=F.value(expr,d.symbols,node.line)
+                        value,_,deps=F.value(expr,symbols,node.line)
                         if key=='disabled':read=value;write=f'{n}.disabled=v;'
                         elif key=='href':read=f'routeHref({value})';write=f'{n}.setAttribute("href",v);'
                         else:read=f'String({value})';write=f'{n}.setAttribute({json.dumps(key.replace("_","-"))},v);'
@@ -294,9 +346,10 @@ class Emitter:
     def emit(self):
         d=self.d
         self.add(f'function {d.symbol}(target,props={{}},parentEnv=new Map(),renderSlot=null){{')
-        self.add(f'const s=checkedProps({schema(d)},props); const x=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;')
+        self.add(f'const s=checkedProps({schema(d)},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;')
         if d.kind!='context':self.add(f'const root=document.createElement("div"); root.dataset.nexo={json.dumps(d.scope)};')
         self.add('try{')
+        if self.has_data:self.add('const dataScope=useDataScope(env,owner);')
         for ctx in d.providers:
             self.add(f'{{const provided={ctx.symbol}(); env.set({json.dumps(ctx.symbol)},provided); owner.cleanup(()=>provided.destroy());}}')
         for alias,ctx in d.injects.items():
@@ -306,6 +359,11 @@ class Emitter:
                 self.add(f'owner.link({json.dumps(key)},x[{json.dumps(alias)}],{json.dumps(name)});')
         for name,js in d.initials.items():self.add(f's[{json.dumps(name)}]={js};')
         for name,body in d.action_js.items():self.add(f'const a_{name}=()=>owner.batch(()=>{{{" ".join(body)}}});')
+        for name,req in d.requests.items():
+            invalid='['+','.join('()=>r['+json.dumps(n)+'].reload()' for n in req.invalid)+']'
+            self.add(f'r[{json.dumps(name)}]=createResource(dataScope,owner,{json.dumps("$"+name)},()=>{req.spec},{json.dumps(req.kind)},{invalid});')
+        for name,req in d.requests.items():
+            if req.kind=='load':self.add(f'api.bind({json.dumps(sorted(req.deps))},()=>{req.spec}.url,()=>r[{json.dumps(name)}].initial());')
         if d.kind=='context':
             methods=','.join(f'[{json.dumps(name)}]:a_{name}' for name in d.actions)
             self.add(f'return {{values:s,actions:{{{methods}}},subscribe:owner.subscribe,destroy:()=>owner.destroy()}};')
@@ -320,9 +378,11 @@ class Emitter:
 def compile_program(program):
     declarations,roots,routes,fallbacks=analyze(program)
     runtime=Path(__file__).with_name('web_runtime.js').read_text()
+    has_data=any(d.requests for d in declarations)
     js=[runtime];css=[]
+    if has_data:js.append(Path(__file__).with_name('web_data.js').read_text())
     for d in declarations:
-        js.append(Emitter(d).emit())
+        emitter=Emitter(d);emitter.has_data=has_data;js.append(emitter.emit())
         if d.kind!='context':css.append(F.scoped_css(d.css,d.scope,d.line))
     for d in program.root.declarations.values():
         if d.public and d.kind!='context':js.append(f'export {{ {d.symbol} as {d.name} }};')

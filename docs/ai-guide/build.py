@@ -39,10 +39,11 @@ def inputs():
     paths.update(doc['path'] for doc in catalog['documents'])
     examples = json.loads((HERE/'source/examples.json').read_text())
     paths.update(e['path'] for e in examples['examples'] + examples.get('frontend_examples', []))
-    paths.update(['nexo/web_runtime.js','nexo/web_router.js'])
+    paths.update(['nexo/web_runtime.js','nexo/web_router.js','nexo/web_data.js'])
     from nexo.web_model import load_program
     for example in examples.get('frontend_examples', []):
         entry=ROOT/example['path']
+        paths.update(example.get('support_files', []))
         paths.update(str(p.relative_to(ROOT)) for p in load_program(entry.read_text(),entry).dependencies)
     # Capability changes invalidate context even before their prose is updated.
     for directory, pattern in [('nexo', '*.py'), ('compiler/nexoc/src', '*.rs'), ('compiler/diag/src', '*.rs'), ('compiler/runtime/src', '*.rs')]:
@@ -92,6 +93,9 @@ def generate(measure=False):
         folder=project_root(str(entry))
         example['entry_file']=str(entry.relative_to(folder))
         example['files']={str(path.relative_to(folder)):path.read_text() for path in sorted(load_program(example['source'],entry).dependencies) if path!=entry}
+        for support in example.get('support_files', []):
+            path=ROOT/support
+            example['files'][str(path.relative_to(folder))]=path.read_text()
         example['verification'] = {'compilation': 'Passed', 'browser_execution': 'Run associated tests; not asserted by this generator', 'source_sha256': digest(example['source'].encode()), 'javascript_sha256': digest(js.encode()), 'css_sha256': digest(css.encode()), 'exports': exports}
     web_examples=serialized({'schema_version':1,'revision':revision,'examples':example_catalog.get('frontend_examples', [])})
     outputs[f'docs/{bundle}/web-examples.json']=web_examples

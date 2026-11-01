@@ -3140,3 +3140,26 @@ state mutations go through context actions; batches span owners and prop updates
 Error pages are layout-free mount/navigation fallbacks; event errors are separate.
 The Python frontend remains isolated from core/server and D175 WASI. Browser
 APIs, conditional/lists, HMR, SSR and Rust browser-driver parity remain future work.
+
+**D192. M3 browser requests are owned, asynchronous typed resources.**
+RFC-0001 edition 3 adds field-only JSON records, lists, `load name = api.get(...)`
+and explicit `mutation name = api.post/put/patch/delete(...)`. Reuse the core
+expression/type AST; keep browser grammar contextual and the server HTTP API and
+D175 WASI unchanged. Contracts validate exact fields on both boundaries. Browser
+wire integers are restricted to JSON's safe integer range and converted to Nexo
+BigInt internally, avoiding silent precision loss. Reads react to scalar URL
+inputs; mutation bodies are evaluated at run time, never implicitly executed.
+Resources expose stable loading/ready/success/error/data and explicit operations.
+Only a ready/success branch may read data; errors narrow after `error != none`.
+Conditional regions and immutable list snapshots own and dispose descendants;
+keyed reconciliation is not implemented. This is a bounded M3 view extension.
+GETs have bounded opt-in retries/cache and consumer-aware deduplication. Sharing
+is restricted to one mounted root; cancellation/destruction releases each lease,
+last-consumer cancellation aborts transport, and generation tokens reject stale
+completions. Mutation success clears root cache and reloads explicitly listed
+local reads; an epoch prevents reuse of pre-invalidation requests. No write retry.
+Only same-origin paths and HTTPS (except loopback development) are allowed.
+Credentials are same-origin; redirects, arbitrary headers and token storage are
+not exposed. Writes require a server-injected CSRF meta token. Backends still
+must validate origin/token, sessions, permissions and rate limits. No authentication
+or production Shield ingress is inferred. No new production dependency.

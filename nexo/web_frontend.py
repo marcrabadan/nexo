@@ -1,4 +1,4 @@
-"""Nexo Web M1–M2: a separate, deliberately bounded browser compiler (RFC-0001).
+"""Nexo Web M1–M3: a separate, deliberately bounded browser compiler (RFC-0001).
 
 Core expression parsing is shared with Nexo. Browser-only contextual blocks do
 not change the core grammar, interpreter, HTTP module, or WASI build target.
@@ -87,21 +87,46 @@ def value(expr, states, line):
             if isinstance(p, str):
                 parts.append(json.dumps(p, ensure_ascii=True))
             else:
-                js, _, names = value(p, states, line)
+                js, typ, names = value(p, states, line)
+                if typ not in ('str','int','bool'):fail(line,'Interpolation requires scalar data.','NW3001')
                 parts.append(f'String({js})')
                 deps |= names
         return '(' + '+'.join(parts or ['""']) + ')', 'str', deps
     if isinstance(expr, A.Name) and expr.name in states:
         binding = states[expr.name]
         if hasattr(binding, 'code'):
-            if binding.type == 'context':
-                fail(line, 'Read a context field or call a declared context action.', 'NW2004')
+            if binding.type in ('context','resource'):
+                fail(line, 'Read a context/resource field or call a declared operation.', 'NW2004')
             return binding.code, binding.type, {binding.dep} if binding.dep else set()
         return f's[{json.dumps(expr.name)}]', binding[0], {expr.name}
-    if isinstance(expr, A.Attr) and isinstance(expr.obj, A.Name):
-        binding = states.get(expr.obj.name)
-        if binding and getattr(binding, 'type', None) == 'context' and expr.name in binding.context.states:
-            return f'{binding.code}.values[{json.dumps(expr.name)}]', binding.context.states[expr.name].type, {f'@{expr.obj.name}.{expr.name}'}
+    if isinstance(expr, A.NoneLit):
+        return 'null', 'none', set()
+    from .web_data import resource_value, constructor
+    result=resource_value(expr, states, line)
+    if result is not None:return result
+    result=constructor(expr,states,line)
+    if result is not None:return result
+    if isinstance(expr,A.ListLit):
+        values=[value(item,states,line) for item in expr.items]
+        if not values or any(v[1]!=values[0][1] for v in values):fail(line,'JSON list literals require a nonempty homogeneous type.', 'NW3001')
+        return 'Object.freeze(['+','.join(v[0] for v in values)+'])',('list',values[0][1]),set().union(*(v[2] for v in values))
+    if isinstance(expr, A.Attr):
+        if isinstance(expr.obj,A.Name):
+            binding = states.get(expr.obj.name)
+            if binding and getattr(binding, 'type', None) == 'context' and expr.name in binding.context.states:
+                return f'{binding.code}.values[{json.dumps(expr.name)}]', binding.context.states[expr.name].type, {f'@{expr.obj.name}.{expr.name}'}
+        js,typ,deps=value(expr.obj,states,line)
+        if isinstance(typ,tuple) and typ[0]=='record' and expr.name in dict(typ[2]):
+            return js+'['+json.dumps(expr.name)+']',dict(typ[2])[expr.name],deps
+        fail(line,'Unknown record field or unguarded request error.', 'NW3001')
+    if isinstance(expr,A.Compare) and len(expr.ops)==1 and expr.ops[0] in ('==','!=','<','>','<=','>='):
+        left,lt,ld=value(expr.operands[0],states,line);right,rt,rd=value(expr.operands[1],states,line)
+        if (lt==rt and lt in ('int','str','bool')) or (lt=='error?' and rt=='none' and expr.ops[0] in ('==','!=')):
+            op={'==':'===','!=':'!=='}.get(expr.ops[0],expr.ops[0])
+            return '('+left+op+right+')','bool',ld|rd
+    if isinstance(expr,A.BoolOp):
+        left,lt,ld=value(expr.left,states,line);right,rt,rd=value(expr.right,states,line)
+        if lt==rt=='bool':return '('+left+('&&' if expr.op=='and' else '||')+right+')','bool',ld|rd
     if isinstance(expr, A.Unary) and expr.op == 'not':
         js, typ, deps = value(expr.operand, states, line)
         if typ == 'bool':
@@ -177,11 +202,11 @@ def build(source_path, output):
 def browser_assets(js, css, exports):
     return {'app.js': js, 'app.css': css,
              'main.js': f'import {{ {exports[0]} }} from "./app.js";\n{exports[0]}(document.querySelector("#app"));\n',
-             'index.html': '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\'; style-src \'self\'; base-uri \'none\'; form-action \'none\'"><title>'+html.escape('Nexo Web' if exports[0] == 'mountApp' else exports[0])+'</title><link rel="stylesheet" href="./app.css"></head><body><div id="app"></div><script type="module" src="./main.js"></script></body></html>\n'}
+             'index.html': '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; connect-src \'self\'; script-src \'self\'; style-src \'self\'; base-uri \'none\'; form-action \'none\'"><title>'+html.escape('Nexo Web' if exports[0] == 'mountApp' else exports[0])+'</title><link rel="stylesheet" href="./app.css"></head><body><div id="app"></div><script type="module" src="./main.js"></script></body></html>\n'}
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='nexo web', description='Experimental M1–M2 browser compiler; independent of WASI.')
+    parser = argparse.ArgumentParser(prog='nexo web', description='Experimental M1–M3 browser compiler; independent of WASI.')
     sub = parser.add_subparsers(dest='command', required=True)
     check = sub.add_parser('check')
     check.add_argument('--json', action='store_true')

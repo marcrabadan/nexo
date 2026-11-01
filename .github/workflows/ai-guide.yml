@@ -24,7 +24,7 @@ jobs:
       - name: Nexo Web compiler and real browser
         env:
           NEXO_WEB_REQUIRE_BROWSER: "1"
-        run: python -m pytest tests/test_web_frontend.py tests/test_web_composition.py
+        run: python -m pytest tests/test_web_frontend.py tests/test_web_composition.py tests/test_web_data.py
       - name: Browser regression
         run: |
           python -m http.server 8765 --bind 127.0.0.1 --directory docs > /tmp/nexo-guide-server.log 2>&1 &

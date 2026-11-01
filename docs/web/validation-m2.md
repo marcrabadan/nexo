@@ -1,5 +1,8 @@
 # Nexo Web M2 delivery — 2026-10-31
 
+For the subsequent milestone see [M3 delivery](validation-m3.md). This report
+preserves the M2 validation record.
+
 M2 is implemented as an experimental browser frontend. This report extends the
 [historical M0–M1 report](validation.md); it does not claim production readiness,
 a public deployment, or a fresh run of the entire native compiler test suite.

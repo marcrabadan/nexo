@@ -48,7 +48,7 @@ def test_counter_determinism_and_security(tmp_path):
     ('count += 1', 'http.get("/secret")', 'NW1001'),
     ('pub component Counter:', 'pub page Counter:', 'NW2003'),
     ('state count: int = 0', 'state count: int = secret()', 'NW1002'),
-    ('    view:', '    load products = api.get("/products")\n\n    view:', 'NW1001'),
+    ('    view:', '    load products = api.get("/products")\n\n    view:', 'NW3001'),
 ])
 def test_rejections(before, after, code):
     with pytest.raises(WebError) as error:
