@@ -5,6 +5,10 @@
 The `nexo.lang` setting is gone: Nexo's messages are in English only
 (D125).
 
+## 0.4.1
+
+Add the Nexo logo to the extension listing and Extensions view.
+
 ## 0.4.0
 
 Phase 4 of Nexo: highlighting of `ai`, `agent` and `server` blocks, routes,
