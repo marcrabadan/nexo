@@ -1,7 +1,10 @@
 # Nexo Web M4 delivery — 2026-11-01
 
 For the next milestone see [M5 delivery](validation-m5.md). This report preserves
-the M4 validation record.
+the M4 validation record. Publication status updated 2026-11-02: M4 and M5
+were committed together in [8c0c7b4](https://github.com/marcrabadan/nexo/commit/8c0c7b42901aed6b6857843cf2af3f3a3103945b)
+and pushed to `main`. The [M5 remote validation record](validation-m5.md#remote-validation-and-publication--2026-11-02)
+links the successful CI and GitHub Pages runs for the subsequent CI fixes.
 
 M4 is an experimental development/security tooling milestone on top of
 [M3](validation-m3.md). It does not claim production readiness, browser Shield
@@ -87,8 +90,8 @@ setup, explicit Node/Vite requirement, HMR reset semantics, commands, maps, edit
 tools and security limits. Existing visual identity, themes, code copying and
 navigation remain. `docs/web/build.py` regenerated `docs/web.html` and the M1–M3
 demos with the updated compiler. No development dependency was added to the public
-website itself. Intended URL after publication:
-`https://marcrabadan.github.io/nexo/web.html#development`.
+website itself. Published documentation:
+[development workflow](https://marcrabadan.github.io/nexo/web.html#development).
 
 AI Guide source updates: `source/nexo-web.md`, `source/catalog.json`,
 `source/examples.json`, `source/syntax.md`, `page.tmpl`, `README.md` and `build.py`.
@@ -99,9 +102,9 @@ versioned context/evidence/project payloads, `docs/ai-guide.html`, `docs/llms*.t
 and measurements. The playground ZIP was regenerated; CI installs pinned Vite
 and makes missing Vite/Chromium a failure in frontend tests.
 
-Current revision:
+Historical M4 guide revision (superseded by the revision in the [M5 report](validation-m5.md)):
 `5b23dc17ba641a958056cd1c8d9a67db1266c33f1b0ceb9eaa2b81af56509b04`.
-**82 generated artifacts are fresh.** Pinned-tokenizer counts compared with M3:
+**82 generated artifacts were fresh at M4 validation.** Pinned-tokenizer counts compared with M3:
 
 | Context | M3 | M4 |
 | --- | ---: | ---: |
@@ -172,7 +175,10 @@ Chromium/Linux were tested; other environments remain unverified. No full native
 compiler/WASI parity suite, formal accessibility audit or production penetration
 test was rerun for M4.
 
-The next milestone is M5: measured optimization, accessibility/security review,
-performance/CI gates and deployment/observability evidence. M5–M6 have not been
-started. No new commit, push, PR or public deployment was created for M4; the
-previous published main commit remains the M3 delivery.
+The subsequent [M5 delivery](validation-m5.md) adds measured optimization,
+accessibility/security review, performance/CI gates and deployment/observability
+evidence, and is now published on `main` with M4. The local results above remain
+the original M4 evidence; later native/compiler and remote CI validation is
+recorded separately in M5. M6 has not been started. No PR was created for this
+delivery; documentation publication does not establish production application
+readiness.

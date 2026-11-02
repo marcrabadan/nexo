@@ -2,8 +2,10 @@
 
 M5 adds an experimental release/quality/operations pipeline on top of
 [M4](validation-m4.md). Included fixtures and the static container were verified
-locally. This is not a blanket production-readiness, WCAG/ASVS certification,
-public TLS/cloud deployment or full native-suite result. M6 was not started.
+locally, with subsequent remote CI validation recorded below. M4 and M5 are
+published on `main`; the documentation and static demo are deployed to GitHub
+Pages. This is not a blanket production-readiness, WCAG/ASVS certification or
+production application TLS/cloud qualification. M6 was not started.
 
 ## Architecture and files
 
@@ -27,7 +29,9 @@ New quality/deployment sources: `tests/test_web_production.py`,
 and `.github/workflows/web-production.yml`.
 The playground generator now excludes optional web_tools/node_modules content;
 its ZIP was rebuilt. The wheel includes required runtime/tooling files and excludes
-node_modules. Existing M4 working changes remain present and uncommitted.
+node_modules. M4 and M5 were committed together in
+[8c0c7b4](https://github.com/marcrabadan/nexo/commit/8c0c7b42901aed6b6857843cf2af3f3a3103945b)
+and pushed to `main`.
 
 ## Implemented commands and behavior
 
@@ -82,10 +86,10 @@ source downloads under `docs/web/production/`; ordinary generation/check verifie
 stored measured/release artifacts without invoking Node. `docs/web.html` and
 M1–M3 demos were regenerated through that pipeline.
 
-Intended URLs after publication:
-`https://marcrabadan.github.io/nexo/web.html#production` and
-`https://marcrabadan.github.io/nexo/web-release-demo/`.
-They work from local docs hosting; this delivery has not published them remotely.
+Published URLs:
+[production workflow](https://marcrabadan.github.io/nexo/web.html#production) and
+[optimized static demo](https://marcrabadan.github.io/nexo/web-release-demo/).
+The successful GitHub Pages deployment is linked in the remote validation record.
 No axe/Vite runtime dependency was added to the public documentation page.
 
 AI Guide canonical sources/catalog/examples/template/README now teach M1–M5.
@@ -151,6 +155,9 @@ WCAG conformance certification.
 
 ## Executed validation
 
+The following results are the original local M5 validation record. Later remote
+CI results are recorded separately below.
+
 - Focused compiler/browser/website/AI Guide suite including tests/test_web_frontend.py, test_web_composition.py, test_web_data.py, test_web_tooling.py, test_web_production.py, test_ai_guide.py, test_ai_guide_advanced.py and test_libraries_page.py: **138 passed**, with browser/Vite/Docker requirements enabled. Final run: 80.64 seconds, one unrelated third-party pytest deprecation warning.
 - Lexer/parser/check JSON/core LSP regression selection: **209 passed, 16 deselected**. Native LSP parity cases were deliberately excluded; no fresh full native/WASI parity result is claimed.
 - Existing AI Guide backend verifier: **5 examples checked and executed**, exact output.
@@ -171,6 +178,33 @@ startup. These were fixed and the real deployment checks rerun. A source-map
 composition issue was fixed by preserving original source identity through Vite's
 normalization and stripping internal tags from final maps.
 
+## Remote validation and publication — 2026-11-02
+
+GitHub Actions reports all four workflows successful for
+[ca66956](https://github.com/marcrabadan/nexo/commit/ca66956cf867c5c46cbdf0786f4ea92542620926),
+which includes the M4/M5 delivery and subsequent CI corrections:
+
+- [Shield security regressions](https://github.com/marcrabadan/nexo/actions/runs/41400327442): four isolated Python shards, Rust build/tests, compiler conformance, interpreter/compiler differential checks and Docker security/isolation checks passed.
+- [Web production quality](https://github.com/marcrabadan/nexo/actions/runs/41400325181): source audits, release/browser/accessibility/deployment tests and measured asset/DOM budgets passed.
+- [AI Guide](https://github.com/marcrabadan/nexo/actions/runs/41400325361): example verification, measured generation freshness, Python/Node guide tests, frontend tests and browser regression passed.
+- [GitHub Pages](https://github.com/marcrabadan/nexo/actions/runs/41400324800): documentation/static-site build and deployment passed.
+
+The original serial Shield job exhausted its shared 45-minute budget after a
+successful Python suite. [d6f1628](https://github.com/marcrabadan/nexo/commit/d6f1628)
+separated the gates; [6c773a3](https://github.com/marcrabadan/nexo/commit/6c773a3)
+partitioned Python tests across four isolated runners without dropping coverage.
+The sharded run exposed a timing-sensitive agent deadline test.
+[ca66956](https://github.com/marcrabadan/nexo/commit/ca66956)
+replaced its fixed provider delay with a response-release event and allowed a
+one-second request setup window, retaining timeout, single-request and no-tool-effect
+assertions. Local validation passed all 90 lifecycle tests and three further
+repetitions of the corrected test on both backends before the successful remote run.
+
+These native CI results supplement the earlier deliberately limited local native
+selection. They do not establish a fresh WASI suite result, cross-browser support,
+production load capacity or security/accessibility certification. No PR was
+created; the commits were pushed directly to `main`.
+
 ## Deployment, security, remaining work and next step
 
 The static container pins
@@ -182,7 +216,8 @@ stderr still needs protected/redacted retention. Use workload-specific SLOs,
 monitoring, rollback and privacy policies before real deployment.
 
 Internal HTTP on 8080 must sit behind a trusted production TLS edge with HTTPS
-redirect/HSTS. No public deployment, end-to-end TLS, cloud topology, real backend
+redirect/HSTS. Beyond the published documentation/static demo on GitHub Pages,
+no production application deployment, end-to-end TLS qualification, cloud topology, real backend
 auth/session/resource-permission integration, image scan, production load test or
 full security audit was performed. Existing Shield memory and bounded loopback
 profiles retain their actual limits and are not production listeners or browser
@@ -198,5 +233,6 @@ remain technical debt. HMR keeps M4's root-remount semantics for logic changes.
 
 Stop at M5. Before M6, choose a concrete workload and qualification needs; SSR,
 hydration, SSG, PWA, WASM interop and realtime subscriptions require separate RFCs.
-No M6 work was started. No new commit, push, PR or remote deployment was created;
-M4 and M5 remain local working changes on top of the published M3 main commit.
+No M6 work was started. M4/M5 and the CI corrections are committed and pushed to
+`main`, with successful remote workflows and documentation deployment as linked
+above. Production application qualification remains pending.
