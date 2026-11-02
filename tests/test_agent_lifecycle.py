@@ -44,6 +44,8 @@ def model():
                 self.connection.shutdown(socket.SHUT_RDWR)
                 self.close_connection = True
                 return
+            if "release_provider" in control:
+                control["release_provider"].wait(timeout=20)
             time.sleep(control.get("delay", 0))
             used = any(m.get("role") == "tool" for m in body.get("messages", []))
             used |= any("tool_result" in json.dumps(m) or "functionResponse" in json.dumps(m)
@@ -84,6 +86,8 @@ def model():
     try:
         yield f"http://127.0.0.1:{server.server_port}", control, seen
     finally:
+        if "release_provider" in control:
+            control["release_provider"].set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
@@ -189,11 +193,17 @@ else e is AIError:
 
 
 def test_deadline_drops_delayed_dispatch(tmp_path, backend, model):
-    model[1].update(delay=0.15, calls=[tool_call()])
-    result = execute(tmp_path, backend, source(model, '''try:
-    reviewer.handle("text", timeout: 30ms)
+    # Allow cold request setup on a loaded runner. Hold the response until
+    # the client exits, so expiry never races a fixed provider sleep.
+    release = threading.Event()
+    model[1].update(release_provider=release, calls=[tool_call()])
+    try:
+        result = execute(tmp_path, backend, source(model, '''try:
+    reviewer.handle("text", timeout: 1s)
 else e is Timeout:
     print("deadline expired")''', TOOL))
+    finally:
+        release.set()
     assert result.returncode == 0, result.stdout.decode()
     assert result.stdout == b"deadline expired\n"
     assert not (tmp_path / "marker").exists()
