@@ -179,7 +179,7 @@ def test_website_browser_layout_theme_navigation_and_demo(browser):
             page.goto(base+'/web.html')
             assert page.title() == 'Nexo Web — compiler-first browser UI'
             assert page.locator('h1').inner_text() == 'Nexo Web'
-            assert page.locator('nav[aria-label="Main"] a[aria-current="page"]').inner_text() == 'Nexo Web'
+            assert page.locator('nav[aria-label="Main"] a[aria-current="page"]').inner_text() == 'Web'
             for theme in ('light', 'dark'):
                 page.evaluate('(theme) => document.documentElement.dataset.theme = theme', theme)
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), (width, theme)

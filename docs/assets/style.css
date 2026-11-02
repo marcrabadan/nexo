@@ -469,7 +469,13 @@ footer nav a:hover { color: var(--text); }
 .closing-links { display: grid; }
 .closing-links a { display: flex; justify-content: space-between; color: inherit; border-bottom: 1px solid color-mix(in srgb, var(--on-accent) 25%, transparent); padding: 16px 0; text-decoration: none; font-size: 13px; font-weight: 600; }
 .closing-links a:hover { text-decoration: underline; }
-footer nav { max-width: 600px; font-size: 12px; }
+footer .wrap { flex-wrap: nowrap; gap: 48px; }
+.foot-brand { flex: 0 0 220px; }
+.foot-cols { flex: 1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 28px; font-size: 13px; }
+.foot-col { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.foot-col h2 { font: 10px/1.6 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin: 0 0 4px; }
+@media (max-width: 1040px) { footer .wrap { flex-wrap: wrap; } .foot-brand { flex-basis: 100%; } .foot-cols { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .foot-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 footer .brand { font-size: 22px; }
 footer .foot-brand p { font-size: 11px; }
 
