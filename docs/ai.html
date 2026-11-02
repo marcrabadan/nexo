@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Guide — Nexo</title>
-<meta name="description" content="Give your coding assistant focused Nexo context, retrieve relevant documentation and compare token costs.">
+<title>For AI agents — Nexo</title>
+<meta name="description" content="Connect your coding agent to Nexo over MCP, give it the exact API with nexo docs --for-ai and let it check, fix and test its own code.">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
@@ -18,13 +18,15 @@
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="index.html">Getting Started</a>
-      <a href="backend.html">Nexo Backend</a>
-      <a href="web.html">Nexo Web</a>
-      <a href="devops.html">Nexo DevOps</a>
-      <a href="shield.html">Nexo Shield</a>
-      <a href="ai.html" aria-current="page">AI Guide</a>
-      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+      <a href="learn.html">Learn</a>
+      <a href="playground.html">Playground</a>
+      <a href="reference.html">Reference</a>
+      <a href="backend.html">Backend</a>
+      <a href="web.html">Web</a>
+      <a href="devops.html">DevOps</a>
+      <a href="shield.html">Security</a>
+      <a href="ai.html" aria-current="page">For AI agents</a>
+      <a class="nav-start" href="index.html#start">Get started <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
     </nav>
     <div class="header-tools">
       <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
@@ -38,7 +40,13 @@
     </div>
   </div>
 </header>
-<main id="main" class="wrap web-page"><section><p class="eyebrow">AI Guide</p><h1>Give your assistant the context it needs.</h1><p class="lede">Start with a compact Nexo prompt, add your task and retrieve more documentation when the work needs it.</p><p><a href="ai-guide.html#compose">Choose and copy a prompt</a> · <a href="llms.txt">Browse the context index</a></p></section>
+<main id="main" class="wrap web-page"><section><p class="eyebrow">For AI agents</p><h1>Give your agent a language it can get right.</h1><p class="lede">One way to do each thing, an exact list of available APIs and a compiler that explains every fix. Connect your coding assistant to Nexo in a minute and let it check, test and format its own work.</p><p><a href="#mcp">Connect with MCP</a> · <a href="ai-guide.html#compose">Choose and copy a prompt</a> · <a href="llms.txt">Browse the context index</a></p></section>
+<section id="mcp"><h2>Connect your assistant with MCP</h2><p><code>nexo mcp</code> runs a Model Context Protocol server on stdio. It offers <code>check</code>, <code>run_tests</code>, <code>docs_for_ai</code>, <code>plan</code> and <code>format</code> by running the same commands you use. It never offers <code>apply</code>: changes to infrastructure always wait for a person.</p><div class="code"><div class="code-bar"><span>MCP client configuration</span><button class="copy" type="button">Copy</button></div><pre><code>{
+  "mcpServers": {
+    "nexo": { "command": "nexo", "args": ["mcp"] }
+  }
+}</code></pre></div><p>Use the full path of the <code>nexo</code> executable if it isn’t on your <code>PATH</code>, such as <code>.venv/bin/nexo</code> inside the cloned repository.</p></section>
+<section><h2>The loop your agent can close</h2><ol><li><strong>Ground.</strong> <code>nexo docs --for-ai</code> prints the exact functions a program can use, so the model doesn’t invent APIs.</li><li><strong>Check.</strong> <code>nexo check --json</code> returns structured diagnostics; every message that reports a problem says how to fix it.</li><li><strong>Repair.</strong> <code>nexo fix</code> applies the safe fixes and <code>nexo fmt</code> keeps one canonical layout, so diffs stay small.</li><li><strong>Prove.</strong> <code>nexo test --suggest</code> proposes edge cases from types and contracts; <code>nexo test --coverage</code> shows the branches that ran.</li></ol><p>Code the agent writes runs inside the program’s <code>policy</code>: files, hosts, environment variables and commands it didn’t declare are refused. See <a href="shield.html">Nexo Shield</a> for stronger isolation.</p></section>
 <section><h2>Start with one focused task</h2><ol><li><strong>Choose Compact context.</strong> Select a profile and whether your assistant can open documentation URLs. Use the self-contained option when it cannot.</li><li><strong>Add your task.</strong> Include the relevant source, the change you want and how you will check the result.</li><li><strong>Ask for a focused result.</strong> Request a patch or a short explanation, then run the Nexo checks. Add context when a specific gap appears.</li></ol><p>The prompt generator runs in your browser without an account or API key. Copying the prompt into an external assistant sends it to that provider under its own terms.</p></section>
 <section><h2>Control input and output separately</h2><p>Compact prompts and selective documentation retrieval reduce the context you send. A focused response request can keep output shorter. The <a href="ai-guide.html">prompt generator</a> includes measured prompt counts and a local token and cost comparison tool.</p><p>Those counts cover prompt text, not your task, chat history, retrieved documents or the model’s response. Tokenization varies by provider. Shorter prompts do not guarantee better answers or lower total cost if they cause more correction rounds.</p></section>
 <section><h2>Bring the right reference</h2><dl><dt><a href="reference.html">Language reference</a></dt><dd>Look up syntax, explicit errors and library signatures.</dd><dt><a href="web-api.html">Nexo Web and API data</a></dt><dd>Use browser-specific syntax and typed requests for UI tasks.</dd><dt><a href="shield.html">Nexo Shield</a></dt><dd>Check permission boundaries and the requirements of the selected execution profile.</dd><dt><a href="ai-guide.html#examples-heading">Verified examples</a></dt><dd>Inspect runnable examples and their stated verification scope.</dd></dl></section>
@@ -47,9 +55,9 @@
   <div class="wrap">
     <div class="foot-brand">
       <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
-      <p>A readable language. One way to do each thing.</p>
+      <p>The language humans read and AI agents get right.</p>
     </div>
-    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
+    <nav class="foot-cols" aria-label="Footer"><div class="foot-col"><h2>Start</h2><a href="index.html">Why Nexo</a><a href="index.html#start">Install</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="walkthrough.html">Full app walkthrough</a></div><div class="foot-col"><h2>Build</h2><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="libraries.html">Libraries</a><a href="reference.html">Language reference</a></div><div class="foot-col"><h2>Trust</h2><a href="security.html">Security by design</a><a href="shield.html">Nexo Shield</a><a href="how-it-works.html">Architecture</a><a href="benchmarks.html">Benchmarks</a><a href="availability.html">Feature availability</a><a href="https://github.com/marcrabadan/nexo/blob/main/docs/guarantees.md">Measured guarantees</a></div><div class="foot-col"><h2>AI</h2><a href="ai.html">For AI agents</a><a href="ai-guide.html">AI prompt guide</a><a href="llms.txt">llms.txt</a><a href="libraries.html#ai">Build agents in Nexo</a></div><div class="foot-col"><h2>Project</h2><a href="https://github.com/marcrabadan/nexo">GitHub</a><a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a><a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">Design decisions</a><a href="troubleshooting.html">Troubleshooting</a></div></nav>
   </div>
 </footer>
 <script src="assets/site.js"></script>
