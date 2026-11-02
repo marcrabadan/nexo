@@ -107,3 +107,30 @@
   .proof > div + div { border-top: 1px solid var(--border); }
   .launch-hero .actions .btn { width: 100%; }
 }
+
+/* Technical sections: toolchain, diagnostics, MCP */
+.arch { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.arch li { position: relative; min-width: 0; border: 1px solid var(--border-strong); border-radius: 9px; padding: 24px 22px; }
+.arch li:not(:last-child)::after { content: ""; position: absolute; right: -15px; top: 50%; width: 8px; height: 8px; border-right: 1.5px solid var(--accent); border-top: 1.5px solid var(--accent); transform: rotate(45deg); }
+.arch h3 { font-size: 19px; font-weight: 600; margin-bottom: 10px; }
+.arch p { color: var(--muted); font-size: 14.5px; line-height: 1.75; margin: 0; }
+.diag-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.diag-grid > * { min-width: 0; }
+.diag-grid .code pre { font-size: 12.5px; }
+.agent-tools .bench-table { margin-top: 20px; }
+.agent-tools .bench-table td, .agent-tools .bench-table th { text-align: left; }
+.agent-tools .code pre { font-size: 12.5px; }
+.mcp-docs, .run-code { margin-top: 20px; }
+.agents .agent-tools { margin-bottom: 56px; }
+.agents .agent-loop { margin-bottom: 0; }
+.table-note { color: var(--faint); font-size: 12.5px; margin: 0; padding: 12px 16px; border-top: 1px solid var(--border); }
+.rules { margin-top: 8px; }
+@media (max-width: 1040px) {
+  .arch { grid-template-columns: 1fr 1fr; }
+  .arch li:nth-child(2)::after { display: none; }
+  .diag-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 800px) {
+  .arch { grid-template-columns: 1fr; }
+  .arch li::after { display: none; }
+}
