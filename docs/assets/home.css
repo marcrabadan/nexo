@@ -112,3 +112,12 @@
   .home-map-shield { align-items: start; padding: 22px 20px; gap: 14px; }
   .home-map-shield strong span { display: block; margin: 6px 0 0; }
 }
+
+/* Keep the introduction focused on a few useful next steps. */
+.example-paths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin-block: 28px; }
+.example-paths > a { color: var(--text); text-decoration: none; border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
+.example-paths > a:hover { border-color: var(--accent); }
+.example-paths h3 { font-size: 22px; }
+.example-paths p { color: var(--muted); font-size: 15px; margin-bottom: 0; }
+.home-page section > .wrap > p { max-width: 76ch; }
+@media (max-width: 800px) { .example-paths { grid-template-columns: 1fr; } }

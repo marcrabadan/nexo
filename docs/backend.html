@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nexo Backend — Nexo</title>
+<meta name="description" content="Build backend services with Nexo: typed APIs, databases, authentication, AI and agents.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/web.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="web-site">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="index.html">Getting Started</a>
+      <a href="backend.html" aria-current="page">Nexo Backend</a>
+      <a href="web.html">Nexo Web</a>
+      <a href="devops.html">Nexo DevOps</a>
+      <a href="shield.html">Nexo Shield</a>
+      <a href="ai.html">AI Guide</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<main id="main" class="wrap web-page">
+<section><p class="eyebrow">Backend development</p><h1>Nexo Backend</h1><p class="lede">Build services with typed routes, persistent data and model-powered workflows using Nexo’s existing language and libraries.</p><p><a href="libraries.html#web">Start with a working API</a> · <a href="libraries.html#db">Add a database</a></p></section>
+<section><h2>Build one useful endpoint</h2><ol><li><a href="libraries.html#web-routes">Define a route and its request types.</a> Start with the local server example and test valid and invalid requests.</li><li><a href="libraries.html#db-web">Connect the route to stored data.</a> Use typed queries and transactions for changes that must succeed together.</li><li><a href="libraries.html#web-auth">Add authentication and roles.</a> Authorize each protected operation on the backend.</li><li><a href="security.html">Declare and check permissions.</a> Verify that access outside the intended grant is denied.</li></ol></section>
+<section><h2>Add what your application needs</h2><dl>
+<dt><a href="libraries.html#web"><code>nexo.web</code> and HTTP</a></dt><dd>Server routes, request validation, authentication and outbound HTTP calls.</dd>
+<dt><a href="libraries.html#db"><code>nexo.db</code></a></dt><dd>Database connections, queries, transactions and migrations.</dd>
+<dt><a href="libraries.html#ai">AI and agents</a></dt><dd>Model calls, typed answers and registered tools. Keep provider credentials on the server and bound agent usage.</dd>
+<dt><a href="libraries.html#stream">Streams</a> and <a href="libraries.html#sync">concurrency</a></dt><dd>Process events and coordinate work when a single request is no longer enough.</dd>
+<dt><a href="libraries.html#privacy">Privacy</a> and <a href="libraries.html#reliability">reliability</a></dt><dd>Control personal data and make retries, failure handling and recovery explicit.</dd>
+</dl><p><a href="libraries.html">Browse all library guides</a> · <a href="reference.html#official">Look up the API reference</a></p></section>
+<section><h2>Connect the browser and deploy</h2><p><a href="web.html">Nexo Web</a> builds the browser interface; its <a href="web-api.html">typed data APIs</a> call your backend through same-origin requests. Browser components and server routes use separate compilation and runtime paths.</p><p>Use <a href="devops.html">Nexo DevOps</a> for infrastructure and delivery, and <a href="shield.html">Nexo Shield</a> for execution boundaries. The local server examples demonstrate supported behavior; production hosting, TLS, session security and operational readiness need their own validation.</p></section>
+<section><div class="wrap"><h2>Build and verify a complete application</h2><p><a href="walkthrough.html">Follow the support inbox walkthrough</a>: connect the browser, API, SQLite and a bounded agent in one local project.</p><p><a href="availability.html">Compare runtime availability</a> · <a href="troubleshooting.html">Fix common errors</a></p></div></section></main>
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
+  </div>
+</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

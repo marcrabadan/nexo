@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build and deploy — Nexo Web</title>
+<meta name="description" content="Produce static assets, review accessibility and choose a secure hosting setup.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/web.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="web-site">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="index.html">Getting Started</a>
+      <a href="backend.html">Nexo Backend</a>
+      <a href="web.html" aria-current="page">Nexo Web</a>
+      <a href="devops.html">Nexo DevOps</a>
+      <a href="shield.html">Nexo Shield</a>
+      <a href="ai.html">AI Guide</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<main id="main" class="wrap web-page"><header><p class="eyebrow"><a href="web.html">Nexo Web</a></p><h1>Build and deploy</h1><p class="lede">Produce static assets, review accessibility and choose a secure hosting setup.</p><nav aria-label="Web guides"><p><a href="web-guide.html">Components and routing</a> · <a href="web-api.html">API and data</a> · <a href="web-development.html">Development</a> · <a href="web-deployment.html">Deployment</a></p></nav></header><section id="production"><h2>Optimized releases and measured quality</h2>
+<p><code>build --release</code> minifies and tree-shakes the application with pinned Vite, emits hashed assets and SRI HTML, and records checksums and sizes in <code>nexo-manifest.json</code>. This remains client-rendered static hosting; it is not SSR or static page generation. Ordinary builds remain available without Node.</p>
+<div class="code"><div class="code-bar"><span>Release workflow</span><button class="copy" type="button">Copy</button></div><pre><code>npm ci --prefix nexo/web_tools
+python -m nexo web audit --security --accessibility --json examples/web/production/app.nexo
+python -m nexo web build examples/web/production/app.nexo --release -o dist
+python -m nexo web preview dist
+python scripts/web/measure.py --output /tmp/web-quality.json --check</code></pre></div>
+<p><a href="web-release-demo/">Run the actual optimized example</a> · <a href="web/production/app.nexo">Nexo source</a> · <a href="web/production/nginx.conf">Nginx configuration</a> · <a href="web/production/Dockerfile">Pinned container example</a> · <a href="web/production/README.md">Deployment and operations guide</a></p>
+<div class="code"><div class="code-bar"><span>production/app.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.web
+
+pub component App:
+    state count: int = 0
+
+    fn increment():
+        count += 1
+
+    view:
+        main:
+            h1(&quot;Nexo Web release&quot;)
+            p(&quot;Count: {count}&quot;, role: &quot;status&quot;)
+            button(&quot;Increment&quot;, on_click: increment)
+
+    style:
+        main {
+            max-width: 48rem;
+            margin: 2rem auto;
+            padding: 1rem;
+            color: #172033;
+            background: #ffffff;
+            font: 1.1rem/1.5 system-ui;
+        }
+        button { padding: 0.7rem 1rem; color: #ffffff; background: #0d47a1; border: 0; border-radius: 0.4rem; font: inherit; }
+        button:focus-visible { outline: 3px solid #0d47a1; outline-offset: 4px; }
+</code></pre></div>
+<h3>Measured assets, reproducible method</h3><table><caption>Estimated JavaScript gzip bytes, per-file compression; local fixtures</caption><thead><tr><th scope="col">Fixture</th><th scope="col">Ordinary build</th><th scope="col">Release</th></tr></thead><tbody><tr><th scope="row">composition</th><td>5382</td><td>3953</td></tr><tr><th scope="row">counter</th><td>2409</td><td>1259</td></tr><tr><th scope="row">data</th><td>6582</td><td>4550</td></tr><tr><th scope="row">production</th><td>2443</td><td>1290</td></tr></tbody></table>
+<p><a href="web/quality-report.json">Download the measured report</a>. It includes environment, raw samples, byte budgets, DOM mutations and axe results. Timings use loopback HTTP and fresh browser contexts on a shared host; they are not universal latency guarantees or framework comparisons. CI gates deterministic byte/DOM/axe budgets, not noisy timing thresholds.</p>
+<h3>Accessibility and safe deployment</h3><p>Source audit flags missing control names, positive tabindex and hidden interactive controls. Pinned axe-core tests the rendered example under WCAG A/AA and best-practice rules, with separate keyboard/status/focus checks. Automated scans cover the tested states and browser; they do not certify every application or replace assistive-technology review.</p>
+<p>The Nginx example has a locally verified non-root, read-only container, restrictive headers, static health, rate limits and privacy-minimized access logs. It does not provide backend APIs, authentication or production TLS: use a trusted HTTPS edge and independently authorize backend resources. Shield's bounded profiles remain backend tools. Choose hosting by budget and reliability; a simple static app usually does not need Kubernetes.</p>
+<p>Optional <code>--observe</code> emits allowlisted local browser events for mounts, requests and navigation, with phases and timing/error metadata. No collector, upload, persistence, raw messages, payloads or URLs are included. Default builds emit none. Operators must explicitly integrate and protect any external monitoring.</p>
+<p>Build into a dedicated directory: unrelated files are preserved by refusing replacement. Source maps are opt-in and expose source. <a href="https://github.com/marcrabadan/nexo/blob/main/docs/rfc/0001-nexo-web.md#m5">Release reference and limitations</a>. SSR, hydration and static generation remain future work.</p></section><section><h2>Security and accessibility</h2><p>Browser compilation rejects server imports, arbitrary calls, HTML injection, script elements, unsafe URL attributes and inline event code. Generated demo assets use a restrictive CSP. Never put secrets in a browser bundle. Visibility checks never replace server authorization.</p><p><a href="shield.html">Shield</a> remains a backend security foundation: use supported policy, authentication, authorization, rate-limit and CSRF controls. Its bounded loopback ingress is not a persistent production web server. Production needs HTTPS, secure HttpOnly sessions and a separately validated backend. OWASP ASVS 5.0 guides future reviews; these experimental features are not a certification.</p><p>Native elements support keyboard interaction. Authors remain responsible for meaningful labels, focus, headings, contrast and ARIA. Use <code>web audit --accessibility</code> for the supported source checks and test the rendered application with assistive technology.</p></section><section><h2>Supported features and limitations</h2><table><caption>Implementation status</caption><thead><tr><th scope="col">Capability</th><th scope="col">Status</th></tr></thead><tbody>
+<tr><th scope="row">Component, local state, actions, text/attribute bindings, scoped CSS</th><td>Experimental</td></tr>
+<tr><th scope="row">Pages with explicit paths and typed parameters; layouts with slot(); context with provide/inject()</th><td>Experimental</td></tr>
+<tr><th scope="row">Typed scalar props, project component/CSS imports</th><td>Experimental</td></tr>
+<tr><th scope="row">Conditions, JSON records and snapshot lists</th><td>Experimental; keyed reconciliation remains proposed</td></tr>
+<tr><th scope="row">Async api.get/post/put/patch/delete, load/mutation, cancellation and cache</th><td>Experimental</td></tr>
+<tr><th scope="row">Vite/HMR and browser Shield tooling</th><td>Experimental tooling; Shield runtime enforcement remains backend-only</td></tr>
+<tr><th scope="row">Release optimization, source accessibility audit, fixture quality budgets and static deployment example</th><td>Experimental; workload-specific production qualification still required</td></tr>
+<tr><th scope="row">SSR, hydration and static generation</th><td>Separate future RFCs</td></tr></tbody></table>
+<p>Pages represent routable screens; layouts own persistent shared structure and a slot; context belongs to the provider subtree. Typed API reads use load and explicit writes use mutation experimentally.</p></section></main>
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
+  </div>
+</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

@@ -104,7 +104,8 @@ def test_navigation_and_default_accessibility():
         text=path.read_text()
         if 'aria-label="Main"' in text:
             main_nav=text[text.index('aria-label="Main"'):text.index('</nav>',text.index('aria-label="Main"'))]
-            assert 'href="ai-guide.html"' in main_nav,path
+            destination = 'ai-guide.html' if path.name == 'ai-guide.html' else 'ai.html'
+            assert f'href="{destination}"' in main_nav,path
     text=(ROOT/'docs/ai-guide.html').read_text()
     assert 'name="mode" value="compact" checked' in text
     assert 'name="access" value="offline" checked' in text

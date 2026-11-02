@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feature availability — Nexo</title>
+<meta name="description" content="Compare Nexo interpreter, native compiler, browser and Shield capabilities before choosing a runtime.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/web.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="web-site">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="index.html">Getting Started</a>
+      <a href="backend.html">Nexo Backend</a>
+      <a href="web.html">Nexo Web</a>
+      <a href="devops.html">Nexo DevOps</a>
+      <a href="shield.html">Nexo Shield</a>
+      <a href="ai.html">AI Guide</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<main id="main" class="wrap web-page">
+<section><p class="eyebrow">Runtime reference</p><h1>Choose the right execution path</h1><p class="lede">Availability depends on the runtime, host and execution profile. Use this map to find the relevant guide; check exact signatures and restrictions before deployment.</p><p>“Supported” means an implementation exists. It does not certify every dependency, platform or production workload.</p></section>
+<section><h2>Runtime and profile map</h2><div class="table-wrap"><table><caption>Capabilities and important boundaries</caption><thead><tr><th scope="col">Capability</th><th scope="col">Python interpreter</th><th scope="col">Rust / LLVM native</th><th scope="col">Browser UI</th><th scope="col">Shield</th></tr></thead><tbody>
+<tr><th scope="row">Core language, records and explicit errors</th><td>Supported</td><td>Supported; host toolchain required</td><td>Separate, restricted UI language subset</td><td>Supported within the selected execution profile</td></tr>
+<tr><th scope="row">Components, routing and typed browser requests</th><td>Python CLI compiles browser assets</td><td>Browser component compilation unavailable</td><td>Experimental; modern browser required</td><td>No browser Shield runtime</td></tr>
+<tr><th scope="row">Backend routes and database libraries</th><td>Supported; connector-specific requirements</td><td>Supported; connector-specific requirements</td><td>Calls a separate backend through same-origin APIs</td><td>Bounded memory/ingress profiles and connector limits; no general production server guarantee</td></tr>
+<tr><th scope="row">AI calls and agents</th><td>Supported; provider configuration required</td><td>Supported; provider and persistence restrictions apply</td><td>Keep model credentials and agent execution on the backend</td><td>Supported only with compatible authorization, connector and persistence profiles</td></tr>
+<tr><th scope="row">Parallel execution</th><td>Parallel constructs execute sequentially</td><td>Native parallel execution</td><td>Core parallel constructs unavailable</td><td>Profile-dependent; the offline worker rejects threads</td></tr>
+<tr><th scope="row">Permissions and static effect analysis</th><td>Supported; unknown effects remain unknown</td><td>Supported; unknown effects remain unknown</td><td>Compiler checks browser capabilities; server authorization remains necessary</td><td>Strict checks for protected APIs; not arbitrary syscall confinement</td></tr>
+<tr><th scope="row">OS isolation and hard process limits</th><td>Policy alone provides neither</td><td>Policy alone provides neither</td><td>Browser sandbox does not protect a backend</td><td>Optional Docker / Linux worker; host probe and explicit profile required</td></tr>
+<tr><th scope="row">Infrastructure and CI</th><td>Adapters and local workflow tools</td><td>Adapters and local workflow tools</td><td>Static asset delivery only</td><td>Shell-based CI and arbitrary native integrations are rejected</td></tr>
+<tr><th scope="row">SSR, hydration and static page generation</th><td>Not implemented for Nexo Web</td><td>Not implemented for Nexo Web</td><td>Client-rendered applications only</td><td>Not applicable</td></tr>
+</tbody></table></div></section>
+<section><h2>Read the boundary that affects your task</h2><ul><li><a href="reference.html#cli">CLI and native compilation</a> — toolchain requirements and commands.</li><li><a href="web-deployment.html">Nexo Web limits</a> — experimental browser features, release builds and hosting.</li><li><a href="libraries.html">Library guides</a> — provider, database and connector prerequisites.</li><li><a href="shield.html#boundaries">Shield execution profiles</a> — permissions, offline isolation and unsupported integrations.</li><li><a href="ai-guide.html">Versioned AI context</a> — detailed implemented, experimental, planned and unverified claims.</li></ul><p>The WASI <code>build --target web</code> path is separate from Nexo Web components. A browser playground result does not prove native or standalone WASI compatibility. Test the actual runtime and deployment target.</p></section>
+</main>
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
+  </div>
+</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

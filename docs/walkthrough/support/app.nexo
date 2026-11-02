@@ -1,0 +1,46 @@
+use nexo.web
+
+pub type Ticket:
+    id: int
+    text: str
+    summary: str
+
+pub type NewTicket:
+    text: str
+
+pub component Inbox:
+    load tickets = api.get("/api/tickets", as: list[Ticket])
+    mutation create = api.post(
+        "/api/tickets",
+        body: NewTicket(text: "I was charged twice for my order."),
+        as: Ticket,
+        invalidate: [tickets]
+    )
+
+    view:
+        main:
+            h1("Support inbox")
+            p("Local demo: the model endpoint returns a fixed example summary.")
+            button("Add sample request", on_click: create.run, disabled: create.loading)
+            if create.loading:
+                p("Summarizing...", role: "status")
+            elif create.error != none:
+                p(create.error.message, role: "alert")
+            elif create.success:
+                p("Request saved.", role: "status")
+            if tickets.loading:
+                p("Loading requests...", role: "status")
+            elif tickets.error != none:
+                p(tickets.error.message, role: "alert")
+                button("Retry", on_click: tickets.reload)
+            elif tickets.ready:
+                ul:
+                    for ticket in tickets.data:
+                        li:
+                            h2(ticket.summary)
+                            p(ticket.text)
+
+    style:
+        main { max-width: 44rem; margin: 2rem auto; padding: 1rem; font-family: system-ui; }
+        button { padding: 0.75rem; }
+        button:focus-visible { outline: 3px solid currentColor; outline-offset: 3px; }

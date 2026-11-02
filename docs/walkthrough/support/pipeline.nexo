@@ -1,0 +1,8 @@
+policy:
+    allow shell
+
+pipeline verify:
+    step frontend:
+        run("python -m nexo web check --json app.nexo")
+    step backend:
+        run("python -m nexo test backend.nexo")

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Development tools — Nexo Web</title>
+<meta name="description" content="Create a project, run it locally and inspect compiler diagnostics.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/web.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="web-site">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="index.html">Getting Started</a>
+      <a href="backend.html">Nexo Backend</a>
+      <a href="web.html" aria-current="page">Nexo Web</a>
+      <a href="devops.html">Nexo DevOps</a>
+      <a href="shield.html">Nexo Shield</a>
+      <a href="ai.html">AI Guide</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<main id="main" class="wrap web-page"><header><p class="eyebrow"><a href="web.html">Nexo Web</a></p><h1>Development tools</h1><p class="lede">Create a project, run it locally and inspect compiler diagnostics.</p><nav aria-label="Web guides"><p><a href="web-guide.html">Components and routing</a> · <a href="web-api.html">API and data</a> · <a href="web-development.html">Development</a> · <a href="web-deployment.html">Deployment</a></p></nav></header><section id="development"><h2>Develop with Vite</h2>
+<p>Vite supplies the optional local development server and module transport. The Nexo compiler still owns parsing, types and browser code. No React wrapper or TypeScript application syntax is involved.</p>
+<div class="code"><div class="code-bar"><span>New project</span><button class="copy" type="button">Copy</button></div><pre><code>python -m nexo web new my-app
+cd my-app
+npm ci
+python -m nexo web dev app.nexo
+# Open the loopback URL printed by the command.
+python -m nexo web check --json app.nexo
+python -m nexo web audit --security --json app.nexo
+python -m nexo web build app.nexo --sourcemap -o dist
+python -m nexo web preview dist</code></pre></div>
+<p>Install Nexo first. Development requires Node 22.12 or 24+ and locked Vite 8.3.5; npm installation is explicit. Existing repository examples use <code>npm ci --prefix nexo/web_tools</code> followed by <code>python -m nexo web dev examples/web/counter.nexo</code>. Build, check, audit and preview do not need Node.</p>
+<p>CSS-only updates keep the current UI and state when generated JavaScript and mapped line positions stay unchanged. Logic edits destroy and remount the application: counters, context and requests reset. Compile errors retain the last valid UI and display a keyboard-readable text diagnostic. <a href="web-demo/">The working Counter</a> is the same source used by the scaffold and HMR tests.</p>
+<p>Dev binds 127.0.0.1, checks Host/Origin, and does not serve project .env files, public directories or arbitrary source paths. It loads no project Vite configuration. Preview serves only built assets. Neither is production hosting or a backend API proxy; keep using the local API example for complete request/mutation testing.</p>
+<h3>Find errors in the editor and browser</h3><p><code>web check --json</code> now includes source statement columns and snippets. <code>build --sourcemap</code> emits deterministic line-level JavaScript maps with embedded Nexo sources; omit maps when source publication is not intended. CSS maps and precise expression stepping remain unsupported.</p>
+<p>Configure a frontend editor to run <code>python -m nexo web lsp</code>. It offers unsaved-entry diagnostics, local definitions/hover, outline and canonical browser completions. The existing core <code>nexo lsp</code> is unchanged. Browser formatting, cross-file navigation and unsaved imported-buffer overlays are not implemented.</p>
+<h3>Review browser security boundaries</h3><p><code>web audit --security</code> applies compiler capability checks and flags credential-like literals and opt-in cache requiring identity review. Findings are redacted; no findings does not prove security. Backend authorization remains explicitly unassessed. The report explains Shield memory dispatch and bounded loopback ingress limits; it does not run Shield in a browser or turn its listener into production hosting.</p>
+<p><a href="https://github.com/marcrabadan/nexo/blob/main/docs/rfc/0001-nexo-web.md#m4">Development semantics, limits and troubleshooting</a>. Development features are tested locally with real Vite and Chromium; no comparative performance or production-readiness claim is made.</p></section><section><h2>Build and run locally</h2><div class="code"><div class="code-bar"><span>Local development</span><button class="copy" type="button">Copy</button></div><pre><code>python -m nexo web check --json examples/web/counter.nexo
+python -m nexo web build examples/web/counter.nexo -o /tmp/nexo-counter
+python -m http.server 8765 --bind 127.0.0.1 --directory /tmp/nexo-counter
+# Open http://127.0.0.1:8765/
+python -m pytest tests/test_web_frontend.py</code></pre></div>
+<p>Install Nexo from the repository first. Ordinary build emits <code>index.html</code>, <code>main.js</code>, <code>app.js</code> and <code>app.css</code>. Serve over HTTP; file URLs cannot reliably load ES modules. Development tools include <code>web new/dev/preview/audit/lsp</code> and opt-in JavaScript source maps. Release builds add <code>--release</code> optimization, integrity manifests and measured quality gates.</p>
+<p>Diagnostics: NW1001 grammar, NW1002 names/types, NW1003 CSS boundaries, NW1004 unsafe DOM, NW1000 I/O. Composition diagnostics: NW2001 modules, NW2002 props/composition, NW2003 routes, NW2004 context and NW2005 slots. Data diagnostics: NW3001 JSON contracts, NW3002 request/readiness rules and NW3003 API URL boundaries. Tooling diagnostics: NW4001 tool availability, NW4002 dev boundaries, NW4101 credential review and NW4102 cache review. Release diagnostics: NW5001 release integrity/optimization and NW5101–NW5103 source accessibility findings. Each compile error gives a fix. Inspect JSON diagnostics before changing code.</p></section></main>
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
+  </div>
+</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>

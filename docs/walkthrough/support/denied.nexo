@@ -1,0 +1,5 @@
+policy:
+    allow read "support.db"
+    deny shell
+
+print(read("outside-the-grant.txt"))

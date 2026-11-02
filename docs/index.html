@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexo programming language</title>
-<meta name="description" content="Learn Nexo, a programming language with readable syntax, explicit errors and native compilation. Start with guided lessons, working examples and a clear language reference.">
+<meta name="description" content="Get started with Nexo: readable syntax, security by design, AI and deployment libraries, browser interfaces and focused LLM context.">
 <meta property="og:title" content="Nexo programming language">
 <meta property="og:description" content="One way to do each thing. Errors as values, exact money, data pipelines and contracts.">
 <meta name="color-scheme" content="dark light">
@@ -22,15 +22,12 @@
   <div class="wrap">
     <a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="learn.html">Learn</a>
-      <a href="playground.html">Playground</a>
-      <a href="examples.html">Examples</a>
-      <a href="libraries.html">Libraries</a>
-      <a href="how-it-works.html">How it works</a>
-      <a href="reference.html">Reference</a>
+      <a href="index.html" aria-current="page">Getting Started</a>
+      <a href="backend.html">Nexo Backend</a>
       <a href="web.html">Nexo Web</a>
-      <a href="ai-guide.html">AI Guide</a>
-      <a href="shield.html">Shield</a>
+      <a href="devops.html">Nexo DevOps</a>
+      <a href="shield.html">Nexo Shield</a>
+      <a href="ai.html">AI Guide</a>
       <a class="nav-start" href="#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
     </nav>
     <div class="header-tools">
@@ -46,69 +43,22 @@
   </div>
 </header>
 
-<main id="main">
-<div class="hero learning-hero" id="top"><div class="wrap">
-  <div class="hero-copy">
-    <p class="eyebrow">The Nexo programming language</p>
-    <h1>One way to do <br><em>each thing.</em></h1>
-    <p class="lede">Nexo is a programming language with readable syntax, explicit errors, and native compilation. Start small, then build real applications.</p>
-    <div class="actions"><a class="btn btn-primary" href="learn.html">Learn Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a><a class="btn btn-ghost" href="#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></div>
-    <p class="hero-footnote">New to programming? You can start here.</p>
-  </div>
-  <div class="hero-code first-program">
-    <div class="editor-caption">Your first Nexo program</div>
-    <div class="code"><div class="code-bar"><span>hello.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = "Ada"
-print("Hello, {name}!")</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Hello, Ada!</code></pre></div></div>
-    <div class="code-explained"><p><code>name</code> remembers a value.</p><p><code>print(...)</code> displays text.</p><p><code>{name}</code> puts the value into the message.</p></div>
-    <a class="text-link" href="learn.html#hello">Understand every line <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
-  </div>
-</div></div>
-
-<section id="learn" class="alt"><div class="wrap">
-  <div class="section-head"><p class="eyebrow">A place to begin</p><h2>Learn a little.<br>Build on what you know.</h2><p class="section-intro">Three short lessons take you from your first message to a reusable invoice calculation. Read the code, see the result, then try a small exercise.</p></div>
-  <ol class="lesson-cards">
-    <li><a href="learn.html#hello"><span class="lesson-label">Lesson 01</span><h3>Say hello</h3><p>Write your first program. Give a value a name and put it into a message.</p><code>print("Hello, {name}!")</code><span class="lesson-link">Start with text <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></span></a></li>
-    <li><a href="learn.html#money"><span class="lesson-label">Lesson 02</span><h3>Work with numbers</h3><p>Calculate a line total with a price and a quantity. Keep money exact.</p><code>total = price * quantity</code><span class="lesson-link">Make a calculation <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></span></a></li>
-    <li><a href="learn.html#functions"><span class="lesson-label">Lesson 03</span><h3>Write a function</h3><p>Give a calculation a name so you can use it with different values.</p><code>fn invoice_total(price, quantity):</code><span class="lesson-link">Reuse your code <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></span></a></li>
-  </ol>
-</div></section>
-
-<section class="home-overview" id="how-it-works"><div class="wrap">
-  <div class="section-head"><p class="eyebrow">How it works</p><h2>See how the pieces fit.</h2><p class="section-intro">One language, two ways to run. Add Shield when your program needs explicit permissions and execution boundaries.</p></div>
-  <figure class="home-map">
-    <ol class="home-map-flow">
-      <li><span class="map-step">Write</span><h3>Your code</h3><code>hello.nexo</code><p>The readable program you create.</p></li>
-      <li class="home-map-routes"><span class="map-step">Run</span><h3>Choose a path</h3><div class="home-map-choices"><span>Run directly</span><span>Build native code</span></div><p>Both use the same Nexo syntax.</p></li>
-      <li><span class="map-step">See</span><h3>Your result</h3><code>Hello, Ada!</code><p>The output of your program.</p></li>
-    </ol>
-    <div class="home-map-shield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m12 3 8 3v5c0 5-4 8-8 10-4-2-8-5-8-10V6l8-3Z"/><path d="m8 12 3 3 5-6"/></svg><div><strong>Nexo Shield <span>Optional boundaries</span></strong><p>Permission checks. Hardened Docker. An optional Linux worker for additional isolation.</p></div></div>
-    <figcaption><a class="text-link" href="how-it-works.html">Explore Nexo and Shield visually <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></figcaption>
-  </figure>
-</div></section>
-
-<section id="features"><div class="wrap">
-  <div class="section-head"><p class="eyebrow">Get a feel for Nexo</p><h2>Ideas you can read<br>in the code.</h2><p class="section-intro">Start with familiar calculations. As your programs grow, the same language helps you work with data and handle things that can go wrong.</p></div>
-  <div class="teaching-examples">
-    <article><div class="teaching-heading"><span class="lesson-label">Numbers &amp; money</span><h3>A price is a price.</h3><p>Write the currency beside the amount. Multiplying by a quantity gives an exact total.</p></div><div class="code"><div class="code-bar"><span>total.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">price = 19.90 EUR
-quantity = 3
-print(price * quantity)</code></pre><div class="out"><div class="out-label">Output</div><pre><code>59.70 EUR</code></pre></div></div><a class="text-link" href="learn.html#money">Learn about numbers <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></article>
-    <article><div class="teaching-heading"><span class="lesson-label">Data pipelines</span><h3>Follow the data.</h3><p>A pipeline sends a value to the next step. Here, <code>|&gt; sum</code> adds the numbers in the list.</p></div><div class="code"><div class="code-bar"><span>sum.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">numbers = [2, 4, 6]
-total = numbers |&gt; sum
-print(total)</code></pre><div class="out"><div class="out-label">Output</div><pre><code>12</code></pre></div></div><a class="text-link" href="reference.html#pipelines">Explore pipelines <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></article>
-  </div>
-  <aside class="error-intro"><div><h3>When something can go wrong, the code says so.</h3><p>A function that can fail returns a value or an error. Handle the error where you are, or pass it to the caller with <code>?</code>.</p></div><a class="text-link" href="reference.html#errors">Understand errors <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></aside>
-</div></section>
-
-<section class="alt" id="examples"><div class="wrap">
-  <span id="modules"></span>
-  <div class="section-head"><p class="eyebrow">Put it together</p><h2>Small programs.<br>Useful things.</h2><p class="section-intro">See the language in context. Each example includes the source, its output, and an explanation of what to look for.</p></div>
-  <div class="project-cards">
-    <a href="examples.html#first-example"><span class="lesson-label">Everyday calculations</span><h3>An invoice</h3><p>Turn a price and a quantity into a clear, exact total.</p><span class="lesson-link">See the example <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></span></a>
-    <a href="examples.html#programs"><span class="lesson-label">Working with data</span><h3>A sales report</h3><p>Read a file, group the rows and calculate totals.</p><span class="lesson-link">Follow the data <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></span></a>
-    <a href="examples.html#modules"><span class="lesson-label">Going further</span><h3>A web application</h3><p>Explore databases, typed routes and other modules when you need them.</p><span class="lesson-link">Explore the modules <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></span></a>
-  </div>
-</div></section>
-
+<main id="main"><div class="hero learning-hero" id="top"><div class="wrap">
+<div class="hero-copy"><p class="eyebrow">Getting Started</p><h1>Meet Nexo.</h1><p class="lede">A programming language for readable applications, typed AI workflows and explicit access to system resources.</p><p>Run code with the Python interpreter or compile it to native code with Rust and LLVM. Start with a small program, then add the libraries and execution boundaries your application needs.</p><div class="actions"><a class="btn btn-primary" href="#start">Install and run</a><a class="btn btn-ghost" href="learn.html">Follow the tutorial</a></div></div>
+<div class="hero-code first-program"><div class="editor-caption">Your first Nexo program</div><div class="code"><div class="code-bar"><span>hello.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">name = "Ada"
+print("Hello, {name}!")</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Hello, Ada!</code></pre></div></div></div></div></div>
+<section id="introduction"><div class="wrap"><h2>A language you can follow</h2><p>Nexo uses indentation, named values and functions to keep programs readable. Exact decimal money, typed records and pipelines help express application logic. Functions that can fail return explicit errors: handle them or pass them to the caller with <code>?</code>.</p><p><a href="learn.html">Take the three-part tutorial</a> · <a href="playground.html">Try Nexo in the browser</a> · <a href="reference.html">Look up language syntax</a></p></div></section>
+<section class="alt" id="security"><div class="wrap"><h2>Security by design</h2><p>Describe the access your program needs in a <code>policy</code>. Inspect known effects before running it, then choose enforcement appropriate to the workload.</p><div class="home-map" role="group" aria-label="Security layers"><ol class="home-map-flow">
+<li><h3>Declare permissions</h3><p>Grant specific resources and deny unnecessary capabilities. Static effect analysis highlights known needs and leaves dynamic access marked unknown.</p></li>
+<li><h3>Enforce access</h3><p>Nexo Shield checks protected operations and restricts dependency permissions. Policy checks govern supported APIs; they do not confine arbitrary native code.</p></li>
+<li><h3>Isolate execution</h3><p>Add a hardened container or the optional Linux worker. Kernel isolation requires supported host features; the offline worker denies sockets and child processes.</p></li>
+</ol></div><p><a href="security.html">Follow the permissions tutorial</a> · <a href="shield.html">Choose a Shield execution profile</a> · <a href="how-it-works.html">Explore the architecture</a></p></div></section>
+<section id="libraries"><div class="wrap"><h2>Build services and deliver them</h2><div class="example-paths">
+<a href="backend.html"><h3>Nexo Backend</h3><p>Build typed APIs, connect databases and add AI or agents. Configure provider credentials on the server.</p></a>
+<a href="devops.html"><h3>Nexo DevOps</h3><p>Describe infrastructure, run CI pipelines and prepare deployments. Review plans and generated workflows before applying changes.</p></a>
+<a href="libraries.html#db"><h3>Application data</h3><p>Work with databases, HTTP services and streams using executable examples.</p></a>
+</div><p><a href="libraries.html">Browse the library guides</a></p></div></section>
+<section class="alt" id="tokens"><div class="wrap"><h2>Use LLM tokens deliberately</h2><p>For coding assistance, start with the AI Guide’s compact context and retrieve only the topics your task needs. Ask for a focused patch or a short answer to keep output relevant. Its token comparison tool helps estimate input and output cost; savings depend on the task and model.</p><p>For agents built in Nexo, <code>max_tokens</code> bounds reported input plus output usage across an invocation. Output limits and monetary reservations provide separate controls. Reported usage checks cannot guarantee a provider’s final invoice.</p><p><a href="ai-guide.html">Prepare focused AI context</a> · <a href="https://github.com/marcrabadan/nexo/blob/main/docs/agent-token-budgets.md">Understand agent token budgets</a></p></div></section>
 <section id="start"><div class="wrap">
   <div class="section-head"><p class="eyebrow">Install &amp; run</p><h2>Your first program,<br>on your computer.</h2><p class="section-intro">Use a macOS or Linux terminal with Git and Python 3.12 installed. You’ll download Nexo and run the interpreter, which reads and executes your code.</p></div>
   <div class="install-layout">
@@ -120,36 +70,14 @@ python3.12 -m venv .venv
 print("Hello, {name}!")</code></pre></div><h3 class="run-heading">3. Run it</h3><p>Back in the terminal, enter this command.</p><div class="code"><div class="code-bar"><span>Terminal</span><button class="copy" type="button">Copy</button></div><pre><code>.venv/bin/nexo hello.nexo</code></pre><div class="out"><div class="out-label">Output</div><pre><code>Hello, Ada!</code></pre></div></div><a class="text-link" href="learn.html#hello">Now learn what each line does <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></div>
   </div>
   <p class="native-note">Nexo can also compile programs to native code. <a href="how-it-works.html#your-code">See the two ways to run a program</a>, or explore the <a href="reference.html#cli">compiler commands</a> for building and running a compiled program.</p>
-</div></section>
-
-<section class="alt shield-intro" id="shield"><div class="wrap shield-intro-layout">
-  <div><p class="eyebrow">When you need explicit permissions</p><h2>Meet Nexo Shield.</h2><p class="section-intro">Declare which files and resources a program may access. Shield enforces those permissions and supports native execution inside hardened Docker.</p><p>Inspect known permission requirements before execution with <code>nexo check --effects</code>. <a href="shield.html#static-analysis">See static effect analysis</a>.</p><a class="text-link" href="shield.html">Learn how Shield works <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></div>
-  <div class="shield-policy-preview"><div class="code"><div class="code-bar"><span>policy.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">policy:
-    allow read "input.txt"
-    deny shell</code></pre></div><p>The program may read <code>input.txt</code>. Shell commands are denied. Learn the language first, then explore how to control access.</p></div>
-</div></section>
-
-<section class="closing"><div class="wrap closing-layout"><div><p class="eyebrow">Choose your next step</p><h2>A lesson when you’re learning.<br>A reference when you need it.</h2></div><div class="closing-links"><a href="learn.html#hello">Start the first lesson <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a><a href="examples.html">Explore working examples <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a><a href="reference.html">Look up the syntax <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a></div></div></section>
-</main>
+</div></section><section><div class="wrap"><h2>Continue with your project</h2><dl><dt><a href="web.html">Nexo Web</a></dt><dd>Build a browser interface and connect typed backend requests.</dd><dt><a href="shield.html">Nexo Shield</a></dt><dd>Choose permissions, dependency limits and host isolation.</dd><dt><a href="ai.html">AI Guide</a></dt><dd>Give a coding assistant task-specific Nexo context and verified examples.</dd></dl><p>Nexo is evolving. Feature availability depends on the runtime and execution profile; each guide states its supported scope.</p></div></section><section><div class="wrap"><h2>Build and verify a complete application</h2><p><a href="walkthrough.html">Follow the support inbox walkthrough</a>: connect the browser, API, SQLite and a bounded agent in one local project.</p><p><a href="availability.html">Compare runtime availability</a> · <a href="troubleshooting.html">Fix common errors</a></p></div></section></main>
 <footer>
   <div class="wrap">
     <div class="foot-brand">
       <a class="brand" href="#top"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
       <p>A readable language. One way to do each thing.</p>
     </div>
-    <nav aria-label="Footer">
-      <a href="learn.html">Learn</a>
-      <a href="playground.html">Playground</a>
-      <a href="examples.html">Examples</a>
-      <a href="libraries.html">Libraries</a>
-      <a href="how-it-works.html">How it works</a>
-      <a href="reference.html">Reference</a>
-      <a href="web.html">Nexo Web</a>
-      <a href="ai-guide.html">AI Guide</a>
-      <a href="shield.html">Shield</a>
-      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
-      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
-    </nav>
+    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
   </div>
 </footer>
 
