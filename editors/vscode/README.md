@@ -82,3 +82,21 @@ command.* The server's own log is in the **Output** panel, channel
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `nexo.path` | `nexo` | the `nexo` command to run: a name on the `PATH`, or the absolute path of `compiler/target/release/nexo` or `.venv/bin/nexo` |
+## Publishing from GitHub Actions
+
+Store the publisher's Azure DevOps personal access token as the repository
+**Actions secret** `VSCE_PAT` (not a repository variable or Dependabot secret).
+The token needs Marketplace Manage scope and access to publisher `nexo-lang`.
+An organization secret must explicitly permit this repository. Environment
+secrets are not available unless the job selects that environment.
+
+Push a `vscode-vX.Y.Z` tag to publish its package, or open **Actions → VS Code
+extension → Run workflow**, select `main` and enable **publish**. A manual run
+without that option only tests and packages the extension. The workflow checks
+that the credential is present before compiling; it never prints the token.
+
+If publishing reports `TF400813`, check whether `VSCE_PAT` was available to the
+run, then verify token expiry, scope and publisher membership. After correcting
+the secret, rerun the failed release job or use a manual publish from `main`.
+Do not republish a version already accepted by Marketplace; increase the package
+and lockfile version for a new release.
