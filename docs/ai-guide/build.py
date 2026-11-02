@@ -39,7 +39,7 @@ def inputs():
     paths.update(doc['path'] for doc in catalog['documents'])
     examples = json.loads((HERE/'source/examples.json').read_text())
     paths.update(e['path'] for e in examples['examples'] + examples.get('frontend_examples', []))
-    paths.update(['nexo/web_runtime.js','nexo/web_router.js','nexo/web_data.js','nexo/web_observe.js'])
+    paths.update(['nexo/web_runtime.js','nexo/web_keyed.js','nexo/web_router.js','nexo/web_data.js','nexo/web_observe.js'])
     paths.update(str(p.relative_to(ROOT)) for p in (ROOT/'nexo/web_tools').iterdir() if p.is_file() and p.suffix in ('.json','.mjs','.nexo'))
     from nexo.web_model import load_program
     for example in examples.get('frontend_examples', []):

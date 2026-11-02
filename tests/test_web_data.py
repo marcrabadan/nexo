@@ -75,7 +75,8 @@ def prepare(folder,source=SOURCE,token=True,main=None):
 def test_contracts_determinism_and_csp(tmp_path):
     a=compile_web(SOURCE,APP);b=compile_web(SOURCE,APP)
     assert a==b
-    assert 'fetch(' in a[0] and 'XMLHttpRequest' not in a[0] and 'innerHTML' not in a[0]
+    assert 'fetch(' in a[0] and 'XMLHttpRequest' not in a[0]
+    assert 'template.innerHTML=markup' in a[0]  # only compiler-escaped constant subtrees
     assert "connect-src 'self'" in prepare(tmp_path)['index.html']
 
 

@@ -21,6 +21,9 @@ def generate(release=False):
     m3_source=m3_path.read_text()
     page = (ROOT/'docs/web/page.tmpl').read_text().replace('@@COUNTER@@', html.escape(source)).replace('@@COMPOSITION@@',html.escape(m2_source)).replace('@@DATA@@',html.escape(m3_source))
     extra={'docs/web-m2-demo/'+name:text for name,text in browser_assets(*compile_web(m2_source,m2_path)).items()}
+    keyed=ROOT/'examples/web/keyed/app.nexo'
+    extra.update({'docs/web-keyed-demo/'+name:text for name,text in browser_assets(*compile_web(keyed.read_text(),keyed)).items()})
+    extra['docs/web-keyed-demo/source/app.nexo']=keyed.read_text()
     for path in load_program(m2_source,m2_path).dependencies:
         extra['docs/web-m2-demo/source/'+path.relative_to(m2_path.parent).as_posix()]=path.read_text()
     extra.update({'docs/web-m3-demo/'+name:text for name,text in browser_assets(*compile_web(m3_source,m3_path)).items()})
@@ -58,7 +61,12 @@ def main():
     parser.add_argument('--check', action='store_true')
     parser.add_argument('--release',action='store_true',help='Explicitly rebuild the optimized public demo with optional pinned tooling')
     args = parser.parse_args()
-    for name, content in generate(args.release).items():
+    generated=generate(args.release)
+    if args.release and not args.check:
+        from nexo.web_release import write_release
+        prefix='docs/web-release-demo/'
+        write_release({name.removeprefix(prefix):content for name,content in generated.items() if name.startswith(prefix)},ROOT/prefix)
+    for name, content in generated.items():
         target = ROOT/name
         if args.check:
             if not target.exists() or target.read_text() != content:

@@ -241,7 +241,7 @@
     {
       "id": "nexo-web",
       "status": "experimental",
-      "summary": "Python browser UI/data, Vite/HMR/LSP, optimized releases and measured quality tools. Rust browser/SSR unavailable. Retrieve conditional Web guidance.",
+      "summary": "Experimental Python browser UI/data and Vite/HMR/LSP. Rust browser/SSR unavailable. Retrieve optional Web syntax, release and maintenance guidance.",
       "evidence": [
         [
           "nexo/web_frontend.py",
@@ -348,6 +348,10 @@
           "def test_real_browser"
         ],
         [
+          "tests/test_web_qualification.py",
+          "def test_nginx_verified_tls_edge_and_http_redirect"
+        ],
+        [
           "examples/web/production/Dockerfile",
           "USER 101:101"
         ],
@@ -362,6 +366,14 @@
         [
           ".github/workflows/web-production.yml",
           "name: Web production quality"
+        ],
+        [
+          "tests/test_web_debt.py",
+          "def test_real_browser_keyed_rows_events_static_markup_and_disposal"
+        ],
+        [
+          "nexo/web_tools/hmr.mjs",
+          "export function createHotApp"
         ]
       ]
     }

@@ -1,7 +1,9 @@
 # RFC-0001: Nexo Web
 
-Status: M0 accepted design; M1–M5 experimental implementation. Edition: 5.
+Status: M0 accepted design; M1–M5 experimental implementation with post-M5 maintenance. Edition: 6.
 M1–M5 are experimental implementations; M6 remains future work.
+The [post-M5 amendment](#post-m5-maintenance-d195) supersedes earlier limitations
+on keyed lists, event payloads, static extraction, CSS maps and compatible component HMR.
 
 ## Decision and compatibility
 
@@ -764,3 +766,91 @@ not security/billing evidence. Monitoring failures cannot change application flo
 
 M5 measured evidence and remaining limits are in docs/web/validation-m5.md.
 M6 SSR/hydration/SSG/PWA/WASM interoperability/realtime still require separate RFCs.
+
+## Post-M5 maintenance (D195)
+
+These changes close compiler/tooling debt, not M6. Existing unkeyed loops,
+parameterless actions, scalar state, CLI commands and D175 WASI remain compatible.
+
+### Typed immutable state and keyed lists
+
+State also accepts the existing finite JSON record/list contracts, including
+`state products: list[Product] = [Product(id: 1, name: "One")]` and typed empty
+lists. Constructors/assignments are checked; records/lists are frozen and replaced
+as a whole. There are no in-place collection/field writes or general browser async
+functions. Props/routes remain scalar. Record types are declared/imported normally.
+
+```nexo
+for product in products key product.id:
+    li:
+        ProductRow(label: product.name)
+```
+
+`key` is contextual to a view loop, not a new core keyword. The key expression
+must depend on that item alone and have type int or str. Keys are unique within
+that region; duplicate keys throw before changing the last rendered list.
+Same-key rows retain DOM ranges, owners, listeners, descendant local state and
+focus while immutable item values update their bindings/props. Order follows the
+new list. Removed rows destroy descendants/subscriptions/listeners; re-added keys
+create fresh state. No index-key inference. An unkeyed legacy loop still replaces
+its whole region. Request loading/error branches retain their existing semantics:
+if a branch disappears, its rows are destroyed even when the loop has keys.
+
+### Typed events
+
+```nexo
+state query: str = ""
+fn edit(event: WebEvent):
+    query = event.value
+view:
+    input(value: query, on_input: edit, aria_label: "Filter")
+```
+
+UI event actions accept zero arguments or exactly one `name: WebEvent` parameter;
+context actions remain parameterless. `WebEvent` is a reserved built-in browser
+type with read-only `value: str` and `checked: bool`. Each invocation gets a frozen
+snapshot of the native listener's currentTarget, captured synchronously before
+batching. Non-value/checkbox controls yield empty string/false. No raw DOM target,
+HTML, JS methods, native event retention or automatic two-way binding is exposed.
+Use explicit assignment actions. `value` writes the native value property;
+`checked` and `disabled` write boolean properties. Input is untrusted; text remains
+escaped, and backend validation/authorization is still required.
+
+### Static markup and maps
+
+The compiler extracts maximal fully constant native-element subtrees, including
+escaped text/attributes, into cached templates cloned per instance. Only compiled
+escaped constants reach the template parser; dynamic values use text nodes and
+typed attributes. Components, slots, structural regions and event-bearing nodes
+are not treated as static fragments. There is no independently importable view,
+raw HTML API, runtime evaluation or virtual DOM.
+
+`--sourcemap` emits JS and CSS v3 line maps with original source content. CSS maps
+include inline style lines and recursively expanded local CSS imports; generated
+scope wrappers are unmapped. Multiple original fragments on one generated line
+use its first mapped fragment; exact columns/expressions are not promised. Release
+CSS maps compose through pinned Lightning CSS and mapped assets have distinct
+names/SRI. Normal builds omit/remove both maps. Embedded sources are public when
+maps are published; no server files or secrets belong in browser source.
+
+### Compatible component HMR
+
+Dev uses a shared runtime module and a per-application instance registry. Scope
+IDs use module/declaration identity within a deterministic application namespace.
+Dev retains its initial namespace across edits; separate builds derive theirs
+from project sources, preventing unrelated bundle styles from sharing IDs. CSS-only updates
+preserve DOM/state. A compatible component logic/view edit replaces only mounted
+instances of changed outermost component boundaries and preserves each boundary's
+own typed local state; unaffected components, inputs and layouts retain identity.
+Descendants, providers and requests owned by a replaced boundary are disposed and
+recreated; old listeners are inert. This is not arbitrary state migration.
+
+Changes to state/prop/provider/injection shape, declarations, entry, context logic,
+pages, layout or routing metadata safely remount the application and reset state.
+Compile errors retain the last good UI. HMR registry/factories/state capture are
+dev-only and absent from ordinary/release assets. Runtime ownership/batching is
+shared across hot module versions; applications never share local state registries.
+
+Examples/tests: `examples/web/keyed/app.nexo`, `tests/test_web_debt.py` and existing
+M1–M5 suites. Browser LSP recognizes keys/events; frontend formatting, exact source
+columns, Rust browser compilation and M6 features remain outside this amendment.

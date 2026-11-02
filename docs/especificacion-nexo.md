@@ -1515,6 +1515,14 @@ The core has 39 words reserved everywhere in the code. Module words are only res
 
 ## 28. Experimental browser frontend (RFC-0001)
 
+Post-M5 maintenance (D195), RFC-0001 edition 6, adds typed immutable JSON state,
+explicit keyed view loops, frozen WebEvent value/checked snapshots, constant native
+markup extraction, opt-in CSS line maps and compatible component-boundary HMR.
+The amendment defines cleanup and safe full-remount cases. Existing unkeyed loops,
+scalar state and parameterless actions remain compatible. This is not M6; core
+grammar, server HTTP and D175 WASI are unchanged. See
+[post-M5 semantics](rfc/0001-nexo-web.md#post-m5-maintenance-d195).
+
 The Python CLI's `nexo web check|build` selects the bounded browser grammar in
 [rfc/0001-nexo-web.md](rfc/0001-nexo-web.md) (D190). Implemented M1 vocabulary:
 `pub component Name:`, typed `state`, parameterless `fn`, safe DOM `view` and

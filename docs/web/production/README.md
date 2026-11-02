@@ -43,9 +43,62 @@ authorization, CSRF, secure HttpOnly/SameSite cookies, rate limits and input val
 Shield's bounded loopback ingress is not a replacement production server.
 
 The image digest is pinned for reproducibility, not a promise of vulnerability
-freedom. Scan/update images and dependencies before deployment. No cloud account,
+freedom. The Dockerfile also pins signed Alpine package fixes for Brotli,
+curl/libcurl, musl and zlib following the 2026-11-02 scan. If a pinned package is
+removed from the repository, deliberately update/revalidate the pin; do not silently
+fall back to unpinned packages. Scan/update images and dependencies before deployment. No cloud account,
 public deployment, end-to-end TLS or production load qualification is implied by
 a local container smoke test.
+
+## Reproduce local qualification
+
+```sh
+python -m pip install -e '.[dev]' playwright==1.56.0
+python -m playwright install --with-deps chromium
+npm ci --prefix nexo/web_tools
+NEXO_WEB_REQUIRE_BROWSER=1 NEXO_WEB_REQUIRE_VITE=1 NEXO_WEB_REQUIRE_DOCKER=1 \
+  NEXO_WEB_LOAD_REPORT=/tmp/nexo-web-load.json \
+  python -m pytest tests/test_web_production.py tests/test_web_qualification.py -q
+```
+
+The additional tests use a disposable verified local certificate and two hardened
+Nginx containers to check TLS 1.2/1.3, HTTP redirect, HSTS and retained CSP. They
+also exercise 160 loopback requests at concurrency 16, distinguish accepted and
+rate-limited responses, check burst recovery and restart the same immutable image.
+The rate-limit fixture is intentionally small; aggregate responses/s include 429s
+and are not application throughput or an SLO. No public CA/domain renewal or
+business flow is tested. Certificates and private keys are temporary test fixtures.
+
+For another engine install `firefox` or `webkit` with Playwright, set
+`NEXO_WEB_BROWSER=firefox` (or `webkit`) and run the production suite with
+`-k 'real_browser and not nginx'` and required browser/Vite flags. Missing engines
+must fail required checks. Browser jobs are configured in CI; consult their actual
+results rather than inferring support from a configured job.
+
+The Firefox job pins Playwright 1.62.0 (Firefox 153); Chromium/WebKit qualification
+uses 1.56.0. Its older Firefox 142 lacks the native `@scope` used by the compiler.
+MDN lists Firefox support from 146 and Chromium from 118; Safari 26 has known
+scoped input/textarea limitations, corrected in 26.4. These are CSS feature
+boundaries, not claims of complete framework/device qualification.
+
+The Web production quality workflow downloads checksum-verified Trivy 0.76.1,
+builds this image, scans its saved archive and fails on HIGH/CRITICAL findings.
+It uploads the JSON scan and load/asset reports even when a later gate fails.
+For local scanning use the same pinned Trivy release and verified release checksum:
+
+```sh
+docker save -o /tmp/nexo-web-image.tar nexo-static-example
+trivy image --input /tmp/nexo-web-image.tar --scanners vuln \
+  --severity HIGH,CRITICAL --exit-code 1 --format json \
+  --output /tmp/nexo-web-image-scan.json --timeout 5m
+```
+
+Database download/scan errors are failures, never clean results. A zero-finding
+scan is dated evidence, not proof of vulnerability freedom. For managed builds
+behind a trusted TLS-intercepting proxy, pass its CA with
+`docker build --secret id=proxy_ca,src=/path/to/ca.pem ...`; it is mounted only for
+the package-install step, with certificate verification enabled, and is not copied
+into the image. Registry credentials remain managed by Docker.
 
 ## Operations and optional browser events
 

@@ -33,7 +33,7 @@ def preview_server(directory,port=4173):
     if release:allowed=set(read_release(directory))
     else:
         required=('index.html','main.js','app.js','app.css')
-        allowed={name for name in (*required,'app.js.map') if (directory/name).is_file() and not (directory/name).is_symlink()}
+        allowed={name for name in (*required,'app.js.map','app.css.map') if (directory/name).is_file() and not (directory/name).is_symlink()}
         if not set(required)<=allowed:fail(1,'Preview requires a valid release or built index.html/main.js/app.js/app.css files.','NW4002')
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):

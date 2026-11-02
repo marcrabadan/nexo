@@ -1,0 +1,137 @@
+{
+  "date": "2026-11-02",
+  "host": {
+    "architecture": "x86_64",
+    "docker": "28.4.0",
+    "node": "24.19.0",
+    "os": "Linux",
+    "playwright": "1.56.0",
+    "python": "3.12.14"
+  },
+  "image_scan": {
+    "compiled_input_sha256": "6a1a1ad958f661dbd56f893fcfc9e7f5431c824f295eb86c5f51cc86af4c9618",
+    "created_at": "2026-11-02T12:41:32.54053249Z",
+    "database": {
+      "DownloadedAt": "2026-11-02T10:45:54.433029189Z",
+      "NextUpdate": "2026-11-03T07:17:05.526947983Z",
+      "UpdatedAt": "2026-11-02T07:17:05.526948404Z",
+      "Version": 2
+    },
+    "original_findings_by_severity": {
+      "CRITICAL": 1,
+      "HIGH": 2,
+      "LOW": 44,
+      "MEDIUM": 3,
+      "UNKNOWN": 2
+    },
+    "patched_findings_by_severity": {},
+    "patched_local_image_id": "sha256:e78ae7ecfdbca23291d3cc798b23f9f25974fbc713e3325f40e1306a14da7f90",
+    "raw_report_sha256": "0a4d8b67bd910cb3f7d3b8291432570896ba6d12076d2502d1a7893fbb951370",
+    "scanner": "Trivy 0.76.1",
+    "scanner_archive_sha256": "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"
+  },
+  "schema_version": 1,
+  "scope": "Local static Nexo Web example only; no production backend or cloud qualification",
+  "source_sha256": {
+    ".github/workflows/web-production.yml": "11d3e8cc01ca87bf29d055828e79d7c78c8a22ea1ee5827785cb5a984e8547df",
+    "examples/web/production/Dockerfile": "d1166a748ac53915348f61666e4b5b25614223345c743fc6b3c7a3c870988050",
+    "nexo/web_codegen.py": "fde703f72d74e470edbe4cdcbe468162acccd46124dea9021352869893b3a2f6",
+    "nexo/web_keyed.js": "475c054098c25406af24b31f5a883ced32668bf758103299ab68c8f138823288",
+    "nexo/web_maps.py": "68ba6c3aa0d8ea26e240a4f83a36d3409f6e56c9a84c406cc798c5ff3afc4ffe",
+    "nexo/web_model.py": "961a539fbe83f736e9a23db88184c3ffa67fe0f77d2f85d268a1eefd68eb77e7",
+    "nexo/web_runtime.js": "2346e69916f1179c4600ce678e42113a5895ad9e6e398c7c602942d892facad9",
+    "nexo/web_tools/hmr.mjs": "a181cf4f65a01be26c295c2aa708fa76e835494d70b6b9865432c2894216efd7",
+    "nexo/web_tools/plugin.mjs": "3777c13636fe371e683776f0d98ca8d7aa20b339ae6e8498b28046161f2d88d5",
+    "nexo/web_tools/release.mjs": "01684a6142d849386e4f2bc7f61520dbab791dd95dd770cf81e5ba417ce64a2a",
+    "tests/test_web_debt.py": "61b9b81ac758c2726c502d47e5c8dcab18ea78f128e534a5500e4f3a457f900f",
+    "tests/test_web_frontend.py": "a13a844bea4afce490bc6f04accf2e2e15af1979aec05dae26a7921de7fe2583",
+    "tests/test_web_production.py": "bede01494f060c97f82e61d4adafdeb54fb32f1fd3d3b18afb5191b28b68bef4",
+    "tests/test_web_qualification.py": "61c1426fc783102edf4ea6e44ad6a8a5864f4394ab6bedd366ca286a48a36dde"
+  },
+  "tests": {
+    "ai_guide": {
+      "browser_variants_passed": 48,
+      "generated_files_checked": 87,
+      "measured_freshness_passed": true,
+      "node_runner_passed": true,
+      "python_passed": 23
+    },
+    "core_selection": {
+      "deselected": 16,
+      "passed": 209,
+      "scope": "lexer/parser/check JSON/core LSP; compiler_answers excluded"
+    },
+    "frontend_m1_m4": {
+      "failures": 0,
+      "passed": 92,
+      "seconds": 45.697,
+      "skipped": 0
+    },
+    "full_focused_suite": {
+      "failures": 0,
+      "passed": 154,
+      "seconds": 88.78,
+      "skipped": 0
+    },
+    "load": {
+      "all_responses_per_second": 1896.406653187757,
+      "concurrency": 16,
+      "elapsed_seconds": 0.08437008999680984,
+      "index_sha256": "27fdfd3d2f8ccec40b120b8eb6381f03aa4bebb91a2286a0be40b917361cb174",
+      "latency_ms_all_responses": {
+        "p50": 5.128472999786027,
+        "p95": 14.679276002425468
+      },
+      "rate_limit_recovered": true,
+      "requests": 160,
+      "restart_recovered": true,
+      "schema_version": 1,
+      "scope": "local static fixture; not a production capacity/SLO claim",
+      "statuses": {
+        "200": 41,
+        "429": 119
+      }
+    },
+    "optimized_keyed_application_smoke": {
+      "passed": true,
+      "scope": "Chromium release build: row identity/state retained on reorder, input text escaped"
+    },
+    "post_m5_debt": {
+      "failures": 0,
+      "passed": 14,
+      "seconds": 5.912,
+      "skipped": 0
+    },
+    "production_and_qualification": {
+      "failures": 0,
+      "passed": 24,
+      "seconds": 23.143,
+      "skipped": 0
+    },
+    "tls": {
+      "hsts": "max-age=31536000",
+      "http_redirect": 308,
+      "protocols": [
+        "TLSv1.2",
+        "TLSv1.3"
+      ],
+      "untrusted_certificate_rejected": true,
+      "verified_certificate": true
+    },
+    "webkit_release_browser": {
+      "engine": "WebKit 26.0 (Playwright 1.56.0)",
+      "environment_note": "Locally supplied libraries; linker-cache preflight skipped, actual tests executed; not Safari/iOS qualification",
+      "failures": 0,
+      "passed": 11,
+      "seconds": 15.47,
+      "skipped": 0
+    }
+  },
+  "unverified": [
+    "Firefox 153 CI regression is configured with Playwright 1.62.0 but not yet executed locally/remotely; older 142 launch failed locally and lacks native @scope",
+    "Public domain/CA renewal and external HTTPS edge",
+    "Backend authentication, sessions, CSRF and resource authorization",
+    "Real workload/SLO, long soak, multi-instance rollout and rollback",
+    "Manual assistive-technology accessibility review"
+  ]
+}

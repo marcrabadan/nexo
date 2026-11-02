@@ -1,0 +1,27 @@
+{
+  "example": {
+    "associated_tests": [
+      "tests/test_web_debt.py"
+    ],
+    "command": "python -m nexo web check --json examples/web/keyed/app.nexo",
+    "entry_file": "app.nexo",
+    "files": {},
+    "id": "web-keyed",
+    "path": "examples/web/keyed/app.nexo",
+    "purpose": "Typed immutable list state, stable keyed row ownership and explicit WebEvent input snapshots",
+    "scope": "Experimental post-M5 maintenance (D195). Complete self-contained browser project. Compiler checks are separate from browser keyed reorder/disposal/event/focus and compatible HMR tests.",
+    "source": "use nexo.web\n\ntype Product:\n    id: int\n    name: str\n\ncomponent Row(label: str):\n    state count: int = 0\n\n    fn increment():\n        count += 1\n\n    view:\n        div:\n            span(label)\n            button(\"Count: {count}\", on_click: increment)\n\npub component App:\n    state query: str = \"\"\n    state selected: bool = false\n    state products: list[Product] = [Product(id: 1, name: \"One\"), Product(id: 2, name: \"Two\")]\n\n    fn edit(event: WebEvent):\n        query = event.value\n\n    fn select(event: WebEvent):\n        selected = event.checked\n\n    fn reorder():\n        products = [Product(id: 2, name: \"Two updated\"), Product(id: 1, name: \"One\")]\n\n    fn remove():\n        products = [Product(id: 2, name: \"Two\")]\n\n    fn restore():\n        products = [Product(id: 1, name: \"One\"), Product(id: 2, name: \"Two\")]\n\n    view:\n        main:\n            h1(\"Keyed list and typed events\")\n            label(\"Filter\", for: \"query\")\n            input(id: \"query\", value: query, on_input: edit)\n            output(query, role: \"status\")\n            label(\"Selected\", for: \"selected\")\n            input(id: \"selected\", type: \"checkbox\", checked: selected, on_change: select)\n            p(\"Selected: {selected}\")\n            button(\"Reorder\", on_click: reorder)\n            button(\"Remove\", on_click: remove)\n            button(\"Restore\", on_click: restore)\n            ul:\n                for product in products key product.id:\n                    li(id: \"row-{product.id}\"):\n                        Row(label: product.name)\n\n    style:\n        main { padding: 24px; }\n",
+    "verification": {
+      "browser_execution": "Run associated tests; not asserted by this generator",
+      "compilation": "Passed",
+      "css_sha256": "eb1ed477c1ba8bac3f4fcbd57ef5cc3d7ae88f88d030a8109a7202c3ce76e18c",
+      "exports": [
+        "App"
+      ],
+      "javascript_sha256": "2e90319ae3103162d6fe3a0ca619718634619f86bd9b5e676f955c2524ff66b4",
+      "source_sha256": "7a8919f7be0550abe1a58ae643cb14890ccbbe270ee24d183eb81ceba15951db"
+    }
+  },
+  "revision": "8e7174c359bf33e1a0e94a5580728b4f8271e341918ad29b19469676180e8482",
+  "schema_version": 1
+}

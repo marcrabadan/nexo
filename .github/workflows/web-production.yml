@@ -5,7 +5,7 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -25,12 +25,53 @@ jobs:
           NEXO_WEB_REQUIRE_BROWSER: "1"
           NEXO_WEB_REQUIRE_VITE: "1"
           NEXO_WEB_REQUIRE_DOCKER: "1"
-        run: python -m pytest tests/test_web_production.py -q
+          NEXO_WEB_LOAD_REPORT: /tmp/nexo-web-load.json
+        run: python -m pytest tests/test_web_production.py tests/test_web_qualification.py tests/test_web_debt.py -q
+      - name: Scan patched production image (HIGH/CRITICAL gate)
+        run: |
+          curl --fail --location --retry 2 --output /tmp/trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.76.1/trivy_0.76.1_Linux-64bit.tar.gz
+          echo 'c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0  /tmp/trivy.tar.gz' | sha256sum --check
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+          python -m nexo web build examples/web/production/app.nexo --release -o examples/web/production/dist
+          docker build -t nexo-web-scan examples/web/production
+          docker save -o /tmp/nexo-web-image.tar nexo-web-scan
+          /tmp/trivy image --input /tmp/nexo-web-image.tar --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --format json --output /tmp/nexo-web-image-scan.json --timeout 5m
       - name: Measured byte and DOM budgets
         run: python scripts/web/measure.py --output /tmp/nexo-web-quality.json --check
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: nexo-web-quality
-          path: /tmp/nexo-web-quality.json
+          path: |
+            /tmp/nexo-web-quality.json
+            /tmp/nexo-web-load.json
+            /tmp/nexo-web-image-scan.json
           if-no-files-found: warn
+  browsers:
+    name: Release browser (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native @scope requires Firefox >=146; Playwright 1.56 bundles 142.
+          - {browser: firefox, playwright: '1.62.0'}
+          - {browser: webkit, playwright: '1.56.0'}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -e '.[dev]' playwright==${{ matrix.playwright }}
+      - run: python -m playwright install --with-deps ${{ matrix.browser }}
+      - run: npm ci --prefix nexo/web_tools
+      - name: Release browser regression
+        env:
+          NEXO_WEB_REQUIRE_BROWSER: "1"
+          NEXO_WEB_REQUIRE_VITE: "1"
+          NEXO_WEB_BROWSER: ${{ matrix.browser }}
+        run: python -m pytest tests/test_web_production.py tests/test_web_debt.py -k 'real_browser and not nginx and not component_hmr' -q

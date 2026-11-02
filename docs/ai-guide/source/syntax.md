@@ -38,5 +38,4 @@ Checks: `nexo check app.nexo`; `nexo check --json app.nexo`;
 Run/build with the selected backend; `.venv/bin/nexo` is the interpreter and
 `compiler/target/debug/nexo` is the native driver in a built checkout.
 
-Browser UI: experimental Python `nexo web` M1–M5. Request the conditional Nexo Web
-topic before writing UI; later milestones remain proposed.
+Browser UI: Python `nexo web` M1–M5 experimental. Load optional Web guidance. M6 remains proposed.

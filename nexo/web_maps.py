@@ -30,3 +30,13 @@ def source_map(program,origins):
         names.append('nexo://project/'+name)
     return {'version':3,'file':'app.js','sources':names,'sourcesContent':[units[k].source for k in keys],
             'names':[],'mappings':';'.join(segments)}
+
+
+def css_source_map(program,origins):
+    names=list(program.css_sources);source=previous_line=0;segments=[]
+    for origin in origins:
+        if origin is None:segments.append('');continue
+        name,line=origin;index=names.index(name)
+        segments.append(vlq(0)+vlq(index-source)+vlq(line-1-previous_line)+vlq(0))
+        source=index;previous_line=line-1
+    return {'version':3,'file':'app.css','sources':names,'sourcesContent':list(program.css_sources.values()),'names':[],'mappings':';'.join(segments)}

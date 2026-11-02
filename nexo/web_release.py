@@ -99,11 +99,11 @@ def write_release(files,directory):
     if target.is_symlink():fail(1,'Release output must not be a symlink.','NW5001')
     if target.exists():
         if not target.is_dir() or target==target.parent:fail(1,'Release output requires a dedicated build directory.','NW5001')
-        known={'index.html','assets',MANIFEST} if (target/MANIFEST).exists() else {'index.html','main.js','app.js','app.css','app.js.map'}
+        known={'index.html','assets',MANIFEST} if (target/MANIFEST).exists() else {'index.html','main.js','app.js','app.css','app.js.map','app.css.map'}
         if any(p.name not in known or p.is_symlink() for p in target.iterdir()):fail(1,'Release output contains unrelated files; choose a clean build directory.','NW5001')
         existing={str(p.relative_to(target)) for p in target.rglob('*') if p.is_file() or p.is_symlink()}
         if MANIFEST in existing:read_release(target)
-        elif not existing<= {'index.html','main.js','app.js','app.css','app.js.map'}:fail(1,'Release output contains unrelated files; choose a clean build directory.','NW5001')
+        elif not existing<= {'index.html','main.js','app.js','app.css','app.js.map','app.css.map'}:fail(1,'Release output contains unrelated files; choose a clean build directory.','NW5001')
     target.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.nexo-release-',dir=target.parent) as temporary:
         stage=Path(temporary)/'next';stage.mkdir()

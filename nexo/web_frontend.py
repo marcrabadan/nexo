@@ -21,7 +21,7 @@ from .errors import NexoError
 
 IDENT = r'[A-Za-z_][A-Za-z_0-9]*'
 TAGS = set('main section article header footer nav div span h1 h2 h3 h4 h5 h6 p button label input ul ol li strong em small form fieldset legend output pre code br hr'.split())
-ATTRS = {'class', 'id', 'title', 'role', 'type', 'name', 'placeholder', 'disabled', 'aria_label', 'aria_live', 'aria_describedby', 'aria_labelledby', 'aria_hidden', 'tabindex', 'for'}
+ATTRS = {'class', 'id', 'title', 'role', 'type', 'name', 'placeholder', 'value', 'checked', 'disabled', 'aria_label', 'aria_live', 'aria_describedby', 'aria_labelledby', 'aria_hidden', 'tabindex', 'for'}
 VOID = {'input', 'br', 'hr'}
 
 
@@ -188,16 +188,19 @@ def compile_web(source, source_path=None):
     return compile_program(load_program(source, source_path))
 
 
-def artifacts(source_path, sourcemap=False, observe=False):
+def artifacts(source_path, sourcemap=False, observe=False, hmr=None):
     from .web_model import load_program
     from .web_codegen import compile_program
     source=Path(source_path).read_text(encoding='utf-8')
     program=load_program(source,source_path);mapping={} if sourcemap else None
-    js,css,exports=compile_program(program,mapping,observe)
+    css_mapping={} if sourcemap else None
+    js,css,exports=compile_program(program,mapping,observe,css_mapping,hmr)
     files=browser_assets(js,css,exports)
     if sourcemap:
         files['app.js']+='//# sourceMappingURL=./app.js.map\n'
         files['app.js.map']=json.dumps(mapping,sort_keys=True,ensure_ascii=True)+'\n'
+        files['app.css']+='/*# sourceMappingURL=./app.css.map */\n'
+        files['app.css.map']=json.dumps(css_mapping,sort_keys=True,ensure_ascii=True)+'\n'
     return files,program
 
 
@@ -214,7 +217,8 @@ def build(source_path, output, sourcemap=False, release=False, observe=False):
     directory.mkdir(parents=True,exist_ok=True)
     for name,content in files.items():(directory/name).write_text(content,encoding='utf-8')
     # Rebuilding without maps must not leave a previous source-bearing map behind.
-    if not sourcemap:(directory/'app.js.map').unlink(missing_ok=True)
+    if not sourcemap:
+        for name in ('app.js.map','app.css.map'):(directory/name).unlink(missing_ok=True)
     return files
 
 

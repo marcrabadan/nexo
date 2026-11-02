@@ -23,7 +23,7 @@ def test_counter_determinism_and_security(tmp_path):
     assert first == second
     assert '@scope ([data-nexo="nw-' in first['app.css']
     assert 'document.createTextNode' in first['app.js']
-    assert 'innerHTML' not in first['app.js']
+    assert 'template.innerHTML=markup' in first['app.js']  # compiler-escaped constants only
     assert 'eval(' not in first['app.js']
     assert "script-src 'self'" in first['index.html']
     assert '<script type="module" src=' in first['index.html']
@@ -87,12 +87,17 @@ def browser():
             pytest.fail('Playwright is required by NEXO_WEB_REQUIRE_BROWSER=1')
         pytest.skip('Playwright is unavailable')
     with playwright.sync_playwright() as p:
+        engine = os.environ.get('NEXO_WEB_BROWSER', 'chromium')
+        if engine not in ('chromium', 'firefox', 'webkit'):
+            pytest.fail('NEXO_WEB_BROWSER must be chromium, firefox or webkit')
         try:
-            browser = p.chromium.launch(executable_path=shutil.which("chromium"))
+            options = {'executable_path': shutil.which('chromium')} if engine == 'chromium' else {}
+            options['timeout'] = 30000
+            browser = getattr(p, engine).launch(**options)
         except playwright.Error as error:
             if required:
-                pytest.fail(f'Chromium is required: {error}')
-            pytest.skip(f'Chromium unavailable: {error}')
+                pytest.fail(f'{engine} is required: {error}')
+            pytest.skip(f'{engine} unavailable: {error}')
         yield browser
         browser.close()
 

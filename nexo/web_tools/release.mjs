@@ -4,14 +4,15 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {loadVite} from './vite.mjs';
+import {createRequire} from 'node:module';
 let root;
 try{
   let input='';for await(const chunk of process.stdin)input+=chunk;
   const payload=JSON.parse(input);
-  const {vite:{build}}=await loadVite(payload.project);
+  const {vite:{build},packageFile}=await loadVite(payload.project);
   root=await mkdtemp(join(tmpdir(),'nexo-release-'));
   for(const [name,text] of Object.entries(payload.files)){
-    if(!['index.html','app.js','main.js','app.css','app.js.map'].includes(name))throw new Error('NW5001: Unexpected compiler input');
+    if(!['index.html','app.js','main.js','app.css','app.js.map','app.css.map'].includes(name))throw new Error('NW5001: Unexpected compiler input');
     await writeFile(join(root,name),text);
   }
   const originals=new Map();
@@ -40,6 +41,21 @@ try{
     const map=JSON.parse(files[name]);
     map.sourcesContent?.forEach((source,index)=>{const original=originals.get(source);if(original){map.sources[index]=original.name;map.sourcesContent[index]=original.source;}});
     files[name]=JSON.stringify(map);
+  }
+  if(payload.sourcemap){
+    const {transform}=createRequire(packageFile)('lightningcss');
+    const input=JSON.parse(payload.files['app.css.map']);
+    const result=transform({filename:'app.css',code:Buffer.from(payload.files['app.css'].replace(/\/\*# sourceMappingURL=.*?\*\/\s*$/,'')),
+      minify:true,sourceMap:true,inputSourceMap:JSON.stringify(input)});
+    const names=Object.keys(files).filter(name=>name.endsWith('.css'));
+    if(names.length!==1)throw new Error('Expected one compiled CSS asset');
+    const old=names[0],map=JSON.parse(Buffer.from(result.map).toString('utf8'));
+    const suffix=createHash('sha256').update(result.map).digest('hex').slice(0,12);
+    const name=old.slice(0,-4)+'-map-'+suffix+'.css';map.file=name.split('/').at(-1);
+    delete files[old];
+    files[name]=Buffer.from(result.code).toString('utf8')+'\n/*# sourceMappingURL='+map.file+'.map */\n';
+    files[name+'.map']=JSON.stringify(map);
+    files['index.html']=files['index.html'].replaceAll(old,name);
   }
   process.stdout.write(JSON.stringify({schema_version:1,files}));
 }catch(error){console.error(error.message.startsWith('NW4001:')?error.message:'NW5001: Release optimization failed: '+error.message);process.exitCode=1;}

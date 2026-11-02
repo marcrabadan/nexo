@@ -3214,3 +3214,21 @@ local browser events only; default builds emit none, and no collector/upload,
 raw message/URL/token logging or authoritative client security record is implied.
 Frontend projects gain individually retrievable versioned AI payloads so added
 production context does not inflate every unrelated task. M6 is not started.
+
+**D195. Post-M5 debt is closed through typed ownership, not a second UI model.**
+RFC-0001 edition 6 adds contextual `for item in list key item.id`, immutable JSON
+record/list state and frozen `WebEvent` snapshots (value:str, checked:bool).
+Same-key rows retain owners/DOM/local state; duplicates fail before DOM changes,
+removed rows dispose, and legacy unkeyed loops keep replacement semantics.
+Only compiler-escaped constant native subtrees are cached as cloneable templates;
+dynamic text never enters an HTML parser. JS/CSS line maps include local import
+sources and compose through the existing release optimizer. Source-bearing maps
+are opt-in and removed by unmapped builds. Dev-only shared runtime/instance
+registration allows compatible component boundaries to refresh with their own
+typed local state, preserving unaffected branches. Ownership/type/routing/context
+changes remount safely; descendants/providers/requests of a replaced boundary are
+recreated. This is bounded compatibility, not general state migration. Stable
+scope identity is module+declaration inside an application namespace; dev retains
+its initial namespace while independent builds derive it from project sources.
+No core syntax/HTTP/WASI change,
+independently imported view fragments, raw DOM/event API or M6 capability is added.

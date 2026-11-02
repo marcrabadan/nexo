@@ -1,11 +1,12 @@
 // Compiler-first Vite plugin. Vite watches/serves modules; Python owns semantics.
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {readFile} from 'node:fs/promises';
 const execute=promisify(execFile);
-const APP='\0nexo:app',START='\0nexo:start';
-export async function compile(python,file){
+const APP='\0nexo:app',START='\0nexo:start',HOT='\0nexo:hot',RUNTIME='\0nexo:runtime';
+export async function compile(python,file,scopeSeed){
   let stdout;
-  try{({stdout}=await execute(python,['-m','nexo.web_bridge',file],{timeout:30000,maxBuffer:16*1024*1024}));}
+  try{({stdout}=await execute(python,['-m','nexo.web_bridge',file,...(scopeSeed?['--scope-seed',scopeSeed]:[])],{timeout:30000,maxBuffer:16*1024*1024}));}
   catch(error){if(error.stdout)stdout=error.stdout;else throw error;}
   const result=JSON.parse(stdout);
   if(result.schema_version!==1)throw new Error('Unsupported Nexo compiler protocol');
@@ -14,10 +15,11 @@ export async function compile(python,file){
 export function plugin({python,file,initial,watchRoot}){
   let bundle=initial,server,timer,closed=false,sequence=0,queue=Promise.resolve();
   const start=`import * as initial from 'virtual:nexo/app';
-let app=null,latestCSS=0;
+import {createHotApp} from 'virtual:nexo/hot';
+let app=createHotApp(document.querySelector('#app')),latestCSS=0;
 function error(message){let node=document.querySelector('#nexo-diagnostic');if(!node){node=document.createElement('pre');node.id='nexo-diagnostic';node.setAttribute('role','alert');document.body.prepend(node);}node.textContent=message;}
 function clear(){document.querySelector('#nexo-diagnostic')?.remove();}
-function apply(module){if(!module)return;try{app?.destroy();app=null;app=module.__nexoMount(document.querySelector('#app'));}catch(e){error('Nexo mount failed: '+e.message);}}
+function apply(module){if(!module)return;try{app.apply(module);}catch(e){error('Nexo mount failed: '+e.message);}}
 apply(initial);
 if(import.meta.hot){
   import.meta.hot.accept('virtual:nexo/app',module=>apply(module));
@@ -29,7 +31,7 @@ if(import.meta.hot){
   async function update(){
     if(closed)return;
     let next;
-    try{next=await compile(python,file);}catch(error){server.ws.send({type:'custom',event:'nexo:error',data:{message:'Nexo compiler unavailable: '+error.message}});return;}
+    try{next=await compile(python,file,initial.hmr.scope_seed);}catch(error){server.ws.send({type:'custom',event:'nexo:error',data:{message:'Nexo compiler unavailable: '+error.message}});return;}
     if(next.diagnostics.length){const d=next.diagnostics[0];server.ws.send({type:'custom',event:'nexo:error',data:{message:d.code+' '+d.file+':'+d.line+':'+d.column+' '+d.message}});return;}
     const old=bundle;bundle=next;server.watcher.add(next.dependencies);
     if(old.javascript!==next.javascript){
@@ -40,12 +42,28 @@ if(import.meta.hot){
     server.ws.send({type:'custom',event:'nexo:clear',data:{}});
   }
   return {name:'nexo-web',enforce:'pre',
-    resolveId(id){if(id==='virtual:nexo/app')return APP;if(id==='/__nexo/start.js')return START;},
-    load(id){
+    resolveId(id){if(id==='virtual:nexo/app')return APP;if(id==='virtual:nexo/hot')return HOT;if(id==='virtual:nexo/runtime')return RUNTIME;if(id==='/__nexo/start.js')return START;},
+    async load(id){
       if(id===START)return start;
+      if(id===HOT)return await readFile(new URL('./hmr.mjs',import.meta.url),'utf8');
+      if(id===RUNTIME){
+        const names=['int','createOwner','checkedProps','injected','routeHref','navigate','createRegion','createKeyedRegion','appendStatic'];
+        if(initial.hmr.runtime.includes('function createResource'))names.push('createResource','useDataScope');
+        if(initial.hmr.runtime.includes('function createRouter'))names.push('createRouter');
+        if(initial.hmr.runtime.includes('function nexoObserve'))names.push('nexoObserve');
+        return initial.hmr.runtime+'\nexport {'+names.join(',')+'};';
+      }
       if(id===APP){
         const entry=bundle.bootstrap;
-        return {code:bundle.assets['app.js'].replace(/\/\/# sourceMappingURL=.*\n$/,'')+'\nexport function __nexoMount(host){return '+entry+'(host);}\n',map:JSON.parse(bundle.assets['app.js.map'])};
+        const names=['int','createOwner','checkedProps','injected','routeHref','navigate','createRegion','createKeyedRegion','appendStatic'];
+        if(bundle.hmr.runtime.includes('function createResource'))names.push('createResource','useDataScope');
+        if(bundle.hmr.runtime.includes('function createRouter'))names.push('createRouter');
+        if(bundle.hmr.runtime.includes('function nexoObserve'))names.push('nexoObserve');
+        const header='import {'+names.join(',')+"} from 'virtual:nexo/runtime';";
+        const definitions=Object.entries(bundle.hmr.definitions).map(([id,meta])=>JSON.stringify(id)+':{...'+JSON.stringify(meta)+',create:'+id+(meta.kind==='context'?'':'_impl')+'}').join(',');
+        const body=bundle.assets['app.js'].replace(bundle.hmr.runtime,header+'\n'.repeat(bundle.hmr.runtime.split('\n').length-1));
+        const call=entry==='mountApp'?entry+'(host,env)':entry+'(host,{},env)';
+        return {code:body.replace(/\/\/# sourceMappingURL=.*\n$/,'')+'\nexport const __nexoEntry='+JSON.stringify(entry)+';\nexport const __nexoDefinitions={'+definitions+'};\nexport function __nexoMount(host,env){return '+call+';}\n',map:JSON.parse(bundle.assets['app.js.map'])};
       }
     },
     handleHotUpdate(){return [];},
@@ -60,6 +78,7 @@ if(import.meta.hot){
       server.middlewares.use(async(req,res,next)=>{
         const path=new URL(req.url,'http://127.0.0.1').pathname;
         if(path==='/__nexo/app.css'){res.setHeader('Content-Type','text/css; charset=utf-8');res.end(bundle.assets['app.css']);return;}
+        if(path==='/__nexo/app.css.map'){res.setHeader('Content-Type','application/json; charset=utf-8');res.end(bundle.assets['app.css.map']);return;}
         if(path==='/'||path==='/index.html'){
           const html=bundle.assets['index.html'].replace(/<meta http-equiv="Content-Security-Policy"[^>]*>/,'').replace('href="./app.css"','id="nexo-style" href="/__nexo/app.css"').replace('src="./main.js"','src="/__nexo/start.js"');
           res.setHeader('Content-Type','text/html; charset=utf-8');res.end(await server.transformIndexHtml('/',html));return;

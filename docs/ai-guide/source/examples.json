@@ -167,7 +167,17 @@
         "examples/web/production/nginx.conf",
         "examples/web/production/README.md"
       ],
-      "scope": "Experimental Python browser M5. Release requires installed pinned Vite/Node; container checks require local Docker. Compiler evidence is not a browser/deployment pass; TLS and public cloud deployment are unverified."
+      "scope": "Experimental Python browser M5. Release requires pinned Vite/Node; container and local verified TLS/burst/restart checks require Docker. Compiler evidence is separate from browser/deployment passes; public TLS/cloud and real backend remain unverified."
+    },
+    {
+      "id": "web-keyed",
+      "path": "examples/web/keyed/app.nexo",
+      "purpose": "Typed immutable list state, stable keyed row ownership and explicit WebEvent input snapshots",
+      "command": "python -m nexo web check --json examples/web/keyed/app.nexo",
+      "associated_tests": [
+        "tests/test_web_debt.py"
+      ],
+      "scope": "Experimental post-M5 maintenance (D195). Complete self-contained browser project. Compiler checks are separate from browser keyed reorder/disposal/event/focus and compatible HMR tests."
     }
   ]
 }

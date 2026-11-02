@@ -63,7 +63,7 @@ def test_scaffold_and_style_only_identity(tmp_path):
     assert (project/'package-lock.json').read_bytes()==(ROOT/'nexo/web_tools/package-lock.json').read_bytes()
     first=compile_entry(project/'app.nexo')
     (project/'app.nexo').write_text((project/'app.nexo').read_text().replace('24px','40px'))
-    second=compile_entry(project/'app.nexo')
+    second=compile_entry(project/'app.nexo',first['hmr']['scope_seed'])
     assert first['javascript']==second['javascript'] and first['css']!=second['css']
     with pytest.raises(WebError,match='already exists'):scaffold(project)
 
@@ -161,9 +161,10 @@ def test_real_browser_vite_hmr_recovery_boundaries_and_maps(tmp_path,browser):
         expect(page.locator('p')).to_have_text('Count: 1')
         entry.write_text(COUNTER.replace('count += 1','count += 2'))
         expect(page.get_by_role('alert')).to_have_count(0)
-        expect(page.locator('p')).to_have_text('Count: 0')
-        page.evaluate('oldButton.click()');expect(page.locator('p')).to_have_text('Count: 0')
-        page.get_by_role('button',name='+',exact=True).click();expect(page.locator('p')).to_have_text('Count: 2')
+        expect(page.locator('p')).to_have_text('Count: 1')
+        page.wait_for_function('()=>oldButton!==document.querySelector("button")')
+        page.evaluate('oldButton.click()');expect(page.locator('p')).to_have_text('Count: 1')
+        page.get_by_role('button',name='+',exact=True).click();expect(page.locator('p')).to_have_text('Count: 3')
         assert not page.evaluate('originalMain===document.querySelector("main")')
         import base64
         code=page.request.get(base+'@id/__x00__nexo:app').text()

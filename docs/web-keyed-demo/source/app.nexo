@@ -1,0 +1,56 @@
+use nexo.web
+
+type Product:
+    id: int
+    name: str
+
+component Row(label: str):
+    state count: int = 0
+
+    fn increment():
+        count += 1
+
+    view:
+        div:
+            span(label)
+            button("Count: {count}", on_click: increment)
+
+pub component App:
+    state query: str = ""
+    state selected: bool = false
+    state products: list[Product] = [Product(id: 1, name: "One"), Product(id: 2, name: "Two")]
+
+    fn edit(event: WebEvent):
+        query = event.value
+
+    fn select(event: WebEvent):
+        selected = event.checked
+
+    fn reorder():
+        products = [Product(id: 2, name: "Two updated"), Product(id: 1, name: "One")]
+
+    fn remove():
+        products = [Product(id: 2, name: "Two")]
+
+    fn restore():
+        products = [Product(id: 1, name: "One"), Product(id: 2, name: "Two")]
+
+    view:
+        main:
+            h1("Keyed list and typed events")
+            label("Filter", for: "query")
+            input(id: "query", value: query, on_input: edit)
+            output(query, role: "status")
+            label("Selected", for: "selected")
+            input(id: "selected", type: "checkbox", checked: selected, on_change: select)
+            p("Selected: {selected}")
+            button("Reorder", on_click: reorder)
+            button("Remove", on_click: remove)
+            button("Restore", on_click: restore)
+            ul:
+                for product in products key product.id:
+                    li(id: "row-{product.id}"):
+                        Row(label: product.name)
+
+    style:
+        main { padding: 24px; }

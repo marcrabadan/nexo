@@ -65,8 +65,14 @@ function createOwner() {
           };
           effects.push({names,update}); update();
         },
-        listen(node,event,action) {
-          const handler = () => { if(!disposed) batch(action); };
+        listen(node,event,action,withEvent=false) {
+          const handler = event => {
+            if(disposed)return;
+            if(!withEvent){batch(action);return;}
+            const target=event.currentTarget;
+            const value=Object.freeze({value:typeof target.value==='string'?target.value:'',checked:target.checked===true});
+            batch(()=>action(value));
+          };
           node.addEventListener(event,handler);
           cleanups.push(() => node.removeEventListener(event,handler));
         }
@@ -108,6 +114,13 @@ function routeHref(path) {
   return '#'+path;
 }
 function navigate(path) { window.location.hash=routeHref(path); }
+// Only compiler-escaped constant markup reaches this helper; never runtime data.
+const staticTemplates=new Map();
+function appendStatic(parent,markup){
+  let template=staticTemplates.get(markup);
+  if(!template){template=document.createElement('template');template.innerHTML=markup;staticTemplates.set(markup,template);}
+  parent.append(template.content.cloneNode(true));
+}
 // Conditional/list regions own every descendant and release it before replacement.
 function createRegion(parent, owner) {
   const start=document.createComment('nexo'),end=document.createComment('/nexo');
@@ -125,7 +138,7 @@ function createRegion(parent, owner) {
 
 function _nw_05804ee1abc73468(target,props={},parentEnv=new Map(),renderSlot=null){
 const s=checkedProps({},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
-const root=document.createElement("div"); root.dataset.nexo="nw-6869afce4d80efa9";
+const root=document.createElement("div"); root.dataset.nexo="nw-6ec93ec14cb4676c";
 try{
 s["count"]=0n;
 const a_increment=()=>owner.batch(()=>{
@@ -133,20 +146,17 @@ api.set("count", int(s["count"]+(1n)));
 });
 const _node1=document.createElement("main");
 root.append(_node1);
-const _node2=document.createElement("h1");
+appendStatic(_node1,"<h1>Nexo Web</h1>");
+const _node2=document.createElement("p");
 _node1.append(_node2);
 const _text3=document.createTextNode(""); _node2.append(_text3);
-_text3.data=String(("Nexo Web"));
-const _node4=document.createElement("p");
+api.bind(["count"],()=>String(("Count: "+String(s["count"]))),v=>{_text3.data=v;});
+const _node4=document.createElement("button");
+_node4.type="button";
 _node1.append(_node4);
 const _text5=document.createTextNode(""); _node4.append(_text5);
-api.bind(["count"],()=>String(("Count: "+String(s["count"]))),v=>{_text5.data=v;});
-const _node6=document.createElement("button");
-_node6.type="button";
-_node1.append(_node6);
-const _text7=document.createTextNode(""); _node6.append(_text7);
-_text7.data=String(("+"));
-api.listen(_node6,"click",a_increment);
+_text5.data=String(("+"));
+api.listen(_node4,"click",a_increment);
 target.append(root);
 return {element:root,env,outlet,update(props){const next=checkedProps({},props); owner.batch(()=>{for(const key of Object.keys(next))api.set(key,next[key]);});},destroy(){owner.destroy(); root.remove();}};
 }catch(e){owner.destroy();root.remove();throw e;} }

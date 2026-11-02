@@ -1,5 +1,5 @@
 // Static-host-compatible fragment router. No network, HTML injection or globals.
-function createRouter(target, routes, fallbacks) {
+function createRouter(target, routes, fallbacks, rootEnv=new Map()) {
   let disposed=false, current=null, page=null, layouts=[], fallback=null;
   const initialTitle=document.title;
   const initialDescription=document.querySelector('meta[name="description"]');
@@ -44,7 +44,7 @@ function createRouter(target, routes, fallbacks) {
     while(keep<layouts.length && keep<route.layouts.length && layouts[keep].id===route.layouts[keep].id)keep++;
     clearPage();clearLayouts(keep);
     let host=keep?layouts[keep-1].handle.outlet:target;
-    let env=keep?layouts[keep-1].handle.env:new Map();
+    let env=keep?layouts[keep-1].handle.env:rootEnv;
     for(let i=keep;i<route.layouts.length;i++) {
       const item=route.layouts[i];
       const handle=item.create(host,{},env);

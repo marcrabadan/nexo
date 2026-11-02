@@ -65,8 +65,14 @@ function createOwner() {
           };
           effects.push({names,update}); update();
         },
-        listen(node,event,action) {
-          const handler = () => { if(!disposed) batch(action); };
+        listen(node,event,action,withEvent=false) {
+          const handler = event => {
+            if(disposed)return;
+            if(!withEvent){batch(action);return;}
+            const target=event.currentTarget;
+            const value=Object.freeze({value:typeof target.value==='string'?target.value:'',checked:target.checked===true});
+            batch(()=>action(value));
+          };
           node.addEventListener(event,handler);
           cleanups.push(() => node.removeEventListener(event,handler));
         }
@@ -108,6 +114,13 @@ function routeHref(path) {
   return '#'+path;
 }
 function navigate(path) { window.location.hash=routeHref(path); }
+// Only compiler-escaped constant markup reaches this helper; never runtime data.
+const staticTemplates=new Map();
+function appendStatic(parent,markup){
+  let template=staticTemplates.get(markup);
+  if(!template){template=document.createElement('template');template.innerHTML=markup;staticTemplates.set(markup,template);}
+  parent.append(template.content.cloneNode(true));
+}
 // Conditional/list regions own every descendant and release it before replacement.
 function createRegion(parent, owner) {
   const start=document.createComment('nexo'),end=document.createComment('/nexo');

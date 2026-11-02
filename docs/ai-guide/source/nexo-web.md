@@ -11,7 +11,7 @@ UI/context names, no core reserved words as local names. Expressions: scalar
 literals/reads/interpolation, checked int + - *, unary minus, str +, bool not.
 Int64 uses BigInt; overflow throws without rolling back earlier assignments.
 Events on_click/on_input/on_change name a local or injected context action.
-No event payload or two-way input. M3 adds conditions and snapshot lists; no keyed reconciliation.
+Actions may take one `event: WebEvent` parameter: frozen read-only value:str and checked:bool from currentTarget, no raw DOM/event methods. Use explicit assignments and value/checked attributes; no automatic two-way binding. State also accepts immutable JSON records/lists (whole-value assignment, including typed empty lists).
 
 ## M2 canonical composition
 
@@ -55,7 +55,7 @@ a parameterless, layout-free mount/navigation error page. Event-action errors
 are not caught by that page. Navigation focuses the new main/heading.
 
 Bindings batch across local/context owners, run deterministically and skip equal
-rendered values. Text uses text nodes. CSS uses native @scope, standard selectors,
+rendered values. Dynamic text uses text nodes. Fully constant native subtrees use compiler-escaped cached templates cloned per instance. CSS uses native @scope, standard selectors,
 custom properties, media/container/supports queries. Local `@import "./card.css";`
 inside style is expanded and scoped; imports stay inside the project root and
 cycles are rejected. No remote resources (url/image-set/image/src), global
@@ -78,8 +78,7 @@ Read products.data only in `if/elif products.ready:`. Render loading with
 role: "status"; after `elif products.error != none:` read error.kind/message/status
 and offer products.reload. Mutations expose loading/success/error; success also
 narrows data. `if/elif/else` conditions require bool; `for product in products.data:`
-iterates an immutable snapshot. Replacing a list destroys child state/listeners;
-no keyed diff. Conditions and regions preserve semantic DOM parentage. Compound
+iterates immutable values. Canonical identity-preserving syntax: `for product in products key product.id:`. Keys depend only on the item, type int/str; duplicates fail before DOM changes. Same keys preserve row owners/DOM/local state and update bindings; removed keys clean up, re-added keys start fresh. Legacy unkeyed loops replace whole regions. A disappearing surrounding condition still disposes its rows. Conditions and regions preserve semantic DOM parentage. Compound
 conditions do not narrow data. Keep request error handling explicit; core T! and
 page error boundaries do not catch these resource values.
 
@@ -119,8 +118,7 @@ For repository examples: `npm ci --prefix nexo/web_tools`; then web dev with the
 existing entry path. No automatic network installs. Build/check/audit/preview
 work without Node. Do not invent a React wrapper, project JS config or API proxy.
 
-CSS-only HMR retains state when JS/mapped lines stay unchanged; logic changes
-destroy/remount the root and reset state/context/requests. Compile errors retain
+CSS-only HMR retains DOM/state. Compatible component edits refresh only changed outermost boundaries with their own typed state; unaffected siblings/layouts retain identity. Descendants/providers/requests owned by a refreshed boundary are recreated. Shape/declaration/entry/context/page/layout/routing changes safely remount the application. The shared runtime and per-app registry are dev-only. Compile errors retain
 last good UI and expose text diagnostics. Initial compile must succeed. Dev
 checks Host/Origin, serves no project .env/public/arbitrary files and uses external
 styles under CSP. Loopback is not authentication; never deploy dev/preview.
@@ -129,7 +127,7 @@ The M3 full API example still uses its dedicated loopback server, not Vite.
 `web build app.nexo --sourcemap -o dist` emits deterministic line-level JS maps
 with embedded Nexo source; opt in to publishing them. Default builds omit maps.
 `web preview dist` serves only built assets on loopback port 4173. Dev/preview
-accept --port 0..65535 (0 ephemeral). M5 adds --release optimization below; CSS maps remain unavailable.
+accept --port 0..65535 (0 ephemeral). M5 adds --release optimization below; --sourcemap includes CSS line maps for inline styles and local imports, composed through Lightning CSS for releases. Both JS/CSS maps embed source and are removed by unmapped builds; exact expression columns remain unsupported.
 check --json keeps schema_version 1 and adds statement column/end_column/snippet.
 
 Editor server: `python -m nexo web lsp`. It supports UTF-16 diagnostics for unsaved
@@ -175,9 +173,18 @@ have compiler-input/optimizer/method fingerprints; remeasure explicitly on drift
 
 examples/web/production supplies an accessible client and digest-pinned static
 Nginx container. Tests verify non-root/read-only/no-capability/no-new-privileges,
-headers/cache, health and minimized access logs. TLS edge, backend auth/CSRF/session/
-permissions, image scanning, workload SLOs, log retention and rollback qualification
-remain operator responsibilities. No cloud deployment is implied. Static sites
+headers/cache, health and minimized access logs. Local qualification adds verified
+disposable TLS 1.2/1.3/redirect/HSTS, bounded burst/recovery and immutable-image restart
+tests in tests/test_web_qualification.py. The image pins signed Alpine fixes;
+CI uses checksum-verified Trivy 0.76.1 and fails on HIGH/CRITICAL findings or scan
+errors. Firefox/WebKit jobs are configured; require actual passing results before
+claiming support. Native @scope needs Firefox >=146 (CI pins Playwright 1.62.0 /
+Firefox 153); 1.56.0 Firefox 142 is insufficient. Safari 26 has scoped input limits
+corrected in 26.4; tested Linux WebKit fixtures do not qualify Safari/iOS devices.
+Local burst measurements include 429s, not production throughput.
+Real TLS/domain renewal, backend auth/CSRF/session/permissions, workload SLOs,
+log retention and rollout/rollback qualification remain operator responsibilities.
+No cloud deployment is implied. Static sites
 rarely need Kubernetes; justify it from service architecture/budget/reliability.
 Shield's bounded backend listener is not production hosting or browser enforcement.
 
@@ -186,8 +193,9 @@ sanitized error code/status and finite duration; no URLs/params/names/messages/
 payloads/tokens or external transport. Operators own listener cleanup and any
 explicit monitoring/consent. Client events are forgeable, not authorization/billing
 records. See the production project's README for deployment/observability steps.
-Run tests/test_web_production.py with required browser/Vite/Docker flags for full
-verification. Report unavailable environments as unverified; M6 is not implemented.
+Run tests/test_web_production.py and tests/test_web_qualification.py with required
+browser/Vite/Docker flags for the local example checks. Report unavailable
+environments as unverified; M6 is not implemented.
 
 ## Workflow and security
 
@@ -205,7 +213,7 @@ permission. Assess actual Shield profiles: bounded loopback ingress is not a
 persistent production server. Production needs HTTPS/header CSP. No ASVS 5.0
 certification is claimed. Native controls still need meaningful labels/contrast.
 
-Proposed only: keyed reconciliation, CSS maps, frontend formatting, SSR/hydration/SSG. Do not generate those as runnable code. Use the individual project payloads linked below; the optional compatibility pack
+Proposed only: frontend formatting, exact expression stepping, SSR/hydration/SSG. Do not generate those as runnable code. Use the individual project payloads linked below; the optional compatibility pack
 at @@WEB_EXAMPLES@@ includes every required source file,
 compiler hashes and associated test commands. The entries below are generated
 from real compiler-checked sources; actual browser results come from their tests.

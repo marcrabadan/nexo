@@ -328,3 +328,14 @@ rebuild the optimized public demo with docs/web/build.py --release. The normal
 --check path verifies current measured/release artifacts without requiring Node.
 Tests/CI cover actual release/browser/axe/container behavior; no production TLS,
 public deployment, full WCAG/ASVS certification or M6 claim is implied.
+
+### Post-M5 maintenance
+
+RFC-0001 edition 6 / D195 closes explicit keyed reconciliation, typed immutable
+JSON state, WebEvent value/checked snapshots, constant escaped-template extraction,
+CSS line maps and compatible component HMR. The optional Web topic specifies
+identity, cleanup, safe full-remount cases and source-publication boundaries.
+`web-keyed` is a separately retrievable, compiler-checked project; the existing
+combined compatibility pack also contains it. `tests/test_web_debt.py` exercises
+actual DOM/state/focus identity, event escaping, imported CSS maps/release maps and
+Vite refresh/disposal. Keep M6 and unsupported browser features clearly proposed.

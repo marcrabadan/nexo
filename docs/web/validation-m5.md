@@ -207,6 +207,11 @@ created; the commits were pushed directly to `main`.
 
 ## Deployment, security, remaining work and next step
 
+For subsequent local TLS, burst/recovery and patched-image scan evidence see
+[production-example qualification, 2026-11-02](production-qualification.md).
+The historical checks above are preserved; that report records the later scope
+and remaining application-specific gaps separately.
+
 The static container pins
 `nginxinc/nginx-unprivileged@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03`.
 It runs non-root/read-only with bounded tmpfs, no capabilities and no-new-privileges.
@@ -218,18 +223,19 @@ monitoring, rollback and privacy policies before real deployment.
 Internal HTTP on 8080 must sit behind a trusted production TLS edge with HTTPS
 redirect/HSTS. Beyond the published documentation/static demo on GitHub Pages,
 no production application deployment, end-to-end TLS qualification, cloud topology, real backend
-auth/session/resource-permission integration, image scan, production load test or
+auth/session/resource-permission integration, production load test or
 full security audit was performed. Existing Shield memory and bounded loopback
 profiles retain their actual limits and are not production listeners or browser
 sandboxes. Source audits, SRI and hashes do not authorize backend requests or make
 a compromised host trustworthy. Relevant OWASP ASVS 5.0 controls remain a review
 framework, not a certification result.
 
-Earlier language limits still apply: scalar props/state, bounded JSON contracts,
-snapshot lists rather than keyed reconciliation, no event payloads/general browser
-async functions, and no Rust browser driver. Static markup extraction, CSS maps,
-broader device/browser/accessibility coverage and real-application qualification
-remain technical debt. HMR keeps M4's root-remount semantics for logic changes.
+The original M5 gaps in keyed reconciliation, event snapshots, static extraction,
+CSS maps and granular HMR are addressed by the subsequent
+[D195 maintenance](technical-debt.md), with immutable JSON state and explicit
+compatibility/cleanup semantics. Props/routes remain scalar; general browser
+async functions and the Rust browser driver are still unavailable. Broader
+device/accessibility coverage and real-application qualification remain pending.
 
 Stop at M5. Before M6, choose a concrete workload and qualification needs; SSR,
 hydration, SSG, PWA, WASM interop and realtime subscriptions require separate RFCs.

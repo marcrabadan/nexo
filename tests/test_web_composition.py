@@ -51,7 +51,7 @@ def test_m2_imports_css_and_determinism(tmp_path):
     assert '@import' not in outputs[0]['app.css']
     assert 'border-radius: 12px' in outputs[0]['app.css']
     assert 'mountApp' in outputs[0]['main.js']
-    assert 'innerHTML' not in outputs[0]['app.js']
+    assert 'template.innerHTML=markup' in outputs[0]['app.js']  # escaped compile-time constants
 
 
 @pytest.mark.parametrize('old,new,code',[

@@ -65,8 +65,14 @@ function createOwner() {
           };
           effects.push({names,update}); update();
         },
-        listen(node,event,action) {
-          const handler = () => { if(!disposed) batch(action); };
+        listen(node,event,action,withEvent=false) {
+          const handler = event => {
+            if(disposed)return;
+            if(!withEvent){batch(action);return;}
+            const target=event.currentTarget;
+            const value=Object.freeze({value:typeof target.value==='string'?target.value:'',checked:target.checked===true});
+            batch(()=>action(value));
+          };
           node.addEventListener(event,handler);
           cleanups.push(() => node.removeEventListener(event,handler));
         }
@@ -108,6 +114,13 @@ function routeHref(path) {
   return '#'+path;
 }
 function navigate(path) { window.location.hash=routeHref(path); }
+// Only compiler-escaped constant markup reaches this helper; never runtime data.
+const staticTemplates=new Map();
+function appendStatic(parent,markup){
+  let template=staticTemplates.get(markup);
+  if(!template){template=document.createElement('template');template.innerHTML=markup;staticTemplates.set(markup,template);}
+  parent.append(template.content.cloneNode(true));
+}
 // Conditional/list regions own every descendant and release it before replacement.
 function createRegion(parent, owner) {
   const start=document.createComment('nexo'),end=document.createComment('/nexo');
@@ -265,7 +278,7 @@ function createResource(scope,owner,dep,readSpec,kind,invalidate){
 
 function _nw_d10137633b46a682(target,props={},parentEnv=new Map(),renderSlot=null){
 const s=checkedProps({["endpoint"]: {type:"str", default: () => ("/api/products")},["writable"]: {type:"bool", default: () => true}},props); const x=Object.create(null); const r=Object.create(null); const owner=createOwner(); const api=owner.state(s); const env=new Map(parentEnv); let outlet=null;
-const root=document.createElement("div"); root.dataset.nexo="nw-50906aabea7df467";
+const root=document.createElement("div"); root.dataset.nexo="nw-b0c39178dffe9945";
 try{
 const dataScope=useDataScope(env,owner);
 r["products"]=createResource(dataScope,owner,"$products",()=>({method:"GET",schema:JSON.parse("{\"kind\": \"list\", \"item\": {\"kind\": \"record\", \"fields\": {\"id\": {\"kind\": \"int\"}, \"name\": {\"kind\": \"str\"}}}}"),url:s["endpoint"],timeout_ms:5000,retries:1,cache_ms:1000,dedupe:true}),"load",[]);
@@ -273,99 +286,88 @@ r["create"]=createResource(dataScope,owner,"$create",()=>({method:"POST",schema:
 api.bind(["endpoint"],()=>({method:"GET",schema:JSON.parse("{\"kind\": \"list\", \"item\": {\"kind\": \"record\", \"fields\": {\"id\": {\"kind\": \"int\"}, \"name\": {\"kind\": \"str\"}}}}"),url:s["endpoint"],timeout_ms:5000,retries:1,cache_ms:1000,dedupe:true}).url,()=>r["products"].initial());
 const _node1=document.createElement("main");
 root.append(_node1);
-const _node2=document.createElement("h1");
-_node1.append(_node2);
-const _text3=document.createTextNode(""); _node2.append(_text3);
-_text3.data=String(("Nexo Web \u2014 typed data"));
-const _region4=createRegion(_node1,owner);
-api.bind(["$products"],()=>(r["products"].loading?0:((r["products"].error!==null)?1:(r["products"].ready?2:-1))),choice=>_region4.replace((_host7,_owner5)=>{const _api6=_owner5.state(s);
-_owner5.link("endpoint",owner,"endpoint");
-_owner5.link("writable",owner,"writable");
-_owner5.link("$products",owner,"$products");
-_owner5.link("$create",owner,"$create");
+appendStatic(_node1,"<h1>Nexo Web \u2014 typed data</h1>");
+const _region2=createRegion(_node1,owner);
+api.bind(["$products"],()=>(r["products"].loading?0:((r["products"].error!==null)?1:(r["products"].ready?2:-1))),choice=>_region2.replace((_host5,_owner3)=>{const _api4=_owner3.state(s);
+_owner3.link("endpoint",owner,"endpoint");
+_owner3.link("writable",owner,"writable");
+_owner3.link("$products",owner,"$products");
+_owner3.link("$create",owner,"$create");
 if(choice===0){
-const _node8=document.createElement("p");
-_host7.append(_node8);
-const _text9=document.createTextNode(""); _node8.append(_text9);
-_text9.data=String(("Loading..."));
-{const v=String(("status"));_node8.setAttribute("role",v);}
+appendStatic(_host5,"<p role=\"status\">Loading...</p>");
 }
 if(choice===1){
-const _node10=document.createElement("p");
-_host7.append(_node10);
-const _text11=document.createTextNode(""); _node10.append(_text11);
-_api6.bind(["$products"],()=>String((String(r["products"].error["kind"])+": "+String(r["products"].error["message"]))),v=>{_text11.data=v;});
-{const v=String(("alert"));_node10.setAttribute("role",v);}
-const _node12=document.createElement("button");
-_node12.type="button";
-_host7.append(_node12);
-const _text13=document.createTextNode(""); _node12.append(_text13);
-_text13.data=String(("Retry"));
-_api6.listen(_node12,"click",r["products"].reload);
+const _node6=document.createElement("p");
+_host5.append(_node6);
+const _text7=document.createTextNode(""); _node6.append(_text7);
+_api4.bind(["$products"],()=>String((String(r["products"].error["kind"])+": "+String(r["products"].error["message"]))),v=>{_text7.data=v;});
+{const v=String(("alert"));_node6.setAttribute("role",v);}
+const _node8=document.createElement("button");
+_node8.type="button";
+_host5.append(_node8);
+const _text9=document.createTextNode(""); _node8.append(_text9);
+_text9.data=String(("Retry"));
+_api4.listen(_node8,"click",r["products"].reload);
 }
 if(choice===2){
-const _node14=document.createElement("ul");
-_host7.append(_node14);
-const _region15=createRegion(_node14,_owner5);
-_api6.bind(["$products"],()=>r["products"].data,items=>_region15.replace((_host18,_owner16)=>{const _api17=_owner16.state(s);
-_owner16.link("endpoint",_owner5,"endpoint");
-_owner16.link("writable",_owner5,"writable");
-_owner16.link("$products",_owner5,"$products");
-_owner16.link("$create",_owner5,"$create");
+const _node10=document.createElement("ul");
+_host5.append(_node10);
+const _region11=createRegion(_node10,_owner3);
+_api4.bind(["$products"],()=>r["products"].data,items=>_region11.replace((_host14,_owner12)=>{const _api13=_owner12.state(s);
+_owner12.link("endpoint",_owner3,"endpoint");
+_owner12.link("writable",_owner3,"writable");
+_owner12.link("$products",_owner3,"$products");
+_owner12.link("$create",_owner3,"$create");
 for(const _item36 of items){
-const _node19=document.createElement("li");
-_host18.append(_node19);
+const _node15=document.createElement("li");
+_host14.append(_node15);
+const _text16=document.createTextNode(""); _node15.append(_text16);
+_text16.data=String(_item36["name"]);
+}
+}));
+}
+}));
+const _node17=document.createElement("button");
+_node17.type="button";
+_node1.append(_node17);
+const _text18=document.createTextNode(""); _node17.append(_text18);
+_text18.data=String(("Reload"));
+api.listen(_node17,"click",r["products"].reload);
+const _node19=document.createElement("button");
+_node19.type="button";
+_node1.append(_node19);
 const _text20=document.createTextNode(""); _node19.append(_text20);
-_text20.data=String(_item36["name"]);
-}
-}));
-}
-}));
+_text20.data=String(("Cancel read"));
+api.listen(_node19,"click",r["products"].cancel);
 const _node21=document.createElement("button");
 _node21.type="button";
 _node1.append(_node21);
 const _text22=document.createTextNode(""); _node21.append(_text22);
-_text22.data=String(("Reload"));
-api.listen(_node21,"click",r["products"].reload);
-const _node23=document.createElement("button");
-_node23.type="button";
-_node1.append(_node23);
-const _text24=document.createTextNode(""); _node23.append(_text24);
-_text24.data=String(("Cancel read"));
-api.listen(_node23,"click",r["products"].cancel);
-const _node25=document.createElement("button");
-_node25.type="button";
-_node1.append(_node25);
-const _text26=document.createTextNode(""); _node25.append(_text26);
-_text26.data=String(("Create product"));
-api.listen(_node25,"click",r["create"].run);
-api.bind(["$create", "writable"],()=>(!(s["writable"])||r["create"].loading),v=>{_node25.disabled=v;});
-const _region27=createRegion(_node1,owner);
-api.bind(["$create"],()=>(r["create"].loading?0:((r["create"].error!==null)?1:(r["create"].success?2:-1))),choice=>_region27.replace((_host30,_owner28)=>{const _api29=_owner28.state(s);
-_owner28.link("endpoint",owner,"endpoint");
-_owner28.link("writable",owner,"writable");
-_owner28.link("$products",owner,"$products");
-_owner28.link("$create",owner,"$create");
+_text22.data=String(("Create product"));
+api.listen(_node21,"click",r["create"].run);
+api.bind(["$create", "writable"],()=>(!(s["writable"])||r["create"].loading),v=>{_node21.disabled=v;});
+const _region23=createRegion(_node1,owner);
+api.bind(["$create"],()=>(r["create"].loading?0:((r["create"].error!==null)?1:(r["create"].success?2:-1))),choice=>_region23.replace((_host26,_owner24)=>{const _api25=_owner24.state(s);
+_owner24.link("endpoint",owner,"endpoint");
+_owner24.link("writable",owner,"writable");
+_owner24.link("$products",owner,"$products");
+_owner24.link("$create",owner,"$create");
 if(choice===0){
-const _node31=document.createElement("p");
-_host30.append(_node31);
-const _text32=document.createTextNode(""); _node31.append(_text32);
-_text32.data=String(("Saving..."));
-{const v=String(("status"));_node31.setAttribute("role",v);}
+appendStatic(_host26,"<p role=\"status\">Saving...</p>");
 }
 if(choice===1){
-const _node33=document.createElement("p");
-_host30.append(_node33);
-const _text34=document.createTextNode(""); _node33.append(_text34);
-_api29.bind(["$create"],()=>String((String(r["create"].error["kind"])+": "+String(r["create"].error["message"]))),v=>{_text34.data=v;});
-{const v=String(("alert"));_node33.setAttribute("role",v);}
+const _node27=document.createElement("p");
+_host26.append(_node27);
+const _text28=document.createTextNode(""); _node27.append(_text28);
+_api25.bind(["$create"],()=>String((String(r["create"].error["kind"])+": "+String(r["create"].error["message"]))),v=>{_text28.data=v;});
+{const v=String(("alert"));_node27.setAttribute("role",v);}
 }
 if(choice===2){
-const _node35=document.createElement("p");
-_host30.append(_node35);
-const _text36=document.createTextNode(""); _node35.append(_text36);
-_api29.bind(["$create"],()=>String(("Created: "+String(r["create"].data["name"]))),v=>{_text36.data=v;});
-{const v=String(("status"));_node35.setAttribute("role",v);}
+const _node29=document.createElement("p");
+_host26.append(_node29);
+const _text30=document.createTextNode(""); _node29.append(_text30);
+_api25.bind(["$create"],()=>String(("Created: "+String(r["create"].data["name"]))),v=>{_text30.data=v;});
+{const v=String(("status"));_node29.setAttribute("role",v);}
 }
 }));
 target.append(root);

@@ -68,7 +68,7 @@ def test_release_maps_preserve_original_sources_and_are_relocatable(tmp_path):
         folder=tmp_path/name;shutil.copytree(ROOT/'examples/web/composition',folder)
         outputs.append(build(folder/'app.nexo',folder/'dist',sourcemap=True,release=True))
     assert outputs[0]==outputs[1]
-    maps=[json.loads(text) for name,text in outputs[0].items() if name.endswith('.map')]
+    maps=[json.loads(text) for name,text in outputs[0].items() if name.endswith('.js.map')]
     assert len(maps)==1
     assert {'nexo://project/app.nexo','nexo://project/session.nexo','nexo://project/ui/widgets.nexo'}<=set(maps[0]['sources'])
     assert not any('nexo-map-source' in content for content in maps[0]['sourcesContent'])
@@ -185,7 +185,8 @@ def nginx_container(tmp_path):
     for name in ('Dockerfile','nginx.conf'):shutil.copy(APP.parent/name,context/name)
     tag='nexo-web-check-'+uuid.uuid4().hex[:12];container=None
     try:
-        result=run('build','--pull=false','-t',tag,str(context))
+        secrets=['--secret','id=proxy_ca,src='+env['CODEX_PROXY_CERT']] if env.get('CODEX_PROXY_CERT') else []
+        result=run('build','--pull=false',*secrets,'-t',tag,str(context))
         assert result.returncode==0,result.stderr
         result=run('run','-d','--read-only','--user','101:101','--cap-drop','ALL','--security-opt','no-new-privileges',
                    '--tmpfs','/tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777','-p','127.0.0.1::8080',tag)

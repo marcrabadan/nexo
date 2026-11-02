@@ -9,7 +9,7 @@ from .web_frontend import compile_web,WebError,TAGS
 from .web_model import Unit,parse_unit
 from .web_diagnostics import diagnostic
 
-WORDS='component page layout context state fn view style provide inject slot load mutation api get post put patch delete loading ready success error data reload cancel run navigate if elif else for pub use type int str bool list true false none'.split()
+WORDS='component page layout context state fn view style provide inject slot load mutation api get post put patch delete loading ready success error data reload cancel run navigate if elif else for key pub use type int str bool list WebEvent value checked true false none'.split()
 
 
 def diagnostics(text,name):
@@ -42,7 +42,7 @@ def outline(text,name):
     for d in unit.declarations.values():
         symbol=item(d.name,d.line,23,d.kind);children=[]
         for key,p in {**d.props,**d.states}.items():children.append(item(key,p.line,8,str(p.type)))
-        for key,body in d.actions.items():children.append(item(key,body[0][1]-1,12,'fn '+key+'()'))
+        for key,body in d.actions.items():children.append(item(key,body[0][1]-1,12,'fn '+key+'('+((d.action_params[key]+': WebEvent') if key in d.action_params else '')+')'))
         for key,req in d.requests.items():children.append(item(key,req.line,13,req.kind))
         symbol['children']=children;out.append(symbol)
     out.sort(key=lambda v:v['range']['start']['line'])

@@ -48,6 +48,9 @@ class Declaration:
     symbol: str = ''
     slots: int = 0
     requests: dict = field(default_factory=dict)
+    action_params: dict = field(default_factory=dict)
+    css_line: int = 1
+    css_origins: list = field(default_factory=list)
 
 
 @dataclass
@@ -65,6 +68,7 @@ class Program:
     root: Unit
     units: list[Unit]
     dependencies: set[Path]
+    css_sources: dict = field(default_factory=dict)
 
     def resolve(self, unit, name, line, kind=None):
         pieces = name.split('.')
@@ -172,7 +176,16 @@ def parse_view(items, i, indent):
             m=re.fullmatch(r'for ('+F.IDENT+r') in (.+):',text)
             if not m:F.fail(line,'Use for item in resource.data: inside its ready branch.')
             identifier(m[1],line)
-            node=F.Element('#for',F.expression(m[2],line),line=line);node.variable=m[1]
+            from .lexer import tokenize_expr
+            expression=m[2];split=None;depth=0
+            try:
+                for token in tokenize_expr(expression,'<web-loop>',line,1):
+                    if token.kind=='OP':depth+=1 if token.value in ('(','[','{') else -1 if token.value in (')',']','}') else 0
+                    index=token.span.col-1
+                    if not depth and token.kind=='NAME' and token.value=='key' and index>0 and expression[index-1].isspace() and expression[index+3:index+4].isspace():split=index;break
+            except F.NexoError:F.fail(line,'Invalid view loop expression.')
+            node=F.Element('#for',F.expression(expression[:split].strip() if split is not None else expression,line),line=line);node.variable=m[1]
+            node.key=F.expression(expression[split+3:].strip(),line) if split is not None else None
             i+=1;node.children,i=parse_view(items,i,indent+4)
             if not node.children:F.fail(line,'A for block requires a view.')
         else:
@@ -182,16 +195,6 @@ def parse_view(items, i, indent):
                 if not node.children:F.fail(line,'An element block requires a child.')
         nodes.append(node)
     return nodes,i
-
-
-def scope_source(source):
-    # CSS edits must not change DOM scope IDs during style-only HMR.
-    out=[];inside=False
-    for text in source.splitlines():
-        if len(text)-len(text.lstrip(' '))==4 and text.strip()=='style:':inside=True;continue
-        if inside and (not text.strip() or len(text)-len(text.lstrip())>4):continue
-        inside=False;out.append(text)
-    return '\n'.join(out)
 
 
 def parse_unit(unit):
@@ -226,6 +229,7 @@ def parse_unit(unit):
             node=F.core('\n'.join(lines[line-1:end]),line)
             if not isinstance(node,A.TypeDef) or not node.fields or node.alias or node.variants or node.methods or node.settings or node.annotations or node.trait:
                 F.fail(line,'Browser JSON types are nonempty field-only records.', 'NW3001')
+            if node.name=='WebEvent':F.fail(line,'WebEvent is the built-in browser event snapshot type.','NW3001')
             if any(p.default is not None or p.marks for p in node.fields) or len({p.name for p in node.fields})!=len(node.fields):
                 F.fail(line,'JSON record fields require unique explicit types without defaults/annotations.', 'NW3001')
             if node.name in unit.contracts or node.name in unit.declarations or any(node.name==a for _,a,_ in uses):F.fail(line,'Duplicate type/declaration name.', 'NW3001')
@@ -248,8 +252,8 @@ def parse_unit(unit):
             line, indent, text = items[i]
             if indent != 4:
                 F.fail(line, 'Declaration members require four spaces.')
-            state = re.fullmatch(r'state ('+F.IDENT+r'): (int|str|bool) = (.+)', text)
-            action = re.fullmatch(r'fn ('+F.IDENT+r')\(\):', text)
+            state = re.fullmatch(r'state ('+F.IDENT+r'): (.+?) = (.+)', text)
+            action = re.fullmatch(r'fn ('+F.IDENT+r')\((.*?)\):', text)
             request=re.fullmatch(r'(load|mutation) ('+F.IDENT+r') = (.+)',text)
             if request:
                 from .web_data import Request
@@ -265,6 +269,8 @@ def parse_unit(unit):
                 identifier(key, line)
                 if key in seen:
                     F.fail(line, 'Duplicate member.')
+                if typ not in SCALARS:
+                    typ=F.core('fn __state(value: '+typ+'):\n    pass',line).params[0].type
                 d.states[key] = Property(typ, F.expression(initial,line), line)
                 seen.add(key)
                 i += 1
@@ -274,6 +280,12 @@ def parse_unit(unit):
                 if key in seen:
                     F.fail(line, 'Duplicate member.')
                 seen.add(key)
+                if action[2]:
+                    param=re.fullmatch('('+F.IDENT+r'): WebEvent',action[2])
+                    if not param or d.kind=='context':
+                        F.fail(line,'UI actions accept only one parameter: event: WebEvent.','NW1002')
+                    identifier(param[1],line)
+                    d.action_params[key]=param[1]
                 i += 1
                 body = []
                 while i < len(items) and items[i][1] > 4:
@@ -296,11 +308,14 @@ def parse_unit(unit):
                     F.fail(line, 'Contexts have no style; UI declarations have at most one style.')
                 seen.add('style')
                 start = line
+                d.css_line=line+1
                 i += 1
                 while i < len(items) and items[i][1] > 4:
                     i += 1
                 end = items[i][0]-1 if i<len(items) else len(lines)
                 d.css = '\n'.join(s[8:] if s.startswith('        ') else s for s in lines[start:end]).strip()
+                raw=lines[start:end]
+                d.css_line+=next((j for j,s in enumerate(raw) if s.strip()),0)
             elif text.startswith('provide '):
                 if d.kind == 'context':
                     F.fail(line, 'Contexts cannot own other contexts in M2.', 'NW2004')
@@ -330,7 +345,7 @@ def parse_unit(unit):
             F.fail(d.line,'A context requires typed state.', 'NW2004')
         suffix=hashlib.sha256((unit.key+'\n'+name).encode()).hexdigest()[:16]
         d.symbol='_nw_'+suffix
-        d.scope='nw-'+hashlib.sha256((unit.key+'\n'+name+'\n'+scope_source(unit.source)).encode()).hexdigest()[:16]
+        d.scope='nw-'+suffix
     return uses
 
 
@@ -338,6 +353,10 @@ def load_program(source, source_path=None):
     root_path=Path(source_path).resolve() if source_path else None
     root_dir=project_root(str(root_path)) if root_path else None
     units, by_path, visiting, dependencies = [], {}, [], set()
+    css_sources={}
+
+    def css_name(path,key='app'):
+        return 'nexo://project/'+(path.relative_to(root_dir).as_posix() if path and root_dir else (key or 'app')+'.nexo')
     if root_dir and (root_dir/'nexo.toml').is_file():
         dependencies.add(root_dir/'nexo.toml')
 
@@ -346,9 +365,20 @@ def load_program(source, source_path=None):
             F.fail(line, 'Browser imports must remain inside the project root.', 'NW2001')
         return path
 
-    def css_expand(text,folder,line,stack):
-        pattern=r'@import\s+"([^"\n]+)"\s*;'
-        def replace(match):
+    def css_expand(text,folder,line,stack,source):
+        chunks=[];origins=[None]
+        def append(chunk,locations):
+            chunks.append(chunk)
+            parts=chunk.split('\n')
+            for i,part in enumerate(parts):
+                if origins[-1] is None and part:origins[-1]=locations[i]
+                if i<len(parts)-1:origins.append(None)
+        pieces=re.findall(r'/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|@import\s+"[^"\n]+"\s*;|[^"\'/@]+|.',text)
+        for piece in pieces:
+            match=re.fullmatch(r'@import\s+"([^"\n]+)"\s*;',piece)
+            if not match:
+                append(piece,[(source,line+i) for i in range(len(piece.split('\n')))])
+                line+=piece.count('\n');continue
             name=match[1]
             if ':' in name or name.startswith(('/', '\\')) or '\\' in name:
                 F.fail(line,'External CSS resources are outside the browser subset.', 'NW1003')
@@ -360,10 +390,10 @@ def load_program(source, source_path=None):
             if path in stack:
                 F.fail(line,'CSS import cycle.', 'NW2001')
             dependencies.add(path)
-            return css_expand(path.read_text(encoding='utf-8'),path.parent,line,[*stack,path])
-        # Strip no comments here: @import in comments/strings must not read files.
-        pieces=re.findall(r'/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|@import\s+"[^"\n]+"\s*;|[^"\'/@]+|.',text)
-        return ''.join(re.sub(pattern,replace,p) if p.startswith('@import') else p for p in pieces)
+            content=path.read_text(encoding='utf-8');identity=css_name(path);css_sources[identity]=content
+            expanded,locations=css_expand(content,path.parent,1,[*stack,path],identity)
+            append(expanded,locations);line+=piece.count('\n')
+        return ''.join(chunks),origins
 
     def visit(text,path,key):
         if path and path in visiting:
@@ -385,7 +415,8 @@ def load_program(source, source_path=None):
                 target=inside(root_dir.joinpath(*module.split('.')).with_suffix('.nexo').resolve(),line)
                 unit.imports[alias]=visit(target.read_text(encoding='utf-8'),target,module)
             for d in unit.declarations.values():
-                d.css=css_expand(d.css,path.parent if path else None,d.line,[])
+                identity=css_name(path,key);css_sources[identity]=text
+                d.css,d.css_origins=css_expand(d.css,path.parent if path else None,d.css_line,[],identity)
                 F.scoped_css(d.css,d.scope,d.line)
         except F.WebError as error:
             if not getattr(error,'file',None):error.file=shown_path(path) if path else '<web>'
@@ -398,4 +429,4 @@ def load_program(source, source_path=None):
         return unit
 
     root=visit(source,root_path,'')
-    return Program(root,units,dependencies)
+    return Program(root,units,dependencies,css_sources)
