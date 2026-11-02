@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nexo Web — compiler-first browser UI</title>
-<meta name="description" content="Build a working Counter with native Nexo components, reactive state and scoped CSS. Experimental M1–M5 compiler, typed composition, routes, context and honest feature status.">
+<meta name="description" content="Build a browser interface in Nexo, run a working Counter, then explore components, typed API requests and deployment.">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
@@ -18,15 +18,12 @@
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="learn.html">Learn</a>
-      <a href="playground.html">Playground</a>
-      <a href="examples.html">Examples</a>
-      <a href="libraries.html">Libraries</a>
-      <a href="how-it-works.html">How it works</a>
-      <a href="reference.html">Reference</a>
+      <a href="index.html">Getting Started</a>
+      <a href="backend.html">Nexo Backend</a>
       <a href="web.html" aria-current="page">Nexo Web</a>
-      <a href="ai-guide.html">AI Guide</a>
-      <a href="shield.html">Shield</a>
+      <a href="devops.html">Nexo DevOps</a>
+      <a href="shield.html">Nexo Shield</a>
+      <a href="ai.html">AI Guide</a>
       <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
     </nav>
     <div class="header-tools">
@@ -41,13 +38,16 @@
     </div>
   </div>
 </header>
-<main id="main" class="wrap web-page">
-<section><p class="eyebrow">RFC-0001 · Experimental M1–M5</p><h1>Nexo Web</h1>
-<p>Readable Nexo components compiled to JavaScript, HTML and scoped CSS. Local state updates the DOM directly, with no virtual DOM or React dependency.</p>
-<p><a href="web-demo/">Try two Counters</a> · <a href="web-m2-demo/">Try M2 composition and routing</a> · <a href="https://github.com/marcrabadan/nexo/blob/main/docs/rfc/0001-nexo-web.md">Language and lifecycle reference</a></p>
-<p>M1 and M2 run through the <strong>Python CLI</strong>. The Rust driver does not compile browser components. The existing WASI command <code>nexo build --target web</code> keeps its established behavior.</p></section>
-<section aria-labelledby="philosophy"><h2 id="philosophy">One readable component</h2><p>A component combines local <code>state</code>, an action written with <code>fn</code>, a <code>view</code> and a <code>style</code>. This is the exact acceptance example compiled into the demo.</p>
-<div class="code"><div class="code-bar"><span>counter.nexo · M1</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.web
+<main id="main" class="wrap web-page"><section><p class="eyebrow">Experimental browser UI</p><h1>Nexo Web</h1>
+<p class="lede">Build browser interfaces in Nexo. Write components with local state, actions and scoped CSS; the compiler produces JavaScript, HTML and CSS.</p>
+<p><a href="web-demo/">Try the Counter demo</a> · <a href="#start">Build your first component</a> · <a href="web-api.html">Connect an API</a></p></section>
+<section id="start"><h2>Build your first component</h2><p>Install Nexo using <a href="index.html#start">Getting Started</a>, then activate its Python environment with <code>source .venv/bin/activate</code>. Run these commands from the repository root.</p>
+<div class="code"><div class="code-bar"><span>Terminal</span><button class="copy" type="button">Copy</button></div><pre><code>python -m nexo web check --json examples/web/counter.nexo
+python -m nexo web build examples/web/counter.nexo -o /tmp/nexo-counter
+python -m http.server 8765 --bind 127.0.0.1 --directory /tmp/nexo-counter</code></pre></div>
+<p>Open <a href="http://127.0.0.1:8765/">http://127.0.0.1:8765/</a>. The button updates the count. This ordinary build requires no Node installation.</p></section>
+<section><h2>One component, from state to screen</h2><p><code>state</code> stores the count, <code>fn</code> changes it, <code>view</code> renders it and <code>style</code> keeps its CSS local. Each mounted Counter has its own state.</p>
+<div class="code"><div class="code-bar"><span>counter.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.web
 
 pub component Counter:
     state count: int = 0
@@ -65,261 +65,15 @@ pub component Counter:
         main {
             padding: 24px;
         }
-</code></pre></div>
-<p>Every instance gets fresh typed state. Clicking the native button batches state changes and updates only bindings that depend on them, skipping unchanged rendered values. Text becomes text nodes, so markup in strings is displayed safely. Destroying a mount removes its listeners and subscriptions.</p>
-<p>Actions support typed assignments; state types include <code>int</code>, <code>str</code>, <code>bool</code> and immutable JSON records/lists. Expressions include literals, state reads, interpolation, checked integer arithmetic and string concatenation. Unsupported syntax and reserved words used as state/action names produce a diagnostic.</p></section>
-<section aria-labelledby="architecture"><h2 id="architecture">From readable source to the browser</h2>
-<ol class="web-flow"><li><strong>Nexo Web source</strong><p>Components, state, views and styles.<br>Pages, layouts and owner-scoped context: experimental M2.</p></li><li><strong>Nexo compiler</strong><p>Parse → typed component AST → binding dependencies → DOM instructions + scoped CSS.</p><p>Static bindings have no subscription. Fully constant native subtrees become compiler-escaped templates cloned per instance.</p></li><li><strong>Browser</strong><p>External JavaScript + HTML + CSS. Direct DOM updates; independent owners and cleanup.</p></li></ol>
-<p>React offers component composition; Solid demonstrates fine-grained updates; Svelte moves work into compilation; Vite supplies development tooling. Nexo Web pursues those useful properties with native Nexo syntax. Nexo Web remains much smaller: composition is implemented in experimental M2; optional Vite development and conservative HMR are implemented in M4. No comparative performance claim has been measured.</p></section>
-<section id="composition"><h2>Compose screens with M2</h2><p>Components take typed, read-only scalar properties. Project imports use qualified <code>use</code> names and <code>pub</code> exports. A component projects nested content through <code>slot()</code>; a layout owns persistent shared structure. Each provider creates its own context instance; <code>inject()</code> resolves the nearest provider.</p>
-<p>Pages declare explicit paths and typed parameters. M2 uses fragment URLs such as <code>#/users/7</code>, so the working demo runs on static hosting. Local anchors, back/forward navigation, nested layout persistence, page metadata, not-found and navigation error pages are supported. Navigation focuses the new page content.</p>
-<p><a href="web-m2-demo/">Run the complete project</a> · <a href="web-m2-demo/source/app.nexo">Download the entry</a> · <a href="https://github.com/marcrabadan/nexo/tree/main/examples/web/composition">All project files</a>. This entry requires its <code>session.nexo</code>, <code>ui/widgets.nexo</code>, <code>ui/card.css</code> and <code>nexo.toml</code> files; it is not a standalone snippet.</p>
-<div class="code"><div class="code-bar"><span>composition/app.nexo · M2</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.web
-use session
-use ui.widgets
-
-pub layout Shell:
-    provide session.Visits
-    visits = inject(session.Visits)
-    state opens: int = 0
-
-    fn open():
-        opens += 1
-
-    view:
-        header:
-            h1(&quot;Nexo Web M2&quot;)
-            p(&quot;Shared visits: {visits.count}; layout clicks: {opens}&quot;)
-            button(&quot;Layout +&quot;, on_click: open)
-            nav:
-                a(&quot;Home&quot;, href: &quot;/&quot;)
-                a(&quot;User 7&quot;, href: &quot;/users/7&quot;)
-        slot()
-
-pub layout Details:
-    layout = Shell
-    state opens: int = 0
-
-    fn open():
-        opens += 1
-
-    view:
-        section:
-            h2(&quot;Persistent nested layout&quot;)
-            p(&quot;Nested layout clicks: {opens}&quot;)
-            button(&quot;Nested +&quot;, on_click: open)
-            slot()
-
-pub page Home:
-    path = &quot;/&quot;
-    layout = Shell
-    title = &quot;Nexo Web — Home&quot;
-    description = &quot;A compiled Nexo component, layout and context example.&quot;
-    visits = inject(session.Visits)
-    state label: str = &quot;Local count&quot;
-
-    fn rename():
-        label = &quot;Updated count&quot;
-
-    view:
-        main:
-            widgets.Card(heading: label):
-                p(&quot;Shared in slot: {visits.count}&quot;)
-                button(&quot;Shared +&quot;, on_click: visits.increment)
-                button(&quot;Rename&quot;, on_click: rename)
-                widgets.Counter(label: label)
-
-pub page User(id: int):
-    path = &quot;/users/{id}&quot;
-    layout = Details
-    title = &quot;Nexo Web — User {id}&quot;
-    visits = inject(session.Visits)
-
-    view:
-        main:
-            h2(&quot;User {id}&quot;)
-            p(&quot;Shared on another page: {visits.count}&quot;)
-            button(&quot;Shared +&quot;, on_click: visits.increment)
-
-pub page NotFound:
-    not_found = true
-    layout = Shell
-    title = &quot;Nexo Web — Not found&quot;
-
-    view:
-        main:
-            h2(&quot;Page not found&quot;)
-            a(&quot;Return home&quot;, href: &quot;/&quot;)
-
-pub page Failure:
-    error = true
-    title = &quot;Nexo Web — Error&quot;
-
-    view:
-        main:
-            h2(&quot;Unable to render this page&quot;)
-</code></pre></div>
-<p>Shared layout state survives navigation through a common layout prefix. Page state resets when leaving a page or changing parameters. Context updates batch across owners. Slots retain caller bindings and CSS, while their listeners and subscriptions are cleaned up with the receiving component.</p>
-<p>Props and route parameters support <code>int</code>, <code>str</code> and <code>bool</code>. Layouts require exactly one slot and have no props yet. Local project modules/CSS are supported; package imports and SSR remain future work. Explicit keyed lists are available below. Error pages handle mount/navigation failures, not arbitrary event exceptions.</p>
-<div class="code"><pre><code>python -m nexo web check --json examples/web/composition/app.nexo
-python -m nexo web build examples/web/composition/app.nexo -o /tmp/nexo-composition
-python -m http.server 8765 --bind 127.0.0.1 --directory /tmp/nexo-composition
-python -m pytest tests/test_web_frontend.py tests/test_web_composition.py</code></pre></div></section>
-<section><h2>Scoped CSS</h2><p>Write standard CSS selectors and declarations. The compiler emits an external stylesheet with native <code>@scope</code> boundaries. Custom properties and media/container/supports queries work. Use a modern browser with CSS scope support.</p><p>Local <code>@import "./card.css";</code> is expanded into the component scope in M2. Remote imports and resource functions such as <code>url()</code> and <code>image-set()</code>, global at-rules, CSS escapes and minification remain unsupported. Styles are component-owned; no inline style is needed.</p></section>
-<section><h2>Build and run locally</h2><div class="code"><div class="code-bar"><span>Local development</span><button class="copy" type="button">Copy</button></div><pre><code>python -m nexo web check --json examples/web/counter.nexo
-python -m nexo web build examples/web/counter.nexo -o /tmp/nexo-counter
-python -m http.server 8765 --bind 127.0.0.1 --directory /tmp/nexo-counter
-# Open http://127.0.0.1:8765/
-python -m pytest tests/test_web_frontend.py</code></pre></div>
-<p>Install Nexo from the repository first. Ordinary build emits <code>index.html</code>, <code>main.js</code>, <code>app.js</code> and <code>app.css</code>. Serve over HTTP; file URLs cannot reliably load ES modules. M4 adds <code>web new/dev/preview/audit/lsp</code> and opt-in JavaScript source maps. M5 adds <code>--release</code> optimization, integrity manifests and measured quality gates.</p>
-<p>Diagnostics: NW1001 grammar, NW1002 names/types, NW1003 CSS boundaries, NW1004 unsafe DOM, NW1000 I/O. M2 adds NW2001 modules, NW2002 props/composition, NW2003 routes, NW2004 context and NW2005 slots. M3 adds NW3001 JSON contracts, NW3002 request/readiness rules and NW3003 API URL boundaries. M4 adds NW4001 tool availability, NW4002 dev boundaries, NW4101 credential review and NW4102 cache review. M5 adds NW5001 release integrity/optimization and NW5101–NW5103 source accessibility findings. Each compile error gives a fix. Inspect JSON diagnostics before changing code.</p></section>
-<section id="data"><h2>M3: typed asynchronous data</h2>
-<p><code>load</code> owns a reactive GET; <code>mutation</code> owns an explicit POST, PUT, PATCH or DELETE. Both use nonblocking browser fetch, exact JSON contracts and visible loading/error states. A successful mutation reloads its explicitly named reads.</p>
-<p><a href="web-m3-demo/">Try the read-only M3 demo</a>. It fetches a real static JSON file. Writes are disabled there; run the complete local project below to test CSRF-protected creation and invalidation.</p>
-<div class="code"><div class="code-bar"><span>data/app.nexo · M3</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.web
-
-pub type Product:
-    id: int
-    name: str
-
-pub type NewProduct:
-    name: str
-
-pub component App(endpoint: str = &quot;/api/products&quot;, writable: bool = true):
-    load products = api.get(
-        endpoint,
-        as: list[Product],
-        timeout_ms: 5000,
-        retries: 1,
-        cache_ms: 1000
-    )
-
-    mutation create = api.post(
-        endpoint,
-        body: NewProduct(name: &quot;Nexo handbook&quot;),
-        as: Product,
-        invalidate: [products]
-    )
-
-    view:
-        main:
-            h1(&quot;Nexo Web — typed data&quot;)
-            if products.loading:
-                p(&quot;Loading...&quot;, role: &quot;status&quot;)
-            elif products.error != none:
-                p(&quot;{products.error.kind}: {products.error.message}&quot;, role: &quot;alert&quot;)
-                button(&quot;Retry&quot;, on_click: products.reload)
-            elif products.ready:
-                ul:
-                    for product in products.data:
-                        li(product.name)
-            button(&quot;Reload&quot;, on_click: products.reload)
-            button(&quot;Cancel read&quot;, on_click: products.cancel)
-            button(&quot;Create product&quot;, on_click: create.run, disabled: not writable or create.loading)
-            if create.loading:
-                p(&quot;Saving...&quot;, role: &quot;status&quot;)
-            elif create.error != none:
-                p(&quot;{create.error.kind}: {create.error.message}&quot;, role: &quot;alert&quot;)
-            elif create.success:
-                p(&quot;Created: {create.data.name}&quot;, role: &quot;status&quot;)
-
-    style:
-        main { max-width: 48rem; margin: 2rem auto; padding: 1rem; font-family: system-ui; }
-        button { margin: 0.25rem; padding: 0.5rem; }
-        button:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }
-</code></pre></div>
-<p>Data is available only inside a <code>ready</code> or mutation <code>success</code> branch. Errors expose kind, message and HTTP status. <code>reload</code>, <code>cancel</code> and mutation <code>run</code> are explicit operations. Views support conditions and immutable lists. Use <code>for product in products key product.id:</code> to retain row DOM and local state across replacements/reordering. Removed rows clean up; duplicate keys fail. Unkeyed loops retain their legacy whole-list replacement behavior.</p>
-<p>GET supports bounded timeouts/retries, consumer-aware deduplication and opt-in memory caching. Requests and cache belong to one mounted application; unmount cancels its work. Changing user/session requires destroying and remounting the root. JSON int values must fit the safe wire integer range; use str for larger identifiers.</p>
-<div class="code"><pre><code>python -m nexo web check --json examples/web/data/app.nexo
-python -m nexo web build examples/web/data/app.nexo -o dist
-python examples/web/data/server.py --directory dist
-# Open http://127.0.0.1:8765/
-python -m pytest tests/test_web_data.py</code></pre></div>
-<p><a href="web-m3-demo/source/app.nexo">Nexo source</a> · <a href="web-m3-demo/source/server.py">Local demo server</a> · <a href="web-m3-demo/source/nexo.toml">Project config</a> · <a href="https://github.com/marcrabadan/nexo/blob/main/docs/rfc/0001-nexo-web.md#m3">Full M3 reference</a></p>
-<p>Requests allow same-origin paths only, with HTTPS in production. Writes require a server-injected CSRF token and backend Origin/token validation. Credentials use same-origin cookies. The bundled Python server binds loopback and demonstrates session isolation; it has no production authentication, TLS or deployment support. Backend authorization and rate limits remain essential.</p></section>
-<section id="typed-ui"><h2>Keyed rows and typed input events</h2>
-<p><a href="web-keyed-demo/">Run the working list/input example</a> · <a href="web-keyed-demo/source/app.nexo">Complete Nexo source</a> · <a href="web/technical-debt.md">Maintenance semantics and validation</a></p>
-<div class="code"><div class="code-bar"><span>Typed input and row identity</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">fn edit(event: WebEvent):
-    query = event.value
-
-view:
-    input(value: query, on_input: edit, aria_label: "Filter")
-    ul:
-        for product in products key product.id:
-            li(product.name)</code></pre></div>
-<p>This excerpt belongs inside a component with typed query/products state; the complete source above compiles as provided. <code>WebEvent</code> contains only frozen <code>value: str</code> and <code>checked: bool</code> snapshots. It exposes no DOM target or JavaScript methods. Input remains untrusted, and explicit assignment handlers update state. No automatic two-way binding is implied.</p></section>
-<section><h2>Browser compatibility</h2><p>Scoped CSS relies on native <code>@scope</code>. MDN lists support from Chromium 118 and Firefox 146; Safari 26 has scoped input/textarea limitations corrected in 26.4. These feature boundaries do not establish framework or device support. Local examples are verified with system Chromium and Linux Playwright WebKit; Firefox and actual Safari/iOS qualification remain unverified. CI uses a newer pinned Firefox harness instead of the unsupported Firefox 142 bundled with Playwright 1.56.</p></section>
-<section id="development"><h2>M4: develop with Vite</h2>
-<p>Vite supplies the optional local development server and module transport. The Nexo compiler still owns parsing, types and browser code. No React wrapper or TypeScript application syntax is involved.</p>
-<div class="code"><div class="code-bar"><span>New project · M4</span><button class="copy" type="button">Copy</button></div><pre><code>python -m nexo web new my-app
-cd my-app
-npm ci
-python -m nexo web dev app.nexo
-# Open the loopback URL printed by the command.
-python -m nexo web check --json app.nexo
-python -m nexo web audit --security --json app.nexo
-python -m nexo web build app.nexo --sourcemap -o dist
-python -m nexo web preview dist</code></pre></div>
-<p>Install Nexo first. Development requires Node 22.12 or 24+ and locked Vite 8.3.5; npm installation is explicit. Existing repository examples use <code>npm ci --prefix nexo/web_tools</code> followed by <code>python -m nexo web dev examples/web/counter.nexo</code>. Build, check, audit and preview do not need Node.</p>
-<p>CSS-only updates keep the UI/state. Compatible component logic edits refresh only affected boundaries and retain their own typed state; unaffected branches keep DOM identity. Descendants/providers/requests owned by a refreshed boundary are recreated. State/prop/provider shape, context, page, layout or routing changes safely remount the application. Compile errors retain the last valid UI and display a keyboard-readable text diagnostic. <a href="web-demo/">The working Counter</a> is the same source used by the scaffold and HMR tests.</p>
-<p>Dev binds 127.0.0.1, checks Host/Origin, and does not serve project .env files, public directories or arbitrary source paths. It loads no project Vite configuration. Preview serves only built assets. Neither is production hosting or a backend API proxy; keep using the M3 local API example for complete request/mutation testing.</p>
-<h3>Find errors in the editor and browser</h3><p><code>web check --json</code> now includes source statement columns and snippets. <code>build --sourcemap</code> emits deterministic line-level JavaScript and CSS maps, including original local CSS imports and embedded sources; omit maps when source publication is not intended. Release CSS maps compose through Lightning CSS. Precise expression stepping remains unsupported.</p>
-<p>Configure a frontend editor to run <code>python -m nexo web lsp</code>. It offers unsaved-entry diagnostics, local definitions/hover, outline and canonical browser completions. The existing core <code>nexo lsp</code> is unchanged. Browser formatting, cross-file navigation and unsaved imported-buffer overlays are not implemented.</p>
-<h3>Review browser security boundaries</h3><p><code>web audit --security</code> applies compiler capability checks and flags credential-like literals and opt-in cache requiring identity review. Findings are redacted; no findings does not prove security. Backend authorization remains explicitly unassessed. The report explains Shield memory dispatch and bounded loopback ingress limits; it does not run Shield in a browser or turn its listener into production hosting.</p>
-<p><a href="https://github.com/marcrabadan/nexo/blob/main/docs/rfc/0001-nexo-web.md#m4">M4 semantics, limits and troubleshooting</a>. Development features are tested locally with real Vite and Chromium; no comparative performance or production-readiness claim is made.</p></section>
-<section id="production"><h2>M5: optimized releases and measured quality</h2>
-<p><code>build --release</code> minifies and tree-shakes the application with pinned Vite, emits hashed assets and SRI HTML, and records checksums and sizes in <code>nexo-manifest.json</code>. This remains client-rendered static hosting; it is not SSR or static page generation. Ordinary builds remain available without Node.</p>
-<div class="code"><div class="code-bar"><span>Release workflow · M5</span><button class="copy" type="button">Copy</button></div><pre><code>npm ci --prefix nexo/web_tools
-python -m nexo web audit --security --accessibility --json examples/web/production/app.nexo
-python -m nexo web build examples/web/production/app.nexo --release -o dist
-python -m nexo web preview dist
-python scripts/web/measure.py --output /tmp/web-quality.json --check</code></pre></div>
-<p><a href="web-release-demo/">Run the actual optimized example</a> · <a href="web/production/app.nexo">Nexo source</a> · <a href="web/production/nginx.conf">Nginx configuration</a> · <a href="web/production/Dockerfile">Pinned container example</a> · <a href="web/production/README.md">Deployment and operations guide</a></p>
-<div class="code"><div class="code-bar"><span>production/app.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">use nexo.web
-
-pub component App:
-    state count: int = 0
-
-    fn increment():
-        count += 1
-
-    view:
-        main:
-            h1(&quot;Nexo Web release&quot;)
-            p(&quot;Count: {count}&quot;, role: &quot;status&quot;)
-            button(&quot;Increment&quot;, on_click: increment)
-
-    style:
-        main {
-            max-width: 48rem;
-            margin: 2rem auto;
-            padding: 1rem;
-            color: #172033;
-            background: #ffffff;
-            font: 1.1rem/1.5 system-ui;
-        }
-        button { padding: 0.7rem 1rem; color: #ffffff; background: #0d47a1; border: 0; border-radius: 0.4rem; font: inherit; }
-        button:focus-visible { outline: 3px solid #0d47a1; outline-offset: 4px; }
-</code></pre></div>
-<h3>Measured assets, reproducible method</h3><table><caption>Estimated JavaScript gzip bytes, per-file compression; local fixtures</caption><thead><tr><th scope="col">Fixture</th><th scope="col">Ordinary build</th><th scope="col">Release</th></tr></thead><tbody><tr><th scope="row">composition</th><td>5644</td><td>4105</td></tr><tr><th scope="row">counter</th><td>2641</td><td>1385</td></tr><tr><th scope="row">data</th><td>6764</td><td>4664</td></tr><tr><th scope="row">production</th><td>2674</td><td>1413</td></tr></tbody></table>
-<p><a href="web/quality-report.json">Download the measured report</a>. It includes environment, raw samples, byte budgets, DOM mutations and axe results. Timings use loopback HTTP and fresh browser contexts on a shared host; they are not universal latency guarantees or framework comparisons. CI gates deterministic byte/DOM/axe budgets, not noisy timing thresholds.</p>
-<h3>Accessibility and safe deployment</h3><p>Source audit flags missing control names, positive tabindex and hidden interactive controls. Pinned axe-core tests the rendered example under WCAG A/AA and best-practice rules, with separate keyboard/status/focus checks. Automated scans cover the tested states and browser; they do not certify every application or replace assistive-technology review.</p>
-<p>The Nginx example has a locally verified non-root, read-only container, restrictive headers, static health, rate limits and privacy-minimized access logs. It does not provide backend APIs, authentication or production TLS: use a trusted HTTPS edge and independently authorize backend resources. Shield's bounded profiles remain backend tools. Choose hosting by budget and reliability; a simple static app usually does not need Kubernetes.</p>
-<p><a href="web/production-qualification.md">Local production-example qualification</a> records verified disposable TLS, burst limiting/recovery, container restart and a dated image scan. The image pins signed Alpine security fixes; CI rejects HIGH/CRITICAL findings. Firefox/WebKit checks are configured but support requires actual passing results. These local checks do not qualify a real backend, public TLS renewal, business workload or production SLO.</p>
-<p>Optional <code>--observe</code> emits allowlisted local browser events for mounts, requests and navigation, with phases and timing/error metadata. No collector, upload, persistence, raw messages, payloads or URLs are included. Default builds emit none. Operators must explicitly integrate and protect any external monitoring.</p>
-<p>Build into a dedicated directory: unrelated files are preserved by refusing replacement. Source maps are opt-in and expose source. <a href="https://github.com/marcrabadan/nexo/blob/main/docs/rfc/0001-nexo-web.md#m5">M5 reference and limitations</a>. M6 features remain future work.</p></section>
-<section><h2>What comes next</h2><table><caption>Implementation status</caption><thead><tr><th scope="col">Capability</th><th scope="col">Status</th></tr></thead><tbody>
-<tr><th scope="row">Component, local state, actions, text/attribute bindings, scoped CSS</th><td>Experimental M1</td></tr>
-<tr><th scope="row">Pages with explicit paths and typed parameters; layouts with slot(); context with provide/inject()</th><td>Experimental M2</td></tr>
-<tr><th scope="row">Typed scalar props, project component/CSS imports</th><td>Experimental M2</td></tr>
-<tr><th scope="row">Conditions, JSON records and snapshot lists</th><td>Experimental M3 plus explicit keyed reconciliation (post-M5 maintenance)</td></tr>
-<tr><th scope="row">Async api.get/post/put/patch/delete, load/mutation, cancellation and cache</th><td>Experimental M3</td></tr>
-<tr><th scope="row">Vite/HMR and browser Shield tooling</th><td>Experimental M4 tooling; Shield runtime enforcement remains backend-only</td></tr>
-<tr><th scope="row">Release optimization, source accessibility audit, fixture quality budgets and static deployment example</th><td>Experimental M5; workload-specific production qualification still required</td></tr>
-<tr><th scope="row">SSR, hydration and static generation</th><td>Separate future RFCs</td></tr></tbody></table>
-<p>Pages represent routable screens; layouts own persistent shared structure and a slot; context belongs to the provider subtree. Typed API reads use load and explicit writes use mutation in experimental M3.</p></section>
-<section><h2>Security and accessibility</h2><p>Browser compilation rejects server imports, arbitrary calls, HTML injection, script elements, unsafe URL attributes and inline event code. Generated demo assets use a restrictive CSP. Never put secrets in a browser bundle. Visibility checks never replace server authorization.</p><p><a href="shield.html">Shield</a> remains a backend security foundation: use supported policy, authentication, authorization, rate-limit and CSRF controls. Its bounded loopback ingress is not a persistent production web server. Production needs HTTPS, secure HttpOnly sessions and a separately validated backend. OWASP ASVS 5.0 guides future reviews; M1–M5 are not a certification.</p><p>Native elements support keyboard interaction. Authors remain responsible for meaningful labels, focus, headings, contrast and ARIA. Static accessibility checks are available; rendered and assistive-technology checks remain necessary.</p></section>
-<section><h2>For AI coding agents</h2><p>The <a href="ai-guide.html">AI Guide</a> includes a versioned, separately retrievable Nexo Web topic with this exact Counter source. It distinguishes implemented M1–M5 from future syntax and teaches local compile/test/diagnostic workflows.</p></section>
+</code></pre></div></section>
+<section><h2>Build the next part</h2><dl>
+<dt id="composition"><a href="web-guide.html">Components and routing</a></dt><dd>Pass typed properties, compose layouts and navigate between pages.</dd>
+<dt id="data"><a href="web-api.html">API and data</a></dt><dd>Fetch JSON, submit changes and render loading, success and error states.</dd>
+<dt id="api-reference"><a href="web-api.html#api-reference">API reference</a></dt><dd>Look up HTTP methods, options, resource states and request limits.</dd>
+<dt id="development"><a href="web-development.html">Development tools</a></dt><dd>Use Vite, editor diagnostics, source maps and security checks.</dd>
+<dt id="production"><a href="web-deployment.html">Build and deploy</a></dt><dd>Optimize assets, check accessibility and host a static application.</dd>
+</dl></section>
+<section><h2>Choose the right runtime</h2><p>Browser components compile through the Python CLI. The Rust driver does not compile them. Server routes use the separate <a href="libraries.html#web"><code>nexo.web</code> library</a>; the browser calls that backend through same-origin APIs.</p><p>Nexo Web is experimental. SSR, hydration and static generation are not implemented. Keep credentials on the server and enforce authentication and authorization there. See the <a href="web-deployment.html">supported features and deployment boundaries</a>.</p></section>
 </main>
 <footer>
   <div class="wrap">
@@ -327,19 +81,7 @@ pub component App:
       <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
       <p>A readable language. One way to do each thing.</p>
     </div>
-    <nav aria-label="Footer">
-      <a href="learn.html">Learn</a>
-      <a href="playground.html">Playground</a>
-      <a href="examples.html">Examples</a>
-      <a href="libraries.html">Libraries</a>
-      <a href="how-it-works.html">How it works</a>
-      <a href="reference.html">Reference</a>
-      <a href="web.html" aria-current="page">Nexo Web</a>
-      <a href="ai-guide.html">AI Guide</a>
-      <a href="shield.html">Shield</a>
-      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
-      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
-    </nav>
+    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
   </div>
 </footer>
 <script src="assets/site.js"></script>

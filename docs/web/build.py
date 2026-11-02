@@ -19,7 +19,12 @@ def generate(release=False):
     m2_source=m2_path.read_text()
     m3_path=ROOT/'examples/web/data/app.nexo'
     m3_source=m3_path.read_text()
-    page = (ROOT/'docs/web/page.tmpl').read_text().replace('@@COUNTER@@', html.escape(source)).replace('@@COMPOSITION@@',html.escape(m2_source)).replace('@@DATA@@',html.escape(m3_source))
+    pages = {name: (ROOT/'docs/web'/template).read_text()
+             for name, template in [('web.html', 'page.tmpl'),
+                                    ('web-guide.html', 'guide.tmpl'),
+                                    ('web-api.html', 'api.tmpl'),
+                                    ('web-development.html', 'development.tmpl'),
+                                    ('web-deployment.html', 'deployment.tmpl')]}
     extra={'docs/web-m2-demo/'+name:text for name,text in browser_assets(*compile_web(m2_source,m2_path)).items()}
     keyed=ROOT/'examples/web/keyed/app.nexo'
     extra.update({'docs/web-keyed-demo/'+name:text for name,text in browser_assets(*compile_web(keyed.read_text(),keyed)).items()})
@@ -50,8 +55,14 @@ def generate(release=False):
         if item['input_sha256']!=input_revision(current):raise ValueError('Stale Web measurement fixture: '+name)
         before=item['development']['javascript']['gzip_bytes'];after=item['release']['javascript']['gzip_bytes']
         rows.append('<tr><th scope="row">'+html.escape(name)+'</th><td>'+str(before)+'</td><td>'+str(after)+'</td></tr>')
-    page=page.replace('@@PRODUCTION@@',html.escape(production.read_text())).replace('@@QUALITY_ROWS@@',''.join(rows))
-    return {**extra, 'docs/web.html': page, 'docs/web-demo/app.js': js, 'docs/web-demo/app.css': css,
+    replacements = {'COUNTER': html.escape(source), 'COMPOSITION': html.escape(m2_source),
+                    'DATA': html.escape(m3_source), 'PRODUCTION': html.escape(production.read_text()),
+                    'QUALITY_ROWS': ''.join(rows)}
+    for name, page in pages.items():
+        for key, value in replacements.items():
+            page = page.replace('@@'+key+'@@', value)
+        extra['docs/'+name] = page
+    return {**extra, 'docs/web-demo/app.js': js, 'docs/web-demo/app.css': css,
             'docs/web-demo/main.js': 'import {Counter} from "./app.js";\nCounter(document.querySelector("#app"));\nCounter(document.querySelector("#app"));\n',
             'docs/web-demo/index.html': '<!doctype html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'self\'; style-src \'self\'; base-uri \'none\'; form-action \'none\'"><title>Nexo Web Counter demo</title><link rel="stylesheet" href="app.css"></head><body><h1>Two independent Nexo components</h1><p>Each button updates its own count. <a href="../web.html">Nexo Web documentation</a>.</p><div id="app"></div><script type="module" src="main.js"></script></body></html>\n'}
 

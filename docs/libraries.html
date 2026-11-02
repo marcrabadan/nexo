@@ -9,6 +9,7 @@
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/libraries.css">
 <script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
 </head>
 <body class="reference-page">
@@ -19,15 +20,12 @@
   <div class="wrap">
     <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
     <nav class="nav" id="nav" aria-label="Main">
-      <a href="learn.html">Learn</a>
-      <a href="playground.html">Playground</a>
-      <a href="examples.html">Examples</a>
-      <a href="libraries.html" aria-current="page">Libraries</a>
-      <a href="how-it-works.html">How it works</a>
-      <a href="reference.html">Reference</a>
+      <a href="index.html">Getting Started</a>
+      <a href="backend.html">Nexo Backend</a>
       <a href="web.html">Nexo Web</a>
-      <a href="ai-guide.html">AI Guide</a>
-      <a href="shield.html">Shield</a>
+      <a href="devops.html">Nexo DevOps</a>
+      <a href="shield.html">Nexo Shield</a>
+      <a href="ai.html">AI Guide</a>
       <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
     </nav>
     <div class="header-tools">
@@ -46,109 +44,19 @@
 <main id="main">
 <div class="wrap ref-layout">
 
-<aside class="ref-side">
-  <details class="ref-toc" open>
-    <summary>On this page</summary>
-    <nav aria-label="Libraries">
-      <ol>
-        <li><a href="#web">Web and HTTP</a>
-          <ol>
-            <li><a href="#web-setup">Run and test locally</a></li>
-            <li><a href="#web-routes">Typed routes and bodies</a></li>
-            <li><a href="#web-auth">Authentication and roles</a></li>
-            <li><a href="#web-client">HTTP errors and retries</a></li>
-            <li><a href="#web-next">Persistence and boundaries</a></li>
-          </ol>
-        </li>
-        <li><a href="#ai">nexo.ai</a>
-          <ol>
-            <li><a href="#ai-setup">Set up a model</a></li>
-            <li><a href="#ai-typed">Typed answers</a></li>
-            <li><a href="#ai-extract">Extract data</a></li>
-            <li><a href="#ai-stream">Answers as they arrive</a></li>
-            <li><a href="#ai-agent">Agents and tools</a></li>
-          </ol>
-        </li>
-        <li><a href="#db">nexo.db</a>
-          <ol>
-            <li><a href="#db-setup">Connect a database</a></li>
-            <li><a href="#db-queries">Tables and queries</a></li>
-            <li><a href="#db-transactions">Transactions</a></li>
-            <li><a href="#db-sql">The SQL it sends</a></li>
-            <li><a href="#db-web">A web API on a table</a></li>
-            <li><a href="#db-migrate">Migrations</a></li>
-          </ol>
-        </li>
-        <li><a href="#stream">nexo.stream</a>
-          <ol>
-            <li><a href="#stream-setup">Connect a broker</a></li>
-            <li><a href="#stream-once">Each message once</a></li>
-            <li><a href="#stream-windows">Windows of time</a></li>
-            <li><a href="#stream-partitions">Partitions into a table</a></li>
-            <li><a href="#stream-processes">Producer and consumer</a></li>
-          </ol>
-        </li>
-        <li><a href="#sync">nexo.sync</a>
-          <ol>
-            <li><a href="#sync-workers">Workers and bounded queues</a></li>
-            <li><a href="#sync-select">Select and timeouts</a></li>
-            <li><a href="#sync-shared">Shared state</a></li>
-            <li><a href="#sync-deadlocks">Deadlocks</a></li>
-            <li><a href="#sync-boundaries">Lifecycle and boundaries</a></li>
-          </ol>
-        </li>
-        <li><a href="#flags">Feature flags</a>
-          <ol>
-            <li><a href="#flags-cohorts">Stable cohorts</a></li>
-            <li><a href="#flags-overrides">Local overrides</a></li>
-            <li><a href="#flags-lifecycle">Flag lifecycle</a></li>
-          </ol>
-        </li>
-        <li><a href="#privacy">Privacy</a>
-          <ol>
-            <li><a href="#privacy-records">Records and retention</a></li>
-            <li><a href="#privacy-logs">Private fields and logs</a></li>
-            <li><a href="#privacy-report">Data model report</a></li>
-          </ol>
-        </li>
-        <li><a href="#deployment">Infrastructure and CI</a>
-          <ol>
-            <li><a href="#deployment-infra">Declare and check</a></li>
-            <li><a href="#deployment-ci">Run a local pipeline</a></li>
-            <li><a href="#deployment-export">Export CI configuration</a></li>
-          </ol>
-        </li>
-        <li><a href="#interop">C and Python</a>
-          <ol>
-            <li><a href="#interop-python">Python modules</a></li>
-            <li><a href="#interop-c">C signatures</a></li>
-            <li><a href="#interop-boundaries">Audit and boundaries</a></li>
-          </ol>
-        </li>
-        <li><a href="#reliability">Resilience and workflows</a>
-          <ol>
-            <li><a href="#reliability-retry">Retries and fallback</a></li>
-            <li><a href="#reliability-circuit">Circuit breakers</a></li>
-            <li><a href="#reliability-actions">Undo actions</a></li>
-            <li><a href="#reliability-workflows">Workflow compensation</a></li>
-          </ol>
-        </li>
-      </ol>
-    </nav>
-  </details>
-</aside>
+<aside class="ref-side"><details class="ref-toc" open><summary>Library guides</summary><nav aria-label="Libraries"><ol><li><a href="#web">Backend APIs and HTTP</a></li><li><a href="#ai">AI models and agents</a></li><li><a href="#db">Databases</a></li><li><a href="#stream">Streams</a></li><li><a href="#sync">Concurrency</a></li><li><a href="#flags">Feature flags</a></li><li><a href="#privacy">Privacy</a></li><li><a href="#deployment">Infrastructure and CI</a></li><li><a href="#interop">Python and C</a></li><li><a href="#reliability">Reliability</a></li></ol></nav></details></aside>
 
 <article class="ref-body">
 
 <header class="ref-head">
   <p class="eyebrow">Libraries</p>
-  <h1>Libraries, step by step</h1>
-  <p class="lede">Build services, coordinate work and manage application data. Follow practical guides for web APIs, AI, databases and streams, then add feature flags, privacy controls, deployment and recovery.</p>
+  <h1>Library guides and reference</h1>
+  <p class="lede">Look up setup, executable examples and supported limits. For a guided starting point, use <a href="backend.html">Nexo Backend</a> or <a href="devops.html">Nexo DevOps</a>.</p>
   <p class="ref-note">Example files live in <a href="https://github.com/marcrabadan/nexo/tree/main/docs/libraries"><code>docs/libraries</code></a> in the repository checkout. Unless a command says otherwise, run it from its example’s folder. Displayed results come from executable examples; validation uses isolated copies so databases, exports and local state stay separate. No external provider is called by the executed examples. C/Python examples require their host integration tooling.</p>
   <p class="ref-note">Adding credentials or model tools? Follow the <a href="security.html">security guide</a> to check permissions, verify a denial and constrain an agent’s tools before connecting external services. The <a href="reference.html#official">reference</a> lists module options and language constructs.</p>
 </header>
-
-<section class="ref-sec" id="web">
+<section class="library-start"><h2>Find the library for your task</h2><ul><li><a href="#ai">AI and agents</a> — model calls, typed answers and tools.</li><li><a href="#web">Backend APIs</a> — server routes, authentication and HTTP clients. For browser components, use <a href="web.html">Nexo Web</a>.</li><li><a href="#db">Data storage</a> and <a href="#stream">streams</a> — queries, transactions and event processing.</li><li><a href="#deployment">Infrastructure and CI</a> — deployment configuration and reviewable workflows.</li><li><a href="#privacy">Privacy</a>, <a href="#sync">concurrency</a> and <a href="#reliability">reliability</a> — add controls as your application grows.</li></ul><p>Expand one guide below. Each includes its own prerequisites; examples that need a service explain how to configure it.</p></section>
+<details class="library-guide" id="web"><summary>Backend APIs and HTTP</summary><section class="ref-sec">
   <h2><a href="#web"><code>nexo.web</code> and HTTP: build and test an API</a></h2>
   <p>A <code>server</code> block defines routes; <code>http</code> calls them as a client. Start with a small registration endpoint, verify its inputs and responses, then add authentication. These examples return the submitted record; they do not create an account, persist data or send an email.</p>
 
@@ -275,9 +183,9 @@ POST URL/registrations answered 403 Forbidden
   <h3 id="web-next">Add persistence and execution boundaries</h3>
   <p>Continue with <a href="#db-web">a web API backed by a database table</a> when registrations must survive a restart. For all route options and error mappings, see the <a href="reference.html#mod-web">server reference</a>.</p>
   <p>JWT authentication controls who can call a route. Shield controls the protected operations the program can perform. Follow the <a href="security.html">security guide</a> for grants, known effects and denials. The ordinary HTTP examples here are not Shield deployment profiles: dependency/authorization configurations reject external listeners; supported in-memory and loopback ingress profiles require <a href="https://github.com/marcrabadan/nexo/blob/main/docs/shield-web.md">explicit configuration</a>. The offline Linux worker denies sockets.</p>
-</section>
+</section></details>
 
-<section class="ref-sec" id="ai">
+<details class="library-guide" id="ai"><summary>AI models and agents</summary><section class="ref-sec">
   <h2><a href="#ai"><code>nexo.ai</code>: language models</a></h2>
   <p><code>ask</code> is a function: it sends an instruction and an input to a model and returns its answer. Assigned to a typed variable, the answer is that type, checked field by field. It needs no <code>use</code>.</p>
 
@@ -489,9 +397,9 @@ there is no order 99
 Order 7 has shipped.
 ✓ the agent's answer can be faked
 2 tests: 2 passed, 0 failed</code></pre></div></div>
-</section>
+</section></details>
 
-<section class="ref-sec" id="db">
+<details class="library-guide" id="db"><summary>Databases and migrations</summary><section class="ref-sec">
   <h2><a href="#db"><code>nexo.db</code>: databases</a></h2>
   <p><code>@table</code> types are the schema, and a pipeline on a table becomes one parameterised SQL query. The same program runs on SQLite, PostgreSQL, MySQL, MongoDB and Elasticsearch: only the address changes.</p>
 
@@ -772,9 +680,9 @@ print(db.Customer.all() |&gt; map it.email, db.Order.count(), "order")</code></p
 -- Migration 0001 of shop.db, made by nexo db diff from shop_v2.nexo.
 ALTER TABLE "customer" ADD COLUMN "email" TEXT;
 CREATE TABLE "order" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, "customer_id" INTEGER NOT NULL REFERENCES "customer", "total" TEXT NOT NULL);</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo db migrate shop_v2.nexo</div><pre><code>Applied ./migrations/0001.sql.</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo shop_v2.nexo</div><pre><code>["ana@mail.com"] 1 order</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo db diff shop_v2.nexo</div><pre><code>shop.db already matches the types of shop_v2.nexo.</code></pre></div></div>
-</section>
+</section></details>
 
-<section class="ref-sec" id="stream">
+<details class="library-guide" id="stream"><summary>Real-time streams</summary><section class="ref-sec">
   <h2><a href="#stream"><code>nexo.stream</code>: real-time data</a></h2>
   <p>A stream is one more source for <code>when</code> and <code>|&gt;</code>. <code>when</code> handles each message; a pipeline groups them by time. A message whose block fails is tried 4 times and then goes to the dead letters, <code>NAME.dead</code>, so one bad message never stops the others.</p>
 
@@ -962,9 +870,9 @@ order 1: 25 EUR (message 1)
 order 2: 50 EUR (message 2)
 order 3: 75 EUR (message 3)</code></pre></div></div><div class="code"><div class="out"><div class="out-label">$ nexo consumer.nexo   # Ctrl-C to stop</div><pre><code>Listening to kafka("orders") (Ctrl-C to stop)</code></pre></div></div>
   <p>The second run of the consumer prints nothing new: the three orders were acknowledged. The same two programs work on Kafka, RabbitMQ or a cloud queue by adding the broker's option to <code>kafka("orders")</code>.</p>
-</section>
+</section></details>
 
-<section class="ref-sec" id="sync">
+<details class="library-guide" id="sync"><summary>Concurrency and coordination</summary><section class="ref-sec">
   <h2><a href="#sync"><code>nexo.sync</code>: coordinate concurrent work</a></h2>
   <p>Use workers when independent tasks need to exchange results. Channels carry messages, <code>select</code> waits for a message or timeout, and <code>shared</code> marks state that tasks may change together. Start with a fixed number of workers and an explicit way to know when their work is complete.</p>
 
@@ -1054,9 +962,9 @@ Every task is waiting on a channel and none can go on. Close the channel with cl
   <h3 id="sync-boundaries">Choose sync, streams or an execution boundary</h3>
   <p>Channels coordinate tasks inside one running process. They do not provide a durable broker, replay after a restart or cross-process delivery. Use <a href="#stream">streams and message brokers</a> for those requirements. There is no task handle or per-task cancellation API in this interface.</p>
   <p>Under Shield, spawned tasks retain the caller’s captured permission ceilings; launching a task cannot regain broader root permissions. Configured dependency/agent/tool boundaries restrict messages and shared values to supported plain data. The Linux worker profiles reject threads and sync imports. See the <a href="https://github.com/marcrabadan/nexo/blob/main/docs/shield-spawn.md">spawn security contract</a> and <a href="security.html">security guide</a> before choosing a deployment profile.</p>
-</section>
+</section></details>
 
-<section class="ref-sec" id="flags">
+<details class="library-guide" id="flags"><summary>Feature flags</summary><section class="ref-sec">
   <h2><a href="#flags">Feature flags: roll out a change deliberately</a></h2>
   <p>A flag changes which application path runs without changing its source. Flags are available implicitly: declare a <code>flags:</code> block, then call <code>flag(name, user?)</code>. Use a flag for rollout decisions; keep authorization in your authentication and permission checks.</p>
   <h3 id="flags-cohorts">Switches, audiences and stable cohorts</h3>
@@ -1089,9 +997,9 @@ stable cohort: true</code></pre></div></div>
   <p>Use <code>nexo flags set checkout off rollout.nexo</code> to switch it back. Add <code>--stage prod</code> to set a production-stage override; the running application must select the matching stage, such as through <code>NEXO_STAGE=prod</code>. Keep stage and working-directory configuration consistent between the setter and application. Protect the override store from untrusted writes.</p>
   <h3 id="flags-lifecycle">Retire flags after the rollout</h3>
   <p><code>expires:</code> lets lint report a flag past its intended lifetime; it is not an automatic kill switch. Test both application paths, decide what happens when the feature is disabled, and remove the flag when its migration is complete. See the <a href="reference.html#mod-flags">flag syntax reference</a>.</p>
-</section>
+</section></details>
 
-<section class="ref-sec" id="privacy">
+<details class="library-guide" id="privacy"><summary>Privacy controls</summary><section class="ref-sec">
   <h2><a href="#privacy">Privacy: know where personal data goes</a></h2>
   <p>Mark data at its record definition, then follow it through storage, logs, export and deletion. These operations help implement application behavior; they do not establish a complete privacy policy or manage copies held by other systems.</p>
   <h3 id="privacy-records">Retention, export, erasure and restriction</h3>
@@ -1145,9 +1053,9 @@ Contact: table contact in contacts.db
   purpose: answer support requests
   read by: the program</code></pre></div></div>
   <p>The report describes declared fields, retention and purpose. It is not a discovery scan of every file, log, backup or downstream service. See the <a href="reference.html#mod-flags">privacy reference</a> and <a href="security.html">security guide</a> for related controls.</p>
-</section>
+</section></details>
 
-<section class="ref-sec" id="deployment">
+<details class="library-guide" id="deployment"><summary>Infrastructure and CI</summary><section class="ref-sec">
   <h2><a href="#deployment"><code>nexo.infra</code> and <code>nexo.ci</code>: inspect, verify, then deploy</a></h2>
   <p>Infrastructure declarations describe resources and stage overrides. A pipeline sequences work. Keep source validation, local pipeline execution, export and real infrastructure changes separate so the command you run matches the operation you intend.</p>
   <h3 id="deployment-infra">Declare an application and its production stage</h3>
@@ -1194,9 +1102,9 @@ Pipeline verify: 2 steps passed, version 1.0.0.</code></pre></div></div>
   <h3 id="deployment-export">Generate a CI configuration without publishing it</h3>
 <div class="code"><div class="out"><div class="out-label">$ nexo ci export github verify pipeline.nexo</div><pre><code>Wrote .github/workflows/verify.yml.</code></pre></div></div>
   <p>This writes <code>.github/workflows/verify.yml</code> locally. Review the generated file and configure its runner, credentials and approval settings before committing it to an application repository. Exporting does not enable a workflow, upload secrets or deploy the application. Other targets are <code>gitlab</code>, <code>azure</code> and <code>jenkins</code>. The <a href="reference.html#cli">CLI reference</a> also lists selecting an individual step and failure/success handlers.</p>
-</section>
+</section></details>
 
-<section class="ref-sec" id="interop">
+<details class="library-guide" id="interop"><summary>Python and C integration</summary><section class="ref-sec">
   <h2><a href="#interop">C and Python: reuse an existing library</a></h2>
   <p>Use interoperability when an existing library supplies behavior your application needs. Both integrations need the relevant host runtime or toolchain; an import is executable integration, not a declaration that automatically contains third-party code.</p>
   <h3 id="interop-python">Import a Python module</h3>
@@ -1230,9 +1138,9 @@ c.nexo:4: libm.sqrt(...) calls C (implicit unsafe). Check its arguments and its 
 c.nexo:5: libm.pow(...) calls C (implicit unsafe). Check its arguments and its result: nothing protects the memory it touches.
 Unsafe uses: 4. Files with unsafe code: 1.</code></pre></div></div>
   <p><code>audit</code> inventories known C imports and calls; it is not a vulnerability scanner or a proof of memory safety. Valid signatures cannot prevent a C library from corrupting memory. Review ownership, library versions and deployment requirements independently. Shield rejects in-process C and Python integrations even when the root policy grants them, because their confinement is outside the supported boundary. See the <a href="reference.html#mod-interop">interop reference</a> and <a href="shield.html#boundaries">Shield limitations</a>.</p>
-</section>
+</section></details>
 
-<section class="ref-sec" id="reliability">
+<details class="library-guide" id="reliability"><summary>Retries, circuits and workflows</summary><section class="ref-sec">
   <h2><a href="#reliability">Resilience and workflows: make failure behavior explicit</a></h2>
   <p>These are language constructs and ordinary functions rather than extra modules to import. Decide whether an operation can safely be repeated, which failures are recoverable, and how completed side effects will be compensated.</p>
   <h3 id="reliability-retry">Bound retries and provide an explicit fallback</h3>
@@ -1346,7 +1254,7 @@ no mailbox for bob@example.invalid
 ["ana@example.com"]</code></pre></div></div>
   <p>State is saved after completed steps; a process interrupted between an external effect and its progress save may repeat that effect on restart. Use idempotent operations or external deduplication where required. The local journal is not a transaction with a remote service, and compensation does not automatically reverse arbitrary effects. Successful runs remove their workflow journal; calling again with the same arguments starts a new run.</p>
   <p>The sample tests compensation in one process, not a crash-recovery guarantee. A <code>step wait condition, max: ...</code> requires a deadline. Keep journal storage durable and protected when using restart recovery. Persistent workflows are rejected under Shield because their state confinement is not implemented. Continue with the <a href="reference.html#workflows">workflow reference</a> and <a href="shield.html#boundaries">execution boundaries</a>.</p>
-</section>
+</section></details>
 
 </article>
 </div>
@@ -1358,22 +1266,11 @@ no mailbox for bob@example.invalid
       <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
       <p>A readable language. One way to do each thing.</p>
     </div>
-    <nav aria-label="Footer">
-      <a href="learn.html">Learn</a>
-      <a href="playground.html">Playground</a>
-      <a href="examples.html">Examples</a>
-      <a href="libraries.html">Libraries</a>
-      <a href="how-it-works.html">How it works</a>
-      <a href="reference.html">Reference</a>
-      <a href="web.html">Nexo Web</a>
-      <a href="ai-guide.html">AI Guide</a>
-      <a href="shield.html">Shield</a>
-      <a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a>
-      <a href="https://github.com/marcrabadan/nexo">GitHub</a>
-    </nav>
+    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
   </div>
 </footer>
 
 <script src="assets/site.js"></script>
+<script src="assets/libraries.js"></script>
 </body>
 </html>

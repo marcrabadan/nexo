@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting — Nexo</title>
+<meta name="description" content="Resolve common Nexo installation, permission, browser API, authentication and deployment failures.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="assets/logo.svg" type="image/svg+xml">
+<link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/web.css">
+<script>try { var t = localStorage.getItem("nexo-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body class="web-site">
+<a class="skip" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="28" height="28">Nexo</a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="index.html">Getting Started</a>
+      <a href="backend.html">Nexo Backend</a>
+      <a href="web.html">Nexo Web</a>
+      <a href="devops.html">Nexo DevOps</a>
+      <a href="shield.html">Nexo Shield</a>
+      <a href="ai.html">AI Guide</a>
+      <a class="nav-start" href="index.html#start">Install Nexo <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+    </nav>
+    <div class="header-tools">
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch theme" title="Switch theme">
+        <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+      </button>
+      <a class="gh" href="https://github.com/marcrabadan/nexo">GitHub</a>
+      <button class="icon-btn menu" id="menu" type="button" aria-label="Menu" aria-controls="nav" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<main id="main" class="wrap web-page">
+<section><p class="eyebrow">Practical reference</p><h1>Find the failing boundary</h1><p class="lede">Start with the command, runtime and first diagnostic. Fix one concrete failure before changing the architecture.</p><p>For a reproducible starting point, run the <a href="walkthrough.html">support inbox walkthrough</a>. Check the <a href="availability.html">runtime map</a> when behavior differs between targets.</p></section>
+<section id="install"><h2>Installation and toolchain</h2><dl><dt><strong><code>nexo</code> is missing or imports fail</strong></dt><dd>From the repository root, activate <code>source .venv/bin/activate</code> and rerun <code>python -m pip install -e .</code>. Use Python 3.12 or newer. Verify the interpreter belongs to the environment you installed into.</dd><dt><strong>Native compilation cannot find its compiler or linker</strong></dt><dd>Follow the <a href="reference.html#cli">native build instructions</a> for the supported Rust/LLVM toolchain and host. Use the interpreter for supported development work while resolving the toolchain; that does not validate the native target.</dd><dt><strong>Vite is unavailable</strong></dt><dd>For repository examples, run <code>npm ci --prefix nexo/web_tools</code>. Use the Node version required by the <a href="web-development.html">development guide</a>. Ordinary browser builds and checks do not require Node; release optimization does.</dd></dl></section>
+<section id="permissions"><h2>Permissions and isolation</h2><dl><dt><strong>A read, secret or network operation is denied</strong></dt><dd>Run <code>python -m nexo security check app.nexo</code> to inspect declared policy. Compare the exact path, environment variable or hostname with the intended grant. A Shield denial is fatal; catching an ordinary error cannot grant permission. Check dependency and request ceilings as well as root policy.</dd><dt><strong>Effect analysis reports an unknown</strong></dt><dd>Unknown means the static analyzer cannot establish the effect. Inspect the dynamic operation and relevant authorization; do not treat unknown as safe or solve it with a broad grant.</dd><dt><strong>The Linux worker probe fails</strong></dt><dd>Run <code>nexo security probe</code> on the actual host and inspect missing kernel features. The offline profile denies sockets and threads. Select a compatible documented profile rather than expecting it to run a networked backend unchanged.</dd></dl><p><a href="shield.html#boundaries">Read the Shield boundaries</a>.</p></section>
+<section id="api"><h2>Browser requests and authentication</h2><dl><dt><strong>The page is blank when opened as a file</strong></dt><dd>Serve the build over HTTP. ES modules do not reliably load through <code>file:</code> URLs. Confirm you are serving the build directory, not the source folder.</dd><dt><strong>NW3001 or a response validation error</strong></dt><dd>Declare <code>as: T</code> and compare the actual JSON shape with that contract. Missing or extra fields, incompatible scalars and unsafe wire integers can invalidate a response. Read <code>data</code> only inside a <code>ready</code> or mutation <code>success</code> branch.</dd><dt><strong>A browser API URL is rejected</strong></dt><dd>Use a same-origin absolute path such as <code>/api/tickets</code>. Cross-origin URLs, redirects and custom headers are unsupported. Use HTTPS outside loopback development.</dd><dt><strong>A write fails with a CSRF error</strong></dt><dd>Open the application through the session-serving backend or gateway. It must inject the CSRF meta token and validate Origin and token on writes. The static preview server cannot create that session. Do not remove CSRF checks to make a request pass.</dd><dt><strong>The API returns 401 or 403</strong></dt><dd>401 usually means authentication is missing or invalid; 403 can indicate a missing role or failed CSRF check. Inspect the backend response and session adapter. Browser visibility and UI state do not authorize a backend operation.</dd><dt><strong>The walkthrough cannot start</strong></dt><dd>Check that ports 8765 and 8081 are free and use a dedicated writable <code>--state</code> directory. Read the first backend diagnostic. Use a new state directory to distinguish old SQLite rows from a new run.</dd></dl><p><a href="web-api.html">Read the API contracts and options</a>.</p></section>
+<section id="ai"><h2>AI and token budgets</h2><dl><dt><strong>The walkthrough always returns the same summary</strong></dt><dd>That is expected: the local fixture returns a fixed sentence and synthetic usage. It does not contact a model. Follow the walkthrough’s production steps before integrating a real provider.</dd><dt><strong>A provider call fails</strong></dt><dd>Check the configured provider, model, endpoint, secret and network grant. Keep credentials on the server. A successful stub test does not validate a live model identifier, provider account or price configuration.</dd><dt><strong>An agent exhausts its tokens or steps</strong></dt><dd>Inspect prompt history, reported usage and tool/model turns. Invocation token limits include input and output; an output cap alone is different. Reduce unnecessary context or adjust an intentional allowance. Cancellation and budget failure do not roll back completed external effects or provider charges.</dd></dl><p><a href="ai.html">Prepare focused coding context</a> · <a href="libraries.html#ai">Configure AI applications</a>.</p></section>
+<section id="deployment"><h2>Deployment and delivery</h2><dl><dt><strong>A generated CI file does not run</strong></dt><dd>Export only writes configuration. Review the file, install dependencies, set the working directory and configure runner credentials and approvals before enabling it.</dd><dt><strong>Infrastructure commands fail after local validation</strong></dt><dd>Validate credentials, region, provider permissions and adapter support on the target. A local plan or emulator result does not establish live cloud readiness.</dd><dt><strong>Static hosting loads the UI but API calls fail</strong></dt><dd>Serve the authenticated API through the same origin with the required session and CSRF integration. Static assets alone do not provide a backend, TLS termination, login or persistent storage.</dd></dl><p><a href="devops.html">Choose a delivery guide</a>. If a failure remains, prepare the exact command, runtime/version, first diagnostic and a minimal reproducible example. Remove credentials and personal data before sharing logs.</p></section>
+</main>
+<footer>
+  <div class="wrap">
+    <div class="foot-brand">
+      <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
+      <p>A readable language. One way to do each thing.</p>
+    </div>
+    <nav aria-label="Footer"><a href="index.html">Getting Started</a><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="shield.html">Nexo Shield</a><a href="ai.html">AI Guide</a><a href="libraries.html">Libraries</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="reference.html">Language reference</a><a href="security.html">Security by design</a><a href="how-it-works.html">Architecture</a><a href="walkthrough.html">Application walkthrough</a><a href="availability.html">Feature availability</a><a href="troubleshooting.html">Troubleshooting</a></nav>
+  </div>
+</footer>
+<script src="assets/site.js"></script>
+</body>
+</html>
