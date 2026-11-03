@@ -26,18 +26,16 @@ Total with VAT: 350.65 EUR
   instalment: 96.59 EUR
 ```
 
-> **Status: early.** This repository holds the core of the language in two
-> implementations: a Python tree-walking interpreter (phase 0) and a Rust
-> compiler that produces native code through LLVM (phase 1). Both run the
-> same programs with the same output. Phase 2 adds the memory model,
-> real `parallel`, `nexo.sync` and contracts the compiler proves. Phase 3
-> adds the tools: `nexo fmt`, `lint`, `fix`, `check`, `lsp`, a REPL in the
-> compiler and a VS Code extension. Phase 4 adds the standard library and
-> the modules `nexo.ai`, `nexo.web` and `nexo.db`, with C and Python
-> interoperability. Phase 5 adds cloud and operations: `nexo.infra` for
-> AWS, Azure, GCP and Kubernetes, `nexo.ci` pipelines, `nexo.stream`,
-> feature flags and privacy. The modules of later phases are described
-> in the specification but not implemented yet.
+> **Status: experimental preview (pre-1.0).** Nexo has a Python
+> interpreter and a Rust/LLVM native compiler, developer tooling, a VS Code
+> extension, and language modules for web APIs, AI and operations.
+> The website also documents an **experimental browser UI subset**
+> and a local `nexo mcp` tool server for coding agents. These features are
+> still evolving: not every runtime supports every capability, and no
+> independent production security audit has been completed.
+> See the [feature-availability matrix](docs/availability.html),
+> [web UI limits](docs/web.html), and [measured guarantees](docs/guarantees.md).
+
 
 ## Contents
 
@@ -554,11 +552,15 @@ compiles the app with `nexo build --release` and copies the binary, which
 needs only glibc, into `debian:bookworm-slim`; secrets are passed with
 `-e` when the container starts.
 
-**Not yet:** `ml`, `ui`, `notify`, `every` and
-`lifecycle`, canary and blue/green releases, `nexo chaos`,
-MCP tools, PostgreSQL, brokers on the network, `use rust`/`use wasm`,
-YAML/XML/Parquet (D89, D113). Using any of them gives a clear "not
-available in this phase" error; nothing is silently ignored.
+**Not yet or limited:** `ml`, the general-purpose `ui` module (the
+experimental Nexo Web browser UI is a separate, restricted subset),
+`notify`, `every` and `lifecycle`, canary and blue/green releases,
+`nexo chaos`, arbitrary application-level MCP integrations (the local
+`nexo mcp` developer-tool server is available), PostgreSQL, brokers on the
+network, `use rust`/`use wasm`, and YAML/XML/Parquet (D89, D113).
+Unavailable features report a clear error; the
+[feature-availability matrix](docs/availability.html) describes exceptions
+and runtime-specific limits.
 
 **Performance.** `compiler/bench/compare.py` times each benchmark against
 the same program in Rust (`rustc -O` with overflow checks, since Nexo
