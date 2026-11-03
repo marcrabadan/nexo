@@ -91,7 +91,11 @@ def browser(request):
         if engine not in ('chromium', 'firefox', 'webkit'):
             pytest.fail('NEXO_WEB_BROWSER must be chromium, firefox or webkit')
         try:
-            options = {'executable_path': shutil.which('chromium')} if engine == 'chromium' else {}
+            # CI installs the browser matching its pinned Playwright version.
+            # Use system Chromium only when that managed build is unavailable.
+            options = {}
+            if engine == 'chromium' and not Path(p.chromium.executable_path).is_file():
+                options['executable_path'] = shutil.which('chromium')
             options['timeout'] = 30000
             browser = getattr(p, engine).launch(**options)
         except playwright.Error as error:
