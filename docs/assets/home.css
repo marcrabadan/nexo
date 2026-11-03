@@ -134,3 +134,14 @@
   .arch { grid-template-columns: 1fr; }
   .arch li::after { display: none; }
 }
+
+
+/* Launch clarity: keep claims linked to evidence and the next step in view. */
+.proof-note { margin: 16px 0 0; font-size: 13px; line-height: 1.6; color: var(--muted); }
+.launch-benefits { padding-block: 72px; }
+.launch-benefits .pillars a { color: var(--accent); text-underline-offset: 3px; }
+.launch-try { margin: 26px 0 0; color: var(--muted); font-size: 16px; line-height: 1.7; }
+.launch-try a { color: var(--accent); text-underline-offset: 3px; }
+@media (max-width: 800px) {
+  .launch-benefits { padding-block: 48px; }
+}
