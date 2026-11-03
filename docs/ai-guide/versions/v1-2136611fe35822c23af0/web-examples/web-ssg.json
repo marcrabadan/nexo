@@ -1,0 +1,34 @@
+{
+  "example": {
+    "associated_tests": [
+      "tests/test_web_ssg.py"
+    ],
+    "command": "python -m nexo web build examples/web/ssg/app.nexo --static --routes examples/web/ssg/routes.json -o dist",
+    "entry_file": "app.nexo",
+    "files": {
+      "README.md": "# Experimental routed static site\n\nFrom the repository root:\n\n```sh\npython -m nexo web build examples/web/ssg/app.nexo --static \\\n    --routes examples/web/ssg/routes.json -o dist\npython -m nexo web preview dist\n```\n\nOpen the printed loopback URL. Home and Guide are generated automatically.\nMember URLs come from `routes.json`; add a concrete URL there before linking to\nit. Load `/members/7/` directly or use the normal navigation links. The pages work\nwith JavaScript disabled. Preview also serves the generated not-found page with\nHTTP 404.\n\nDeploy the contents of `dist` at an origin root on a static host supporting\ndirectory index files. Configure that host's error document to `404.html` with\nHTTP 404. Deployment below a subdirectory, async data and hydration are outside\nthis example. See `docs/rfc/0003-web-routed-ssg.md` for the complete bounds.\n",
+      "routes.json": "[\"/members/7\", \"/members/9223372036854775807\"]\n"
+    },
+    "id": "web-ssg",
+    "path": "examples/web/ssg/app.nexo",
+    "purpose": "Finite routed static generation with nested layouts, typed parameters, normal links and page metadata",
+    "scope": "Experimental M6b, origin-root hosting and portable slug paths only. Shared frontend compilation is checked here; associated tests verify generated documents, output ownership and no-JavaScript navigation. No hydration, async server data or production qualification.",
+    "source": "use nexo.web\n\npub layout Shell:\n    view:\n        header:\n            nav:\n                a(\"Home\", href: \"/\")\n                a(\"Guide\", href: \"/guide\")\n                a(\"Member 7\", href: \"/members/7\")\n        slot()\n    style:\n        header { padding: 1rem; background: #edf4ff; }\n        nav { display: flex; gap: 1rem; }\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Nexo static site\"\n    description = \"Pages generated at build time, with no JavaScript.\"\n    view:\n        main:\n            h1(\"Nexo routed static generation\")\n            p(\"Follow the links or load a nested URL directly.\")\n\npub page Guide:\n    path = \"/guide\"\n    layout = Shell\n    title = \"Static site guide\"\n    view:\n        main:\n            h1(\"Guide\")\n            p(\"Each page has its own generated HTML document.\")\n\npub page Member(id: int):\n    path = \"/members/{id}\"\n    layout = Shell\n    title = \"Member {id}\"\n    description = \"The profile for member {id}.\"\n    state initial: int = id\n    view:\n        main:\n            h1(\"Member {initial}\")\n            p(\"This route's parameter was checked at build time.\")\n\npub page NotFound:\n    not_found = true\n    layout = Shell\n    title = \"Page not found\"\n    view:\n        main:\n            h1(\"Page not found\")\n",
+    "support_files": [
+      "examples/web/ssg/routes.json",
+      "examples/web/ssg/README.md"
+    ],
+    "verification": {
+      "browser_execution": "Run associated tests; not asserted by this generator",
+      "compilation": "Passed",
+      "css_sha256": "8a6e5d05a84378fb58ea8682a3f231008d15b924f6f898c4a304009e6800e2d0",
+      "exports": [
+        "mountApp"
+      ],
+      "javascript_sha256": "7f3b5aa29623da90076b492189a934f23046b3a02a5ba27c24cc494a67b582b2",
+      "source_sha256": "3cf456bf9b81c5d5d61873a95ea2f421a077431feaa60c57510ae5784689ba2b"
+    }
+  },
+  "revision": "2136611fe35822c23af0fcdcbae4222a77616e8b1d562d0bae848697bb56de66",
+  "schema_version": 1
+}

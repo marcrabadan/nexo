@@ -241,7 +241,7 @@
     {
       "id": "nexo-web",
       "status": "experimental",
-      "summary": "Experimental Python browser UI/data and Vite/HMR/LSP. Rust browser/SSR unavailable. Retrieve optional Web syntax, release and maintenance guidance.",
+      "summary": "Experimental Python Web UI/data/tooling; M6 SSR/SSG, typed hydration/async data, PWA, WASM and SSE. Rust browser unavailable. Retrieve Web guidance for limits.",
       "evidence": [
         [
           "nexo/web_frontend.py",
@@ -374,6 +374,170 @@
         [
           "nexo/web_tools/hmr.mjs",
           "export function createHotApp"
+        ],
+        [
+          "nexo/web_static.py",
+          "def render"
+        ],
+        [
+          "nexo/web_ssg.py",
+          "def enumerate_routes"
+        ],
+        [
+          "nexo/web_static_output.py",
+          "def write_output"
+        ],
+        [
+          "tests/test_web_static.py",
+          "def test_real_browser_without_javascript"
+        ],
+        [
+          "tests/test_web_ssg.py",
+          "def test_real_browser_navigation_and_deep_links_without_javascript"
+        ],
+        [
+          "docs/rfc/0003-web-routed-ssg.md",
+          "Status: implemented experimental second M6 slice."
+        ],
+        [
+          "nexo/web_ssr.py",
+          "class SSRApplication"
+        ],
+        [
+          "tests/test_web_ssr.py",
+          "def test_concurrent_request_isolation"
+        ],
+        [
+          "tests/test_web_ssr.py",
+          "def test_real_browser_ssr_dynamic_navigation_without_javascript"
+        ],
+        [
+          "docs/rfc/0004-web-request-time-ssr.md",
+          "Status: implemented experimental third M6 slice."
+        ],
+        [
+          "nexo/web_hydrate.py",
+          "class HydrationEmitter"
+        ],
+        [
+          "nexo/web_hydrate.js",
+          "function hydrateRoot"
+        ],
+        [
+          "tests/test_web_hydration.py",
+          "def test_real_browser_preserves_nodes_focus_and_typed_input"
+        ],
+        [
+          "tests/test_web_hydration.py",
+          "def test_real_browser_mismatch_attaches_nothing_and_preserves_tree"
+        ],
+        [
+          "docs/rfc/0005-web-fixed-tree-hydration.md",
+          "Status: implemented experimental fourth M6 slice."
+        ],
+        [
+          "tests/test_web_conditional_hydration.py",
+          "def test_real_browser_branch_disposal_resets_children_and_cleans_slots"
+        ],
+        [
+          "tests/test_web_conditional_hydration.py",
+          "def test_real_browser_live_marker_damage_cannot_remove_unrelated_dom"
+        ],
+        [
+          "docs/rfc/0006-web-conditional-hydration.md",
+          "Status: implemented experimental fifth M6 slice."
+        ],
+        [
+          "nexo/web_pwa.py",
+          "def augment"
+        ],
+        [
+          "nexo/web_subscriptions.py",
+          "class EventChannel"
+        ],
+        [
+          "nexo/web_m6.js",
+          "async function loadWasm"
+        ],
+        [
+          "tests/test_web_m6_completion.py",
+          "def test_real_browser_integrated_example_runs_all_host_adapters"
+        ],
+        [
+          "docs/rfc/0007-web-structured-hydration.md",
+          "Status: implemented experimental M6."
+        ],
+        [
+          "docs/rfc/0008-web-async-server-data.md",
+          "Status: implemented experimental M6."
+        ],
+        [
+          "docs/rfc/0009-web-public-pwa.md",
+          "Status: implemented experimental M6."
+        ],
+        [
+          "docs/rfc/0010-web-isolated-wasm.md",
+          "Status: implemented experimental M6."
+        ],
+        [
+          "docs/rfc/0011-web-owned-subscriptions.md",
+          "Status: implemented experimental M6."
+        ],
+        [
+          "nexo/web_wasm_worker.js",
+          "self.onmessage=async event"
+        ],
+        [
+          "scripts/web/stability.py",
+          "def accepted"
+        ],
+        [
+          "docs/web/stability.md",
+          "Nexo Web remains experimental."
+        ],
+        [
+          ".github/workflows/web-stability.yml",
+          "name: Web stability qualification"
+        ],
+        [
+          "tests/test_web_pwa_lifecycle.py",
+          "def test_real_browser_pwa_failed_same_generation_worker_cannot_delete_live_cache"
+        ],
+        [
+          "tests/e2e/web/run.py",
+          "CASES="
+        ],
+        [
+          "tests/e2e/web/job.yaml",
+          "kind: Job"
+        ],
+        [
+          "tests/e2e/web/README.md",
+          "# M6 E2E against a local Kubernetes deployment"
+        ],
+        [
+          "tests/e2e/web/Dockerfile",
+          "playwright==1.62.0"
+        ],
+        [
+          "tests/e2e/web/run-job.sh",
+          "kubectl"
+        ],
+        [
+          "examples/web/m6/k8s/app.py",
+          "application=SSRApplication"
+        ],
+        [
+          "examples/web/m6/k8s/Dockerfile",
+          "gunicorn==26.2.0"
+        ],
+        [
+          "examples/web/m6/k8s/deployment.yaml",
+          "kind: Deployment"
+        ],
+        [
+          "examples/web/m6/k8s/ingress.yaml",
+          "kind: Ingress"
         ]
       ]
     }

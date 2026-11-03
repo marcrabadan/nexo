@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-03",
+  "scope": "URL-driven public M6 demo E2E; local Gunicorn container and selected-browser image; no Kubernetes or Ingress execution",
+  "host_browser": {
+    "schema_version": 1,
+    "status": "passed",
+    "scope": "deployed M6 demo contract, not arbitrary application or production certification",
+    "base_url": "http://127.0.0.1:32776/",
+    "browser": "chromium",
+    "browser_version": "154.0.8037.57",
+    "runner_sha256": "3fde5166d8f6c68e4dd03253997ae555d9c7ac34b263988e998225f4c32cbb80",
+    "tests": [
+      {
+        "name": "ssr_without_javascript",
+        "status": "passed",
+        "error": null,
+        "seconds": 1.383
+      },
+      {
+        "name": "hydration_lists_context",
+        "status": "passed",
+        "error": null,
+        "seconds": 3.099
+      },
+      {
+        "name": "wasm_worker",
+        "status": "passed",
+        "error": null,
+        "seconds": 2.278
+      },
+      {
+        "name": "live_sse",
+        "status": "passed",
+        "error": null,
+        "seconds": 2.277
+      },
+      {
+        "name": "http_ingress_headers_404",
+        "status": "passed",
+        "error": null,
+        "seconds": 1.246
+      }
+    ],
+    "runner_error": null,
+    "tls_verification": true
+  },
+  "runner_container": {
+    "schema_version": 1,
+    "status": "passed",
+    "scope": "deployed M6 demo contract, not arbitrary application or production certification",
+    "base_url": "http://127.0.0.1:8080/",
+    "browser": "chromium",
+    "browser_version": "151.0.7922.34",
+    "runner_sha256": "3fde5166d8f6c68e4dd03253997ae555d9c7ac34b263988e998225f4c32cbb80",
+    "tests": [
+      {
+        "name": "ssr_without_javascript",
+        "status": "passed",
+        "error": null,
+        "seconds": 0.281
+      },
+      {
+        "name": "hydration_lists_context",
+        "status": "passed",
+        "error": null,
+        "seconds": 0.58
+      },
+      {
+        "name": "wasm_worker",
+        "status": "passed",
+        "error": null,
+        "seconds": 0.271
+      },
+      {
+        "name": "live_sse",
+        "status": "passed",
+        "error": null,
+        "seconds": 1.141
+      },
+      {
+        "name": "http_ingress_headers_404",
+        "status": "passed",
+        "error": null,
+        "seconds": 0.213
+      }
+    ],
+    "runner_error": null,
+    "tls_verification": true
+  },
+  "runner_configuration_tests_passed": 9,
+  "manifest_checks": "Job/Deployment/Service/Ingress parsed with PyYAML; selector/TLS-host/security checks; bash -n helper passed; not API-server validation",
+  "artifact_protocol": "results extracted with exec/tar from the live tmpfs, acknowledged with .collected, runner exit code 0 verified",
+  "images": {
+    "app": "sha256:d940446652fc0c5b344f23a0cee172bf8b97d08201dd8533619c55c380f32ee6",
+    "runner": "sha256:414b9574851686860539b1f6b4396921a87b1eea4681bc294498319b5a4d713b"
+  },
+  "source_sha256": {
+    "tests/e2e/web/run.py": "3fde5166d8f6c68e4dd03253997ae555d9c7ac34b263988e998225f4c32cbb80",
+    "tests/e2e/web/Dockerfile": "e147b47ba251878bd4a03f5e16c4033b0b215d76b5d8ca884e4c93ba3e0ad788",
+    "tests/e2e/web/job.yaml": "c5101609ae223e49fdcbba3637f1f506cad76e17f6107405d2eb72068264d89e",
+    "tests/e2e/web/run-job.sh": "fccbb8edbe4ac74c0d9c843859f2ed15d9fbd3e6b3fdcb0c8d45121b24ad4597",
+    "examples/web/m6/k8s/app.py": "5bba8e7e4fa62f1ebe64e800bf26e961fdcca49566a62b8ecbb774b51387fa20",
+    "examples/web/m6/k8s/Dockerfile": "00f4b4e92be785d5f3dd79c54b9cdbbbd331ce21333129b80070251f5a74c8d0",
+    "examples/web/m6/k8s/deployment.yaml": "036c17d1c2010ac60110c9c09e1b92992b724991ab0ac134157ba5f2fb16e796",
+    "examples/web/m6/k8s/ingress.yaml": "0932c8535c4dd66863cb6819a57de5f43f86b42e6e40a2ceaaa996a008c83636"
+  },
+  "limitations": [
+    "No Kubernetes cluster/client available here; Job scheduling, API validation, cluster DNS, Ingress/TLS remain unexecuted",
+    "Local proof uses HTTP loopback secure context; it is not HTTPS certificate qualification",
+    "Only Chromium runner image was built and executed; Firefox/WebKit images are configurable but unverified here",
+    "Public single-worker integration fixture; not production hosting, authentication, load or shutdown qualification"
+  ]
+}

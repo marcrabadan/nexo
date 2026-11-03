@@ -1,0 +1,36 @@
+{
+  "example": {
+    "associated_tests": [
+      "tests/test_web_m6_completion.py"
+    ],
+    "command": "python examples/web/m6/server.py",
+    "entry_file": "app.nexo",
+    "files": {
+      "README.md": "# Experimental M6 integration\n\nFrom the repository root:\n\n```sh\npython examples/web/m6/server.py\n```\n\nOpen http://127.0.0.1:4174/. The trusted async backend supplies the initial title and products; hydration reuses that markup. Increment a row, reorder it and verify its local count survives while the shared context increments. Hiding/remounting resets row state. A verified import-free WASM Worker computes 42. Public SSE snapshots update the notice. Closing the page disposes owned resources. Stop with Ctrl-C.\n\nPublic static offline demonstration (separate from request-time SSR):\n\n```sh\npython -m nexo web build examples/web/ssg/app.nexo --static --routes examples/web/ssg/routes.json --pwa -o /tmp/nexo-m6-pwa\npython -m nexo web preview /tmp/nexo-m6-pwa --port 4173\n```\n\nVisit once online, wait for service-worker activation and reload; generated routes then work offline. Use HTTPS or loopback and root hosting. The cache contains only explicitly generated public files; never use this build for personalized state.\n\nThese are experimental interfaces, not production hosting or authentication. Reference contracts: RFC-0007 through RFC-0011; verification: docs/web/validation-m6.md. Browser source load/mutation resources are not executed by SSR; server data comes from the explicit trusted Python loader.\n\n## Kubernetes E2E\n\nA public Gunicorn Deployment/Service example and a Playwright Job are available in `examples/web/m6/k8s/` and `tests/e2e/web/`. See `tests/e2e/web/README.md` for image builds, port forwarding, HTTPS Ingress requirements and artifact collection. The runner targets the integrated demo contract; it does not start a local server or mutate a deployment.\n",
+      "host.js": "// Explicit trusted host adapters; no inline scripts or implicit network features.\nconst script=document.querySelector('script[src^=\"/_nexo/hydrate-\"]');\nconst {hydrate,loadWasm,connectEvents}=await import(script.src);\nconst handle=hydrate(document.querySelector('#app'));\nconnectEvents(handle,'/events',{schema:{kind:'record',fields:{notice:{kind:'str'}}}});\ntry{\n  const module=await loadWasm(handle,'/add.wasm',{\n    sha256:'@@SHA256@@',functions:{add:{params:['i32','i32'],result:'i32'}}\n  });\n  handle.update({result:await module.call('add',20,22)});\n}catch{handle.update({notice:'WASM unavailable; server content remains usable'});}\n",
+      "server.py": "\"\"\"Trusted backend configuration for the integrated experimental M6 example.\"\"\"\nimport asyncio\nimport hashlib\nfrom pathlib import Path\nimport sys\nimport threading\n\nROOT = Path(__file__).resolve().parents[3]\nsys.path.insert(0, str(ROOT))\nfrom nexo.web_ssr import local_server\nfrom nexo.web_subscriptions import EventChannel\n\nADD = bytes.fromhex('0061736d0100000001070160027f7f017f030201000707010361646400000a09010700200020016a0b')\n\n\nasync def load(request):\n    await asyncio.sleep(0)  # Replace with an independently authorized backend query.\n    return {'title':'Async server snapshot', 'products':[{'id':1,'name':'One'},{'id':2,'name':'Two'}]}\n\n\ndef main():\n    folder = Path(__file__).parent\n    channel = EventChannel({'kind':'record','fields':{'notice':{'kind':'str'}}})\n    channel.publish({'notice':'Public event stream connected'})\n    boot = (folder/'host.js').read_text().replace('@@SHA256@@', hashlib.sha256(ADD).hexdigest())\n    assets = {'/m6-host.js':('text/javascript',boot),'/add.wasm':('application/wasm',ADD)}\n    stop = threading.Event()\n    def publish():\n        sequence = 0\n        while not stop.wait(2):\n            sequence += 1\n            channel.publish({'notice':f'Public snapshot {sequence}'})\n    publisher = threading.Thread(target=publish, daemon=True);publisher.start()\n    try:\n        with local_server(folder/'app.nexo',4174,hydrate=True,loader=load,wasm=True,\n                          channels={'/events':channel},assets=assets,client_boot='/m6-host.js') as server:\n            print(f'M6 integrated example http://127.0.0.1:{server.server_port}/',flush=True)\n            try:server.serve_forever()\n            except KeyboardInterrupt:pass\n    finally:\n        stop.set();channel.close();publisher.join()\n\n\nif __name__ == '__main__':\n    main()\n"
+    },
+    "id": "web-m6",
+    "path": "examples/web/m6/app.nexo",
+    "purpose": "Integrated experimental M6: trusted async SSR state, list/context hydration, isolated WASM and public SSE",
+    "scope": "Run the trusted Python host for all adapters. Frontend compilation checks source; real completion tests verify the host, offline PWA separately, lifetime and typed boundary behavior. No production qualification.",
+    "source": "use nexo.web\n\ntype Product:\n    id: int\n    name: str\n\npub context Visits:\n    state count: int = 0\n    fn increment():\n        count += 1\n\npub layout Shell:\n    provide Visits\n    visits = inject(Visits)\n    view:\n        header:\n            h1(\"Nexo Web M6\")\n            p(\"Shared interactions: {visits.count}\")\n        slot()\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    state title: str = \"Loading server snapshot\"\n    state products: list[Product] = []\n    state notice: str = \"Waiting for public events\"\n    state result: int = 0\n    state visible: bool = true\n    fn reorder():\n        products = [Product(id: 2, name: \"Two updated\"), Product(id: 1, name: \"One\")]\n    fn toggle():\n        visible = not visible\n    view:\n        main:\n            h2(title)\n            p(notice, id: \"notice\", aria_live: \"polite\")\n            p(\"WASM result: {result}\", id: \"wasm-result\")\n            button(\"Reorder products\", on_click: reorder)\n            button(\"Toggle list\", on_click: toggle)\n            if visible:\n                ul:\n                    for product in products key product.id:\n                        li(id: \"row-{product.id}\"):\n                            ProductRow(label: product.name)\n            else:\n                p(\"List hidden; remounting creates fresh row state\")\n    style:\n        main { padding: 1rem; max-width: 48rem; }\n\ncomponent ProductRow(label: str):\n    visits = inject(Visits)\n    state count: int = 0\n    fn increment():\n        count += 1\n        visits.increment()\n    view:\n        section:\n            h3(label)\n            button(\"Local count: {count}\", on_click: increment)\n",
+    "support_files": [
+      "examples/web/m6/server.py",
+      "examples/web/m6/host.js",
+      "examples/web/m6/README.md"
+    ],
+    "verification": {
+      "browser_execution": "Run associated tests; not asserted by this generator",
+      "compilation": "Passed",
+      "css_sha256": "f1cc8bf40f1dcf943dc887df409bad7cf58f00e3e9b03a14532700b71ef246cb",
+      "exports": [
+        "mountApp"
+      ],
+      "javascript_sha256": "ee7b229686920a9a22c0c2809e2ab7db6eb4d3381a9af2c723add73e6f1d0b67",
+      "source_sha256": "867f3c171e3c79392c6482b693d5d51134cd91eafc56f61ee8aae47d438cc992"
+    }
+  },
+  "revision": "2136611fe35822c23af0fcdcbae4222a77616e8b1d562d0bae848697bb56de66",
+  "schema_version": 1
+}

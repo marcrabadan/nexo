@@ -34,7 +34,7 @@ creates a fresh provider on a component/layout/page. `visits = inject(Visits)`
 resolves the nearest provider. Read `visits.count`; call `visits.increment()` in
 an action, or use `on_click: visits.increment`. Consumers cannot assign shared
 fields. No process-global singleton. Each root/router has isolated providers;
-future SSR must also allocate fresh request-owned context.
+SSR and hydration allocate fresh request-owned providers (RFC-0007).
 
 ## M2 pages and layouts
 
@@ -195,7 +195,150 @@ explicit monitoring/consent. Client events are forgeable, not authorization/bill
 records. See the production project's README for deployment/observability steps.
 Run tests/test_web_production.py and tests/test_web_qualification.py with required
 browser/Vite/Docker flags for the local example checks. Report unavailable
-environments as unverified; M6 is not implemented.
+environments as unverified. M6 now includes bounded static HTML, routed SSG
+and request-time WSGI rendering, structured/list/context hydration, async server data, public offline PWA, isolated WASM and typed SSE (RFC-0002–0011). The M5 production qualification does
+not qualify these new modes.
+
+## Experimental static HTML and routed generation (RFC-0002/0003)
+
+Use `python -m nexo web build app.nexo --static -o dist` for scalar noninteractive
+components or literal public page routes. For dynamic pages, add `--routes
+routes.json`, where routes.json is a UTF-8 JSON array of concrete local paths,
+for example `["/members/7", "/members/42"]`. Every dynamic page needs a generated
+instance. Typed int64/bool/string route matching and static precedence are checked
+before writes. A public root page at / is required for routed static generation.
+Layouts, scalar props/state, imports, lexical slots, conditions and escaped title/
+description metadata are supported. Rendered links must target generated pages.
+No actions/events or browser requests/mutations. Typed record/list state, loops and scoped context are supported; static error pages remain unsupported. The renderer never executes source functions or server modules.
+
+Output uses directory URLs such as /members/7/ with shared /_nexo/app.css and no
+JavaScript. Use portable ASCII slug segments (letters, digits, underscore, hyphen);
+no query/fragment/external URLs, dot segments or Unicode paths in this slice.
+Enumeration is limited to 1000 paths and 1 MiB. Deploy at an origin root with
+directory index support; base paths are not supported. Optional not-found pages
+emit 404.html; configure the hosting error status explicitly. `web preview dist`
+serves nested paths and fallback HTTP 404, including with JavaScript disabled.
+Static mode rejects --release, --observe and --sourcemap. Scalar request-time
+rendering and scalar/conditional hydration are available separately below; async server
+data remains unimplemented. Run tests/test_web_static.py
+and tests/test_web_ssg.py; report missing browser QA explicitly. Source example:
+examples/web/ssg/app.nexo with examples/web/ssg/routes.json. This is experimental,
+not production or cross-engine qualification.
+
+## Experimental scalar request-time rendering (RFC-0004)
+
+`python -m nexo web serve examples/web/ssr/app.nexo --port 4174` starts a loopback
+WSGI reference runner. It compiles source/imports/CSS once and renders public typed
+page patterns on demand. No routes JSON or root page is required. To integrate
+with an external synchronous WSGI host, create the callable application with
+`from nexo.web_ssr import SSRApplication`, then
+`application = SSRApplication.from_file("app.nexo")`. No production WSGI/ASGI host
+is supplied. Integrators own authentication, host checks, limits, TLS and lifecycle.
+
+`application.response("/members/123/", method="GET")` returns frozen status,
+header tuples and body bytes. Every call creates fresh scalar page/layout/slot
+state; compiled source/CSS is shared read-only. No request-time source functions,
+file reads, network operations, identity headers, cookies or request bodies are
+used. Support includes GET/HEAD, safe local 308 redirects, compiled CSS at
+/_nexo/app.css, typed 404s and explicit layout-free error pages with HTTP 500.
+Failing error pages use a generic 500 without diagnostic/source-path disclosure.
+Malformed paths return 400; unsupported methods return 405. Default SSR responses are no-store
+and disable scripts/connections through CSP. Query strings, Unicode/base paths,
+source UI actions/events and browser requests remain unsupported without explicit hydration.
+
+WSGI PATH_INFO is already decoded and is re-escaped before raw URL matching.
+Do not decode it twice or construct redirects from Host. The loopback runner checks
+Host/Origin and logs no raw parameter URLs; it is single-request-at-a-time with
+no hot reload. It is not Shield ingress, a production listener or a session/backend
+authorization boundary. Run tests/test_web_ssr.py, including real browser tests
+with JavaScript disabled. RFC-0007/0008 add structured hydration and async server data; production serving remains an operator responsibility.
+
+## Experimental scalar hydration (RFC-0005/0006)
+
+Use `python -m nexo web serve examples/web/hydration/app.nexo --hydrate --port 4174`
+or `SSRApplication.from_file("app.nexo", hydrate=True)`. This opt-in mode supports
+scalar page/layout/component trees, conditional regions, lexical slots, assignment
+actions and frozen WebEvent input/change snapshots. RFC-0007/0008 extend this to typed record/list state, keyed/unkeyed lists, scoped context, local full-document navigation and explicit trusted async loader state. Browser load/mutation resources remain unsupported in this mode. Ordinary SSR still rejects actions/events and emits no JavaScript.
+
+The server emits HTML plus escaped build/page identities and typed route props
+on the host. Int64 route values transfer as decimal strings for checked BigInt.
+Initial state is recomputed from source and typed route props, optionally overridden by the checked trusted loader snapshot; no cookies or identity headers are implicitly read. A cached external module at a build-
+specific URL is allowed by same-origin script CSP; no inline script/eval is added.
+Source bundles and props are public. The identity is not an authorization or SRI
+signature guarantee against a compromised same-origin server.
+
+The client verifies the entire existing DOM tree, attributes, text and ownership
+scopes before installing listeners/bindings. Successful attachment retains nodes,
+focus and live pre-hydration input/checked properties. Missing empty text nodes can
+be added after verification. Early edits are not automatically adopted into state;
+the next explicit input/change assignment updates it. Early clicks are not replayed.
+Mismatch throws NW6005 and leaves owned content intact with no attached handlers;
+there is no automatic remount or state migration. Auto-boot only sets the host's
+nexoHydration dataset status to ready/mismatch, without telemetry.
+
+The generated module exports hydrate(target), returning the same handle while
+active. destroy() is idempotent, removes behavior and leaves DOM in place. Hosts
+own removal; rehydration after disposal requires original initial-state markup.
+An old disposed handle cannot unregister a newer root. Actions reuse existing
+batching, overflow and partial-assignment semantics, not SSR error-page recovery.
+Native links still perform full document navigations and remain usable without
+JavaScript. Run tests/test_web_hydration.py with real Chromium for DOM identity,
+input preservation, mismatch, disposal and no-JavaScript checks. Runtime resource
+is included in the wheel. No production or cross-engine qualification is implied.
+
+### Conditional branch ownership (RFC-0006)
+
+if/elif/else regions now hydrate under the same explicit flag. The server emits
+nexo-if/end comment pairs with source-line/selected-index identity only in hydration
+mode. Preserve these comments when deploying. Initial choice, markers and all
+selected content must match before attachment; no-match branches still have an
+empty marker pair. Nested cursors stop at their own boundary, not following siblings.
+
+Unchanged choice preserves branch DOM and component local state. A changed choice
+builds fresh native DOM and ownership in a detached fragment, then disposes/replaces
+only the old bounded branch. Removed components lose listeners/subscriptions;
+new components start with current props and fresh local state. Nested/projected
+slots receive the receiving branch's explicit session while keeping caller values
+and source ownership for reactive links and CSS. Root destroy cleans current
+nested branches and leaves DOM. Ordinary SSR/static/client behavior is unchanged.
+
+A failed new-branch initializer disposes partial detached work and preserves old
+DOM/behavior, without rolling back source actions or automatically retrying a cached
+choice. Live transitions reject damaged/moved anchors or extended ranges containing
+unrelated sibling nodes. External edits are not a supported reconciliation API.
+Actions retain existing overflow/partial-update semantics. Focus outside the region
+stays; focus inside removed content follows native behavior. No event replay or
+state migration is added. Example: examples/web/conditional-hydration/app.nexo.
+Run tests/test_web_conditional_hydration.py for marker, slot, nested-range, disposal
+and failed-transition browser evidence. RFC-0007/0008 extend this with lists, context and typed server data. No production certification is implied.
+
+## Completed experimental M6 (RFC-0007–0011)
+
+Run `python examples/web/m6/server.py` for the complete SSR/async/list/context/WASM/SSE project. Its trusted Python configuration is required; do not run the .nexo entry alone and expect host adapters. See its README for a separate `build --static --pwa` offline build.
+
+`SSRApplication.from_file(entry, hydrate=True, loader=async_callback, loader_timeout=10)` accepts a partial typed root-page state dictionary from a frozen RenderRequest (path, page, page_id, params). Use aresponse() in async embedding; WSGI/response() bridge an isolated async loader. Values are copied, escaped and bounded to 1 MiB, lists 10,000, nesting 32; exact field types and int64 limits are enforced. Wire integers are decimal strings, hydrated integers BigInt. Loader exceptions, invalid values and timeouts yield generic 500. No source-language async execution or automatic auth context.
+
+`hydrate(target)` returns a handle with update(patch), snapshot(), context(name), onDestroy(callback), destroy() and capabilities. Patches validate before assignment. Keyed rows preserve identity/local state through reordering; removed rows and branches dispose owners. Unkeyed changes recreate rows. Context providers are scoped and request-local. Existing DOM is verified before attachment. navigate() performs checked full-document local navigation. Browser load/mutation resources still require the separate client-rendered mode.
+
+Enable `wasm=True` explicitly on hydrated SSR to import `loadWasm` from the generated module. Supply a same-origin local URL, SHA256, named numeric signatures (i32/i64/f32/f64, result may be void), and optional timeoutMs. The external Worker rejects imports, bounds the binary to 1 MiB and pending calls to 32, and terminates on timeout/destroy. Example: `const w=await loadWasm(handle,'/add.wasm',{sha256:hash,functions:{add:{params:['i32','i32'],result:'i32'}}}); await w.call('add',20,22);`. No DOM, memory API, WASI or host imports.
+
+Enable explicit `channels={'/events': EventChannel(schema)}` or subscriptions=True. Import `connectEvents` from the generated module; `connectEvents(handle,'/events',{schema})` applies typed public full-state snapshots through handle.update by default. JSON schema uses kind int/str/bool/list(item)/record(fields). Invalid envelopes/data close the stream. Epoch/sequence IDs suppress stale messages. EventChannel limits frame size to 64 KiB and ring capacity to 128; expired replay resumes latest snapshot, not a durable log. Retries and resource lifetime are bounded; root teardown closes EventSource. Authentication and distributed delivery belong to the host.
+
+`build --static --pwa` emits manifest/icon/registration and an integrity-checked allowlisted public precache. It supports --routes. Only generated same-origin GET assets/pages are cached. APIs, query paths and SSR responses are excluded; unknown offline navigation returns generated 404. Root hosting plus HTTPS/loopback is required. Installation UI depends on platform. Never precache personal data. Plain builds do not register a worker. Failed updates preserve the previous working offline site. A failed worker reinstall must also preserve an already existing cache with the same public asset version. New candidate caches are removed on failure; successful activation prunes only obsolete application caches. Tests cover replacement, rollback, missing/corrupt assets and initial-install recovery.
+
+All M6 buckets are implemented within these experimental contracts; production hosting/authentication/TLS, arbitrary workload qualification, durable realtime and streaming SSR are outside scope. Run tests/test_web_m6_completion.py plus the static/SSG/SSR/hydration suites.
+
+## Stabilization status
+
+Nexo Web remains experimental. `docs/web/stability.md` defines release acceptance criteria; `python scripts/web/stability.py --browser chromium --output /tmp/web-stability` runs the strict M6 gate (repeat for firefox/webkit). Any failed, skipped or empty test run blocks the gate; source changes during qualification also block it. The gate clears inherited pytest selections and stale result files. PWA lifecycle tests are part of the gate. Hosted CI installs browser dependencies and archives results. Browser version evidence is recorded. A passing local gate is not a stable release or a production certification.
+
+Root destroy attempts all cleanup callbacks and owned teardown even if a host callback throws, removes the root registry entry, then reports AggregateError. The root remains disposed and repeated destroy is harmless. The PWA offline test stops the actual HTTP origin and verifies cache-backed page/404 navigation; browser offline-emulation failures alone do not establish a product defect.
+
+## Deployed Kubernetes E2E
+
+`tests/e2e/web/README.md` provides a URL-driven runner and an artifact-collecting Kubernetes Job for the integrated M6 demo contract. Run `python tests/e2e/web/run.py --base-url https://your-host --results ./web-e2e-results`, or use `BASE_URL=https://your-host NAMESPACE=your-namespace bash tests/e2e/web/run-job.sh` after building/loading the selected-browser image. The runner starts no server and checks actual deployed SSR, hydration/list/context, Worker WASM, changing SSE and HTTP header/404 behavior. Its selectors expect the supplied demo, not arbitrary applications.
+
+Use trusted HTTPS inside the cluster; HTTP service DNS is not a secure context for WASM integrity. For a local browser, Kubernetes port forwarding to loopback also works but does not qualify Ingress TLS/DNS. No TLS-ignore flag is provided. Public PWA lifecycle tests remain in the separate strict gate because they own and stop their origin. Job manifests, local container verification and an actual Kubernetes run are distinct evidence; never infer a cluster run from a successful container test.
 
 ## Workflow and security
 
@@ -213,7 +356,7 @@ permission. Assess actual Shield profiles: bounded loopback ingress is not a
 persistent production server. Production needs HTTPS/header CSP. No ASVS 5.0
 certification is claimed. Native controls still need meaningful labels/contrast.
 
-Proposed only: frontend formatting, exact expression stepping, SSR/hydration/SSG. Do not generate those as runnable code. Use the individual project payloads linked below; the optional compatibility pack
+Proposed only: frontend formatting and exact expression stepping. Do not generate those as runnable code. Use the individual project payloads linked below; the optional compatibility pack
 at @@WEB_EXAMPLES@@ includes every required source file,
 compiler hashes and associated test commands. The entries below are generated
 from real compiler-checked sources; actual browser results come from their tests.

@@ -1,0 +1,27 @@
+{
+  "example": {
+    "associated_tests": [
+      "tests/test_web_static.py"
+    ],
+    "command": "python -m nexo web build examples/web/static/app.nexo --static -o dist",
+    "entry_file": "app.nexo",
+    "files": {},
+    "id": "web-static",
+    "path": "examples/web/static/app.nexo",
+    "purpose": "Noninteractive scalar component HTML with scoped CSS and no JavaScript",
+    "scope": "Experimental M6a. Shared frontend compilation is checked here; associated tests verify static HTML output and browser execution with JavaScript disabled.",
+    "source": "use nexo.web\n\npub component Welcome:\n    state version: int = 6\n    view:\n        main:\n            Heading(label: \"Nexo Web static HTML\"):\n                p(\"An experimental M{version} page, readable without JavaScript.\")\n    style:\n        main { max-width: 48rem; margin: 3rem auto; padding: 1rem; }\n\ncomponent Heading(label: str):\n    view:\n        h1(label)\n        slot()\n",
+    "verification": {
+      "browser_execution": "Run associated tests; not asserted by this generator",
+      "compilation": "Passed",
+      "css_sha256": "8f02e3d598ee8c5e53e10cf1015b135fde496f7e212b53f75579496a6d58bfd6",
+      "exports": [
+        "Welcome"
+      ],
+      "javascript_sha256": "7fc6b911e57d523738e0cfcf0706202177de8adaa95590ab12a2c296188f2419",
+      "source_sha256": "a63d92515d625986c2d694a85add0109707fec408322508c5b1060ea2dc253b4"
+    }
+  },
+  "revision": "d28245b1cb3d6cad06096aea402e6f306e4f2e57a4631387708578eb519b0722",
+  "schema_version": 1
+}

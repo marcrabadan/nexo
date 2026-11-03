@@ -1,0 +1,59 @@
+use nexo.web
+
+type Product:
+    id: int
+    name: str
+
+pub context Visits:
+    state count: int = 0
+    fn increment():
+        count += 1
+
+pub layout Shell:
+    provide Visits
+    visits = inject(Visits)
+    view:
+        header:
+            h1("Nexo Web M6")
+            p("Shared interactions: {visits.count}")
+        slot()
+
+pub page Home:
+    path = "/"
+    layout = Shell
+    state title: str = "Loading server snapshot"
+    state products: list[Product] = []
+    state notice: str = "Waiting for public events"
+    state result: int = 0
+    state visible: bool = true
+    fn reorder():
+        products = [Product(id: 2, name: "Two updated"), Product(id: 1, name: "One")]
+    fn toggle():
+        visible = not visible
+    view:
+        main:
+            h2(title)
+            p(notice, id: "notice", aria_live: "polite")
+            p("WASM result: {result}", id: "wasm-result")
+            button("Reorder products", on_click: reorder)
+            button("Toggle list", on_click: toggle)
+            if visible:
+                ul:
+                    for product in products key product.id:
+                        li(id: "row-{product.id}"):
+                            ProductRow(label: product.name)
+            else:
+                p("List hidden; remounting creates fresh row state")
+    style:
+        main { padding: 1rem; max-width: 48rem; }
+
+component ProductRow(label: str):
+    visits = inject(Visits)
+    state count: int = 0
+    fn increment():
+        count += 1
+        visits.increment()
+    view:
+        section:
+            h3(label)
+            button("Local count: {count}", on_click: increment)

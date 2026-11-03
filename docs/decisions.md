@@ -3232,3 +3232,94 @@ scope identity is module+declaration inside an application namespace; dev retain
 its initial namespace while independent builds derive it from project sources.
 No core syntax/HTTP/WASI change,
 independently imported view fragments, raw DOM/event API or M6 capability is added.
+
+
+**D196. M6 starts with opt-in, noninteractive build-time component HTML.**
+RFC-0002 defines `web build --static`: analyzed scalar component trees, imports,
+slots and conditionals render to escaped HTML and scoped CSS without JavaScript.
+The evaluator accepts only the browser scalar AST subset and checks int64 overflow;
+it never executes source functions or core modules. Actions, requests, context,
+routing, structured state and loops fail closed, even in unrendered declarations
+or branches. Staged output replacement removes old client JS/maps and refuses
+unrelated files. This first slice excludes hydration, request-time SSR, routed
+SSG, release optimization and the other M6 capabilities; it makes no production
+qualification claim. Existing client builds retain their behavior.
+
+
+**D197. M6b enumerates finite routes into independently rendered HTML documents.**
+RFC-0003 extends `web build --static` to public pages, nested layouts, title/
+description metadata and normal local links. Literal routes are automatic;
+`--routes` reads concrete dynamic URLs from a bounded JSON array. Matching retains
+client specificity and typed parameter rules; portable slug paths, full parameter
+coverage, case-insensitive collision checks and generated-link validation fail
+before writing. Directory URLs share root CSS; not-found pages emit 404.html,
+served with HTTP 404 by preview. Source functions, requests and context are never
+executed. Scoped slot wrappers match client ownership. A distinct nexo-web-static
+manifest and staged ownership helper support rebuilds and build-mode switching
+without changing the measured M5 optimizer fingerprint. Origin-root hosting only;
+request-time SSR, hydration and the other advanced M6 capabilities remain future
+work. No production or cross-engine qualification is implied.
+
+
+**D198. M6c serves fresh scalar HTML per request through a compile-once WSGI app.**
+RFC-0004 introduces SSRApplication and the loopback `web serve` runner. The shared
+renderer accepts public typed routes on demand without finite enumeration, using
+request-local page/layout/component/slot state and compiled read-only source/CSS.
+GET/HEAD, canonical local redirects, CSS, typed 404s and safe layout-free 500 pages
+have explicit status/header behavior. WSGI decoded paths are re-escaped before
+raw matching to avoid a second URL decode. No per-request source reads, arbitrary
+source functions, backend modules, identity headers or network operations execute.
+The local reference server validates Host/Origin and logs no raw URLs; production
+hosting, middleware, auth and request limits remain integration work. Actions,
+requests, context, structured state, hydration and async server data remain outside
+this slice. Existing core HTTP, Shield ingress and measured M5 releases are unchanged.
+
+
+**D199. M6d hydrates verified fixed scalar trees without replacing server DOM.**
+RFC-0005 adds opt-in `web serve --hydrate` and the WSGI factory's hydrate flag. A
+separate emitter reuses checked expressions/actions and owner primitives without
+changing ordinary client output. Source-derived build/page identities and escaped
+typed route props coordinate deterministic state recomputation; int64 transfers
+as decimal strings. Complete DOM/scope/text/attribute validation precedes listener
+attachment. Mismatch leaves owned SSR content intact and attaches nothing; there
+is no automatic remount or state migration. Initial bindings skip DOM writes to
+preserve focus and pre-hydration input/checkbox edits; explicit events update state.
+Scalar assignment actions, frozen WebEvent snapshots, child props and lexical
+slots reuse existing reactive ownership. Destroy is idempotent and preserves DOM.
+The cached external module has a build-specific URL and same-origin CSP permission
+only in hydration mode. Conditions/lists, context, resources, navigation actions,
+server-derived state and production/cross-engine qualification remain excluded.
+
+
+**D200. M6e hydrates conditional regions with independently disposed branch ownership.**
+RFC-0006 adds if/elif/else marker pairs only in hydration HTML. Initial choice,
+range limits and complete selected content are verified before attaching behavior.
+Unchanged choices retain DOM/component state; changed choices construct fresh native
+DOM off-document, then replace only the bounded old branch after disposing it.
+Failed construction cleans partial owners and keeps old behavior without source-
+state rollback or automatic retries. Explicit slot session parameters keep lexical
+caller data and receiving-branch lifetimes separate, including newly created and
+nested conditional slots. Root teardown preserves current markup and removes all
+active branch behavior. Default SSR/static and ordinary client artifacts stay
+unchanged. Lists/keyed hydration, context, resources, arbitrary server state and
+production/cross-engine qualification remain outside the slice.
+
+
+**D201. M6: Structured hydration and scoped ownership.**
+See RFC-0007 for the implemented experimental contract. SSR and static HTML accept immutable typed record/list state and scoped context providers. Hydration additionally claims conditional and keyed/unkeyed list ranges before attaching behavior. Keyed rows preserve native identity, focus and local component state across movement; removed rows dispose listeners, subscriptions and nested owners. Duplicate int64/string keys fail before DOM mutation. Unkeyed list changes recreate rows. Projected slots retain caller data and receiver lifetime. Providers are fresh per render, shadow lexically and never share request state.
+
+
+**D202. M6: Async server data.**
+See RFC-0008 for the implemented experimental contract. SSRApplication.from_file(path, hydrate=True, loader=async_callback, loader_timeout=10) invokes a trusted Python callback once per rendered page. The frozen RenderRequest provides path, page, page_id and read-only typed params. Return a partial dictionary of root-page state overrides. Fields and nested values must exactly match source types. The renderer copies values and emits escaped typed wire data for hydration. No callback values become executable JavaScript.
+
+
+**D203. M6: Public static PWA.**
+See RFC-0009 for the implemented experimental contract. build --static --pwa explicitly opts generated public static output into a manifest, icon, external registration module and root service worker. It also works with --routes. Plain builds remain unchanged. Only generated allowlisted GET assets and canonical pages enter the versioned cache; precache fetches require SHA384 integrity. Failed installation removes partial caches. Activation removes only this application's cache prefix.
+
+
+**D204. M6: Worker-isolated WASM interoperability.**
+See RFC-0010 for the implemented experimental contract. SSRApplication.from_file(..., hydrate=True, wasm=True) explicitly enables loadWasm(handle, localURL, {sha256, functions, timeoutMs}). The generated external module exports the adapter. Supply named signatures with i32/i64/f32/f64 scalar arguments/results or void result. Binary fetches require same-origin paths, application/wasm, a verified SHA256 and at most 1 MiB. Modules with imports are rejected.
+
+
+**D205. M6: Owned typed subscriptions.**
+See RFC-0011 for the implemented experimental contract. SSRApplication.from_file(..., hydrate=True, channels={localPath: EventChannel(schema)}) enables connectEvents(handle, localPath, {schema, onValue, onError, maxRetries}). subscriptions=True can enable an externally hosted same-origin SSE endpoint instead. The generated module exports the adapter; default onValue applies a checked root-state patch. Invalid JSON, shape, type, oversized payload or event envelope closes the connection before reporting a generic error. Duplicate/stale sequence IDs within an epoch are ignored. Retry errors are bounded (default 3, maximum 10). Root destruction and explicit close remove handlers and close EventSource.

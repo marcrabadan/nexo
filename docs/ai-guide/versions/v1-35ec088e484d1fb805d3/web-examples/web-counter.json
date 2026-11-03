@@ -1,0 +1,28 @@
+{
+  "example": {
+    "associated_tests": [
+      "tests/test_web_frontend.py",
+      "tests/test_web_tooling.py"
+    ],
+    "command": "python -m nexo web check --json examples/web/counter.nexo",
+    "entry_file": "counter.nexo",
+    "files": {},
+    "id": "web-counter",
+    "path": "examples/web/counter.nexo",
+    "purpose": "Independent reactive Counter components with scoped CSS",
+    "scope": "Experimental Python browser compiler M1–M4; same Counter source as web new scaffold. Compiler evidence is separate from mandatory Chromium/Vite HMR tests.",
+    "source": "use nexo.web\n\npub component Counter:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n\n    view:\n        main:\n            h1(\"Nexo Web\")\n            p(\"Count: {count}\")\n            button(\"+\", on_click: increment)\n\n    style:\n        main {\n            padding: 24px;\n        }\n",
+    "verification": {
+      "browser_execution": "Run associated tests; not asserted by this generator",
+      "compilation": "Passed",
+      "css_sha256": "46bfc52a76fc85478afcecb15427eb4a5aae9008978b45bb142efa643712dd2d",
+      "exports": [
+        "Counter"
+      ],
+      "javascript_sha256": "6f3e1207389f50245f209e93beb8701f6d8cc11dbcada981e9735e11f8d25a21",
+      "source_sha256": "d3425db45e931139fdc14533465ade634a3662404b83d379dab738f3d749823f"
+    }
+  },
+  "revision": "35ec088e484d1fb805d339ef1c3f998e5a405cafc9e6d172c206aab083958e1b",
+  "schema_version": 1
+}

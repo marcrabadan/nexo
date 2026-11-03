@@ -1,0 +1,41 @@
+use nexo.web
+
+pub layout Shell:
+    view:
+        header:
+            a("Home", href: "/")
+            a("Counter 7", href: "/counter/7")
+        slot()
+
+pub page Home:
+    path = "/"
+    layout = Shell
+    title = "Hydrated Nexo HTML"
+    view:
+        main:
+            h1("HTML first, client behavior after validation")
+            Counter(start: 0)
+
+pub page CounterPage(start: int):
+    path = "/counter/{start}"
+    layout = Shell
+    title = "Counter {start}"
+    view:
+        main:
+            Counter(start: start)
+
+component Counter(start: int):
+    state count: int = start
+    state label: str = "Initial"
+    fn increment():
+        count += 1
+    fn rename(event: WebEvent):
+        label = event.value
+    view:
+        section:
+            h2("Count: {count}")
+            button("Increment", on_click: increment)
+            input(value: label, aria_label: "Label", on_input: rename)
+            p("Label: {label}")
+    style:
+        section { padding: 1rem; border: 1px solid #789; }

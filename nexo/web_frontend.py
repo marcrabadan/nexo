@@ -1,4 +1,4 @@
-"""Nexo Web M1–M5: a separate, deliberately bounded browser compiler (RFC-0001).
+"""Nexo Web M1–M5 and experimental M6a: a separate, deliberately bounded browser compiler (RFC-0001).
 
 Core expression parsing is shared with Nexo. Browser-only contextual blocks do
 not change the core grammar, interpreter, HTTP module, or WASI build target.
@@ -188,7 +188,7 @@ def compile_web(source, source_path=None):
     return compile_program(load_program(source, source_path))
 
 
-def artifacts(source_path, sourcemap=False, observe=False, hmr=None):
+def artifacts(source_path, sourcemap=False, observe=False, hmr=None, static=False, routes=None):
     from .web_model import load_program
     from .web_codegen import compile_program
     source=Path(source_path).read_text(encoding='utf-8')
@@ -196,6 +196,14 @@ def artifacts(source_path, sourcemap=False, observe=False, hmr=None):
     css_mapping={} if sourcemap else None
     js,css,exports=compile_program(program,mapping,observe,css_mapping,hmr)
     files=browser_assets(js,css,exports)
+    if static:
+        if any(d.kind == 'page' and d.public for u in program.units for d in u.declarations.values()):
+            from .web_ssg import assets
+            return assets(files, program, routes), program
+        if routes is not None:
+            fail(1, 'Route enumeration requires a routed static application.', 'NW6003')
+        from .web_static import assets
+        return assets(files, program, exports), program
     if sourcemap:
         files['app.js']+='//# sourceMappingURL=./app.js.map\n'
         files['app.js.map']=json.dumps(mapping,sort_keys=True,ensure_ascii=True)+'\n'
@@ -204,16 +212,29 @@ def artifacts(source_path, sourcemap=False, observe=False, hmr=None):
     return files,program
 
 
-def build(source_path, output, sourcemap=False, release=False, observe=False):
-    files,program=artifacts(source_path,sourcemap,observe)
+def build(source_path, output, sourcemap=False, release=False, observe=False, static=False, routes=None, pwa=False):
+    if pwa and not static:
+        fail(1, 'PWA generation requires a public --static build.', 'NW6010')
+    if routes is not None and not static:
+        fail(1, 'Route enumeration requires --static.', 'NW6003')
+    if static and (sourcemap or release or observe):
+        fail(1, 'Static builds cannot combine sourcemap, release or observe options.', 'NW6001')
+    files,program=artifacts(source_path,sourcemap,observe,static=static,routes=routes)
+    if static:
+        if pwa:
+            from .web_pwa import augment
+            files = augment(files)
+        from .web_static_output import write_output
+        return write_output(files, output)
     if release:
-        from .web_release import optimize,write_release
+        from .web_release import optimize
+        from .web_static_output import write_output
         from .modules import project_root
-        return write_release(optimize(files,project_root(str(program.root.path)),sourcemap,observe),output)
+        return write_output(optimize(files,project_root(str(program.root.path)),sourcemap,observe),output)
     directory=Path(output)
     if (directory/'nexo-manifest.json').exists():
-        from .web_release import write_release
-        return write_release(files,directory)
+        from .web_static_output import write_output
+        return write_output(files,directory)
     directory.mkdir(parents=True,exist_ok=True)
     for name,content in files.items():(directory/name).write_text(content,encoding='utf-8')
     # Rebuilding without maps must not leave a previous source-bearing map behind.
@@ -229,7 +250,7 @@ def browser_assets(js, css, exports):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='nexo web', description='Experimental M1–M5 browser compiler; independent of WASI.')
+    parser = argparse.ArgumentParser(prog='nexo web', description='Experimental M1–M6 browser compiler; independent of WASI.')
     sub = parser.add_subparsers(dest='command', required=True)
     check = sub.add_parser('check')
     check.add_argument('--json', action='store_true')
@@ -240,14 +261,26 @@ def main(argv=None):
     compile_cmd.add_argument('--sourcemap',action='store_true')
     compile_cmd.add_argument('--release',action='store_true')
     compile_cmd.add_argument('--observe',action='store_true')
+    compile_cmd.add_argument('--static', action='store_true', help='Experimental M6 static HTML and routed SSG (RFC-0002/0003).')
+    compile_cmd.add_argument('--pwa', action='store_true', help='Opt-in offline public static site (RFC-0009).')
+    compile_cmd.add_argument('--routes', metavar='JSON', help='JSON array of concrete dynamic route paths for --static.')
     dev=sub.add_parser('dev');dev.add_argument('file');dev.add_argument('--port',type=int,default=5173)
     preview=sub.add_parser('preview');preview.add_argument('directory',nargs='?',default='dist');preview.add_argument('--port',type=int,default=4173)
+    serve=sub.add_parser('serve', help='Experimental request-time SSR on loopback (RFC-0004).')
+    serve.add_argument('file');serve.add_argument('--port', type=int, default=4174)
+    serve.add_argument('--loader', help='Explicit trusted Python module:async_function for initial state.')
+    serve.add_argument('--wasm', action='store_true', help='Enable import-free WASM worker capability.')
+    serve.add_argument('--subscriptions', action='store_true', help='Enable same-origin typed EventSource integration.')
+    serve.add_argument('--hydrate', action='store_true', help='Opt-in typed structural hydration (RFC-0005–0008).')
     new=sub.add_parser('new');new.add_argument('directory')
     audit=sub.add_parser('audit');audit.add_argument('--security',action='store_true');audit.add_argument('--accessibility',action='store_true');audit.add_argument('--json',action='store_true');audit.add_argument('file')
     sub.add_parser('lsp')
     args = parser.parse_args(argv)
     if args.command=='audit' and not (args.security or args.accessibility):parser.error('audit requires --security and/or --accessibility')
     try:
+        if args.command == 'serve':
+            from .web_ssr import serve, load_loader
+            return serve(args.file, args.port, hydrate=args.hydrate, loader=load_loader(args.loader) if args.loader else None, wasm=args.wasm, subscriptions=args.subscriptions)
         if args.command in ('new','dev','preview'):
             from .web_tooling import command
             return command(args)
@@ -267,7 +300,7 @@ def main(argv=None):
             if args.json:
                 print(json.dumps({'schema_version': 1, 'diagnostics': []}, sort_keys=True))
         else:
-            build(args.file,args.output,args.sourcemap,args.release,args.observe)
+            build(args.file,args.output,args.sourcemap,args.release,args.observe,args.static,args.routes,args.pwa)
         return 0
     except (WebError, OSError, UnicodeError) as error:
         from .web_diagnostics import diagnostic as render_diagnostic

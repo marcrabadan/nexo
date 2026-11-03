@@ -1,0 +1,38 @@
+use nexo.web
+
+pub page Home:
+    path = "/"
+    title = "Conditional hydration"
+    state visible: bool = true
+    state count: int = 0
+    fn toggle():
+        visible = not visible
+    fn increment():
+        count += 1
+    view:
+        main:
+            h1("Hydrated conditional ownership")
+            button("Toggle panel", on_click: toggle)
+            button("Increment parent", on_click: increment)
+            p("Parent: {count}")
+            if visible:
+                Panel(number: count):
+                    p("Projected parent: {count}")
+            else:
+                p("Panel hidden")
+
+component Panel(number: int):
+    state local: int = 0
+    fn increment():
+        local += 1
+    view:
+        section:
+            h2("Panel for {number}")
+            p("Local: {local}")
+            button("Increment local", on_click: increment)
+            if number > 0:
+                slot()
+            else:
+                p("Increment the parent to project content")
+    style:
+        section { padding: 1rem; border: 1px solid #789; }

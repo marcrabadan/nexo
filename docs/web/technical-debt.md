@@ -59,7 +59,7 @@ evidence; no universal speedup, HMR latency or capacity guarantee is inferred.
   accessibility qualification and the local Firefox launch limitation remain in
   the [production qualification report](production-qualification.md).
 - SSR, hydration, SSG, PWA, WASM interoperability and realtime subscriptions are
-  still M6 proposals requiring separate RFCs.
+  implemented experimentally by the subsequent RFC-0002–0011 M6 work; this historical maintenance report does not qualify those modes. See [M6 validation](validation-m6.md).
 
 ## Recorded validation — 2026-11-02
 

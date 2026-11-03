@@ -1,0 +1,51 @@
+use nexo.web
+
+pub layout Shell:
+    view:
+        header:
+            nav:
+                a("Home", href: "/")
+                a("Guide", href: "/guide")
+                a("Member 7", href: "/members/7")
+        slot()
+    style:
+        header { padding: 1rem; background: #edf4ff; }
+        nav { display: flex; gap: 1rem; }
+
+pub page Home:
+    path = "/"
+    layout = Shell
+    title = "Nexo static site"
+    description = "Pages generated at build time, with no JavaScript."
+    view:
+        main:
+            h1("Nexo routed static generation")
+            p("Follow the links or load a nested URL directly.")
+
+pub page Guide:
+    path = "/guide"
+    layout = Shell
+    title = "Static site guide"
+    view:
+        main:
+            h1("Guide")
+            p("Each page has its own generated HTML document.")
+
+pub page Member(id: int):
+    path = "/members/{id}"
+    layout = Shell
+    title = "Member {id}"
+    description = "The profile for member {id}."
+    state initial: int = id
+    view:
+        main:
+            h1("Member {initial}")
+            p("This route's parameter was checked at build time.")
+
+pub page NotFound:
+    not_found = true
+    layout = Shell
+    title = "Page not found"
+    view:
+        main:
+            h1("Page not found")

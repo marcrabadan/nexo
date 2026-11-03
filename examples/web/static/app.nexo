@@ -1,0 +1,15 @@
+use nexo.web
+
+pub component Welcome:
+    state version: int = 6
+    view:
+        main:
+            Heading(label: "Nexo Web static HTML"):
+                p("An experimental M{version} page, readable without JavaScript.")
+    style:
+        main { max-width: 48rem; margin: 3rem auto; padding: 1rem; }
+
+component Heading(label: str):
+    view:
+        h1(label)
+        slot()

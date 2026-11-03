@@ -1,6 +1,7 @@
 """Optional Vite dev runner, offline scaffolding and bounded artifact preview."""
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import os
+import json
 import signal
 from pathlib import Path
 import shutil
@@ -28,11 +29,20 @@ def scaffold(directory):
 
 def preview_server(directory,port=4173):
     directory=Path(directory).resolve()
-    from .web_release import MANIFEST,read_release
+    from .web_release import MANIFEST
+    from .web_static_output import read_output
     release=(directory/MANIFEST).exists()
-    if release:allowed=set(read_release(directory))
+    static = False
+    pwa = False
+    if release:
+        artifacts = read_output(directory)
+        allowed = set(artifacts)
+        manifest = json.loads(artifacts[MANIFEST])
+        static = manifest['format'] == 'nexo-web-static'
+        pwa = bool(manifest.get('pwa'))
     else:
-        required=('index.html','main.js','app.js','app.css')
+        static = (directory/'index.html').is_file() and (directory/'app.css').is_file() and not (directory/'main.js').exists() and not (directory/'app.js').exists()
+        required=('index.html','app.css') if static else ('index.html','main.js','app.js','app.css')
         allowed={name for name in (*required,'app.js.map','app.css.map') if (directory/name).is_file() and not (directory/name).is_symlink()}
         if not set(required)<=allowed:fail(1,'Preview requires a valid release or built index.html/main.js/app.js/app.css files.','NW4002')
     class Handler(BaseHTTPRequestHandler):
@@ -42,15 +52,25 @@ def preview_server(directory,port=4173):
             if host not in permitted or (origin and origin!='http://'+host):self.send_error(403);return
             path=urlsplit(self.path).path
             name='index.html' if path=='/' else path[1:]
-            if name not in allowed:self.send_error(404);return
+            if static and path != '/':
+                if path.endswith('/'):
+                    name += 'index.html'
+                elif name + '/index.html' in allowed:
+                    self.send_response(308);self.send_header('Location',path + '/');self.end_headers();return
+            status = 200
+            if name not in allowed:
+                if static and '404.html' in allowed:
+                    name = '404.html';status = 404
+                else:
+                    self.send_error(404);return
             target=directory/name
             if target.is_symlink() or not target.resolve().is_relative_to(directory):self.send_error(403);return
             try:body=target.read_bytes()
             except OSError:self.send_error(404);return
-            kind={'html':'text/html','js':'text/javascript','css':'text/css','map':'application/json','json':'application/json'}.get(name.rsplit('.',1)[-1],'application/octet-stream')
-            self.send_response(200);self.send_header('Content-Type',kind+'; charset=utf-8')
+            kind={'html':'text/html','js':'text/javascript','css':'text/css','map':'application/json','json':'application/json','webmanifest':'application/manifest+json','svg':'image/svg+xml'}.get(name.rsplit('.',1)[-1],'application/octet-stream')
+            self.send_response(status);self.send_header('Content-Type',kind+'; charset=utf-8')
             self.send_header('Content-Length',str(len(body)));self.send_header('Cache-Control','no-store')
-            self.send_header('Content-Security-Policy',CSP);self.send_header('X-Content-Type-Options','nosniff')
+            self.send_header('Content-Security-Policy',(CSP+"; worker-src 'self'; manifest-src 'self'; img-src 'self'") if pwa else CSP.replace("script-src 'self'", "script-src 'none'").replace("connect-src 'self'", "connect-src 'none'") if static else CSP);self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Referrer-Policy','no-referrer');self.end_headers();self.wfile.write(body)
         def log_message(self,*args):pass
     return ThreadingHTTPServer(('127.0.0.1',port),Handler)

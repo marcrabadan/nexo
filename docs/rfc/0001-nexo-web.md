@@ -1,7 +1,12 @@
 # RFC-0001: Nexo Web
 
-Status: M0 accepted design; M1–M5 experimental implementation with post-M5 maintenance. Edition: 6.
-M1–M5 are experimental implementations; M6 remains future work.
+Status: M0 accepted design; M1–M6 implemented experimentally. Edition: 12.
+M1–M5 are experimental implementations. [RFC-0002](0002-web-static-html.md) starts
+M6a with experimental static component HTML. [RFC-0003](0003-web-routed-ssg.md) adds
+M6b routed static generation. [RFC-0004](0004-web-request-time-ssr.md) adds M6c
+scalar request-time WSGI rendering. [RFC-0005](0005-web-fixed-tree-hydration.md)
+adds opt-in scalar hydration, extended to conditional regions by
+[RFC-0006](0006-web-conditional-hydration.md). RFC-0007 through RFC-0011 complete the experimental M6 scope; see the completion checklist below.
 The [post-M5 amendment](#post-m5-maintenance-d195) supersedes earlier limitations
 on keyed lists, event payloads, static extraction, CSS maps and compatible component HMR.
 
@@ -157,8 +162,13 @@ line-level JS source maps, diagnostics, source audit and an explicit browser LSP
 See the [M4 amendment](#m4). M5 adds release optimization below; full security/a11y certification remains
 workload-specific.
 M5 adds release optimization, measured quality gates and a verified static deployment
-example; see the M5 amendment. Broader production qualification remains workload-specific. M6 SSR/hydration/SSG/PWA/WASM interop/subscriptions each need
-separate RFCs; no automatic implementation is authorized here.
+example; see the M5 amendment. Broader production qualification remains workload-specific. [RFC-0002](0002-web-static-html.md) starts M6a with bounded static component HTML.
+[RFC-0003](0003-web-routed-ssg.md) adds finite routed SSG and
+[RFC-0004](0004-web-request-time-ssr.md) adds scalar request-time rendering.
+[RFC-0005](0005-web-fixed-tree-hydration.md) adds fixed-tree scalar hydration.
+[RFC-0006](0006-web-conditional-hydration.md) extends it with conditional regions.
+RFC-0007–0011 add list/context hydration, async state, PWA, WASM interop and subscriptions. Historical M1–M5 amendments below retain their original
+milestone boundaries; RFC-0002 through RFC-0011 supersede their blanket M6-future statements.
 
 ## Security
 
@@ -854,3 +864,20 @@ shared across hot module versions; applications never share local state registri
 Examples/tests: `examples/web/keyed/app.nexo`, `tests/test_web_debt.py` and existing
 M1–M5 suites. Browser LSP recognizes keys/events; frontend formatting, exact source
 columns, Rust browser compilation and M6 features remain outside this amendment.
+
+
+## M6 experimental completion (D201–D205)
+
+The following checklist supersedes historical M6-future limitations in earlier amendments. Every M6 capability has an implemented bounded experimental interface and an executable browser/reference example. This does not certify arbitrary applications for production.
+
+| Capability | Contract | Evidence |
+| --- | --- | --- |
+| Static HTML and routed SSG | RFC-0002/0003 | test_web_static.py, test_web_ssg.py |
+| Request-time SSR | RFC-0004/0008 | test_web_ssr.py, async isolation/timeout tests |
+| Hydration, conditions, lists and context | RFC-0005/0006/0007 | hydration, conditional and completion suites |
+| Async server state transfer | RFC-0008 | typed loader and wire tests |
+| Public offline PWA | RFC-0009 | real service-worker offline route/404 test |
+| WASM interoperability | RFC-0010 | actual Worker calls, integrity/import rejection, timeout |
+| Realtime subscriptions | RFC-0011 | SSE replay, typed updates and teardown |
+
+Run `python examples/web/m6/server.py` for the integrated SSR/async/context/list/WASM/SSE example. See its README for the separate public static PWA build. `docs/web/validation-m6.md` records verification and environment limits. Rust browser compilation, production authentication/TLS hosting, streaming SSR, WASI imports and durable message delivery remain outside these contracts.

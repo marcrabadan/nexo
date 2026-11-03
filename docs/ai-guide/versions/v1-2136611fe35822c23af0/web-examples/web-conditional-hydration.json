@@ -1,0 +1,32 @@
+{
+  "example": {
+    "associated_tests": [
+      "tests/test_web_conditional_hydration.py"
+    ],
+    "command": "python -m nexo web serve examples/web/conditional-hydration/app.nexo --hydrate --port 4174",
+    "entry_file": "app.nexo",
+    "files": {
+      "README.md": "# Experimental conditional hydration\n\n```sh\npython -m nexo web serve examples/web/conditional-hydration/app.nexo --hydrate --port 4174\n```\n\nThe initial panel is server-rendered and claimed in place. Increment local, then\nincrement the parent: the same panel retains its local count, and its conditional\nslot begins showing the projected parent value. Toggle the panel off/on: the old\npanel is disposed and the new one starts with fresh local state. Parent state and\nunrelated DOM survive both transitions.\n\nOnly conditional scalar hydration is added here. Lists, context, async server data\nand arbitrary state transfer remain unsupported. Keep compiler comment boundaries\nin deployed HTML. Mismatches attach no behavior; failed new-branch construction\nkeeps the old branch without rolling back the source action. With JavaScript\ndisabled, the initial server branch and native links remain available.\n\nThe loopback runner is a local development tool. Use\n`SSRApplication.from_file(\"app.nexo\", hydrate=True)` for an external synchronous\nWSGI host, with production/authentication/TLS/limits supplied separately. See\nRFC-0006 for ownership, slot and mismatch details.\n"
+    },
+    "id": "web-conditional-hydration",
+    "path": "examples/web/conditional-hydration/app.nexo",
+    "purpose": "Conditional SSR hydration with nested branch lifetimes, reactive child props and projected caller slots",
+    "scope": "Experimental M6e conditional hydration. Shared browser compilation is checked here; associated browser tests prove initial claims, bounded branch transitions, disposal and marker guards. No lists/keyed hydration, context, async server state or production qualification.",
+    "source": "use nexo.web\n\npub page Home:\n    path = \"/\"\n    title = \"Conditional hydration\"\n    state visible: bool = true\n    state count: int = 0\n    fn toggle():\n        visible = not visible\n    fn increment():\n        count += 1\n    view:\n        main:\n            h1(\"Hydrated conditional ownership\")\n            button(\"Toggle panel\", on_click: toggle)\n            button(\"Increment parent\", on_click: increment)\n            p(\"Parent: {count}\")\n            if visible:\n                Panel(number: count):\n                    p(\"Projected parent: {count}\")\n            else:\n                p(\"Panel hidden\")\n\ncomponent Panel(number: int):\n    state local: int = 0\n    fn increment():\n        local += 1\n    view:\n        section:\n            h2(\"Panel for {number}\")\n            p(\"Local: {local}\")\n            button(\"Increment local\", on_click: increment)\n            if number > 0:\n                slot()\n            else:\n                p(\"Increment the parent to project content\")\n    style:\n        section { padding: 1rem; border: 1px solid #789; }\n",
+    "support_files": [
+      "examples/web/conditional-hydration/README.md"
+    ],
+    "verification": {
+      "browser_execution": "Run associated tests; not asserted by this generator",
+      "compilation": "Passed",
+      "css_sha256": "06adcbcf3b38becbf7d1dbb6eea0137150e122948439500268b851fbe6896a65",
+      "exports": [
+        "mountApp"
+      ],
+      "javascript_sha256": "2023ee56f725f41c3ebd087196148c53f4389302e02fb5689226ed0c92b0abae",
+      "source_sha256": "73487958b67cfa145001549a442595b83b3445e85490218c78a396ee87f89fd0"
+    }
+  },
+  "revision": "2136611fe35822c23af0fcdcbae4222a77616e8b1d562d0bae848697bb56de66",
+  "schema_version": 1
+}

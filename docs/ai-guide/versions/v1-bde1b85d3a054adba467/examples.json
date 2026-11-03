@@ -1,0 +1,491 @@
+{
+  "examples": [
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "test",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [],
+      "domains": [
+        "cli",
+        "language"
+      ],
+      "expected_output": "Hello Ada\n✓ invoice\n1 test: 1 passed, 0 failed\n",
+      "features": [
+        "records",
+        "errors",
+        "contracts",
+        "tests",
+        "money"
+      ],
+      "id": "cli",
+      "maturity": "implemented-and-tested",
+      "modules": [],
+      "path": "docs/ai-guide/source/example.nexo",
+      "purpose": "CLI output with records, explicit errors, contracts and a money assertion",
+      "scope": "Interpreter check and local execution; native backend unverified",
+      "source": "# A small, offline program: records, contracts, tests and explicit errors.\ntype Request:\n    name: str\n\nfn welcome(request: Request) -> str!:\n    if len(request.name) == 0:\n        fail(\"name is required\")\n    return \"Hello {request.name}\"\n\nfn total(price: money, quantity: int) -> money:\n    expect quantity > 0\n    return price * quantity\n\ntest \"invoice\":\n    assert total(19.90 EUR, 2) == 39.80 EUR\n\ntry:\n    print(welcome(Request(\"Ada\")))\nelse e:\n    print(e.message)\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "test",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "c90942600510e781e36b3fd7006105e4a940c77c3c9674b4bafb657a1462ed8c",
+        "stderr": "",
+        "stdout": "Hello Ada\n✓ invoice\n1 test: 1 passed, 0 failed\n"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "test",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [
+        "loopback socket permission"
+      ],
+      "domains": [
+        "api",
+        "backend"
+      ],
+      "expected_output": "ready\n201 Ana\n✓ routes return text and JSON\nhello Ana, number 7\nGET URL/greet/not-a-number answered 400 Bad Request\n✓ path and query parameters are typed\nPOST URL/registrations answered 400 Bad Request\n✓ missing record fields fail validation\n3 tests: 3 passed, 0 failed\n",
+      "features": [
+        "server",
+        "http",
+        "validation",
+        "tests"
+      ],
+      "id": "rest",
+      "maturity": "implemented-and-tested",
+      "modules": [
+        "http"
+      ],
+      "path": "docs/libraries/web/routes.nexo",
+      "purpose": "Typed local REST routes and validation failures",
+      "scope": "Local interpreter HTTP tests; not public-server Shield or deployment certification",
+      "source": "type Registration:\n    name: str\n    email: str\n\nserver signup:\n    port = 8080\n\n    get \"/health\"():\n        return \"ready\"\n\n    get \"/greet/{id}\"(id: int, name: str = \"visitor\"):\n        return \"hello {name}, number {id}\"\n\n    post \"/registrations\"(entry: Registration):\n        return entry\n\ntest \"routes return text and JSON\":\n    health = http.get(\"{signup.url}/health\")\n    assert health.status == 200\n    print(health.text)\n    reply = http.post(\"{signup.url}/registrations\", {\"name\": \"Ana\", \"email\": \"ana@example.com\"})\n    assert reply.status == 201\n    print(reply.status, reply.json()[\"name\"])\n\ntest \"path and query parameters are typed\":\n    reply = http.get(\"{signup.url}/greet/7?name=Ana\")\n    print(reply.text)\n    try:\n        http.get(\"{signup.url}/greet/not-a-number\", retries: 0)\n        fail(\"expected an invalid path parameter\")\n    else e is HTTPError:\n        assert e.message == \"GET {signup.url}/greet/not-a-number answered 400 Bad Request\"\n        print(e.message.replace(signup.url, \"URL\"))\n\ntest \"missing record fields fail validation\":\n    try:\n        http.post(\"{signup.url}/registrations\", {\"name\": \"Ana\"}, retries: 0)\n        fail(\"expected a missing email field\")\n    else e is HTTPError:\n        assert e.message == \"POST {signup.url}/registrations answered 400 Bad Request\"\n        print(e.message.replace(signup.url, \"URL\"))\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "test",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "d7f3820d962b899daf5acd6a37fd9f0766bb16b5be93abd946bd8ec068278268",
+        "stderr": "",
+        "stdout": "ready\n201 Ana\n✓ routes return text and JSON\nhello Ana, number 7\nGET URL/greet/not-a-number answered 400 Bad Request\n✓ path and query parameters are typed\nPOST URL/registrations answered 400 Bad Request\n✓ missing record fields fail validation\n3 tests: 3 passed, 0 failed\n"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "run",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [
+        "Python SQLite runtime"
+      ],
+      "domains": [
+        "database",
+        "reliability"
+      ],
+      "expected_output": "sent 30.00 from Ana to Luis\nrefused (Error): Luis has 50.00, not 80.00\nrefused (NotFound): There is no Account with owner = \"Eva\"\nonly the first one happened:\n  Ana: 70.00\n  Luis: 50.00\n2 movements\n",
+      "features": [
+        "transaction",
+        "table",
+        "decimal",
+        "errors"
+      ],
+      "id": "database",
+      "maturity": "implemented-and-tested",
+      "modules": [
+        "nexo.db"
+      ],
+      "path": "docs/libraries/db/bank.nexo",
+      "purpose": "In-memory SQLite atomic transfers and rollback",
+      "scope": "Interpreter in-memory database output regression; no live database certification",
+      "source": "## Transfers that either happen whole or not at all.\nuse nexo.db\n\ndb = connect(\":memory:\")\n\n@table\ntype Account:\n    id: id\n    owner: str @unique\n    balance: decimal\n\n@table\ntype Movement:\n    id: id\n    account: ref Account\n    amount: decimal\n    note: str\n\nfn transfer(from_owner: str, to_owner: str, amount: decimal) -> bool!:\n    expect amount > 0\n    db.transaction:\n        a = db.Account.find(owner: from_owner)?\n        if a.balance < amount:\n            fail(\"{from_owner} has {a.balance}, not {amount}\")\n        db.Account.update(a, balance: a.balance - amount)\n        db.Movement.add(account: a, amount: -amount, note: \"to {to_owner}\")\n        # a failure from here on undoes the lines above too\n        b = db.Account.find(owner: to_owner)?\n        db.Account.update(b, balance: b.balance + amount)\n        db.Movement.add(account: b, amount: amount, note: \"from {from_owner}\")\n    return true\n\nfn balances():\n    for a in db.Account.all():\n        print(\"  {a.owner}: {a.balance}\")\n\ndb.Account.add(owner: \"Ana\", balance: 100.00)\ndb.Account.add(owner: \"Luis\", balance: 20.00)\n\nfn attempt(from_owner: str, to_owner: str, amount: decimal):\n    try:\n        transfer(from_owner, to_owner, amount)\n        print(\"sent {amount} from {from_owner} to {to_owner}\")\n    else e:\n        print(\"refused ({e.kind}): {e.message}\")\n\nattempt(\"Ana\", \"Luis\", 30.00)\nattempt(\"Luis\", \"Ana\", 80.00)\nattempt(\"Ana\", \"Eva\", 10.00)\n\nprint(\"only the first one happened:\")\nbalances()\nprint(db.Movement.count(), \"movements\")\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "run",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "b1bf31c71d6028131e8039f81e526f1f7984a9d9242c388d878aba31b7d2bccd",
+        "stderr": "",
+        "stdout": "sent 30.00 from Ana to Luis\nrefused (Error): Luis has 50.00, not 80.00\nrefused (NotFound): There is no Account with owner = \"Eva\"\nonly the first one happened:\n  Ana: 70.00\n  Luis: 50.00\n2 movements\n"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "test",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [],
+      "domains": [
+        "events",
+        "worker"
+      ],
+      "expected_output": "minute      {\"page\": \"/home\", \"count\": 2}\nminute      {\"page\": \"/cart\", \"count\": 1}\nlast 5 min  10\nlast 5 min  35\nlast 5 min  30\nvisit       pages: 3\nminute      {\"page\": \"/home\", \"count\": 1}\nvisit       pages: 1\n✓ windows\n1 test: 1 passed, 0 failed\n",
+      "features": [
+        "stream",
+        "window",
+        "tests"
+      ],
+      "id": "events",
+      "maturity": "implemented-and-tested",
+      "modules": [
+        "nexo.stream"
+      ],
+      "path": "docs/libraries/stream/windows.nexo",
+      "purpose": "Deterministic stream windows with explicit timestamps",
+      "scope": "Interpreter process-local test streams; no external Kafka broker tested",
+      "source": "## Group the messages of a stream by time.\nuse nexo.stream\n\nfn per_minute(row):\n    print(\"minute     \", row)\n\nfn last_five(total):\n    print(\"last 5 min \", total)\n\nfn visit(pages):\n    print(\"visit       pages:\", pages)\n\n# tumbling: one result per minute and page\nkafka(\"clicks\")\n  |> window 1m\n  |> group by page\n  |> count\n  |> each per_minute\n\n# sliding: on every message, over the messages of the last 5 minutes\nkafka(\"sales\")\n  |> sliding 5m\n  |> map amount\n  |> sum\n  |> each last_five\n\n# session: the pages of a visit, which ends after 30 seconds without a click\nkafka(\"visits\")\n  |> session 30s\n  |> count\n  |> each visit\n\ntest \"windows\":\n    t = time(2026, 10, 28, 9, 0, zone: \"UTC\")\n    clicks = kafka(\"clicks\")\n    clicks.send({\"page\": \"/home\"}, at: t)\n    clicks.send({\"page\": \"/cart\"}, at: t + 15s)\n    clicks.send({\"page\": \"/home\"}, at: t + 40s)\n    clicks.send({\"page\": \"/home\"}, at: t + 65s)\n\n    sales = kafka(\"sales\")\n    sales.send({\"amount\": 10}, at: t)\n    sales.send({\"amount\": 25}, at: t + 2m)\n    sales.send({\"amount\": 5}, at: t + 6m)\n\n    visits = kafka(\"visits\")\n    visits.send({\"page\": \"/home\"}, at: t)\n    visits.send({\"page\": \"/shoes\"}, at: t + 10s)\n    visits.send({\"page\": \"/pay\"}, at: t + 20s)\n    visits.send({\"page\": \"/home\"}, at: t + 5m)\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "test",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "e3235272bb93e480d6b476fe8f0fc64453ce4e0fec99990df84d4a30fd695e69",
+        "stderr": "",
+        "stdout": "minute      {\"page\": \"/home\", \"count\": 2}\nminute      {\"page\": \"/cart\", \"count\": 1}\nlast 5 min  10\nlast 5 min  35\nlast 5 min  30\nvisit       pages: 3\nminute      {\"page\": \"/home\", \"count\": 1}\nvisit       pages: 1\n✓ windows\n1 test: 1 passed, 0 failed\n"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_ai_guide_advanced.py",
+        "python docs/ai-guide/local.py verify-examples"
+      ],
+      "command": "test",
+      "component_versions": {
+        "edition": "0.1",
+        "python": "0.0.1",
+        "rust": "0.1.0"
+      },
+      "dependencies": [],
+      "domains": [
+        "ai",
+        "agentic"
+      ],
+      "expected_output": "shipped\nthere is no order 99\n✓ the tools are ordinary functions\nOrder 7 has shipped.\n✓ the agent's answer can be faked\n2 tests: 2 passed, 0 failed\n",
+      "features": [
+        "agent",
+        "tool",
+        "fake",
+        "tests"
+      ],
+      "id": "ai",
+      "maturity": "implemented-and-tested",
+      "modules": [],
+      "path": "docs/libraries/ai/agent.nexo",
+      "purpose": "Registered tools and a fake agent response without provider access",
+      "scope": "Fake agent tests and direct tool calls; no live model, email or provider evaluated",
+      "source": "## An agent that answers order questions with the program's own functions.\ntype Order:\n    id: int\n    status: \"paid\" | \"shipped\" | \"delivered\"\n    email: str\n\norders = [\n    Order(id: 7, status: \"shipped\", email: \"ana@mail.com\"),\n    Order(id: 8, status: \"paid\", email: \"luis@mail.com\")]\n\n@tool \"Looks up an order by its number\"\nfn find_order(id: int) -> Order!:\n    for o in orders:\n        if o.id == id:\n            return o\n    fail(\"there is no order {id}\")\n\n@tool \"Sends a short email to the customer of an order\"\nfn email_customer(id: int, text: str) -> str!:\n    o = find_order(id)?\n    return \"sent to {o.email}\"\n\nagent support:\n    model = \"anthropic:claude-opus\"\n    tools = [find_order, email_customer]\n    goal = \"Answer questions about orders, politely and briefly\"\n    max_steps = 5\n    confirm = [email_customer]\n\ntest \"the tools are ordinary functions\":\n    print(find_order(7).status)\n    try:\n        find_order(99)\n    else e:\n        print(e.message)\n\ntest \"the agent's answer can be faked\":\n    fake support.handle returns \"Order 7 has shipped.\"\n    print(support.handle(\"Where is my order 7?\"))\n",
+      "supported_versions": {
+        "python_interpreter": "0.0.1"
+      },
+      "verification": {
+        "backend": "Python interpreter",
+        "check": "Passed",
+        "command": "test",
+        "execution": "Passed",
+        "native_compilation": "Unknown",
+        "source_sha256": "2ab34abaa90a7a21cc901390b7fe439b603749f12558847b87d2cae4dc4ca791",
+        "stderr": "",
+        "stdout": "shipped\nthere is no order 99\n✓ the tools are ordinary functions\nOrder 7 has shipped.\n✓ the agent's answer can be faked\n2 tests: 2 passed, 0 failed\n"
+      }
+    }
+  ],
+  "frontend_examples": [
+    {
+      "associated_tests": [
+        "tests/test_web_frontend.py",
+        "tests/test_web_tooling.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/counter.nexo",
+      "entry_file": "counter.nexo",
+      "files": {},
+      "id": "web-counter",
+      "path": "examples/web/counter.nexo",
+      "purpose": "Independent reactive Counter components with scoped CSS",
+      "scope": "Experimental Python browser compiler M1–M4; same Counter source as web new scaffold. Compiler evidence is separate from mandatory Chromium/Vite HMR tests.",
+      "source": "use nexo.web\n\npub component Counter:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n\n    view:\n        main:\n            h1(\"Nexo Web\")\n            p(\"Count: {count}\")\n            button(\"+\", on_click: increment)\n\n    style:\n        main {\n            padding: 24px;\n        }\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "46bfc52a76fc85478afcecb15427eb4a5aae9008978b45bb142efa643712dd2d",
+        "exports": [
+          "Counter"
+        ],
+        "javascript_sha256": "6f3e1207389f50245f209e93beb8701f6d8cc11dbcada981e9735e11f8d25a21",
+        "source_sha256": "d3425db45e931139fdc14533465ade634a3662404b83d379dab738f3d749823f"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_composition.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/composition/app.nexo",
+      "entry_file": "app.nexo",
+      "files": {
+        "nexo.toml": "[project]\nname = \"nexo-web-composition\"\nversion = \"0.0.1\"\n",
+        "session.nexo": "use nexo.web\n\npub context Visits:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n",
+        "ui/card.css": ".card {\n    padding: 16px;\n    border: 1px solid currentColor;\n    border-radius: 12px;\n}\n@media (min-width: 600px) {\n    .card { padding: 24px; }\n}\n",
+        "ui/widgets.nexo": "use nexo.web\n\npub component Card(heading: str):\n    view:\n        article(class: \"card\"):\n            h2(heading)\n            slot()\n\n    style:\n        @import \"./card.css\";\n\npub component Counter(label: str, start: int = 0):\n    state count: int = start\n\n    fn increment():\n        count += 1\n\n    view:\n        section:\n            p(\"{label}: {count}\")\n            button(\"Local +\", on_click: increment)\n"
+      },
+      "id": "web-composition",
+      "path": "examples/web/composition/app.nexo",
+      "purpose": "Typed component imports, lexical slots, persistent nested layouts, typed fragment routes and owner-scoped context",
+      "scope": "Experimental Python browser compiler M2; all project files required. Compilation evidence is separate from mandatory real-browser tests.",
+      "source": "use nexo.web\nuse session\nuse ui.widgets\n\npub layout Shell:\n    provide session.Visits\n    visits = inject(session.Visits)\n    state opens: int = 0\n\n    fn open():\n        opens += 1\n\n    view:\n        header:\n            h1(\"Nexo Web M2\")\n            p(\"Shared visits: {visits.count}; layout clicks: {opens}\")\n            button(\"Layout +\", on_click: open)\n            nav:\n                a(\"Home\", href: \"/\")\n                a(\"User 7\", href: \"/users/7\")\n        slot()\n\npub layout Details:\n    layout = Shell\n    state opens: int = 0\n\n    fn open():\n        opens += 1\n\n    view:\n        section:\n            h2(\"Persistent nested layout\")\n            p(\"Nested layout clicks: {opens}\")\n            button(\"Nested +\", on_click: open)\n            slot()\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Nexo Web — Home\"\n    description = \"A compiled Nexo component, layout and context example.\"\n    visits = inject(session.Visits)\n    state label: str = \"Local count\"\n\n    fn rename():\n        label = \"Updated count\"\n\n    view:\n        main:\n            widgets.Card(heading: label):\n                p(\"Shared in slot: {visits.count}\")\n                button(\"Shared +\", on_click: visits.increment)\n                button(\"Rename\", on_click: rename)\n                widgets.Counter(label: label)\n\npub page User(id: int):\n    path = \"/users/{id}\"\n    layout = Details\n    title = \"Nexo Web — User {id}\"\n    visits = inject(session.Visits)\n\n    view:\n        main:\n            h2(\"User {id}\")\n            p(\"Shared on another page: {visits.count}\")\n            button(\"Shared +\", on_click: visits.increment)\n\npub page NotFound:\n    not_found = true\n    layout = Shell\n    title = \"Nexo Web — Not found\"\n\n    view:\n        main:\n            h2(\"Page not found\")\n            a(\"Return home\", href: \"/\")\n\npub page Failure:\n    error = true\n    title = \"Nexo Web — Error\"\n\n    view:\n        main:\n            h2(\"Unable to render this page\")\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "73ecd90fc90c519ef4fdb1835a9c0c0adcae9424bc3d4229bc0c796e5daebf1b",
+        "exports": [
+          "mountApp"
+        ],
+        "javascript_sha256": "75b45916862926ddce2664b2bf0173b69a2a347f1142b506b6bfca785f9d6971",
+        "source_sha256": "353c07372c953fee5aa0e3235f10a0136a99f1d473772ce9b412d740832da18e"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_data.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/data/app.nexo",
+      "entry_file": "app.nexo",
+      "files": {
+        "nexo.toml": "[project]\nname = \"nexo-web-data\"\n",
+        "server.py": "\"\"\"Loopback-only M3 development API. Not a production server or Shield profile.\n\nBuild app.nexo to dist, then: python examples/web/data/server.py --directory dist\n\"\"\"\nimport argparse\nfrom http.cookies import SimpleCookie\nfrom http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer\nimport json\nfrom pathlib import Path\nimport secrets\nimport threading\n\n\ndef create_server(directory, port=8765):\n    sessions={};lock=threading.Lock()\n    class Handler(SimpleHTTPRequestHandler):\n        def __init__(self,*args,**kwargs):super().__init__(*args,directory=str(directory),**kwargs)\n        def session(self):\n            cookie=SimpleCookie()\n            try:cookie.load(self.headers.get('Cookie',''))\n            except Exception:pass\n            key=cookie['nexo_demo'].value if 'nexo_demo' in cookie else ''\n            with lock:\n                if key not in sessions:\n                    if len(sessions)>=100:return None,None,False\n                    key=secrets.token_urlsafe(24)\n                    sessions[key]={'csrf':secrets.token_urlsafe(24),'products':[{'id':1,'name':'Nexo guide'}]}\n                    return key,sessions[key],True\n                return key,sessions[key],False\n        def reply(self,value,status=200):\n            body=json.dumps(value).encode();self.send_response(status)\n            self.send_header('Content-Type','application/json');self.send_header('Cache-Control','no-store')\n            self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Length',str(len(body)))\n            self.end_headers();self.wfile.write(body)\n        def trusted_host(self):\n            return self.headers.get('Host') in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}')\n        def do_GET(self):\n            if not self.trusted_host():return self.reply({'error':'Host denied'},403)\n            if self.path not in ('/','/index.html','/api/products'):return super().do_GET()\n            key,session,new=self.session()\n            if session is None:return self.reply({'error':'Restart demo: session limit reached'},503)\n            if self.path=='/api/products':\n                if new:return self.reply({'error':'Open the application first'},403)\n                with lock:products=list(session['products'])\n                return self.reply(products)\n            body=(directory/'index.html').read_text().replace('<title>','<meta name=\"nexo-csrf-token\" content=\"'+session['csrf']+'\"><title>').encode()\n            self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8')\n            self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')\n            if new:self.send_header('Set-Cookie',f'nexo_demo={key}; HttpOnly; SameSite=Strict; Path=/')\n            self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)\n        def do_POST(self):\n            if not self.trusted_host() or self.path!='/api/products':return self.reply({'error':'Denied'},403)\n            key,session,new=self.session()\n            origin='http://'+self.headers.get('Host','')\n            if session is None or new or self.headers.get('Origin')!=origin or not secrets.compare_digest(self.headers.get('X-CSRF-Token',''),session['csrf']):return self.reply({'error':'CSRF denied'},403)\n            if self.headers.get('Content-Type')!='application/json':return self.reply({'error':'JSON required'},415)\n            try:\n                length=int(self.headers.get('Content-Length','0'))\n                if not 0<length<=65536:return self.reply({'error':'Body too large'},413)\n                value=json.loads(self.rfile.read(length))\n                if not isinstance(value,dict) or set(value)!={'name'} or not isinstance(value['name'],str) or not 1<=len(value['name'])<=100:return self.reply({'error':'Invalid product'},422)\n            except (ValueError,UnicodeError):return self.reply({'error':'Invalid JSON'},400)\n            with lock:\n                if len(session['products'])>=100:return self.reply({'error':'Demo product limit'},429)\n                product={'id':len(session['products'])+1,'name':value['name']};session['products'].append(product)\n            self.reply(product,201)\n    return ThreadingHTTPServer(('127.0.0.1',port),Handler)\n\n\ndef serve(directory,port=8765):\n    server=create_server(directory,port)\n    print(f'Local development only: http://127.0.0.1:{server.server_port}/',flush=True)\n    try:server.serve_forever()\n    finally:server.server_close()\n\n\nif __name__=='__main__':\n    parser=argparse.ArgumentParser(description=__doc__)\n    parser.add_argument('--directory',type=Path,default=Path('dist'))\n    parser.add_argument('--port',type=int,default=8765)\n    args=parser.parse_args();serve(args.directory.resolve(),args.port)\n"
+      },
+      "id": "web-data",
+      "path": "examples/web/data/app.nexo",
+      "purpose": "Typed async GET, explicit CSRF-protected mutation, loading/error rendering, immutable snapshot lists and invalidation",
+      "scope": "Experimental Python browser M3. Build app.nexo then run examples/web/data/server.py --directory dist for a local API. Static public demo is read-only. Compilation does not establish browser execution.",
+      "source": "use nexo.web\n\npub type Product:\n    id: int\n    name: str\n\npub type NewProduct:\n    name: str\n\npub component App(endpoint: str = \"/api/products\", writable: bool = true):\n    load products = api.get(\n        endpoint,\n        as: list[Product],\n        timeout_ms: 5000,\n        retries: 1,\n        cache_ms: 1000\n    )\n\n    mutation create = api.post(\n        endpoint,\n        body: NewProduct(name: \"Nexo handbook\"),\n        as: Product,\n        invalidate: [products]\n    )\n\n    view:\n        main:\n            h1(\"Nexo Web — typed data\")\n            if products.loading:\n                p(\"Loading...\", role: \"status\")\n            elif products.error != none:\n                p(\"{products.error.kind}: {products.error.message}\", role: \"alert\")\n                button(\"Retry\", on_click: products.reload)\n            elif products.ready:\n                ul:\n                    for product in products.data:\n                        li(product.name)\n            button(\"Reload\", on_click: products.reload)\n            button(\"Cancel read\", on_click: products.cancel)\n            button(\"Create product\", on_click: create.run, disabled: not writable or create.loading)\n            if create.loading:\n                p(\"Saving...\", role: \"status\")\n            elif create.error != none:\n                p(\"{create.error.kind}: {create.error.message}\", role: \"alert\")\n            elif create.success:\n                p(\"Created: {create.data.name}\", role: \"status\")\n\n    style:\n        main { max-width: 48rem; margin: 2rem auto; padding: 1rem; font-family: system-ui; }\n        button { margin: 0.25rem; padding: 0.5rem; }\n        button:focus-visible { outline: 3px solid currentColor; outline-offset: 2px; }\n",
+      "support_files": [
+        "examples/web/data/server.py"
+      ],
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "00e82c582b8d4567138332c9c0ad556f3b4a151a4101d646ed6e31acc3f6e16b",
+        "exports": [
+          "App"
+        ],
+        "javascript_sha256": "9c8c5b60611b3cad0f04edcf79f12f40f435a94b061d0a40aebbc97f0b6244aa",
+        "source_sha256": "f254f984bbb8bf7498748af498fe525235c8bc970aa8cce748e4a5179606ee53"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_production.py",
+        "python scripts/web/measure.py --output /tmp/nexo-web-quality.json --check"
+      ],
+      "command": "python -m nexo web check --json examples/web/production/app.nexo",
+      "entry_file": "app.nexo",
+      "files": {
+        "Dockerfile": "# Pinned upstream image; update and scan deliberately before real deployment.\nFROM nginxinc/nginx-unprivileged@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03\nUSER 0:0\n# Signed Alpine fixes absent from the pinned upstream image (2026-11-02).\n# Optional session CA is a BuildKit secret, never persisted in a layer.\nRUN --mount=type=secret,id=proxy_ca \\\n    if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \\\n    apk add --no-cache brotli-libs=1.2.1-r0 curl=8.23.0-r0 libcurl=8.23.0-r0 \\\n        musl=1.2.6-r3 musl-utils=1.2.6-r3 zlib=1.3.2-r1\nCOPY --chmod=0444 nginx.conf /etc/nginx/nginx.conf\nCOPY dist/ /srv/nexo/\nRUN find /srv/nexo -type d -exec chmod 0555 {} +\nRUN find /srv/nexo -type f -exec chmod 0444 {} +\nUSER 101:101\nEXPOSE 8080\nHEALTHCHECK --interval=30s --timeout=3s --start-period=2s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1\nENTRYPOINT [\"nginx\"]\nCMD [\"-g\", \"daemon off;\"]\n",
+        "README.md": "# Static release example (experimental M5)\n\nInstall Nexo, Node 22.12/24+ and the pinned tooling. From the repository:\n\n```sh\nnpm ci --prefix nexo/web_tools\npython -m nexo web audit --security --accessibility --json examples/web/production/app.nexo\npython -m nexo web build examples/web/production/app.nexo --release -o examples/web/production/dist\npython -m nexo web preview examples/web/production/dist\n```\n\n`--release` minifies/tree-shakes with Vite and emits hashed JS/CSS, SRI HTML and\nnexo-manifest.json. A clean/dedicated output directory is required; unrelated\nfiles are never deleted. A subsequent build replaces all prior owned artifacts.\n`--sourcemap` composes original Nexo line mappings and embeds source; do not\npublish maps unless intended. Check and unoptimized builds still work without Node.\nThe preview verifies the manifest and serves only its listed assets on loopback;\nit is not production hosting. Fragment routes work without an SPA rewrite rule.\n\n## Local deployment test\n\nThe Dockerfile expects this directory's generated dist and nginx.conf:\n\n```sh\ndocker build -t nexo-static-example examples/web/production\ndocker run --rm --read-only --user 101:101 --cap-drop ALL \\\n  --security-opt no-new-privileges --tmpfs /tmp:rw,nosuid,nodev,noexec,size=32m,mode=1777 \\\n  -p 127.0.0.1:8080:8080 nexo-static-example\n# GET http://127.0.0.1:8080/healthz\n```\n\nThis example is static-only. No API proxy, sessions, auth or production TLS is\nprovided. Deploy behind a trusted HTTPS edge, redirect HTTP and set HSTS there.\nKeep HTML no-cache, hashed assets immutable, MIME/nosniff/CSP headers intact.\nThe sample enables gzip with Vary: Accept-Encoding; edge compression is also\nvalid; error responses remain no-store. Do not rewrite already-built asset bodies because SRI verifies them.\nUpload assets before switching HTML, retain previous hashed assets during a\nrolling rollout, and roll back the complete immutable build/image. A single\nstatic site usually does not need Kubernetes; choose managed hosting/CDN based\non budget, reliability and operations. Use Kubernetes only when the application's\nservice architecture justifies it. Backend /api endpoints need separately verified\nauthorization, CSRF, secure HttpOnly/SameSite cookies, rate limits and input validation.\nShield's bounded loopback ingress is not a replacement production server.\n\nThe image digest is pinned for reproducibility, not a promise of vulnerability\nfreedom. The Dockerfile also pins signed Alpine package fixes for Brotli,\ncurl/libcurl, musl and zlib following the 2026-11-02 scan. If a pinned package is\nremoved from the repository, deliberately update/revalidate the pin; do not silently\nfall back to unpinned packages. Scan/update images and dependencies before deployment. No cloud account,\npublic deployment, end-to-end TLS or production load qualification is implied by\na local container smoke test.\n\n## Reproduce local qualification\n\n```sh\npython -m pip install -e '.[dev]' playwright==1.56.0\npython -m playwright install --with-deps chromium\nnpm ci --prefix nexo/web_tools\nNEXO_WEB_REQUIRE_BROWSER=1 NEXO_WEB_REQUIRE_VITE=1 NEXO_WEB_REQUIRE_DOCKER=1 \\\n  NEXO_WEB_LOAD_REPORT=/tmp/nexo-web-load.json \\\n  python -m pytest tests/test_web_production.py tests/test_web_qualification.py -q\n```\n\nThe additional tests use a disposable verified local certificate and two hardened\nNginx containers to check TLS 1.2/1.3, HTTP redirect, HSTS and retained CSP. They\nalso exercise 160 loopback requests at concurrency 16, distinguish accepted and\nrate-limited responses, check burst recovery and restart the same immutable image.\nThe rate-limit fixture is intentionally small; aggregate responses/s include 429s\nand are not application throughput or an SLO. No public CA/domain renewal or\nbusiness flow is tested. Certificates and private keys are temporary test fixtures.\n\nFor another engine install `firefox` or `webkit` with Playwright, set\n`NEXO_WEB_BROWSER=firefox` (or `webkit`) and run the production suite with\n`-k 'real_browser and not nginx'` and required browser/Vite flags. Missing engines\nmust fail required checks. Browser jobs are configured in CI; consult their actual\nresults rather than inferring support from a configured job.\n\nThe Firefox job pins Playwright 1.62.0 (Firefox 153); Chromium/WebKit qualification\nuses 1.56.0. Its older Firefox 142 lacks the native `@scope` used by the compiler.\nMDN lists Firefox support from 146 and Chromium from 118; Safari 26 has known\nscoped input/textarea limitations, corrected in 26.4. These are CSS feature\nboundaries, not claims of complete framework/device qualification.\n\nThe Web production quality workflow downloads checksum-verified Trivy 0.76.1,\nbuilds this image, scans its saved archive and fails on HIGH/CRITICAL findings.\nIt uploads the JSON scan and load/asset reports even when a later gate fails.\nFor local scanning use the same pinned Trivy release and verified release checksum:\n\n```sh\ndocker save -o /tmp/nexo-web-image.tar nexo-static-example\ntrivy image --input /tmp/nexo-web-image.tar --scanners vuln \\\n  --severity HIGH,CRITICAL --exit-code 1 --format json \\\n  --output /tmp/nexo-web-image-scan.json --timeout 5m\n```\n\nDatabase download/scan errors are failures, never clean results. A zero-finding\nscan is dated evidence, not proof of vulnerability freedom. For managed builds\nbehind a trusted TLS-intercepting proxy, pass its CA with\n`docker build --secret id=proxy_ca,src=/path/to/ca.pem ...`; it is mounted only for\nthe package-install step, with certificate verification enabled, and is not copied\ninto the image. Registry credentials remain managed by Docker.\n\n## Operations and optional browser events\n\nNginx provides /healthz (static-server liveness only), rate limiting, and JSON\naccess logs with status/bytes/duration/method. URLs, queries, cookies, IPs and\nauthorization headers are omitted from access logs. Native critical diagnostics\non stderr may still contain context; restrict/redact them before external retention. Collect aggregate error rates and latency at\nyour edge/log platform, set workload-specific SLOs, test rollbacks and retain logs\naccording to the application's privacy requirements. Healthz does not prove the\nbackend or application business flow works.\n\n`web build --release --observe ...` opts in to local `nexo:web` CustomEvents.\nThere is no external collector, network upload or persistence. Details contain\nschema_version/kind plus phase, request operation, sanitized error code/status\nand rounded duration_ms when available; no URLs, route parameters, component/user\nnames, payloads, messages, stack traces or tokens. A trusted same-origin operations\nscript may subscribe before main.js runs. Consumers own listener cleanup and must\nnot treat client events as authoritative security or billing records. Default\nbuilds emit no such events. No unhandled-error capture or automatic analytics is\nimplemented. Test a real application and obtain appropriate consent before wiring\nany external monitoring destination.\n",
+        "nexo.toml": "[project]\nname = \"nexo-web-production-example\"\n",
+        "nginx.conf": "# Internal HTTP listener. Terminate TLS and enforce HTTPS/HSTS at the trusted edge.\nworker_processes 1;\npid /tmp/nginx.pid;\nerror_log /dev/stderr crit;\nevents { worker_connections 256; }\nhttp {\n    include /etc/nginx/mime.types;\n    default_type application/octet-stream;\n    server_tokens off;\n    gzip on;\n    gzip_vary on;\n    gzip_min_length 256;\n    gzip_comp_level 6;\n    gzip_types text/css text/javascript application/javascript application/json;\n    client_body_temp_path /tmp/client_body;\n    proxy_temp_path /tmp/proxy;\n    fastcgi_temp_path /tmp/fastcgi;\n    uwsgi_temp_path /tmp/uwsgi;\n    scgi_temp_path /tmp/scgi;\n    log_format nexo_json escape=json '{\"status\":$status,\"bytes\":$body_bytes_sent,\"duration\":$request_time,\"method\":\"$request_method\"}';\n    access_log /dev/stdout nexo_json;\n    limit_req_zone $binary_remote_addr zone=static_rate:10m rate=20r/s;\n    map \"$status:$uri\" $nexo_cache {\n        default \"no-store\";\n        ~^(200|304):/index\\.html$ \"no-cache\";\n        ~^(200|304):/assets/ \"public, max-age=31536000, immutable\";\n    }\n    server {\n        listen 8080;\n        server_name _;\n        root /srv/nexo;\n        index index.html;\n        client_max_body_size 64k;\n        limit_req zone=static_rate burst=40 nodelay;\n        limit_req_status 429;\n        add_header Cache-Control $nexo_cache always;\n        add_header Content-Security-Policy \"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'\" always;\n        add_header X-Content-Type-Options nosniff always;\n        add_header Referrer-Policy no-referrer always;\n        add_header Permissions-Policy \"camera=(), microphone=(), geolocation=()\" always;\n        location = /healthz { access_log off; default_type text/plain; return 200 \"ok\\n\"; }\n        location ~ /\\. { deny all; }\n        location / {\n            limit_except GET { deny all; }\n            try_files $uri $uri/ =404;\n        }\n    }\n}\n"
+      },
+      "id": "web-production",
+      "path": "examples/web/production/app.nexo",
+      "purpose": "Accessible release client and verified static Nginx deployment/operations example",
+      "scope": "Experimental Python browser M5. Release requires pinned Vite/Node; container and local verified TLS/burst/restart checks require Docker. Compiler evidence is separate from browser/deployment passes; public TLS/cloud and real backend remain unverified.",
+      "source": "use nexo.web\n\npub component App:\n    state count: int = 0\n\n    fn increment():\n        count += 1\n\n    view:\n        main:\n            h1(\"Nexo Web release\")\n            p(\"Count: {count}\", role: \"status\")\n            button(\"Increment\", on_click: increment)\n\n    style:\n        main {\n            max-width: 48rem;\n            margin: 2rem auto;\n            padding: 1rem;\n            color: #172033;\n            background: #ffffff;\n            font: 1.1rem/1.5 system-ui;\n        }\n        button { padding: 0.7rem 1rem; color: #ffffff; background: #0d47a1; border: 0; border-radius: 0.4rem; font: inherit; }\n        button:focus-visible { outline: 3px solid #0d47a1; outline-offset: 4px; }\n",
+      "support_files": [
+        "examples/web/production/Dockerfile",
+        "examples/web/production/nginx.conf",
+        "examples/web/production/README.md"
+      ],
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "118de12e42c56e7a1a51bd783083f5d4be52b53cb395f6a2e5f6f3edfc72ee2e",
+        "exports": [
+          "App"
+        ],
+        "javascript_sha256": "0dd84956c21e5e822ac2043f5b8e37f0ea7a52e66b5f65ab22924f319ff32236",
+        "source_sha256": "354b0d6e0df4ef75dd488ab53a9a51239b19a2b3cf70109e5f08b46a32942cbf"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_debt.py"
+      ],
+      "command": "python -m nexo web check --json examples/web/keyed/app.nexo",
+      "entry_file": "app.nexo",
+      "files": {},
+      "id": "web-keyed",
+      "path": "examples/web/keyed/app.nexo",
+      "purpose": "Typed immutable list state, stable keyed row ownership and explicit WebEvent input snapshots",
+      "scope": "Experimental post-M5 maintenance (D195). Complete self-contained browser project. Compiler checks are separate from browser keyed reorder/disposal/event/focus and compatible HMR tests.",
+      "source": "use nexo.web\n\ntype Product:\n    id: int\n    name: str\n\ncomponent Row(label: str):\n    state count: int = 0\n\n    fn increment():\n        count += 1\n\n    view:\n        div:\n            span(label)\n            button(\"Count: {count}\", on_click: increment)\n\npub component App:\n    state query: str = \"\"\n    state selected: bool = false\n    state products: list[Product] = [Product(id: 1, name: \"One\"), Product(id: 2, name: \"Two\")]\n\n    fn edit(event: WebEvent):\n        query = event.value\n\n    fn select(event: WebEvent):\n        selected = event.checked\n\n    fn reorder():\n        products = [Product(id: 2, name: \"Two updated\"), Product(id: 1, name: \"One\")]\n\n    fn remove():\n        products = [Product(id: 2, name: \"Two\")]\n\n    fn restore():\n        products = [Product(id: 1, name: \"One\"), Product(id: 2, name: \"Two\")]\n\n    view:\n        main:\n            h1(\"Keyed list and typed events\")\n            label(\"Filter\", for: \"query\")\n            input(id: \"query\", value: query, on_input: edit)\n            output(query, role: \"status\")\n            label(\"Selected\", for: \"selected\")\n            input(id: \"selected\", type: \"checkbox\", checked: selected, on_change: select)\n            p(\"Selected: {selected}\")\n            button(\"Reorder\", on_click: reorder)\n            button(\"Remove\", on_click: remove)\n            button(\"Restore\", on_click: restore)\n            ul:\n                for product in products key product.id:\n                    li(id: \"row-{product.id}\"):\n                        Row(label: product.name)\n\n    style:\n        main { padding: 24px; }\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "eb1ed477c1ba8bac3f4fcbd57ef5cc3d7ae88f88d030a8109a7202c3ce76e18c",
+        "exports": [
+          "App"
+        ],
+        "javascript_sha256": "2e90319ae3103162d6fe3a0ca619718634619f86bd9b5e676f955c2524ff66b4",
+        "source_sha256": "7a8919f7be0550abe1a58ae643cb14890ccbbe270ee24d183eb81ceba15951db"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_static.py"
+      ],
+      "command": "python -m nexo web build examples/web/static/app.nexo --static -o dist",
+      "entry_file": "app.nexo",
+      "files": {},
+      "id": "web-static",
+      "path": "examples/web/static/app.nexo",
+      "purpose": "Noninteractive scalar component HTML with scoped CSS and no JavaScript",
+      "scope": "Experimental M6a. Shared frontend compilation is checked here; associated tests verify static HTML output and browser execution with JavaScript disabled.",
+      "source": "use nexo.web\n\npub component Welcome:\n    state version: int = 6\n    view:\n        main:\n            Heading(label: \"Nexo Web static HTML\"):\n                p(\"An experimental M{version} page, readable without JavaScript.\")\n    style:\n        main { max-width: 48rem; margin: 3rem auto; padding: 1rem; }\n\ncomponent Heading(label: str):\n    view:\n        h1(label)\n        slot()\n",
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "8f02e3d598ee8c5e53e10cf1015b135fde496f7e212b53f75579496a6d58bfd6",
+        "exports": [
+          "Welcome"
+        ],
+        "javascript_sha256": "7fc6b911e57d523738e0cfcf0706202177de8adaa95590ab12a2c296188f2419",
+        "source_sha256": "a63d92515d625986c2d694a85add0109707fec408322508c5b1060ea2dc253b4"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_ssg.py"
+      ],
+      "command": "python -m nexo web build examples/web/ssg/app.nexo --static --routes examples/web/ssg/routes.json -o dist",
+      "entry_file": "app.nexo",
+      "files": {
+        "README.md": "# Experimental routed static site\n\nFrom the repository root:\n\n```sh\npython -m nexo web build examples/web/ssg/app.nexo --static \\\n    --routes examples/web/ssg/routes.json -o dist\npython -m nexo web preview dist\n```\n\nOpen the printed loopback URL. Home and Guide are generated automatically.\nMember URLs come from `routes.json`; add a concrete URL there before linking to\nit. Load `/members/7/` directly or use the normal navigation links. The pages work\nwith JavaScript disabled. Preview also serves the generated not-found page with\nHTTP 404.\n\nDeploy the contents of `dist` at an origin root on a static host supporting\ndirectory index files. Configure that host's error document to `404.html` with\nHTTP 404. Deployment below a subdirectory, async data and hydration are outside\nthis example. See `docs/rfc/0003-web-routed-ssg.md` for the complete bounds.\n",
+        "routes.json": "[\"/members/7\", \"/members/9223372036854775807\"]\n"
+      },
+      "id": "web-ssg",
+      "path": "examples/web/ssg/app.nexo",
+      "purpose": "Finite routed static generation with nested layouts, typed parameters, normal links and page metadata",
+      "scope": "Experimental M6b, origin-root hosting and portable slug paths only. Shared frontend compilation is checked here; associated tests verify generated documents, output ownership and no-JavaScript navigation. No hydration, async server data or production qualification.",
+      "source": "use nexo.web\n\npub layout Shell:\n    view:\n        header:\n            nav:\n                a(\"Home\", href: \"/\")\n                a(\"Guide\", href: \"/guide\")\n                a(\"Member 7\", href: \"/members/7\")\n        slot()\n    style:\n        header { padding: 1rem; background: #edf4ff; }\n        nav { display: flex; gap: 1rem; }\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Nexo static site\"\n    description = \"Pages generated at build time, with no JavaScript.\"\n    view:\n        main:\n            h1(\"Nexo routed static generation\")\n            p(\"Follow the links or load a nested URL directly.\")\n\npub page Guide:\n    path = \"/guide\"\n    layout = Shell\n    title = \"Static site guide\"\n    view:\n        main:\n            h1(\"Guide\")\n            p(\"Each page has its own generated HTML document.\")\n\npub page Member(id: int):\n    path = \"/members/{id}\"\n    layout = Shell\n    title = \"Member {id}\"\n    description = \"The profile for member {id}.\"\n    state initial: int = id\n    view:\n        main:\n            h1(\"Member {initial}\")\n            p(\"This route's parameter was checked at build time.\")\n\npub page NotFound:\n    not_found = true\n    layout = Shell\n    title = \"Page not found\"\n    view:\n        main:\n            h1(\"Page not found\")\n",
+      "support_files": [
+        "examples/web/ssg/routes.json",
+        "examples/web/ssg/README.md"
+      ],
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "8a6e5d05a84378fb58ea8682a3f231008d15b924f6f898c4a304009e6800e2d0",
+        "exports": [
+          "mountApp"
+        ],
+        "javascript_sha256": "7f3b5aa29623da90076b492189a934f23046b3a02a5ba27c24cc494a67b582b2",
+        "source_sha256": "3cf456bf9b81c5d5d61873a95ea2f421a077431feaa60c57510ae5784689ba2b"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_ssr.py"
+      ],
+      "command": "python -m nexo web serve examples/web/ssr/app.nexo --port 4174",
+      "entry_file": "app.nexo",
+      "files": {
+        "README.md": "# Experimental request-time HTML\n\nFrom the repository root:\n\n```sh\npython -m nexo web serve examples/web/ssr/app.nexo --port 4174\n```\n\nOpen the printed loopback URL. Load `/members/123/` directly and follow Next member.\nThe server renders any valid int64 member URL on demand; no routes JSON or browser\nJavaScript is needed. A value whose Next member calculation overflows returns the\nexplicit error page with HTTP 500. Unknown typed routes use the not-found page.\n\nThe source is compiled once on startup; restart to reload. This loopback reference\nrunner is for local development. To integrate with a synchronous WSGI host, create\n`SSRApplication.from_file(\"examples/web/ssr/app.nexo\")` from `nexo.web_ssr` as the\nhost's application callable. Supply authentication, request limits, host checks,\nTLS and lifecycle management separately. No production hosting is supplied here.\n\nOnly scalar pages/layouts/components are supported: no actions/events, async data,\ncontext or hydration. Deploy at an origin root and use portable ASCII route slugs.\nSee `docs/rfc/0004-web-request-time-ssr.md` for the complete interface and bounds.\n"
+      },
+      "id": "web-ssr",
+      "path": "examples/web/ssr/app.nexo",
+      "purpose": "Compile-once request-time scalar HTML with WSGI, on-demand typed routes and explicit HTTP error pages",
+      "scope": "Experimental M6c scalar WSGI rendering. Shared frontend compilation is checked here; associated tests verify request isolation, HTTP status behavior and no-JavaScript navigation. No server data loaders, context, hydration, backend authentication or production hosting.",
+      "source": "use nexo.web\n\npub layout Shell:\n    view:\n        header:\n            a(\"Home\", href: \"/\")\n            a(\"Member 7\", href: \"/members/7\")\n        slot()\n    style:\n        header { display: flex; gap: 1rem; padding: 1rem; background: #edf4ff; }\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Nexo request-time rendering\"\n    view:\n        main:\n            h1(\"Request-time HTML\")\n            p(\"Load any typed member URL without enumerating it at build time.\")\n\npub page Member(id: int):\n    path = \"/members/{id}\"\n    layout = Shell\n    title = \"Member {id}\"\n    description = \"Request-time profile for member {id}.\"\n    state initial: int = id\n    view:\n        main:\n            h1(\"Member {initial}\")\n            a(\"Next member\", href: \"/members/{id + 1}\")\n\npub page NotFound:\n    not_found = true\n    layout = Shell\n    title = \"Page not found\"\n    view:\n        main:\n            h1(\"Page not found\")\n\npub page Error:\n    error = true\n    title = \"Rendering error\"\n    view:\n        main:\n            h1(\"Unable to render this page\")\n",
+      "support_files": [
+        "examples/web/ssr/README.md"
+      ],
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "6369b7a26de8e485bafd69573b345d92bb81a8be55d83b0b3c3c6905eea7f61f",
+        "exports": [
+          "mountApp"
+        ],
+        "javascript_sha256": "3322483862b86fa5dbf80615da5309ae8e9a1dbed64ffd941168a1e647b0c415",
+        "source_sha256": "252444f830534515f5ed9f5ecb917a56a114fee764990da058c1a7b0c9d16d7e"
+      }
+    },
+    {
+      "associated_tests": [
+        "tests/test_web_hydration.py"
+      ],
+      "command": "python -m nexo web serve examples/web/hydration/app.nexo --hydrate --port 4174",
+      "entry_file": "app.nexo",
+      "files": {
+        "README.md": "# Experimental fixed-tree hydration\n\n```sh\npython -m nexo web serve examples/web/hydration/app.nexo --hydrate --port 4174\n```\n\nLoad `/counter/7/`. The heading is already in the server HTML; the external module\nvalidates the tree, attaches Increment and Label handlers, and keeps existing DOM\nnodes. Native navigation loads a fresh server document. With JavaScript disabled,\nthe page remains readable and navigation works, while action controls are inert.\n\nThe first slice supports scalar fixed trees only: no conditions/lists, context,\nasync data, server loaders or navigation actions. Pre-hydration input edits remain\nin the control until the next explicit input/change assignment. Mismatched markup\nstays in place with no attached behavior; no automatic client remount is attempted.\n\nTo integrate with a synchronous WSGI host, create\n`SSRApplication.from_file(\"app.nexo\", hydrate=True)` from `nexo.web_ssr`. Bundles and\nroute props are public. The loopback runner is for local development; production\nhosting/authentication/TLS/limits remain host responsibilities. See RFC-0005 for\nstate transfer, mismatch and lifecycle guarantees.\n"
+      },
+      "id": "web-hydration",
+      "path": "examples/web/hydration/app.nexo",
+      "purpose": "Opt-in fixed-tree hydration retaining server DOM while attaching scalar actions and typed input events",
+      "scope": "Experimental M6d. Shared browser frontend compilation is checked here; associated tests prove existing-node attachment, mismatch rejection, typed input and disposal. No structural hydration, async data, server-state loaders or production qualification.",
+      "source": "use nexo.web\n\npub layout Shell:\n    view:\n        header:\n            a(\"Home\", href: \"/\")\n            a(\"Counter 7\", href: \"/counter/7\")\n        slot()\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Hydrated Nexo HTML\"\n    view:\n        main:\n            h1(\"HTML first, client behavior after validation\")\n            Counter(start: 0)\n\npub page CounterPage(start: int):\n    path = \"/counter/{start}\"\n    layout = Shell\n    title = \"Counter {start}\"\n    view:\n        main:\n            Counter(start: start)\n\ncomponent Counter(start: int):\n    state count: int = start\n    state label: str = \"Initial\"\n    fn increment():\n        count += 1\n    fn rename(event: WebEvent):\n        label = event.value\n    view:\n        section:\n            h2(\"Count: {count}\")\n            button(\"Increment\", on_click: increment)\n            input(value: label, aria_label: \"Label\", on_input: rename)\n            p(\"Label: {label}\")\n    style:\n        section { padding: 1rem; border: 1px solid #789; }\n",
+      "support_files": [
+        "examples/web/hydration/README.md"
+      ],
+      "verification": {
+        "browser_execution": "Run associated tests; not asserted by this generator",
+        "compilation": "Passed",
+        "css_sha256": "79a5af2dadedd8bddad156df83f3d0da4795efb6186058c5682ea7465a6b3351",
+        "exports": [
+          "mountApp"
+        ],
+        "javascript_sha256": "41ebac9d720b7784a523adef6258ffd5717ba4c780d558986f39ea2adc4fdb1f",
+        "source_sha256": "cef9e2a4c86878d484cc1440387045c65e8700354d5b7c922a278afa36e4c13a"
+      }
+    }
+  ],
+  "maturity_definitions": {
+    "documented-not-implemented": "Design only; not an available API",
+    "experimental": "Present but limited; do not infer parity",
+    "implemented-and-tested": "Recorded local tooling results for the stated backend and scope",
+    "unsupported-or-unknown": "No verified executable evidence"
+  },
+  "revision": "bde1b85d3a054adba467cdee9df846262084194c9d6be15729a6aedca65eff18",
+  "schema_version": 1
+}

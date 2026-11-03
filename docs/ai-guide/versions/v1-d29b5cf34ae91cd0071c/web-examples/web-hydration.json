@@ -1,0 +1,32 @@
+{
+  "example": {
+    "associated_tests": [
+      "tests/test_web_hydration.py"
+    ],
+    "command": "python -m nexo web serve examples/web/hydration/app.nexo --hydrate --port 4174",
+    "entry_file": "app.nexo",
+    "files": {
+      "README.md": "# Experimental fixed-tree hydration\n\n```sh\npython -m nexo web serve examples/web/hydration/app.nexo --hydrate --port 4174\n```\n\nLoad `/counter/7/`. The heading is already in the server HTML; the external module\nvalidates the tree, attaches Increment and Label handlers, and keeps existing DOM\nnodes. Native navigation loads a fresh server document. With JavaScript disabled,\nthe page remains readable and navigation works, while action controls are inert.\n\nThis example exercises fixed scalar trees. Conditional regions are also supported;\nsee the sibling conditional-hydration example and RFC-0006. Lists, context, async\ndata, server loaders and navigation actions remain unsupported. Pre-hydration input edits remain\nin the control until the next explicit input/change assignment. Mismatched markup\nstays in place with no attached behavior; no automatic client remount is attempted.\n\nTo integrate with a synchronous WSGI host, create\n`SSRApplication.from_file(\"app.nexo\", hydrate=True)` from `nexo.web_ssr`. Bundles and\nroute props are public. The loopback runner is for local development; production\nhosting/authentication/TLS/limits remain host responsibilities. See RFC-0005 for\nstate transfer, mismatch and lifecycle guarantees.\n"
+    },
+    "id": "web-hydration",
+    "path": "examples/web/hydration/app.nexo",
+    "purpose": "Opt-in fixed-tree hydration retaining server DOM while attaching scalar actions and typed input events",
+    "scope": "Fixed-tree M6d demonstration preserved under scalar/conditional hydration. Shared browser frontend compilation is checked here; associated tests prove existing-node attachment, mismatch rejection, typed input and disposal. No list hydration, async data, server-state loaders or production qualification.",
+    "source": "use nexo.web\n\npub layout Shell:\n    view:\n        header:\n            a(\"Home\", href: \"/\")\n            a(\"Counter 7\", href: \"/counter/7\")\n        slot()\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Hydrated Nexo HTML\"\n    view:\n        main:\n            h1(\"HTML first, client behavior after validation\")\n            Counter(start: 0)\n\npub page CounterPage(start: int):\n    path = \"/counter/{start}\"\n    layout = Shell\n    title = \"Counter {start}\"\n    view:\n        main:\n            Counter(start: start)\n\ncomponent Counter(start: int):\n    state count: int = start\n    state label: str = \"Initial\"\n    fn increment():\n        count += 1\n    fn rename(event: WebEvent):\n        label = event.value\n    view:\n        section:\n            h2(\"Count: {count}\")\n            button(\"Increment\", on_click: increment)\n            input(value: label, aria_label: \"Label\", on_input: rename)\n            p(\"Label: {label}\")\n    style:\n        section { padding: 1rem; border: 1px solid #789; }\n",
+    "support_files": [
+      "examples/web/hydration/README.md"
+    ],
+    "verification": {
+      "browser_execution": "Run associated tests; not asserted by this generator",
+      "compilation": "Passed",
+      "css_sha256": "79a5af2dadedd8bddad156df83f3d0da4795efb6186058c5682ea7465a6b3351",
+      "exports": [
+        "mountApp"
+      ],
+      "javascript_sha256": "41ebac9d720b7784a523adef6258ffd5717ba4c780d558986f39ea2adc4fdb1f",
+      "source_sha256": "cef9e2a4c86878d484cc1440387045c65e8700354d5b7c922a278afa36e4c13a"
+    }
+  },
+  "revision": "d29b5cf34ae91cd0071c2a6d4a330b55b33c9a9ee4cd25ec3397c458ac32707d",
+  "schema_version": 1
+}

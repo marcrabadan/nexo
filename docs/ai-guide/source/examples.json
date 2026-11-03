@@ -128,7 +128,7 @@
         "tests/test_web_frontend.py",
         "tests/test_web_tooling.py"
       ],
-      "scope": "Experimental Python browser compiler M1–M4; same Counter source as web new scaffold. Compiler evidence is separate from mandatory Chromium/Vite HMR tests."
+      "scope": "Experimental Python browser compiler M1\u2013M4; same Counter source as web new scaffold. Compiler evidence is separate from mandatory Chromium/Vite HMR tests."
     },
     {
       "id": "web-composition",
@@ -178,6 +178,84 @@
         "tests/test_web_debt.py"
       ],
       "scope": "Experimental post-M5 maintenance (D195). Complete self-contained browser project. Compiler checks are separate from browser keyed reorder/disposal/event/focus and compatible HMR tests."
+    },
+    {
+      "id": "web-static",
+      "path": "examples/web/static/app.nexo",
+      "purpose": "Noninteractive scalar component HTML with scoped CSS and no JavaScript",
+      "command": "python -m nexo web build examples/web/static/app.nexo --static -o dist",
+      "associated_tests": [
+        "tests/test_web_static.py"
+      ],
+      "scope": "Experimental M6a. Shared frontend compilation is checked here; associated tests verify static HTML output and browser execution with JavaScript disabled."
+    },
+    {
+      "id": "web-ssg",
+      "path": "examples/web/ssg/app.nexo",
+      "purpose": "Finite routed static generation with nested layouts, typed parameters, normal links and page metadata",
+      "command": "python -m nexo web build examples/web/ssg/app.nexo --static --routes examples/web/ssg/routes.json -o dist",
+      "associated_tests": [
+        "tests/test_web_ssg.py"
+      ],
+      "support_files": [
+        "examples/web/ssg/routes.json",
+        "examples/web/ssg/README.md"
+      ],
+      "scope": "Experimental M6b, origin-root hosting and portable slug paths only. Shared frontend compilation is checked here; associated tests verify generated documents, output ownership and no-JavaScript navigation. No hydration, async server data or production qualification."
+    },
+    {
+      "id": "web-ssr",
+      "path": "examples/web/ssr/app.nexo",
+      "purpose": "Compile-once request-time scalar HTML with WSGI, on-demand typed routes and explicit HTTP error pages",
+      "command": "python -m nexo web serve examples/web/ssr/app.nexo --port 4174",
+      "associated_tests": [
+        "tests/test_web_ssr.py"
+      ],
+      "support_files": [
+        "examples/web/ssr/README.md"
+      ],
+      "scope": "Experimental M6c scalar WSGI rendering. Shared frontend compilation is checked here; associated tests verify request isolation, HTTP status behavior and no-JavaScript navigation. No server data loaders, context, hydration, backend authentication or production hosting."
+    },
+    {
+      "id": "web-hydration",
+      "path": "examples/web/hydration/app.nexo",
+      "purpose": "Opt-in fixed-tree hydration retaining server DOM while attaching scalar actions and typed input events",
+      "command": "python -m nexo web serve examples/web/hydration/app.nexo --hydrate --port 4174",
+      "associated_tests": [
+        "tests/test_web_hydration.py"
+      ],
+      "support_files": [
+        "examples/web/hydration/README.md"
+      ],
+      "scope": "Fixed-tree M6d demonstration preserved under scalar/conditional hydration. Shared browser frontend compilation is checked here; associated tests prove existing-node attachment, mismatch rejection, typed input and disposal. No list hydration, async data, server-state loaders or production qualification."
+    },
+    {
+      "id": "web-conditional-hydration",
+      "path": "examples/web/conditional-hydration/app.nexo",
+      "purpose": "Conditional SSR hydration with nested branch lifetimes, reactive child props and projected caller slots",
+      "command": "python -m nexo web serve examples/web/conditional-hydration/app.nexo --hydrate --port 4174",
+      "associated_tests": [
+        "tests/test_web_conditional_hydration.py"
+      ],
+      "support_files": [
+        "examples/web/conditional-hydration/README.md"
+      ],
+      "scope": "Experimental M6e conditional hydration. Shared browser compilation is checked here; associated browser tests prove initial claims, bounded branch transitions, disposal and marker guards. No lists/keyed hydration, context, async server state or production qualification."
+    },
+    {
+      "id": "web-m6",
+      "path": "examples/web/m6/app.nexo",
+      "purpose": "Integrated experimental M6: trusted async SSR state, list/context hydration, isolated WASM and public SSE",
+      "command": "python examples/web/m6/server.py",
+      "associated_tests": [
+        "tests/test_web_m6_completion.py"
+      ],
+      "support_files": [
+        "examples/web/m6/server.py",
+        "examples/web/m6/host.js",
+        "examples/web/m6/README.md"
+      ],
+      "scope": "Run the trusted Python host for all adapters. Frontend compilation checks source; real completion tests verify the host, offline PWA separately, lifetime and typed boundary behavior. No production qualification."
     }
   ]
 }

@@ -1,0 +1,45 @@
+use nexo.web
+
+pub layout Shell:
+    view:
+        header:
+            a("Home", href: "/")
+            a("Member 7", href: "/members/7")
+        slot()
+    style:
+        header { display: flex; gap: 1rem; padding: 1rem; background: #edf4ff; }
+
+pub page Home:
+    path = "/"
+    layout = Shell
+    title = "Nexo request-time rendering"
+    view:
+        main:
+            h1("Request-time HTML")
+            p("Load any typed member URL without enumerating it at build time.")
+
+pub page Member(id: int):
+    path = "/members/{id}"
+    layout = Shell
+    title = "Member {id}"
+    description = "Request-time profile for member {id}."
+    state initial: int = id
+    view:
+        main:
+            h1("Member {initial}")
+            a("Next member", href: "/members/{id + 1}")
+
+pub page NotFound:
+    not_found = true
+    layout = Shell
+    title = "Page not found"
+    view:
+        main:
+            h1("Page not found")
+
+pub page Error:
+    error = true
+    title = "Rendering error"
+    view:
+        main:
+            h1("Unable to render this page")

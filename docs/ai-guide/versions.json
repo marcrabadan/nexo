@@ -1,5 +1,5 @@
 {
-  "current": "f0fd6a9f546ae5540a867c29e10d0b7c44b21062338c6746475f98587c53ae93",
+  "current": "d29b5cf34ae91cd0071c2a6d4a330b55b33c9a9ee4cd25ec3397c458ac32707d",
   "versions": [
     {
       "bundle": "ai-guide/versions/v1-0b6e1e8c8bb3b1f2588a",
@@ -32,6 +32,16 @@
       "revision": "1eb85cd027c22bf351857ec9b62d656182420cdc5523b6df48eb6cc57e30824e"
     },
     {
+      "bundle": "ai-guide/versions/v1-2136611fe35822c23af0",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "2136611fe35822c23af0fcdcbae4222a77616e8b1d562d0bae848697bb56de66"
+    },
+    {
       "bundle": "ai-guide/versions/v1-26c42a4a0aa7bfd87104",
       "profiles": [
         "agentic",
@@ -61,6 +71,16 @@
       "revision": "2f77e550e3425bce27a330e5aae25aaca02440a6aea92dd077859bf8700310cb"
     },
     {
+      "bundle": "ai-guide/versions/v1-35ec088e484d1fb805d3",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "35ec088e484d1fb805d339ef1c3f998e5a405cafc9e6d172c206aab083958e1b"
+    },
+    {
       "bundle": "ai-guide/versions/v1-38e671ccbcfdd43ed340",
       "profiles": [
         "agentic",
@@ -69,6 +89,36 @@
         "developer"
       ],
       "revision": "38e671ccbcfdd43ed34036e86fe61ccac51bca21fe50b73a97140fe99885c64b"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-39e9bae4f82fa32c17a9",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "39e9bae4f82fa32c17a956de9125a4f07a5699225b3c6339809a184015d36397"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-506c7df83ffa914c9efb",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "506c7df83ffa914c9efb88e0788890d0f49e05508b8e47ca4bcb1f1b7ce4edc7"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-5483f5c49153490c37b4",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "5483f5c49153490c37b40938ba0e7d216624b5c97899afcbd31402c3bdd386a3"
     },
     {
       "bundle": "ai-guide/versions/v1-5b23dc17ba641a958056",
@@ -140,6 +190,16 @@
       "revision": "9dfcc33b38127169adfb0ed0cab3dd91c7ff6d11f13b65315c9520534ef03656"
     },
     {
+      "bundle": "ai-guide/versions/v1-a086e3b0e7c817e3b13d",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "a086e3b0e7c817e3b13d115ea8e3c0542bbff43eef88988bdde2dfb01be0dac5"
+    },
+    {
       "bundle": "ai-guide/versions/v1-a88c2cfb35a816524ca3",
       "profiles": [
         "agentic",
@@ -170,6 +230,16 @@
       "revision": "bb4af04aa8978df30670270b1d3e872f723bcb089c19f3ed0a707bc450d9666f"
     },
     {
+      "bundle": "ai-guide/versions/v1-bde1b85d3a054adba467",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "bde1b85d3a054adba467cdee9df846262084194c9d6be15729a6aedca65eff18"
+    },
+    {
       "bundle": "ai-guide/versions/v1-cacd18a59e3bac66fa56",
       "profiles": [
         "agentic",
@@ -190,6 +260,26 @@
       "revision": "d041ce38de121eeff713197ef9d6edebcbb5931922c6efe4fd5284257cf9542e"
     },
     {
+      "bundle": "ai-guide/versions/v1-d28245b1cb3d6cad0609",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "d28245b1cb3d6cad06096aea402e6f306e4f2e57a4631387708578eb519b0722"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-d29b5cf34ae91cd0071c",
+      "profiles": [
+        "beginner",
+        "developer",
+        "architect",
+        "agentic"
+      ],
+      "revision": "d29b5cf34ae91cd0071c2a6d4a330b55b33c9a9ee4cd25ec3397c458ac32707d"
+    },
+    {
       "bundle": "ai-guide/versions/v1-d5b4a50929241951e295",
       "profiles": [
         "agentic",
@@ -198,6 +288,16 @@
         "developer"
       ],
       "revision": "d5b4a50929241951e295a753f4db22843fa27d9275aaad9c673ae035783a6754"
+    },
+    {
+      "bundle": "ai-guide/versions/v1-d712170f7fec8428d685",
+      "profiles": [
+        "agentic",
+        "architect",
+        "beginner",
+        "developer"
+      ],
+      "revision": "d712170f7fec8428d685b977eafcb17a3e2d84ad93ece29c898f5695e2d9857d"
     },
     {
       "bundle": "ai-guide/versions/v1-d8d5873d21d72ae93b89",
@@ -242,10 +342,10 @@
     {
       "bundle": "ai-guide/versions/v1-f0fd6a9f546ae5540a86",
       "profiles": [
-        "beginner",
-        "developer",
+        "agentic",
         "architect",
-        "agentic"
+        "beginner",
+        "developer"
       ],
       "revision": "f0fd6a9f546ae5540a867c29e10d0b7c44b21062338c6746475f98587c53ae93"
     },

@@ -1,0 +1,32 @@
+{
+  "example": {
+    "associated_tests": [
+      "tests/test_web_ssr.py"
+    ],
+    "command": "python -m nexo web serve examples/web/ssr/app.nexo --port 4174",
+    "entry_file": "app.nexo",
+    "files": {
+      "README.md": "# Experimental request-time HTML\n\nFrom the repository root:\n\n```sh\npython -m nexo web serve examples/web/ssr/app.nexo --port 4174\n```\n\nOpen the printed loopback URL. Load `/members/123/` directly and follow Next member.\nThe server renders any valid int64 member URL on demand; no routes JSON or browser\nJavaScript is needed. A value whose Next member calculation overflows returns the\nexplicit error page with HTTP 500. Unknown typed routes use the not-found page.\n\nThe source is compiled once on startup; restart to reload. This loopback reference\nrunner is for local development. To integrate with a synchronous WSGI host, create\n`SSRApplication.from_file(\"examples/web/ssr/app.nexo\")` from `nexo.web_ssr` as the\nhost's application callable. Supply authentication, request limits, host checks,\nTLS and lifecycle management separately. No production hosting is supplied here.\n\nOnly scalar pages/layouts/components are supported: no actions/events, async data,\ncontext or hydration. Deploy at an origin root and use portable ASCII route slugs.\nSee `docs/rfc/0004-web-request-time-ssr.md` for the complete interface and bounds.\n"
+    },
+    "id": "web-ssr",
+    "path": "examples/web/ssr/app.nexo",
+    "purpose": "Compile-once request-time scalar HTML with WSGI, on-demand typed routes and explicit HTTP error pages",
+    "scope": "Experimental M6c scalar WSGI rendering. Shared frontend compilation is checked here; associated tests verify request isolation, HTTP status behavior and no-JavaScript navigation. No server data loaders, context, hydration, backend authentication or production hosting.",
+    "source": "use nexo.web\n\npub layout Shell:\n    view:\n        header:\n            a(\"Home\", href: \"/\")\n            a(\"Member 7\", href: \"/members/7\")\n        slot()\n    style:\n        header { display: flex; gap: 1rem; padding: 1rem; background: #edf4ff; }\n\npub page Home:\n    path = \"/\"\n    layout = Shell\n    title = \"Nexo request-time rendering\"\n    view:\n        main:\n            h1(\"Request-time HTML\")\n            p(\"Load any typed member URL without enumerating it at build time.\")\n\npub page Member(id: int):\n    path = \"/members/{id}\"\n    layout = Shell\n    title = \"Member {id}\"\n    description = \"Request-time profile for member {id}.\"\n    state initial: int = id\n    view:\n        main:\n            h1(\"Member {initial}\")\n            a(\"Next member\", href: \"/members/{id + 1}\")\n\npub page NotFound:\n    not_found = true\n    layout = Shell\n    title = \"Page not found\"\n    view:\n        main:\n            h1(\"Page not found\")\n\npub page Error:\n    error = true\n    title = \"Rendering error\"\n    view:\n        main:\n            h1(\"Unable to render this page\")\n",
+    "support_files": [
+      "examples/web/ssr/README.md"
+    ],
+    "verification": {
+      "browser_execution": "Run associated tests; not asserted by this generator",
+      "compilation": "Passed",
+      "css_sha256": "6369b7a26de8e485bafd69573b345d92bb81a8be55d83b0b3c3c6905eea7f61f",
+      "exports": [
+        "mountApp"
+      ],
+      "javascript_sha256": "3322483862b86fa5dbf80615da5309ae8e9a1dbed64ffd941168a1e647b0c415",
+      "source_sha256": "252444f830534515f5ed9f5ecb917a56a114fee764990da058c1a7b0c9d16d7e"
+    }
+  },
+  "revision": "bde1b85d3a054adba467cdee9df846262084194c9d6be15729a6aedca65eff18",
+  "schema_version": 1
+}

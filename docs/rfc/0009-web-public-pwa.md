@@ -1,0 +1,9 @@
+# RFC-0009: Public static PWA
+
+Status: implemented experimental M6.
+
+build --static --pwa explicitly opts generated public static output into a manifest, icon, external registration module and root service worker. It also works with --routes. Plain builds remain unchanged. Only generated allowlisted GET assets and canonical pages enter the versioned cache; precache fetches require SHA384 integrity. Failed installation removes a newly created candidate cache. A worker reinstallation that references an already existing cache must preserve it on failure: the active worker can still depend on that same cache version. Every fetched resource remains integrity-checked, so writes to a reused version contain the same expected asset bytes. Activation removes only this application's cache prefix.
+
+Known routes work offline; unknown navigation returns the generated 404 with status 404. API paths, query-bearing URLs, other origins and SSR responses are never added dynamically. This mode requires root hosting and HTTPS or loopback, service-worker support and public, nonpersonal output. It is not an authenticated/offline mutation queue. An OS install prompt is platform-dependent and not guaranteed. Example commands and a real offline browser test are in examples/web/m6/README.md and tests/test_web_m6_completion.py.
+
+Lifecycle qualification is required in the strict M6 gate: successful replacement retires only old application caches, unrelated caches survive, corrupt/missing candidate resources leave the previous worker and offline pages intact, same-generation failures cannot delete the live cache, rollback reinstalls the prior public release, and an initial failed installation can recover. These tests use a real origin outage after each transition. See `tests/test_web_pwa_lifecycle.py` and `docs/web/stability-pwa-validation.md`.

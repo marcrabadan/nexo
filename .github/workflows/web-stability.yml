@@ -1,0 +1,31 @@
+name: Web stability qualification
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  m6:
+    name: M6 strict (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # Firefox >=146 is required for native CSS @scope.
+      - run: python -m pip install -e '.[dev]' playwright==1.62.0
+      - run: python -m playwright install --with-deps ${{ matrix.browser }}
+      - name: Evidence gate regressions
+        run: python -m pytest tests/test_web_stability_gate.py -q
+      - name: M6 no-skip qualification
+        run: python scripts/web/stability.py --browser ${{ matrix.browser }} --output /tmp/web-stability
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-stability-${{ matrix.browser }}
+          path: /tmp/web-stability/
+          if-no-files-found: error

@@ -1529,14 +1529,14 @@ The Python CLI's `nexo web check|build` selects the bounded browser grammar in
 scoped CSS `style`. The exact acceptance program is `examples/web/counter.nexo`.
 This does not extend the core grammar in section 24 or the server interpreter.
 `nexo build --target web` remains WASI (D175). Pages/layouts/context and typed scalar props are available in experimental M2
-(see the amendment below). Typed browser APIs are available in experimental M3; M4 adds optional Vite/HMR and browser tools; SSR remains proposed. Browser compilation through the
+(see the amendment below). Typed browser APIs are available in experimental M3; M4 adds optional Vite/HMR and browser tools; M6 SSR is described below. Browser compilation through the
 Rust driver is not implemented. The RFC is the source of truth for this isolated
 experimental grammar until it is incorporated into a future language edition.
 
 Experimental browser M2 (D191) extends section 28 through the implemented M2
 amendment of RFC-0001: typed scalar props, qualified project component/CSS imports,
 lexical slot(), pages with typed fragment routes, persistent layouts and owned
-provide/inject context. M3 (D192) adds typed async load/mutation, JSON records/lists and conditional snapshot views; M4 adds optional Vite/HMR and browser tools; SSR remains proposed.
+provide/inject context. M3 (D192) adds typed async load/mutation, JSON records/lists and conditional snapshot views; M4 adds optional Vite/HMR and browser tools; M6 SSR is described below.
 The Python browser domain remains separate from the core grammar and D175 WASI.
 
 Experimental browser M3 is specified by RFC-0001 edition 3: same-origin async
@@ -1557,4 +1557,15 @@ checks, fixture byte/DOM/axe quality gates, verified local static Nginx deployme
 and opt-in allowlisted local observations. Production authorization/TLS/load and
 accessibility certification remain workload-specific; this is not SSR/SSG. See
 [M5 release semantics and evidence](rfc/0001-nexo-web.md#m5). Core Rust/WASI remain
-unchanged; M6 is not implemented.
+unchanged.
+
+Experimental browser M6 (D196–D205), RFC-0001 edition 12 and RFC-0002–0011,
+implements static HTML/routed SSG, request-time WSGI SSR, typed structural
+hydration with conditions/lists/scoped context, trusted async Python initial-state
+loaders, explicit public offline PWA generation, import-free numeric WASM Workers
+and typed owned SSE snapshot subscriptions. These are bounded experimental
+interfaces, separate from core/server language execution and D175 WASI. Run
+`python examples/web/m6/server.py` for the integrated host; public offline output
+uses `nexo web build ... --static --pwa`. See the RFC completion checklist and
+[validation and platform limits](web/validation-m6.md). No production hosting,
+authentication/TLS, streaming SSR or durable delivery is implied.

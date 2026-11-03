@@ -77,7 +77,7 @@ def test_css_queries_and_tokens():
 
 
 @pytest.fixture
-def browser():
+def browser(request):
     # Missing browser/dependency is an explicit skip, never simulated browser success.
     required = os.environ.get('NEXO_WEB_REQUIRE_BROWSER') == '1'
     try:
@@ -98,6 +98,7 @@ def browser():
             if required:
                 pytest.fail(f'{engine} is required: {error}')
             pytest.skip(f'{engine} unavailable: {error}')
+        request.node.user_properties.append(("browser_version", f"{engine} {browser.version}"))
         yield browser
         browser.close()
 
