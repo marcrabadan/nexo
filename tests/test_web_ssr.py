@@ -192,7 +192,9 @@ def test_real_browser_ssr_dynamic_navigation_without_javascript(tmp_path, browse
             assert page.title() == 'Member 12000'
             assert page.locator('h1').inner_text() == 'Member 12000'
             assert page.locator('header').evaluate('(el) => getComputedStyle(el).backgroundColor') == 'rgb(237, 244, 255)'
-            page.get_by_role('link', name='Next member').click()
+            # WebKit can stall its implicit load wait with JavaScript disabled.
+            page.get_by_role('link', name='Next member').click(no_wait_after=True)
+            page.wait_for_url(base + '/members/12001/', wait_until='domcontentloaded')
             assert page.url == base + '/members/12001/'
             assert page.title() == 'Member 12001'
             page.go_back()
@@ -202,3 +204,27 @@ def test_real_browser_ssr_dynamic_navigation_without_javascript(tmp_path, browse
             assert not scripts and page.locator('script').count() == 0
         finally:
             context.close()
+
+
+def test_idle_preconnection_does_not_block_requests(tmp_path):
+    server = local_server(project(tmp_path), 0)
+    accepted = threading.Event()
+    original = server.get_request
+
+    def get_request():
+        connection = original()
+        accepted.set()
+        return connection
+
+    server.get_request = get_request
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    idle = socket.create_connection(server.server_address, timeout=2)
+    try:
+        assert accepted.wait(2)
+        with urlopen(f'http://127.0.0.1:{server.server_port}/members/42/', timeout=8) as response:
+            assert response.status == 200
+            assert b'Member 42' in response.read()
+    finally:
+        idle.close()
+        server.shutdown();server.server_close();thread.join()

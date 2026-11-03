@@ -270,11 +270,19 @@ def local_server(source_path, port=4174, **options):
             return [response.body]
         return application(environ, start_response)
     class Handler(WSGIRequestHandler):
+        def setup(self):
+            super().setup()
+            # Browsers may preconnect without sending a request. Do not let an
+            # idle connection monopolize this single-request local server.
+            self.connection.settimeout(5)
         def log_message(self, *args):
             pass
         def handle(self):
             from wsgiref.simple_server import ServerHandler
-            self.raw_requestline = self.rfile.readline(65537)
+            try:
+                self.raw_requestline = self.rfile.readline(65537)
+            except TimeoutError:
+                return
             if len(self.raw_requestline) > 65536:
                 self.requestline = self.request_version = self.command = ''
                 self.send_error(414)
