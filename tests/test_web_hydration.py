@@ -164,11 +164,11 @@ def test_real_browser_auto_boot_and_no_javascript_fallback(tmp_path, browser):
     with served(project(tmp_path)) as base:
         context = browser.new_context()
         page = context.new_page(); page.goto(base + '/counter/11/')
-        page.wait_for_function('document.querySelector("#app").dataset.nexoHydration==="ready"')
+        page.locator('#app[data-nexo-hydration="ready"]').wait_for()
         page.get_by_role('button', name='Increment').click()
         assert page.locator('h2').inner_text() == 'Count: 12'
         page.get_by_role('link', name='Home', exact=True).click()
-        page.wait_for_function('document.querySelector("#app").dataset.nexoHydration==="ready"')
+        page.locator('#app[data-nexo-hydration="ready"]').wait_for()
         assert page.locator('h2').inner_text() == 'Count: 0'
         context.close()
         context = browser.new_context(java_script_enabled=False)
@@ -234,7 +234,7 @@ pub page Detail(__proto__: int):
 '''
     with served(project(tmp_path, source)) as base:
         page = browser.new_page();page.goto(base + '/detail/4/')
-        page.wait_for_function('document.querySelector("#app").dataset.nexoHydration==="ready"')
+        page.locator('#app[data-nexo-hydration="ready"]').wait_for()
         page.get_by_role('button', name='Increment').click()
         assert page.locator('p').inner_text() == '5'
         page.close()
