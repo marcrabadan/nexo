@@ -3,11 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Nexo — one way to do each thing, checked by the compiler</title>
-<meta name="description" content="Nexo: a statically checked language with errors as values, exact decimal and money, reference counting with copy-on-write, race-free parallel, proven contracts, JSON diagnostics with fixes and an MCP server. Interpreter in Python, LLVM compiler in Rust.">
-<meta property="og:title" content="Nexo — one way to do each thing, checked by the compiler">
-<meta property="og:description" content="Errors as values, exact money, copy-on-write, race-free parallel, proven contracts, reproducible builds with SBOM and nexo mcp for coding agents.">
-<meta property="og:image" content="assets/previews/nexo-language.png">
+<title>Nexo — a programming language for humans and AI agents</title>
+<meta name="description" content="Explore Nexo, an experimental programming language for humans and AI coding agents. Write clear code with explicit errors, compiler-assisted fixes, and security policies at checked API boundaries.">
+<link rel="canonical" href="https://marcrabadan.github.io/nexo/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Nexo Programming Language">
+<meta property="og:url" content="https://marcrabadan.github.io/nexo/">
+<meta property="og:title" content="Nexo — a programming language for humans and AI agents">
+<meta property="og:description" content="Write clear code. Build with AI. Run with confidence. Explore the experimental Nexo programming language in your browser.">
+<meta property="og:image" content="https://marcrabadan.github.io/nexo/assets/previews/nexo-language.png">
+<meta property="og:image:width" content="1440">
+<meta property="og:image:height" content="1100">
+<meta property="og:image:alt" content="Nexo programming language code preview">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Nexo — a programming language for humans and AI agents">
+<meta name="twitter:description" content="Write clear code. Build with AI. Run with confidence. Try Nexo in the browser.">
+<meta name="twitter:image" content="https://marcrabadan.github.io/nexo/assets/previews/nexo-language.png">
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="assets/logo.svg" type="image/svg+xml">
 <link rel="preload" href="assets/fonts/manrope-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
@@ -50,11 +61,11 @@
 
 <div class="hero launch-hero" id="top"><div class="wrap">
 <div class="hero-copy">
-  <a class="hero-announcement" href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md"><span>Edition 0.1 · Read the specification</span><span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
-  <h1>One way to do each thing, <em>checked by the compiler.</em></h1>
-  <p class="lede">Nexo is a statically checked language with errors as values (<code>T!</code>), exact decimal and money types, reference counting with copy-on-write, race-free <code>parallel</code>, and contracts the compiler proves where it can. Its compiler emits diagnostics as JSON with machine-applicable fixes, so humans and coding agents iterate on the same signal.</p>
-  <div class="actions"><a class="btn btn-primary" href="playground.html">Run it in the browser <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a><a class="btn btn-ghost" href="#start">Install</a></div>
-  <p class="hero-footnote">Two implementations: a tree-walking interpreter in Python 3.12 and an LLVM compiler in Rust.<span>Conformance, differential and fuzz tests require identical output from both.</span></p>
+  <a class="hero-announcement" href="availability.html"><span>Experimental preview · What works today</span><span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a>
+  <h1>Write clear code. <em>Build with AI. Run with confidence.</em></h1>
+  <p class="lede">Nexo is an experimental programming language for humans and AI coding agents. Familiar syntax, explicit errors, and machine-readable compiler feedback help people and tools build more predictable software together.</p>
+  <div class="actions"><a class="btn btn-primary" href="playground.html">Try Nexo in your browser <span aria-hidden="true"><svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16m-6-6 6 6-6 6"/></svg></span></a><a class="btn btn-ghost" href="#start">Get started</a></div>
+  <p class="hero-footnote">Built with a Python interpreter and a Rust/LLVM compiler.<span>Early-stage preview: APIs and platform support vary by runtime. <a href="availability.html">See feature availability</a>.</span></p>
 </div>
 <div class="hero-code"><div class="code"><div class="code-bar"><span>orders.nexo</span><button class="copy" type="button">Copy</button></div><pre><code class="nexo">type Order:
     customer: str
@@ -90,8 +101,20 @@ Charged Grace: 254.10 EUR</code></pre></div></div></div>
   <div><dt>9.4 s</dt><dd><strong>100,000 lines, development build</strong>Linear name resolution, <code>-O0</code>, parallel parts on every core.</dd></div>
   <div><dt>1:1</dt><dd><strong>release builds, byte for byte</strong>Reproducible binaries with a CycloneDX SBOM.</dd></div>
   <div><dt>32/32</dt><dd><strong>compile errors with a fix</strong>Every diagnostic in the repository says how to fix it.</dd></div>
-</dl></div>
+</dl>
+<p class="proof-note">Reference measurements, not guarantees for every machine or workload. <a href="benchmarks.html">Benchmark methodology</a> · <a href="https://github.com/marcrabadan/nexo/blob/main/docs/guarantees.md">Verified and outstanding guarantees</a></p>
 </div>
+</div>
+
+<section class="launch-benefits" id="why-nexo"><div class="wrap">
+  <div class="section-head"><p class="eyebrow">Why Nexo</p><h2>Less guesswork. More building.</h2><p class="section-intro">Readable code for people, structured compiler feedback for coding agents, and explicit security boundaries.</p></div>
+  <ul class="pillars">
+    <li><h3>Readable by design</h3><p>One preferred syntax per construct, clear pipelines, and errors that must be handled. <a href="learn.html">See the first tutorial</a>.</p></li>
+    <li><h3>Feedback AI can use</h3><p>Structured diagnostics and suggested edits let a coding agent check, repair, and test changes with the same tools developers use. <a href="ai.html">Explore the AI workflow</a>.</p></li>
+    <li><h3>Security boundaries made explicit</h3><p>Declare permissions in source code and enforce them at checked runtime API boundaries. OS-level isolation requires an explicit Shield profile. <a href="shield.html">Read the threat model</a>.</p></li>
+  </ul>
+  <p class="launch-try">Want to see real code? <a href="playground.html">Run an example instantly</a> or <a href="walkthrough.html">explore a complete app</a>. No installation required for the playground.</p>
+</div></section>
 
 <section id="design"><div class="wrap">
   <div class="section-head"><p class="eyebrow">Design rules</p><h2>Five rules settle every design question.</h2><p class="section-intro">From section 1 of the specification. Where an earlier draft had two ways to do something, edition 0.1 keeps one, and every resolved ambiguity is recorded with its reason in <a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">docs/decisions.md</a>.</p></div>
@@ -303,7 +326,7 @@ compiler/target/debug/nexo build --release hello.nexo -o hello</code></pre></div
   <div class="wrap">
     <div class="foot-brand">
       <a class="brand" href="index.html"><img src="assets/logo.svg" alt="" width="24" height="24">Nexo</a>
-      <p>One way to do each thing, checked by the compiler.</p>
+      <p>Clear code for humans and AI agents. An experimental open-source project.</p><p>Maintained by <a href="https://github.com/marcrabadan">@marcrabadan</a> · <a href="https://github.com/marcrabadan/nexo/issues">Share feedback</a></p>
     </div>
     <nav class="foot-cols" aria-label="Footer"><div class="foot-col"><h2>Start</h2><a href="index.html">Why Nexo</a><a href="index.html#start">Install</a><a href="learn.html">Tutorial</a><a href="playground.html">Playground</a><a href="examples.html">Examples</a><a href="walkthrough.html">Full app walkthrough</a></div><div class="foot-col"><h2>Build</h2><a href="backend.html">Nexo Backend</a><a href="web.html">Nexo Web</a><a href="devops.html">Nexo DevOps</a><a href="libraries.html">Libraries</a><a href="reference.html">Language reference</a></div><div class="foot-col"><h2>Trust</h2><a href="security.html">Security by design</a><a href="shield.html">Nexo Shield</a><a href="how-it-works.html">Architecture</a><a href="benchmarks.html">Benchmarks</a><a href="availability.html">Feature availability</a><a href="https://github.com/marcrabadan/nexo/blob/main/docs/guarantees.md">Measured guarantees</a></div><div class="foot-col"><h2>AI</h2><a href="ai.html">For AI agents</a><a href="ai-guide.html">AI prompt guide</a><a href="llms.txt">llms.txt</a><a href="libraries.html#ai">Build agents in Nexo</a></div><div class="foot-col"><h2>Project</h2><a href="https://github.com/marcrabadan/nexo">GitHub</a><a href="https://github.com/marcrabadan/nexo/blob/main/docs/especificacion-nexo.md">Specification</a><a href="https://github.com/marcrabadan/nexo/blob/main/docs/decisions.md">Design decisions</a><a href="troubleshooting.html">Troubleshooting</a></div></nav>
   </div>
