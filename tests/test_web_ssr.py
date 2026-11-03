@@ -192,7 +192,9 @@ def test_real_browser_ssr_dynamic_navigation_without_javascript(tmp_path, browse
             assert page.title() == 'Member 12000'
             assert page.locator('h1').inner_text() == 'Member 12000'
             assert page.locator('header').evaluate('(el) => getComputedStyle(el).backgroundColor') == 'rgb(237, 244, 255)'
-            page.get_by_role('link', name='Next member').click()
+            # WebKit can stall its implicit load wait with JavaScript disabled.
+            page.get_by_role('link', name='Next member').click(no_wait_after=True)
+            page.wait_for_url(base + '/members/12001/', wait_until='domcontentloaded')
             assert page.url == base + '/members/12001/'
             assert page.title() == 'Member 12001'
             page.go_back()

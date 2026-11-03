@@ -174,7 +174,9 @@ def test_real_browser_auto_boot_and_no_javascript_fallback(tmp_path, browser):
         context = browser.new_context(java_script_enabled=False)
         page = context.new_page();page.goto(base + '/counter/11/')
         assert page.locator('h2').inner_text() == 'Count: 11'
-        page.get_by_role('link', name='Home', exact=True).click()
+        # Wait for the destination document explicitly in the no-JavaScript case.
+        page.get_by_role('link', name='Home', exact=True).click(no_wait_after=True)
+        page.wait_for_url(base + '/', wait_until='domcontentloaded')
         assert page.locator('h2').inner_text() == 'Count: 0'
         context.close()
 
