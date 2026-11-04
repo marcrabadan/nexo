@@ -1,7 +1,7 @@
 {
   "name": "nexo",
   "displayName": "Nexo",
-  "description": "Nexo language support: highlighting, errors and warnings as you type with their fixes, formatting, go to definition, hover, outline and completion (nexo lsp).",
+  "description": "Nexo Web Builder and language support: highlighting, errors and warnings as you type with their fixes, formatting, go to definition, hover, outline and completion (nexo lsp).",
   "version": "0.4.1",
   "publisher": "nexo-lang",
   "license": "Apache-2.0 WITH LLVM-exception",
@@ -68,6 +68,10 @@
       {
         "command": "nexo.restart",
         "title": "Nexo: Restart language server"
+      },
+      {
+        "command": "nexo.builder",
+        "title": "Nexo: Open Web Builder"
       }
     ],
     "configurationDefaults": {
@@ -79,7 +83,7 @@
     }
   },
   "scripts": {
-    "test": "node test/grammar.test.js && node test/extension.test.js && node test/server.test.js",
+    "test": "node test/grammar.test.js && node test/extension.test.js && node test/server.test.js && node test/builder.test.js && node test/builder-host.test.js && node test/builder-view.test.js",
     "package": "vsce package --out nexo.vsix"
   },
   "dependencies": {
@@ -87,6 +91,7 @@
   },
   "devDependencies": {
     "@vscode/vsce": "3.6.2",
+    "jsdom": "26.1.0",
     "vscode-oniguruma": "2.0.1",
     "vscode-textmate": "9.3.2"
   },
