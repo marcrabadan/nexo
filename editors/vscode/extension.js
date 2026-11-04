@@ -45,6 +45,7 @@ function runInTerminal(subcommand) {
 
 function activate(context) {
   context.subscriptions.push(
+    vscode.commands.registerCommand("nexo.builder", () => require("./builder/host").openBuilder(context)),
     vscode.commands.registerCommand("nexo.run", () => runInTerminal([])),
     vscode.commands.registerCommand("nexo.test", () => runInTerminal(["test"])),
     vscode.commands.registerCommand("nexo.restart", async () => {

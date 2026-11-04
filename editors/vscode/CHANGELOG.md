@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+Add the visual Nexo Web Builder with live source generation and a Design
+System Manager for light/dark palettes, shared typography, padding and radii.
+Designs and reusable design systems can be saved, loaded and exported.
+
 The `nexo.lang` setting is gone: Nexo's messages are in English only
 (D125).
 

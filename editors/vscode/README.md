@@ -100,3 +100,66 @@ run, then verify token expiry, scope and publisher membership. After correcting
 the secret, rerun the failed release job or use a manual publish from `main`.
 Do not republish a version already accepted by Marketplace; increase the package
 and lockfile version for a new release.
+
+## Visual Web Builder (experimental)
+
+Run **Nexo: Open Web Builder** from the Command Palette. Add headings,
+paragraphs, buttons, inputs, or rectangles (`div`) from the palette, then
+select a layer or drag it on the canvas. The property inspector edits text,
+position, size, foreground and background color. The Nexo source pane updates
+immediately during dragging and property changes. Undo and redo keep up to
+100 design edits.
+
+**Save design** writes an editable versioned JSON document; **Open design**
+restores it. **Export .nexo** saves the current generated `App` component and
+opens it beside the builder. Existing files use the normal save dialog's
+replacement confirmation; save existing dirty editor buffers before replacing
+them. Code updates live in the builder; exporting to disk is explicit.
+The builder itself does not require a running Nexo language server.
+
+This first version is a fixed 960 × 900 wireframe canvas with independent,
+absolutely positioned elements. Change width and height in Properties to resize.
+It does not yet support responsive auto layout, nesting, interaction bindings,
+images, or importing changes from handwritten Nexo code. Text containing
+interpolation braces is rejected, since text bindings are not implemented.
+Buttons and inputs are design elements; they do not execute application actions.
+The generated component can be checked with `nexo web check app.nexo` and
+built with `nexo web build app.nexo --output dist`.
+
+To install a locally packaged build, use **Extensions → … → Install from VSIX…**
+and select `nexo.vsix`, then run **Nexo: Open Web Builder**.
+
+To try the extension from this repository:
+
+1. Open `editors/vscode` as your VS Code workspace.
+2. Run `npm ci` in that directory.
+3. Press **F5** using the included **Run Nexo Extension** launch configuration.
+4. In the Extension Development Host, run **Nexo: Open Web Builder**.
+
+Run `node test/builder.test.js` for dependency-free generator and validation
+checks, or `npm test` for the complete extension suite after installing packages.
+
+### Design System Manager
+
+The inspector includes a **Design System Manager**. Choose **light** or **dark**
+and edit the active palette: primary, on-primary, canvas background, surface,
+text and border colors. Font family, body and heading sizes, padding and corner
+radius are shared between both modes. Changes update the canvas and generated
+Nexo CSS immediately; exporting produces the currently selected theme.
+
+New elements use the design system. Buttons use primary/on-primary colors;
+other elements use surface/text colors. Use **Apply theme to all elements** to
+bind an existing design to the system. Existing JSON designs retain their
+original colors until you apply the theme. Theme edits and applying a theme
+support undo/redo.
+
+For an individual element, disable **Use design system** to use its custom
+colors, or edit its color/background directly to switch to custom styling.
+Enable the checkbox to restore the shared styles. Applying a theme to all
+elements replaces custom styling bindings; Undo restores them.
+
+Both palettes, shared settings and element bindings are saved with the design.
+**Export design system** writes the settings to a separate JSON file for reuse;
+**Import design system** loads them into another design. Imported settings affect
+theme-bound elements; custom elements keep their styling until you apply the theme.
+This is a design-time theme choice; runtime theme switching is not generated yet.

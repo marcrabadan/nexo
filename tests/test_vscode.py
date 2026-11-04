@@ -13,7 +13,7 @@ EXT = ROOT / "editors" / "vscode"
 
 @pytest.mark.skipif(shutil.which("node") is None or not (EXT / "node_modules").exists(),
                     reason="node and `npm install` in editors/vscode are needed")
-@pytest.mark.parametrize("script", ["grammar", "extension"])
+@pytest.mark.parametrize("script", ["grammar", "extension", "builder", "builder-host", "builder-view"])
 def test_extension(script):
     proc = subprocess.run(["node", f"test/{script}.test.js"], cwd=EXT, capture_output=True, text=True, timeout=300)
     assert proc.returncode == 0, proc.stdout + proc.stderr
