@@ -34,6 +34,13 @@ jobs:
             echo "::error::VSCE_PAT is unavailable. Add it as a repository Actions secret (Settings > Secrets and variables > Actions), with Marketplace Manage permission for publisher nexo-lang."
             exit 1
           fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install interpreter for builder compilation and preview tests
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e .
       - name: Build nexo (the language server)
         working-directory: compiler
         run: cargo build --release
@@ -44,6 +51,7 @@ jobs:
         working-directory: editors/vscode
         env:
           NEXO: ${{ github.workspace }}/compiler/target/release/nexo
+          NEXO_TEST_COMMAND: ${{ github.workspace }}/.venv/bin/nexo
         run: npm test
       - name: Package
         working-directory: editors/vscode

@@ -2,7 +2,7 @@
   "name": "nexo",
   "displayName": "Nexo",
   "description": "Nexo Web Builder and language support: highlighting, errors and warnings as you type with their fixes, formatting, go to definition, hover, outline and completion (nexo lsp).",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "nexo-lang",
   "license": "Apache-2.0 WITH LLVM-exception",
   "repository": {
@@ -23,7 +23,8 @@
   ],
   "main": "./extension.js",
   "activationEvents": [
-    "workspaceContains:**/*.nexo"
+    "workspaceContains:**/*.nexo",
+    "onLanguage:nexo"
   ],
   "contributes": {
     "languages": [
@@ -53,6 +54,11 @@
           "type": "string",
           "default": "nexo",
           "description": "The nexo command: the compiler (compiler/target/release/nexo) or the phase 0 interpreter (.venv/bin/nexo)."
+        },
+        "nexo.builder.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open Web Builder beside a .nexo file when it references nexo.web. Keeps focus in the source editor; opens once per file until it is closed."
         }
       }
     },
@@ -83,7 +89,7 @@
     }
   },
   "scripts": {
-    "test": "node test/grammar.test.js && node test/extension.test.js && node test/server.test.js && node test/builder.test.js && node test/builder-host.test.js && node test/builder-view.test.js",
+    "test": "node test/grammar.test.js && node test/extension.test.js && node test/server.test.js && node test/builder.test.js && node test/builder-host.test.js && node test/builder-view.test.js && node test/builder-features.test.js && node test/builder-preview.test.js",
     "package": "vsce package --out nexo.vsix"
   },
   "dependencies": {

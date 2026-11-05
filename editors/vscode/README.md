@@ -117,12 +117,13 @@ replacement confirmation; save existing dirty editor buffers before replacing
 them. Code updates live in the builder; exporting to disk is explicit.
 The builder itself does not require a running Nexo language server.
 
-This first version is a fixed 960 × 900 wireframe canvas with independent,
-absolutely positioned elements. Change width and height in Properties to resize.
-It does not yet support responsive auto layout, nesting, interaction bindings,
-images, or importing changes from handwritten Nexo code. Text containing
-interpolation braces is rejected, since text bindings are not implemented.
-Buttons and inputs are design elements; they do not execute application actions.
+The canvas edits absolutely positioned elements, with desktop, tablet and mobile
+layouts. Change size in Properties or drag resize handles. Shift+click layers or
+elements to arrange several at once; extract static selections into reusable
+components. The canvas is a design surface. Use **Live preview** to execute source
+state, input handlers and navigation in a browser. Freeform auto layout, images
+and authoring runtime bindings in the inspector are not supported. Dynamic text
+must be edited in source and is preserved when applying visual changes.
 The generated component can be checked with `nexo web check app.nexo` and
 built with `nexo web build app.nexo --output dist`.
 
@@ -163,3 +164,122 @@ Both palettes, shared settings and element bindings are saved with the design.
 **Import design system** loads them into another design. Imported settings affect
 theme-bound elements; custom elements keep their styling until you apply the theme.
 This is a design-time theme choice; runtime theme switching is not generated yet.
+
+### Canvas editing tools
+
+Preview desktop (960px), tablet (768px) and mobile (375px) canvas widths and
+zoom from 50% to 125%. The selected viewport is also the layout being edited:
+desktop supplies base geometry, tablet overrides apply at widths up to 768px,
+and mobile overrides apply at widths up to 480px.
+Enable **Snap to 8px grid** for pointer dragging. Drag distances respect zoom.
+
+Duplicate the selected element or change its stacking order with **Send backward**
+and **Bring forward**. Layer order is preserved in saved designs and exported
+components. The selected layer is highlighted. Use arrow keys to move by 1px,
+Shift+arrow for 10px, Delete/Backspace to remove, Ctrl/Cmd+D to duplicate,
+Ctrl/Cmd+Z to undo, and Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y to redo.
+Shortcuts leave property text fields and other inputs alone. Editing operations
+support undo/redo; merely selecting a viewport or changing zoom/grid controls
+does not change the design.
+
+Select an element to reveal eight edge and corner resize handles. Drag a handle
+to change its dimensions; resizing respects zoom and optional grid snapping.
+The opposite edge stays fixed when resizing from the top or left. Dimensions
+are bounded by the canvas coordinate limits (up to 10,000px). Each drag is one
+undo step. Width and Height in Properties remain available for exact sizes.
+
+### Open automatically for web files
+
+Opening or switching to a `.nexo` file that references `nexo.web` opens Web Builder
+beside the source editor without moving keyboard focus. Adding the reference
+while editing also opens it. Comments and quoted strings do not trigger it.
+The extension reuses the existing builder and opens automatically only once per
+file until that file is closed, so dismissing the builder does not keep reopening it.
+Set `nexo.builder.autoOpen` to `false` to use only **Nexo: Open Web Builder**.
+
+Automatic opening loads the current editor buffer, including unsaved changes,
+into the builder. Switching to another web file loads that file; manual
+**Nexo: Open Web Builder** loads the active web file. **Reload source** explicitly
+reimports it, discarding current canvas changes (which remain available in Undo). Import waits until the
+webview is ready. Source edits reload automatically while the canvas has no edits.
+If both source and canvas change, the builder keeps the canvas and reports a
+conflict instead of replacing either side. Undo restores the design from before an import.
+
+The importer reads the first public component/page and supported static elements
+(h1, h2, p, button, input, div). It supports literal text and basic pixel geometry
+and six-digit hex colors from simple tag/class CSS selectors. Other layout is
+approximated as a vertical wireframe. Runtime state, event handlers, interpolation,
+custom components, control flow and advanced CSS are not reproduced; a partial
+import notice lists limitations. Import never runs source code. Files without
+supported elements show an error and keep the current design.
+
+Import leaves the original file unchanged. **Apply to source** explicitly updates
+the linked editor buffer; normal VS Code Save and Undo remain available.
+**Export .nexo** creates a standalone static component; use Apply to source to
+preserve the original file's runtime logic.
+
+### Apply canvas changes to source
+
+**Apply to source** updates the imported elements' literal text, visual styling,
+responsive geometry and stacking order. It also adds new elements and removes
+deleted elements. Existing state, functions, event handlers, dynamic text,
+unsupported view nodes and handwritten CSS remain in the file. Builder CSS is
+kept in a marked block rather than replacing handwritten styles. The file includes
+a visual metadata comment so component instances, groups, themes and breakpoint
+overrides can be restored. Runtime-only edits retain this metadata; manual
+view/style changes trigger a fresh static import.
+
+Updates target the exact source revision that was loaded. If the editor has
+changed meanwhile, use **Reload source** before applying. Save the design as JSON
+first if you want to keep conflicting canvas edits. Undoing an import from another
+file cannot apply an old design to the newly linked file. Dynamic text/class
+expressions and removal of nested source containers are deliberately rejected
+when they cannot be patched while preserving their contents.
+
+### Responsive layout editing
+
+Choose Desktop, Tablet or Mobile, then drag, resize, align, or edit X/Y/Width/Height.
+Tablet inherits desktop values; mobile inherits tablet and desktop values unless
+overridden. Generated Nexo includes scoped CSS media queries. Text and theme
+changes are shared across breakpoints. **Reset breakpoint overrides** resets the
+selection, or all elements if none are selected. Zoom does not affect exported size.
+
+### Reusable components
+
+Shift+click a static selection, name it (for example `BuilderCard`), and choose
+**Create from selection**. The library stores a reusable component; its canvas
+instance exposes each child's text as an editable property in the inspector.
+Use the library's add button to insert more instances. **Edit defaults** changes
+text defaults and instances still using those defaults; custom instance values
+stay independent. Export and Apply generate real Nexo component declarations with
+string properties. Definitions and instances are included in JSON design files.
+
+Extract components before adding breakpoint overrides to their children; the
+instance wrapper can then have its own responsive geometry. Nested reusable
+instances and extracting source elements with runtime bindings are rejected.
+Those bindings continue to work in their original source component and preview.
+
+### Alignment, distribution and groups
+
+Shift+click elements or layers to select several. Align left/center/right or
+top/middle/bottom. Distribution requires at least three elements and preserves
+the outer edges while equalizing horizontal or vertical gaps. **Group** makes a
+selection move together when dragging or nudging; **Ungroup** separates it. Groups
+are editing metadata, not extra DOM containers. Delete removes the selection.
+These operations are undoable and apply to the active breakpoint.
+
+### Interactive preview
+
+Choose **Live preview** to compile the canvas together with the linked source's
+runtime logic and open a local browser preview. Buttons, inputs, state and routes
+use the actual Nexo web runtime. Canvas edits rebuild after a short delay; the
+browser reloads after a successful build. Compiler failures keep the last working
+preview and show diagnostics in the builder. Clean source edits also update the
+preview. **Stop preview** or closing the builder closes its local server and
+removes temporary build files. Reloading a build resets application state.
+
+Preview requires a trusted workspace and a working `nexo.path` that supports
+`web build`; it does not require Vite or npm dependencies in the user's app. Imports
+resolve from a temporary entry beside the linked source. The server binds only
+127.0.0.1 and serves compiled preview assets. Application backend APIs still need
+their own server; this preview is not a backend proxy or deployment.

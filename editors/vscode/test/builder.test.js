@@ -37,3 +37,18 @@ const invalidColors = defaultDesignSystem(); invalidColors.themes.dark.primary =
 assert.throws(() => validateDesignSystem(invalidColors));
 assert.strictEqual(defaultDesignSystem().themes.light.primary, '#635bff');
 console.log('design system: theme propagation, mode switching, overrides, serialization and validation pass');
+
+const { importSource } = require('../builder/import');
+const imported = importSource(source);
+assert.deepStrictEqual(imported.model.elements.map(e => e.text), model.elements.map(e => e.text));
+assert.deepStrictEqual(imported.model.elements.map(e => [e.x, e.y, e.width, e.height]), model.elements.map(e => [e.x, e.y, e.width, e.height]));
+assert.deepStrictEqual(imported.model.elements.map(e => e.color), model.elements.map(e => e.color));
+assert.throws(() => importSource('use nexo.web'), /No public/);
+assert.throws(() => importSource('pub component App:\n    view:\n        Widget()'), /No supported/);
+const dynamic = importSource('pub component App:\n    state count: int = 0\n    view:\n        main:\n            h1("Counter")\n            p("Count: {count}")\n            button("Add", on_click: increment)');
+assert.strictEqual(dynamic.model.elements[0].text, 'Counter');
+assert(dynamic.warnings.some(w => w.includes('Dynamic')));
+assert(dynamic.warnings.some(w => w.includes('runtime')));
+const escaped = importSource('pub component App:\n    view:\n        p("<script>alert(1)</script>, hello")');
+assert.strictEqual(escaped.model.elements[0].text, '<script>alert(1)</script>, hello');
+console.log('builder source import: static content, geometry, escaping and unsupported syntax pass');
