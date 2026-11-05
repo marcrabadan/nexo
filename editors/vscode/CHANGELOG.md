@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 Add the visual Nexo Web Builder with live source generation and a Design
 System Manager for light/dark palettes, shared typography, padding and radii.
