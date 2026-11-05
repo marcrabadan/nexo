@@ -176,5 +176,13 @@ assert.strictEqual(typeof rebuild, 'function'); rebuild();
 assert.strictEqual(messages.at(-1).type, 'preview-update');
 window.setTimeout = oldTimeout;
 click('stop-preview'); assert.strictEqual(messages.at(-1).type, 'stop-preview');
+// Deleting the highest imported ID and adding a different tag must create a new identity.
+receive({ type: 'load-source', model: legacy, name: '/source/replacement.nexo', warnings: [] });
+doc.querySelector('#layers button').click();
+const removedId = state.elements[0].id;
+click('delete');
+doc.querySelector('#palette button').click();
+assert.notStrictEqual(state.elements[0].id, removedId);
+assert.strictEqual(state.elements[0].tag, 'h1');
 console.log('builder view: live theme edits, custom overrides, apply, undo/redo, persistence, import and legacy designs pass');
 window.close();

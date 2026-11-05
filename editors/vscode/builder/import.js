@@ -19,6 +19,14 @@ function importSource(source) {
     if (/^(?:\.[\w-]+|[a-z][\w-]*)$/.test(selector)) rules.set(selector, match[2]);
     else warnings.add('Complex CSS selectors are not imported.');
   }
+  // Reserve source-managed IDs before assigning IDs to newly handwritten nodes.
+  const reserved = new Set(), assigned = new Set(); let fallback = 1;
+  for (const match of block.join('\n').matchAll(/\bclass:\s*("(?:\\.|[^"\\])*")/g)) {
+    for (const name of JSON.parse(match[1]).split(/\s+/)) {
+      const id = /^(?:nexo-builder-)?(n[0-9]+)$/.exec(name)?.[1]; if (id) reserved.add(id);
+    }
+  }
+  const allocate = () => { while (reserved.has('n' + fallback) || assigned.has('n' + fallback)) fallback++; return 'n' + fallback++; };
   let y = 24;
   for (let i = view + 1; i < block.length; i++) {
     const line = block[i];
@@ -50,7 +58,8 @@ function importSource(source) {
       } else warnings.add('Runtime actions and other attributes are not imported.');
     }
     const managedId = classes.map(name => /^(?:nexo-builder-)?(n[0-9]+)$/.exec(name)?.[1]).find(Boolean);
-    const item = { id: managedId || 'n' + (elements.length + 1), tag: call[1], text: label, x: 24, y, width: call[1] === 'h1' ? 400 : 240, height: call[1] === 'h1' ? 80 : 48, color: '#172033', background: '#ffffff' };
+    const id = managedId && !assigned.has(managedId) ? managedId : allocate(); assigned.add(id);
+    const item = { id, tag: call[1], text: label, x: 24, y, width: call[1] === 'h1' ? 400 : 240, height: call[1] === 'h1' ? 80 : 48, color: '#172033', background: '#ffffff' };
     const declarations = [rules.get(item.tag), ...classes.map(name => rules.get('.' + name))].filter(Boolean).join(';');
     for (const entry of declarations.split(';')) {
       const match = /^\s*([\w-]+)\s*:\s*(.*?)\s*$/.exec(entry); if (!match) continue;

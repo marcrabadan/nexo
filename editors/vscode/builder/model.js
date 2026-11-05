@@ -34,6 +34,7 @@
   }
   function validate(model) {
     if (!model || model.version !== 1 || !Array.isArray(model.elements) || model.elements.length > 500) throw Error('Invalid builder design (expected version 1, at most 500 elements).');
+    if (model.nextElementId !== undefined && (!Number.isSafeInteger(model.nextElementId) || model.nextElementId < 1)) throw Error('Invalid element ID counter.');
     if (model.designSystem !== undefined) validateDesignSystem(model.designSystem);
     if (model.components !== undefined) {
       if (!Array.isArray(model.components) || model.components.length > 100) throw Error('At most 100 reusable components are supported.');
@@ -68,6 +69,11 @@
       for (const key of ['color', 'background']) if (!/^#[0-9a-f]{6}$/i.test(item[key])) throw Error('Colors must use six digit hex values.');
     }
     return model;
+  }
+  function allocateId(model) {
+    const next = Math.max(model.nextElementId || 1, ...model.elements.map(e => Number(e.id.slice(1)) + 1));
+    model.nextElementId = next + 1;
+    return 'n' + next;
   }
   function geometry(item, breakpoint = 'desktop') {
     return { x: item.x, y: item.y, width: item.width, height: item.height, ...(breakpoint !== 'desktop' ? item.layouts?.tablet : {}), ...(breakpoint === 'mobile' ? item.layouts?.mobile : {}) };
@@ -175,12 +181,12 @@
     const children = items.map(e => { const child = { ...e, x: e.x - x, y: e.y - y }; delete child.group; delete child.layouts; return child; });
     if (items.some(e => e.layouts && Object.keys(e.layouts).length)) throw Error('Extract components before adding breakpoint overrides to their children.');
     next.components = [...(next.components || []), { name, elements: children }];
-    const instance = { id: 'n' + (Math.max(0, ...next.elements.map(e => Number(e.id.slice(1)))) + 1), tag: 'div', text: '', x, y, width, height, color: '#172033', background: '#ffffff', component: name, props: Object.fromEntries(children.map(e => [e.id, e.text])) };
+    const instance = { id: allocateId(next), tag: 'div', text: '', x, y, width, height, color: '#172033', background: '#ffffff', component: name, props: Object.fromEntries(children.map(e => [e.id, e.text])) };
     const first = next.elements.findIndex(e => ids.includes(e.id));
     next.elements = next.elements.filter(e => !ids.includes(e.id)); next.elements.splice(first, 0, instance);
     return validate(next);
   }
-  const api = { transform, extractComponent, geometry, setGeometry, responsiveCSS, componentCall, componentSource, tags, fonts, validate, generate, defaultDesignSystem, validateDesignSystem, designSystem, elementStyle };
+  const api = { allocateId, transform, extractComponent, geometry, setGeometry, responsiveCSS, componentCall, componentSource, tags, fonts, validate, generate, defaultDesignSystem, validateDesignSystem, designSystem, elementStyle };
   if (typeof module !== 'undefined') module.exports = api;
   else root.NexoBuilder = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

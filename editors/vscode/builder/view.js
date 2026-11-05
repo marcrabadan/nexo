@@ -18,7 +18,7 @@ function schedulePreview() {
   clearTimeout(previewTimer); lastPreviewModel = snapshot;
   previewTimer = setTimeout(() => vscode.postMessage({ type: 'preview-update', model }), 700);
 }
-function nextId() { return 'n' + (Math.max(0, ...model.elements.map(e => Number(e.id.slice(1)))) + 1); }
+function nextId() { return NexoBuilder.allocateId(model); }
 function position(value) { return Math.min(10000, Math.max(0, Math.round(value / ($('snap').checked ? 8 : 1)) * ($('snap').checked ? 8 : 1))); }
 function checkpoint(notify = true) { if (notify) vscode.postMessage({ type: 'design-changed' }); history.push(JSON.stringify(model)); if (history.length > 100) history.shift(); future = []; }
 function current() { return model.elements.find(e => e.id === selected); }
@@ -97,6 +97,7 @@ function resizeControls(item) {
   $('canvas').append(overlay);
 }
 function render() {
+  model.nextElementId = Math.max(model.nextElementId || 1, ...model.elements.map(e => Number(e.id.slice(1)) + 1));
   selectedIds = new Set([...selectedIds].filter(id => model.elements.some(e => e.id === id)));
   if (!model.elements.some(e => e.id === selected)) selected = null;
   if (selected && !selectedIds.has(selected)) selectedIds = new Set([selected]);

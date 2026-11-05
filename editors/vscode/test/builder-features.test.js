@@ -72,6 +72,31 @@ const empty = { version: 1, elements: [] };
 assert.deepStrictEqual(importSource(applySource(staticSource, empty)).model, empty);
 const invalid = JSON.parse(JSON.stringify(arrangement)); invalid.elements[0].layouts = { mobile: { width: -10 } };
 assert.throws(() => validate(invalid), /geometry/);
+// Review regressions: bare bindings must not disappear during extraction.
+for (const element of ['p(query)', 'input(value: query)', 'button("Go", disabled: busy)']) {
+  const boundSource = 'use nexo.web\npub component App:\n    state query: str = ""\n    state busy: bool = false\n    view:\n        ' + element + '\n';
+  const boundModel = importSource(boundSource).model;
+  const extracted = extractComponent(boundModel, [boundModel.elements[0].id], 'BuilderBound');
+  assert.throws(() => applySource(boundSource, extracted), /runtime bindings/);
+}
+const insertedSource = updated.replace('            h1(', '            h2("New handwritten heading")\n            h1(');
+const insertedModel = importSource(insertedSource).model;
+assert.strictEqual(new Set(insertedModel.elements.map(e => e.id)).size, insertedModel.elements.length);
+assert.strictEqual(insertedModel.elements.find(e => e.text === 'Edited title').id, imported.elements[0].id);
+assert.notStrictEqual(insertedModel.elements[0].id, imported.elements[0].id);
+const { allocateId } = require('../builder/model');
+const reservedModel = { version: 1, elements: [item('n9', 0, 0)], nextElementId: 10 };
+reservedModel.elements = [];
+assert.strictEqual(allocateId(reservedModel), 'n10');
+const replaceSource = 'use nexo.web\npub component App:\n    state count: int = 0\n    fn increment():\n        count += 1\n    view:\n        button("Add", on_click: increment)\n';
+const replacement = importSource(replaceSource).model;
+replacement.nextElementId = 2;
+replacement.elements = [];
+replacement.elements.push({ ...item(allocateId(replacement), 0, 0), tag: 'h1', text: 'Replacement heading' });
+const replacementSource = applySource(replaceSource, replacement);
+assert(replacementSource.includes('h1("Replacement heading"'));
+assert(!replacementSource.includes('on_click: increment'));
+assert(replacementSource.includes('fn increment():'));
 // Compile the results with the actual Nexo compiler when the repository interpreter is installed.
 const root = path.resolve(__dirname, '../../..');
 const command = process.env.NEXO_TEST_COMMAND || path.join(root, '.venv/bin/nexo');

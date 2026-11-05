@@ -13,7 +13,12 @@ function applySource(source, model) {
     tracked.add(binding.id);
     if (!item) {
       const extracted = (model.components || []).some(c => c.elements.some(e => e.id === binding.id));
-      if (extracted && binding.args.some(arg => /^on_\w+:/.test(arg) || /[{}]/.test(arg))) throw Error('Extract only static source elements; runtime bindings must remain in their original component.');
+      if (extracted && binding.args.filter(Boolean).some(arg => {
+        if (/^on_\w+:/.test(arg)) return true;
+        const expression = arg.replace(/^\w+:\s*/, '');
+        try { const literal = JSON.parse(expression); return typeof literal === 'string' && /[{}]/.test(literal); }
+        catch { return true; }
+      })) throw Error('Extract only static source elements; runtime bindings must remain in their original component.');
       if (binding.endLine > binding.line + 1 && !old.component) throw Error('Delete nested containers in source; their children cannot safely be removed by the builder.');
       replacements.push({ start: binding.line, end: binding.endLine, lines: [] }); continue;
     }
