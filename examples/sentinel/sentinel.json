@@ -1,0 +1,13 @@
+{
+  "logs": [
+    "logs/benign.log",
+    "logs/attack.log",
+    "logs/unicode.log",
+    "logs/oversized.log",
+    "logs/binary.log",
+    "logs/../sentinel.json",
+    "/etc/passwd"
+  ],
+  "never_block": ["192.0.2.10"],
+  "firewall": "http://127.0.0.1:8787"
+}

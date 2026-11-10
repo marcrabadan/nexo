@@ -1,0 +1,7 @@
+2026-11-02T10:00:01Z 192.0.2.44 web GET /café/menú.html 200
+2026-11-02T10:00:02Z 192.0.2.44 web GET /search?q=日本語+ログ 200
+2026-11-02T10:00:03Z 198.51.100.90 web GET /files/invoice‮gpj.exe 200
+2026-11-02T10:00:04Z 198.51.100.90 sshd login accepted user=ad​min
+2026-11-02T10:00:05Z 198.51.100.90 web GET /[2Jcleared 400
+2026-11-02T10:00:06Z 192.0.2.51 web GET /emoji/🙂 200
+﻿2026-11-02T10:00:07Z 192.0.2.51 web GET / 200

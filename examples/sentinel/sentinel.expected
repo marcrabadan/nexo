@@ -1,0 +1,24 @@
+Nexo Sentinel
+Scanned 4 files, 35 lines.
+Skipped logs/binary.log: Invalid data: the file "logs/binary.log" is not UTF-8
+Skipped logs/../sentinel.json: outside logs/
+Skipped /etc/passwd: outside logs/
+Findings: 15
+  [high] brute_force logs/attack.log:6 203.0.113.9: 5 failed logins
+  [high] sql_injection logs/attack.log:8 198.51.100.23: GET /products?id=1+UNION+SELECT+name,password+FROM+users 200
+  [high] sql_injection logs/attack.log:9 198.51.100.23: GET /login?user=admin%27--&pass=x 401
+  [medium] path_traversal logs/attack.log:10 198.51.100.77: GET /static/../../etc/passwd 404
+  [medium] sensitive_file logs/attack.log:10 198.51.100.77: GET /static/../../etc/passwd 404
+  [medium] path_traversal logs/attack.log:11 198.51.100.77: GET /download?file=%2e%2e%2f%2e%2e%2fsecrets 403
+  [medium] sensitive_file logs/attack.log:12 198.51.100.77: GET /.env 404
+  [high] sql_injection logs/attack.log:13 192.0.2.10: GET /items?id=5%20or%201=1 200
+  [low] malformed_line logs/attack.log:14 -: 2026-11-02T09:18:00Z not-an-address web GET / 200
+  [low] malformed_line logs/attack.log:15 -: this line is not a log entry
+  [medium] hidden_text logs/unicode.log:3 198.51.100.90: GET /files/invoice<hidden>gpj.exe 200
+  [medium] hidden_text logs/unicode.log:4 198.51.100.90: login accepted user=ad<hidden>min
+  [medium] hidden_text logs/unicode.log:5 198.51.100.90: GET /<control>[2Jcleared 400
+  [medium] hidden_text logs/unicode.log:7 192.0.2.51: GET / 200
+  [low] oversized_line logs/oversized.log:2 -: 6073 characters
+High: 4, medium: 8, low: 3
+Ask the local model for a summary? (yes/no) Addresses to block: ["203.0.113.9", "198.51.100.23"]
+Block them on the firewall? (yes/no) Nothing was changed.

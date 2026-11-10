@@ -370,6 +370,7 @@ Complete programs live in [`examples/`](examples). Each one has a
 | [`todo.nexo`](examples/todo.nexo) | enums, `match`, events with `on`/`emit`, tests |
 | [`word_count.nexo`](examples/word_count.nexo) | the five most common words in a text file |
 | [`shop_api/shop.nexo`](examples/shop_api/shop.nexo) | a web API with SQLite and `ask`: products, reviews the AI analyses, JWT login, tests with `fake ask` |
+| [`sentinel/sentinel.nexo`](examples/sentinel/sentinel.nexo) | Nexo Sentinel, a defensive log analyzer: fixed rules, typed findings, a read policy, an audit file, and a firewall change only after a person says yes ([how to run it](examples/sentinel/README.md)) |
 
 Run any of them from the `examples/` directory so relative paths to
 `data/` resolve:
@@ -630,6 +631,7 @@ editors/vscode/       the VS Code extension
 examples/             complete programs with expected output
   shop_api/           the exit criterion of phase 4: a web API with a database and ask
   deploy/             the exit criterion of phase 5: one file deployed to four clouds
+  sentinel/           Nexo Sentinel: a log analyzer, its logs and its Python comparison
 docs/
   especificacion-nexo.md  the specification (source of truth)
   decisions.md            every ambiguity and the choice made

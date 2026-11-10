@@ -1,0 +1,10 @@
+2026-11-02T08:00:01Z 192.0.2.10 web GET /index.html 200
+2026-11-02T08:00:02Z 192.0.2.10 web GET /assets/app.css 200
+2026-11-02T08:00:09Z 192.0.2.44 sshd login accepted user=ana
+2026-11-02T08:01:30Z 192.0.2.44 web GET /search?q=union+station+hotel 200
+2026-11-02T08:02:11Z 192.0.2.51 sshd login failed user=marc
+2026-11-02T08:02:19Z 192.0.2.51 sshd login accepted user=marc
+
+2026-11-02T08:03:00Z 192.0.2.10 web POST /orders 201
+2026-11-02T08:03:42Z 192.0.2.44 web GET /docs/select-or-insert.html 200
+2026-11-02T08:04:05Z 192.0.2.60 web GET /environment/report 200

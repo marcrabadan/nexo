@@ -1,0 +1,15 @@
+2026-11-02T09:14:01Z 203.0.113.9 sshd login failed user=root
+2026-11-02T09:14:02Z 203.0.113.9 sshd login failed user=admin
+2026-11-02T09:14:03Z 192.0.2.44 web GET /index.html 200
+2026-11-02T09:14:04Z 203.0.113.9 sshd login failed user=root
+2026-11-02T09:14:05Z 203.0.113.9 sshd login failed user=test
+2026-11-02T09:14:06Z 203.0.113.9 sshd login failed user=oracle
+2026-11-02T09:14:07Z 203.0.113.9 sshd login failed user=root
+2026-11-02T09:15:10Z 198.51.100.23 web GET /products?id=1+UNION+SELECT+name,password+FROM+users 200
+2026-11-02T09:15:12Z 198.51.100.23 web GET /login?user=admin%27--&pass=x 401
+2026-11-02T09:16:40Z 198.51.100.77 web GET /static/../../etc/passwd 404
+2026-11-02T09:16:41Z 198.51.100.77 web GET /download?file=%2e%2e%2f%2e%2e%2fsecrets 403
+2026-11-02T09:17:02Z 198.51.100.77 web GET /.env 404
+2026-11-02T09:17:30Z 192.0.2.10 web GET /items?id=5%20or%201=1 200
+2026-11-02T09:18:00Z not-an-address web GET / 200
+this line is not a log entry

@@ -12,3 +12,6 @@ compiler/tests/fuzz/
 # Optional Nexo Web development tooling
 node_modules/
 dist/
+
+# Written by examples/sentinel on each run
+examples/sentinel/audit.json
