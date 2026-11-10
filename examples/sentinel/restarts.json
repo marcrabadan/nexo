@@ -1,0 +1,8 @@
+{
+  "prometheus": "http://localhost:9090",
+  "loki": "http://localhost:3100",
+  "window": "1h",
+  "namespace": "",
+  "lines": 200,
+  "tenant": ""
+}

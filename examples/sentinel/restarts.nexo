@@ -1,0 +1,217 @@
+## Nexo Sentinel, restarts: asks Prometheus which containers restarted,
+## reads the last lines of each one from Loki and says why it restarted.
+## It only reads; the report is written to restarts-report.json.
+
+policy:
+    allow read "restarts.json"
+    allow write "restarts-report.json"
+    allow net "127.0.0.1"
+    allow net "localhost"
+    deny shell
+
+type Settings:
+    prometheus: str
+    loki: str
+    window: str
+    namespace: str
+    lines: int
+    tenant: str
+
+## A cause of a restart: `pattern` is looked for in the lines of the
+## container. The first cause of the table that matches is the one given.
+type Cause:
+    id: str
+    name: str
+    pattern: str
+    action: str
+
+type Restart:
+    namespace: str
+    pod: str
+    container: str
+    restarts: int
+    reason: str
+    cause: str
+    name: str
+    proof: "metrics" | "logs" | "none"
+    evidence: str
+
+CAUSES = [
+    Cause("RST-101", "out_of_memory", "(?i)out of memory|OOMKilled|oom-kill|OutOfMemoryError|cannot allocate memory|MemoryError", "Raise the memory limit of the container or find what grows; compare its use with the limit."),
+    Cause("RST-102", "crash", "(?i)panic:|fatal error|segmentation fault|SIGSEGV|unhandled exception|Traceback \\(most recent call last\\)|core dumped", "Read the stack in the lines named and fix the fault; the program stops itself."),
+    Cause("RST-103", "dependency", "(?i)connection refused|ECONNREFUSED|no such host|connection reset|dial tcp|could not connect to|ETIMEDOUT", "Check the service it could not reach; make the start wait and retry."),
+    Cause("RST-104", "configuration", "(?i)missing (required )?(environment variable|env var|config)|invalid configuration|no such file or directory|permission denied|failed to (load|parse) config", "Compare the variables, secrets and mounted files of the deployment with what the program needs."),
+    Cause("RST-105", "stopped_by_platform", "(?i)SIGTERM|signal terminated|liveness probe failed|shutting down|graceful shutdown", "Look at the probes and their timeouts, and at evictions of the node."),
+    Cause("RST-900", "unknown", "", "Raise `lines` in restarts.json or read the events of the pod.")
+]
+
+PATTERNS = [regex(cause.pattern) for cause in CAUSES if cause.pattern != ""]
+
+## The names Kubernetes accepts; anything else is not put in a query.
+kube_name = regex("^[a-z0-9]([-a-z0-9.]{{0,251}[a-z0-9])?$")
+window_text = regex("^[0-9]{{1,4}[smhd]$")
+hidden = regex("[​-‏‪-‮⁦-⁩﻿]")
+control = regex("[\u0000-\u0008\u000b-\u001f\u007f]")
+start = regex("^.{{0,100}")
+
+## What a person can read safely: hidden and control characters are named
+## instead of printed, and the text is cut at 100 characters.
+fn shown(text: str) -> str:
+    clean = control.replace(hidden.replace(text, "<hidden>"), "<control>")
+    short = start.find(clean) ?? ""
+    if len(short) < len(clean):
+        return "{short}..."
+    return short
+
+## A query as it goes in an address.
+fn encoded(query: str) -> str:
+    var out = query.replace("%", "%25")
+    for pair in [[" ", "%20"], ["\"", "%22"], ["{{", "%7B"], ["}", "%7D"], ["=", "%3D"], [",", "%2C"], ["[", "%5B"], ["]", "%5D"], [">", "%3E"], ["(", "%28"], [")", "%29"], ["+", "%2B"], ["&", "%26"], ["#", "%23"]]:
+        out = out.replace(pair[0], pair[1])
+    return out
+
+fn cause_of(id: str) -> Cause:
+    return [cause for cause in CAUSES if cause.id == id][0]
+
+## What Prometheus answers to a query: a list of {{metric, value}.
+fn metrics(settings: Settings, query: str) -> list!:
+    answer = http.get("{settings.prometheus}/api/v1/query?query={encoded(query)}", timeout: 15s)?
+    body = answer.json()
+    if body["status"] != "success":
+        fail("Prometheus did not answer the query {query}")
+    return body["data"]["result"]
+
+## The last lines of a container, the newest first.
+fn lines_of(settings: Settings, namespace: str, pod: str, container: str) -> list!:
+    query = "{{namespace=\"{namespace}\", pod=\"{pod}\", container=\"{container}\"}"
+    var headers = {}
+    if settings.tenant != "":
+        headers = {"X-Scope-OrgID": settings.tenant}
+    answer = http.get("{settings.loki}/loki/api/v1/query_range?query={encoded(query)}&since={settings.window}&limit={settings.lines}&direction=backward", headers: headers, timeout: 15s)?
+    body = answer.json()
+    if body["status"] != "success":
+        fail("Loki did not answer for {namespace}/{pod}")
+    var lines = []
+    for stream in body["data"]["result"]:
+        for value in stream["values"]:
+            lines.add(value[1])
+    return lines
+
+## The cause the lines show and the line that shows it: [id, evidence].
+fn cause_in(lines: list) -> list:
+    var index = 0
+    for cause in CAUSES:
+        if cause.pattern != "":
+            for line in lines:
+                if PATTERNS[index].find(line) != none:
+                    return [cause.id, shown(line)]
+            index += 1
+    return ["RST-900", ""]
+
+## Why a container restarted. The reason Kubernetes gives comes first:
+## a container killed for its memory leaves no line in its log.
+fn explain(namespace: str, pod: str, container: str, restarts: int, reason: str, lines: list) -> Restart:
+    found = cause_in(lines)
+    var id = found[0]
+    var proof = "logs"
+    var evidence = found[1]
+    if reason == "OOMKilled":
+        id = "RST-101"
+        proof = "metrics"
+        if found[0] != "RST-101":
+            evidence = "Kubernetes ended it: OOMKilled"
+    elif id == "RST-900":
+        proof = "none"
+        evidence = "{len(lines)} lines read, none explains it"
+    return Restart(namespace, pod, container, restarts, reason, id, cause_of(id).name, proof, evidence)
+
+fn selector(settings: Settings) -> str:
+    if settings.namespace == "":
+        return ""
+    return "{{namespace=\"{settings.namespace}\"}"
+
+fn collect(settings: Settings) -> list!:
+    restarted = metrics(settings, "increase(kube_pod_container_status_restarts_total{selector(settings)}[{settings.window}]) > 0")?
+    reasons = metrics(settings, "kube_pod_container_status_last_terminated_reason{selector(settings)} == 1")?
+    var out = []
+    for sample in restarted:
+        labels = sample["metric"]
+        namespace = labels["namespace"] ?? ""
+        pod = labels["pod"] ?? ""
+        container = labels["container"] ?? ""
+        if kube_name.find(namespace) == none or kube_name.find(pod) == none or kube_name.find(container) == none:
+            print("Left out a container whose name is not a Kubernetes name: {shown("{namespace}/{pod}/{container}")}")
+        else:
+            var reason = "-"
+            for other in reasons:
+                their = other["metric"]
+                if their["namespace"] == namespace and their["pod"] == pod and their["container"] == container:
+                    reason = shown(their["reason"] ?? "-")
+            var lines = []
+            try:
+                lines = lines_of(settings, namespace, pod, container)
+            else e:
+                print("No logs of {namespace}/{pod}: {e.message}")
+            times: float = validate(sample["value"][1], as: float)?
+            out.add(explain(namespace, pod, container, int(round(times)), reason, lines))
+    return out
+
+fn pad(text: str, width: int) -> str:
+    var out = text
+    while len(out) < width:
+        out = "{out} "
+    return "{out} "
+
+fn print_report(settings: Settings, restarts: list):
+    print("NEXO SENTINEL - restarts of the last {settings.window}")
+    print("")
+    if len(restarts) == 0:
+        print("No container restarted.")
+        return
+    print("Containers that restarted: {len(restarts)}")
+    print("")
+    print("RESTARTS")
+    print("  {pad("CONTAINER", 44)}{pad("TIMES", 5)}{pad("REASON", 10)}{pad("CAUSE", 19)}{pad("PROOF", 7)}EVIDENCE")
+    for r in restarts:
+        print("  {pad("{r.namespace}/{r.pod}/{r.container}", 44)}{pad(str(r.restarts), 5)}{pad(r.reason, 10)}{pad(r.name, 19)}{pad(r.proof, 7)}{r.evidence}")
+    print("")
+    print("RECOMMENDED")
+    for cause in CAUSES:
+        if len([r for r in restarts if r.cause == cause.id]) > 0:
+            print("  {pad(cause.id, 7)}{pad(cause.name, 19)}{cause.action}")
+    print("")
+
+fn main():
+    settings: Settings = json.parse(read("restarts.json")?, as: Settings)?
+    if window_text.find(settings.window) == none:
+        fail("window must be a number and s, m, h or d, such as 1h")
+    if settings.namespace != "" and kube_name.find(settings.namespace) == none:
+        fail("namespace is not a Kubernetes name")
+    restarts = collect(settings)?
+    print_report(settings, restarts)
+    write("restarts-report.json", convert({"window": settings.window, "restarts": restarts}, to: json))?
+    print("The report is in restarts-report.json.")
+
+try:
+    main()
+else e:
+    print("Sentinel stopped: {e.message}")
+
+test "the first cause of the table wins":
+    lines = ["shutting down", "dial tcp 10.0.0.5:5432: connection refused", "panic: nil map"]
+    assert cause_in(lines) == ["RST-102", "panic: nil map"]
+    assert cause_in(["listening on :8080"]) == ["RST-900", ""]
+
+test "a container killed for its memory needs no line":
+    r = explain("shop", "api-1", "api", 3, "OOMKilled", ["listening on :8080"])
+    assert r.name == "out_of_memory" and r.proof == "metrics"
+    assert r.evidence == "Kubernetes ended it: OOMKilled"
+
+test "a restart nothing explains says so":
+    r = explain("shop", "api-1", "api", 1, "Error", [])
+    assert r.name == "unknown" and r.proof == "none"
+
+test "a query is encoded and names are checked":
+    assert encoded("{{pod=\"a b\"}") == "%7Bpod%3D%22a%20b%22%7D"
+    assert kube_name.find("api-7d9f.shop") != none
+    assert kube_name.find("api\"} or {{x=\"") == none

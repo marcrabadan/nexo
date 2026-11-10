@@ -1,0 +1,23 @@
+Left out a container whose name is not a Kubernetes name: shop/x"} or {job="/api
+NEXO SENTINEL - restarts of the last 1h
+
+Containers that restarted: 6
+
+RESTARTS
+  CONTAINER                                    TIMES REASON     CAUSE               PROOF   EVIDENCE
+  shop/api-7d9f8-x2k4p/api                     3     OOMKilled  out_of_memory       metrics Kubernetes ended it: OOMKilled
+  shop/worker-5c6b7-q8z1m/worker               1     Error      crash               logs    panic: runtime error: index out of range [3] with length 3
+  shop/cart-66d4c-h7n2v/cart                   2     -          dependency          logs    dial tcp 10.0.3.7:5432: connect: connection refused
+  data/importer-0/importer                     4     Error      configuration       logs    fatal: missing required environment variable IMPORT_BUCKET
+  data/cache-0/redis                           1     Completed  stopped_by_platform logs    Received SIGTERM scheduling shutdown...
+  shop/mail-9b8a7-k3j5d/mail                   1     Error      unknown             none    2 lines read, none explains it
+
+RECOMMENDED
+  RST-101 out_of_memory       Raise the memory limit of the container or find what grows; compare its use with the limit.
+  RST-102 crash               Read the stack in the lines named and fix the fault; the program stops itself.
+  RST-103 dependency          Check the service it could not reach; make the start wait and retry.
+  RST-104 configuration       Compare the variables, secrets and mounted files of the deployment with what the program needs.
+  RST-105 stopped_by_platform Look at the probes and their timeouts, and at evictions of the node.
+  RST-900 unknown             Raise `lines` in restarts.json or read the events of the pod.
+
+The report is in restarts-report.json.

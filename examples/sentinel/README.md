@@ -101,6 +101,59 @@ nothing; a failing firewall is recorded; wrong settings stop the program;
 a release build cannot read outside `logs/`; and the Python comparison
 prints the same and writes the same `report.json`.
 
+## Restarts, with Prometheus and Loki
+
+`restarts.nexo` is a second program. It asks Prometheus which containers
+restarted in the last `window`, reads the last lines of each from Loki and
+says why each one restarted. It only reads from both; it changes nothing.
+
+```
+cd examples/sentinel
+../../.venv/bin/nexo restarts.nexo
+```
+
+It needs kube-state-metrics in Prometheus (the metrics
+`kube_pod_container_status_restarts_total` and
+`kube_pod_container_status_last_terminated_reason`) and logs in Loki with
+the labels `namespace`, `pod` and `container`. Settings are in
+`restarts.json`:
+
+| Field | Meaning |
+|---|---|
+| `prometheus`, `loki` | the addresses of the two services |
+| `window` | how far back to look, such as `30m`, `1h` or `2d` |
+| `namespace` | one namespace, or `""` for all |
+| `lines` | how many lines of each container to read from Loki |
+| `tenant` | the `X-Scope-OrgID` header for Loki, or `""` |
+
+The `policy` block allows the network of this machine only. For services
+elsewhere, add their hosts, for example `allow net "loki.example.com"`.
+A release build needs that; development mode warns and goes on.
+
+| Cause | Name | Given when |
+|---|---|---|
+| RST-101 | `out_of_memory` | Kubernetes says `OOMKilled`, or a line speaks of memory running out |
+| RST-102 | `crash` | a line has a panic, a fatal error, a segmentation fault or a traceback |
+| RST-103 | `dependency` | a line has a refused or reset connection, or a host not found |
+| RST-104 | `configuration` | a line has a missing variable, file or permission, or a configuration that does not load |
+| RST-105 | `stopped_by_platform` | a line has SIGTERM, a failed liveness probe or a shutdown |
+| RST-900 | `unknown` | nothing above matched |
+
+The first cause of the table that matches any line is given, with the line
+as evidence. `PROOF` says where it comes from: `metrics` (the reason
+Kubernetes recorded), `logs` or `none`. The report is also written to
+`restarts-report.json`.
+
+Names that come back from Prometheus are checked against the form of a
+Kubernetes name before they go into a Loki query, and the window and
+namespace of the settings are checked the same way, so neither can change
+a query.
+
+Limits: there is no login yet (no bearer token or basic auth, only the
+tenant header), and it has run against stand-ins for the two services
+that answer their HTTP APIs (`tests/test_sentinel_restarts.py`), not
+against a real Prometheus or Loki.
+
 Not done yet from the roadmap: the measurements against Python (startup,
 throughput, memory, size) and running both under the same isolation
 profile.
