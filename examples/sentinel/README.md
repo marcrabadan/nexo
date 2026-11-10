@@ -192,6 +192,46 @@ their HTTP APIs (`tests/test_sentinel_restarts.py`), not against a real
 Prometheus or Loki; and it reads the container that is running now, so
 the lines of a pod that was replaced (a new name) are not looked for.
 
+## CPU and memory, with Prometheus and Loki
+
+`resources.nexo` is a third program. It asks Prometheus for the CPU and
+memory of every container in the last `window` and in the window before
+it, reports the ones that grew or are near their limit, and reads from
+Loki what each of those logged meanwhile. It only reads from both.
+
+```
+cd examples/sentinel
+../../.venv/bin/nexo resources.nexo
+../../.venv/bin/nexo test resources.nexo
+```
+
+| Rule | Name | Severity | A container is reported when |
+|---|---|---|---|
+| RES-101 | `memory_near_limit` | high | its memory is `near_limit_percent` of its limit or more |
+| RES-102 | `memory_increase` | medium | its memory grew `increase_percent` or more, and at least 16 MiB |
+| RES-201 | `cpu_near_limit` | high | its CPU is `near_limit_percent` of its limit or more |
+| RES-202 | `cpu_increase` | medium | its CPU grew `increase_percent` or more, and at least 50 thousandths of a core |
+| RES-203 | `cpu_throttled` | medium | it was held back in `throttled_percent` of its periods or more |
+
+CPU is the average of the window in thousandths of a core (`950m`), memory
+the average of the window in MiB. A container without a limit, or one that
+was not there in the window before, is not reported for what cannot be
+compared. For each container with a finding, the report gives how many of
+its lines in Loki speak of errors, timeouts or memory, and the newest one.
+The report is also written to `resources-report.json`.
+
+It needs cAdvisor's `container_cpu_usage_seconds_total` (required),
+`container_memory_working_set_bytes` and `container_cpu_cfs_*_periods_total`,
+and kube-state-metrics' `kube_pod_container_resource_limits`. Settings are
+in `resources.json`: `prometheus`, `loki`, `window`, `namespace`, `tenant`
+and `auth` as for restarts, the three percentages above, and `lines`, the
+most lines read for each container.
+
+`monitoring.nexo` is the module it uses for the queries and for text that
+is safe to show. Like the restarts report, it has run against stand-ins
+for the two services (`tests/test_sentinel_resources.py`), not against a
+real Prometheus or Loki.
+
 Not done yet from the roadmap: the measurements against Python (startup,
 throughput, memory, size) and running both under the same isolation
 profile.

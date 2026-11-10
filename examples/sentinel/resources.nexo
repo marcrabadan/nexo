@@ -1,0 +1,247 @@
+## Nexo Sentinel, resources: asks Prometheus for the CPU and memory of
+## every container in the last window and in the one before it, reports
+## the ones that grew or are near their limit, and reads from Loki what
+## each of those logged meanwhile. It only reads from both; the report is
+## written to resources-report.json.
+use monitoring
+
+policy:
+    allow read "resources.json"
+    allow write "resources-report.json"
+    allow env "SENTINEL_AUTH"
+    allow net "127.0.0.1"
+    allow net "localhost"
+    deny shell
+
+type Settings:
+    prometheus: str
+    loki: str
+    window: str
+    namespace: str
+    tenant: str
+    auth: bool
+    increase_percent: int
+    near_limit_percent: int
+    throttled_percent: int
+    lines: int
+
+type Rule:
+    id: str
+    name: str
+    severity: "high" | "medium"
+    action: str
+
+## The use of a container: CPU in thousandths of a core, memory in MiB,
+## each now, in the window before, and its limit (0 without one).
+type Use:
+    namespace: str
+    pod: str
+    container: str
+    cpu: int
+    cpu_before: int
+    cpu_limit: int
+    throttled: int
+    memory: int
+    memory_before: int
+    memory_limit: int
+
+type Finding:
+    rule: str
+    name: str
+    severity: "high" | "medium"
+    namespace: str
+    pod: str
+    container: str
+    detail: str
+
+RULES = [
+    Rule("RES-101", "memory_near_limit", "high", "The container will be ended when it reaches its limit: raise the limit or lower what it holds in memory."),
+    Rule("RES-102", "memory_increase", "medium", "Look for what grows (a cache, a queue, a leak) and compare with the traffic of the same time."),
+    Rule("RES-201", "cpu_near_limit", "high", "Raise the CPU limit or add replicas; requests wait while it is at its limit."),
+    Rule("RES-202", "cpu_increase", "medium", "Compare with the traffic and the deployments of the same time; look for a loop or retries."),
+    Rule("RES-203", "cpu_throttled", "medium", "The limit holds the container back: raise it, or lower the work done in each request.")
+]
+
+## Under these a change is noise: 50 thousandths of a core, 16 MiB.
+MIN_CPU = 50
+MIN_MEMORY = 16
+log_filter = "(?i)error|exception|timeout|fatal|panic|out of memory|throttl"
+
+fn rule_of(id: str) -> Rule:
+    return [rule for rule in RULES if rule.id == id][0]
+
+fn finding(id: str, u: Use, detail: str) -> Finding:
+    rule = rule_of(id)
+    return Finding(id, rule.name, rule.severity, u.namespace, u.pod, u.container, detail)
+
+## How much `now` is over `before`, in percent; none without a before.
+fn growth(now: int, before: int) -> int?:
+    if before <= 0:
+        return none
+    return int((now - before) * 100 / before)
+
+fn percent_of(now: int, limit: int) -> int?:
+    if limit <= 0:
+        return none
+    return int(now * 100 / limit)
+
+fn check(u: Use, settings: Settings) -> list:
+    var found = []
+    memory_use = percent_of(u.memory, u.memory_limit)
+    if memory_use != none and memory_use >= settings.near_limit_percent:
+        found.add(finding("RES-101", u, "{u.memory}Mi of {u.memory_limit}Mi ({memory_use}%)"))
+    memory_growth = growth(u.memory, u.memory_before)
+    if memory_growth != none and memory_growth >= settings.increase_percent and u.memory - u.memory_before >= MIN_MEMORY:
+        found.add(finding("RES-102", u, "{u.memory_before}Mi -> {u.memory}Mi (+{memory_growth}%)"))
+    cpu_use = percent_of(u.cpu, u.cpu_limit)
+    if cpu_use != none and cpu_use >= settings.near_limit_percent:
+        found.add(finding("RES-201", u, "{u.cpu}m of {u.cpu_limit}m ({cpu_use}%)"))
+    cpu_growth = growth(u.cpu, u.cpu_before)
+    if cpu_growth != none and cpu_growth >= settings.increase_percent and u.cpu - u.cpu_before >= MIN_CPU:
+        found.add(finding("RES-202", u, "{u.cpu_before}m -> {u.cpu}m (+{cpu_growth}%)"))
+    if u.throttled >= settings.throttled_percent:
+        found.add(finding("RES-203", u, "held back in {u.throttled}% of its periods"))
+    return found
+
+## The labels of a query: the namespace of the settings and `more`.
+fn labels(settings: Settings, more: str) -> str:
+    if settings.namespace == "":
+        return "{{{more}}"
+    return "{{namespace=\"{settings.namespace}\", {more}}"
+
+## A number of a container in an answer, times `scale`; 0 without one.
+fn amount(samples: list, sample: map, scale: float) -> int!:
+    their = sample["metric"]
+    found = monitoring.sample_of(samples, their["namespace"], their["pod"], their["container"])
+    if found == none:
+        return 0
+    return int(round(monitoring.number_of(found)? * scale))
+
+fn ask_for(settings: Settings, what: str, query: str) -> list:
+    try:
+        return monitoring.metrics(settings.prometheus, query, monitoring.headers_of(settings.tenant, settings.auth))
+    else e:
+        print("Without {what}: {e.message}")
+        return []
+
+fn collect(settings: Settings) -> list!:
+    by = "by (namespace, pod, container)"
+    w = settings.window
+    running = labels(settings, "container!=\"\"")
+    cpu = monitoring.metrics(settings.prometheus, "sum {by} (rate(container_cpu_usage_seconds_total{running}[{w}]))", monitoring.headers_of(settings.tenant, settings.auth))?
+    cpu_before = ask_for(settings, "the CPU of before", "sum {by} (rate(container_cpu_usage_seconds_total{running}[{w}] offset {w}))")
+    cpu_limit = ask_for(settings, "the CPU limits", "max {by} (kube_pod_container_resource_limits{labels(settings, "resource=\"cpu\"")})")
+    throttled = ask_for(settings, "the throttling", "100 * sum {by} (rate(container_cpu_cfs_throttled_periods_total{running}[{w}])) / sum {by} (rate(container_cpu_cfs_periods_total{running}[{w}]))")
+    memory = ask_for(settings, "the memory", "max {by} (avg_over_time(container_memory_working_set_bytes{running}[{w}]))")
+    memory_before = ask_for(settings, "the memory of before", "max {by} (avg_over_time(container_memory_working_set_bytes{running}[{w}] offset {w}))")
+    memory_limit = ask_for(settings, "the memory limits", "max {by} (kube_pod_container_resource_limits{labels(settings, "resource=\"memory\"")})")
+    mib = 1.0 / 1048576.0
+    var out = []
+    for sample in cpu:
+        their = sample["metric"]
+        namespace = their["namespace"] ?? ""
+        pod = their["pod"] ?? ""
+        container = their["container"] ?? ""
+        if not monitoring.is_name(namespace) or not monitoring.is_name(pod) or not monitoring.is_name(container):
+            print("Left out a container whose name is not a Kubernetes name: {monitoring.shown("{namespace}/{pod}/{container}")}")
+        else:
+            out.add(Use(namespace, pod, container, amount(cpu, sample, 1000.0)?, amount(cpu_before, sample, 1000.0)?, amount(cpu_limit, sample, 1000.0)?, amount(throttled, sample, 1.0)?, amount(memory, sample, mib)?, amount(memory_before, sample, mib)?, amount(memory_limit, sample, mib)?))
+    return out
+
+## What a container logged in the window that may explain its use:
+## [how many lines, the newest one].
+fn logged(settings: Settings, f: Finding) -> list:
+    query = "{{namespace=\"{f.namespace}\", pod=\"{f.pod}\", container=\"{f.container}\"} |~ \"{log_filter}\""
+    try:
+        lines = monitoring.log_lines(settings.loki, query, settings.window, settings.lines, monitoring.headers_of(settings.tenant, settings.auth))
+        if len(lines) == 0:
+            return [0, "nothing that explains it"]
+        return [len(lines), monitoring.shown(lines[0])]
+    else e:
+        return [0, "no logs: {e.message}"]
+
+fn shown_limit(limit: int, unit: str) -> str:
+    if limit == 0:
+        return "-"
+    return "{limit}{unit}"
+
+fn print_report(settings: Settings, uses: list, findings: list, logs: list):
+    print("NEXO SENTINEL - CPU and memory, the last {settings.window} against the {settings.window} before")
+    print("")
+    high = [f for f in findings if f.severity == "high"] |> count
+    print("{len(uses)} containers read; {len(findings)} findings: {high} high, {len(findings) - high} medium")
+    if len(findings) == 0:
+        return
+    print("")
+    print("FINDINGS")
+    print("  {monitoring.pad("SEVERITY", 8)}{monitoring.pad("RULE", 7)}{monitoring.pad("NAME", 17)}{monitoring.pad("CONTAINER", 38)}DETAIL")
+    for severity in ["high", "medium"]:
+        for f in findings:
+            if f.severity == severity:
+                print("  {monitoring.pad(f.severity, 8)}{monitoring.pad(f.rule, 7)}{monitoring.pad(f.name, 17)}{monitoring.pad("{f.namespace}/{f.pod}/{f.container}", 38)}{f.detail}")
+    print("")
+    print("USE OF THOSE CONTAINERS")
+    print("  {monitoring.pad("CONTAINER", 38)}{monitoring.pad("CPU", 6)}{monitoring.pad("BEFORE", 6)}{monitoring.pad("LIMIT", 6)}{monitoring.pad("THROTTLED", 9)}{monitoring.pad("MEMORY", 7)}{monitoring.pad("BEFORE", 7)}LIMIT")
+    for u in uses:
+        if len([f for f in findings if f.pod == u.pod and f.container == u.container and f.namespace == u.namespace]) > 0:
+            print("  {monitoring.pad("{u.namespace}/{u.pod}/{u.container}", 38)}{monitoring.pad("{u.cpu}m", 6)}{monitoring.pad("{u.cpu_before}m", 6)}{monitoring.pad(shown_limit(u.cpu_limit, "m"), 6)}{monitoring.pad("{u.throttled}%", 9)}{monitoring.pad("{u.memory}Mi", 7)}{monitoring.pad("{u.memory_before}Mi", 7)}{shown_limit(u.memory_limit, "Mi")}")
+    print("")
+    print("WHAT THEY LOGGED")
+    for entry in logs:
+        print("  {monitoring.pad(entry["container"], 38)}{monitoring.pad("{entry["lines"]} lines", 10)}{entry["newest"]}")
+    print("")
+    print("RECOMMENDED")
+    for rule in RULES:
+        own = [f for f in findings if f.rule == rule.id]
+        if len(own) > 0:
+            print("  {monitoring.pad(rule.id, 7)}{monitoring.pad(rule.name, 17)}{monitoring.pad("x{len(own)}", 3)}{rule.action}")
+    print("")
+
+fn main():
+    settings: Settings = json.parse(read("resources.json")?, as: Settings)?
+    if not monitoring.is_window(settings.window):
+        fail("window must be a number and s, m, h or d, such as 1h")
+    if settings.namespace != "" and not monitoring.is_name(settings.namespace):
+        fail("namespace is not a Kubernetes name")
+    if settings.lines < 1 or settings.lines > 5000:
+        fail("lines must be from 1 to 5000")
+    if settings.increase_percent < 1 or settings.near_limit_percent < 1 or settings.throttled_percent < 1:
+        fail("the percentages must be 1 or more")
+    uses = collect(settings)?
+    var findings = []
+    for u in uses:
+        for f in check(u, settings):
+            findings.add(f)
+    var logs = []
+    var seen = []
+    for f in findings:
+        name = "{f.namespace}/{f.pod}/{f.container}"
+        if not (name in seen):
+            seen.add(name)
+            found = logged(settings, f)
+            logs.add({"container": name, "lines": found[0], "newest": found[1]})
+    print_report(settings, uses, findings, logs)
+    write("resources-report.json", convert({"window": settings.window, "containers": len(uses), "findings": findings, "logs": logs, "use": uses}, to: json))?
+    print("The report is in resources-report.json.")
+
+try:
+    main()
+else e:
+    print("Sentinel stopped: {e.message}")
+
+SETTINGS = Settings("", "", "1h", "", "", false, 50, 90, 25, 50)
+
+test "a container that grew is reported once it is more than noise":
+    grew = check(Use("shop", "api-1", "api", 400, 200, 0, 0, 300, 150, 0), SETTINGS)
+    assert [f.rule for f in grew] == ["RES-102", "RES-202"]
+    assert grew[0].detail == "150Mi -> 300Mi (+100%)" and grew[1].detail == "200m -> 400m (+100%)"
+    assert check(Use("shop", "api-1", "api", 30, 10, 0, 0, 20, 8, 0), SETTINGS) == []
+
+test "a container near its limit is high":
+    near = check(Use("shop", "api-1", "api", 950, 940, 1000, 40, 480, 470, 512), SETTINGS)
+    assert [f.rule for f in near] == ["RES-101", "RES-201", "RES-203"]
+    assert near[0].severity == "high" and near[0].detail == "480Mi of 512Mi (93%)"
+
+test "without a limit or a before nothing is guessed":
+    assert check(Use("shop", "new-1", "api", 900, 0, 0, 0, 900, 0, 0), SETTINGS) == []
+    assert growth(10, 0) == none and percent_of(10, 0) == none

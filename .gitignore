@@ -18,3 +18,4 @@ examples/sentinel/audit.json
 examples/sentinel/report.json
 examples/sentinel/restarts-report.json
 examples/sentinel/restarts-report.md
+examples/sentinel/resources-report.json

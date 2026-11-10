@@ -1,0 +1,81 @@
+## What restarts.nexo and resources.nexo share: queries to Prometheus and
+## Loki, and text that is safe to show.
+
+hidden = regex("[​-‏‪-‮⁦-⁩﻿]")
+control = regex("[\u0000-\u0008\u000b-\u001f\u007f]")
+start = regex("^.{{0,100}")
+kube_name = regex("^[a-z0-9]([-a-z0-9.]{{0,251}[a-z0-9])?$")
+window_text = regex("^[0-9]{{1,4}[smhd]$")
+
+## What a person can read safely: hidden and control characters are named
+## instead of printed, and the text is cut at 100 characters.
+pub fn shown(text: str) -> str:
+    clean = control.replace(hidden.replace(text, "<hidden>"), "<control>")
+    short = start.find(clean) ?? ""
+    if len(short) < len(clean):
+        return "{short}..."
+    return short
+
+## The names Kubernetes accepts; anything else is not put in a query.
+pub fn is_name(text: str) -> bool:
+    return kube_name.find(text) != none
+
+## A time such as 30m, 1h or 2d.
+pub fn is_window(text: str) -> bool:
+    return window_text.find(text) != none
+
+## A query as it goes in an address.
+pub fn encoded(query: str) -> str:
+    var out = query.replace("%", "%25")
+    for pair in [[" ", "%20"], ["\"", "%22"], ["{{", "%7B"], ["}", "%7D"], ["=", "%3D"], [",", "%2C"], ["[", "%5B"], ["]", "%5D"], [">", "%3E"], ["(", "%28"], [")", "%29"], ["+", "%2B"], ["&", "%26"], ["#", "%23"], ["!", "%21"], ["*", "%2A"], ["/", "%2F"], ["|", "%7C"], ["~", "%7E"], ["?", "%3F"]]:
+        out = out.replace(pair[0], pair[1])
+    return out
+
+## The headers of every request: the tenant and, with `auth`, the
+## Authorization header kept in the variable SENTINEL_AUTH.
+pub fn headers_of(tenant: str, auth: bool) -> map:
+    var headers = {}
+    if tenant != "":
+        headers["X-Scope-OrgID"] = tenant
+    if auth:
+        headers["Authorization"] = secret("SENTINEL_AUTH")
+    return headers
+
+## What Prometheus answers to a query: a list of {{metric, value}.
+pub fn metrics(prometheus: str, query: str, headers: map) -> list!:
+    answer = http.get("{prometheus}/api/v1/query?query={encoded(query)}", headers: headers, timeout: 15s)?
+    body = answer.json()
+    if body["status"] != "success":
+        fail("Prometheus did not answer the query {query}")
+    return body["data"]["result"]
+
+## The last lines Loki has for a query, the newest first.
+pub fn log_lines(loki: str, query: str, window: str, limit: int, headers: map) -> list!:
+    answer = http.get("{loki}/loki/api/v1/query_range?query={encoded(query)}&since={window}&limit={limit}&direction=backward", headers: headers, timeout: 15s)?
+    body = answer.json()
+    if body["status"] != "success":
+        fail("Loki did not answer the query {query}")
+    var lines = []
+    for stream in body["data"]["result"]:
+        for value in stream["values"]:
+            lines.add(value[1])
+    return lines
+
+## The sample of a container in an answer of Prometheus, or none.
+pub fn sample_of(samples: list, namespace: str, pod: str, container: str) -> map?:
+    for sample in samples:
+        their = sample["metric"]
+        if their["namespace"] == namespace and their["pod"] == pod and their["container"] == container:
+            return sample
+    return none
+
+## The number of a sample.
+pub fn number_of(sample: map) -> float!:
+    number: float = validate(sample["value"][1], as: float)?
+    return number
+
+pub fn pad(text: str, width: int) -> str:
+    var out = text
+    while len(out) < width:
+        out = "{out} "
+    return "{out} "

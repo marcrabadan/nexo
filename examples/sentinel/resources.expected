@@ -1,0 +1,33 @@
+Left out a container whose name is not a Kubernetes name: shop/x"} or {job="/api
+NEXO SENTINEL - CPU and memory, the last 1h against the 1h before
+
+5 containers read; 6 findings: 2 high, 4 medium
+
+FINDINGS
+  SEVERITY RULE    NAME              CONTAINER                              DETAIL
+  high     RES-101 memory_near_limit shop/api-7d9f8-x2k4p/api               480Mi of 512Mi (93%)
+  high     RES-201 cpu_near_limit    shop/api-7d9f8-x2k4p/api               950m of 1000m (95%)
+  medium   RES-202 cpu_increase      shop/api-7d9f8-x2k4p/api               400m -> 950m (+137%)
+  medium   RES-203 cpu_throttled     shop/api-7d9f8-x2k4p/api               held back in 38% of its periods
+  medium   RES-102 memory_increase   shop/worker-5c6b7-q8z1m/worker         300Mi -> 900Mi (+200%)
+  medium   RES-202 cpu_increase      data/importer-0/importer               100m -> 600m (+500%)
+
+USE OF THOSE CONTAINERS
+  CONTAINER                              CPU    BEFORE LIMIT  THROTTLED MEMORY  BEFORE  LIMIT
+  shop/api-7d9f8-x2k4p/api               950m   400m   1000m  38%       480Mi   470Mi   512Mi
+  shop/worker-5c6b7-q8z1m/worker         200m   190m   -      0%        900Mi   300Mi   2048Mi
+  data/importer-0/importer               600m   100m   2000m  0%        210Mi   200Mi   -
+
+WHAT THEY LOGGED
+  shop/api-7d9f8-x2k4p/api               2 lines    WARN request timeout after 30s<control>[2J
+  shop/worker-5c6b7-q8z1m/worker         1 lines    ERROR cache holds 1200000 entries
+  data/importer-0/importer               0 lines    nothing that explains it
+
+RECOMMENDED
+  RES-101 memory_near_limit x1  The container will be ended when it reaches its limit: raise the limit or lower what it holds in memory.
+  RES-102 memory_increase   x1  Look for what grows (a cache, a queue, a leak) and compare with the traffic of the same time.
+  RES-201 cpu_near_limit    x1  Raise the CPU limit or add replicas; requests wait while it is at its limit.
+  RES-202 cpu_increase      x2  Compare with the traffic and the deployments of the same time; look for a loop or retries.
+  RES-203 cpu_throttled     x1  The limit holds the container back: raise it, or lower the work done in each request.
+
+The report is in resources-report.json.

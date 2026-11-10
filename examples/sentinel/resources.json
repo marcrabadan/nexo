@@ -1,0 +1,12 @@
+{
+  "prometheus": "http://localhost:9090",
+  "loki": "http://localhost:3100",
+  "window": "1h",
+  "namespace": "",
+  "tenant": "",
+  "auth": false,
+  "increase_percent": 50,
+  "near_limit_percent": 90,
+  "throttled_percent": 25,
+  "lines": 50
+}
