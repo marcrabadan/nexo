@@ -15,3 +15,4 @@ dist/
 
 # Written by examples/sentinel on each run
 examples/sentinel/audit.json
+examples/sentinel/report.json

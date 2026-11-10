@@ -1,6 +1,6 @@
 """The Python comparison of sentinel.nexo: the same rules, the same
-prompts and the same output on the same logs. Run it from
-examples/sentinel: python3 compare/sentinel.py"""
+prompts, the same output, report.json and audit records on the same
+logs. Run it from examples/sentinel: python3 compare/sentinel.py"""
 import json
 import os
 import re
@@ -9,14 +9,31 @@ import urllib.request
 from datetime import datetime, timezone
 
 MAX_LINE = 4096
-MAX_FAILED_LOGINS = 5
+SPACE = r"(\s|\+|%20)"
+
+# id, name, severity, reference, pattern of the message (or ""), action
+RULES = [
+    ("SEN-101", "sql_injection", "high", "CWE-89, ATT&CK T1190", rf"(?i)union{SPACE}+select|{SPACE}or{SPACE}+1=1|(%27|'){SPACE}*(--|;|%3b)", "Review the queries of the endpoint; use parameters, never text put together."),
+    ("SEN-102", "command_injection", "high", "CWE-78, ATT&CK T1190", rf"(?i)(;|\||%3b|%7c|&&|%26%26|\$\(|`){SPACE}*(cat|wget|curl|nc|bash|sh|id|whoami|uname)({SPACE}|$|&|;)", "Check the host for commands run by the web service; never pass input to a shell."),
+    ("SEN-103", "cross_site_scripting", "medium", "CWE-79", rf"(?i)(<|%3c)script|javascript:|on(error|load){SPACE}*(=|%3d)", "Encode output in the page named; add a Content-Security-Policy."),
+    ("SEN-104", "path_traversal", "medium", "CWE-22", r"(?i)\.\./|\.\.\\|%2e%2e(/|%2f)|\.\.%2f", "Resolve file names inside one folder and refuse the rest."),
+    ("SEN-105", "sensitive_file", "medium", "CWE-538", r"(?i)/etc/(passwd|shadow)|/\.env|/\.git/|/\.ssh/|/wp-config\.php", "Make sure the file is not served; rotate any secret that was answered with 200."),
+    ("SEN-106", "scanner", "medium", "ATT&CK T1595.002", r"(?i)sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wpscan|acunetix|nuclei", "Expect more requests from this address; rate-limit it."),
+    ("SEN-201", "brute_force", "high", "CWE-307, ATT&CK T1110", "", "Lock the accounts tried and require a second factor."),
+    ("SEN-202", "login_after_failures", "high", "ATT&CK T1078", "", "Treat the account as compromised: end its sessions and reset its password."),
+    ("SEN-203", "enumeration", "medium", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
+    ("SEN-301", "hidden_text", "medium", "CWE-117, ATT&CK T1036.002", "", "Open the line with a tool that shows every character before trusting it."),
+    ("SEN-302", "oversized_line", "low", "CWE-400", "", "Limit the length of a request at the proxy."),
+    ("SEN-303", "malformed_line", "low", "CWE-117", "", "Check what writes this log; a broken line can hide an entry."),
+]
+BY_ID = {rule[0]: rule for rule in RULES}
+PATTERNS = [(rule[0], re.compile(rule[4])) for rule in RULES if rule[4]]
 
 ENTRY = re.compile(r"^(\S+) (\S+) (\S+) (.*)$")
 ADDRESS = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
 FAILED_LOGIN = re.compile(r"(?i)login failed|authentication failure|invalid password")
-SQL_INJECTION = re.compile(r"(?i)union(\s|\+|%20)+select|(\s|\+|%20)or(\s|\+|%20)+1=1|(%27|')(\s|\+|%20)*(--|;|%3b)")
-PATH_TRAVERSAL = re.compile(r"(?i)\.\./|\.\.\\|%2e%2e(/|%2f)|\.\.%2f")
-SENSITIVE_FILE = re.compile(r"(?i)/etc/(passwd|shadow)|/\.env|/\.git/|/\.ssh/|/wp-config\.php")
+ACCEPTED_LOGIN = re.compile(r"(?i)login accepted|session opened")
+NOT_FOUND = re.compile(r" 404( |$)")
 HIDDEN = re.compile("[​-‏‪-‮⁦-⁩﻿]")
 CONTROL = re.compile("[\u0000-\u0008\u000b-\u001f\u007f]")
 
@@ -30,70 +47,79 @@ def inside_logs(path):
     return path.startswith("logs/") and ".." not in path and "\\" not in path
 
 
-def finding(rule, severity, file, line, source, evidence):
-    return {"rule": rule, "severity": severity, "file": file, "line": line, "source": source, "evidence": evidence}
+def finding(rule, file, line, source, evidence):
+    return {"rule": rule, "name": BY_ID[rule][1], "severity": BY_ID[rule][2], "file": file, "line": line,
+            "source": source, "evidence": evidence}
+
+
+def fields_of(line):
+    if len(line) > MAX_LINE:
+        return None
+    fields = ENTRY.search(line)
+    if fields is None or ADDRESS.search(fields.group(2)) is None:
+        return None
+    return fields.group(2), fields.group(4)
 
 
 def check_line(file, number, line):
     if len(line) > MAX_LINE:
-        return [finding("oversized_line", "low", file, number, "-", f"{len(line)} characters")]
+        return [finding("SEN-302", file, number, "-", f"{len(line)} characters")]
     if line.strip() == "":
         return []
     found = []
-    fields = ENTRY.search(line)
+    fields = fields_of(line)
     source, message = "-", line
-    if fields is None or ADDRESS.search(fields.group(2)) is None:
-        found.append(finding("malformed_line", "low", file, number, source, shown(line)))
+    if fields is None:
+        found.append(finding("SEN-303", file, number, source, shown(line)))
     else:
-        source, message = fields.group(2), fields.group(4)
+        source, message = fields
     if HIDDEN.search(line) or CONTROL.search(line):
-        found.append(finding("hidden_text", "medium", file, number, source, shown(message)))
-    if source == "-":
+        found.append(finding("SEN-301", file, number, source, shown(message)))
+    if fields is None:
         return found
-    for rule, severity, pattern in (("sql_injection", "high", SQL_INJECTION),
-                                    ("path_traversal", "medium", PATH_TRAVERSAL),
-                                    ("sensitive_file", "medium", SENSITIVE_FILE)):
+    for rule, pattern in PATTERNS:
         if pattern.search(message):
-            found.append(finding(rule, severity, file, number, source, shown(message)))
+            found.append(finding(rule, file, number, source, shown(message)))
     return found
 
 
-def failed_login_from(line):
-    if len(line) > MAX_LINE:
-        return None
-    fields = ENTRY.search(line)
-    if fields is None or ADDRESS.search(fields.group(2)) is None or FAILED_LOGIN.search(fields.group(4)) is None:
-        return None
-    return fields.group(2)
-
-
-def scan_file(file):
-    found, failed, number = [], {}, 0
+def scan_file(file, settings):
+    found, failed, missing, number = [], {}, {}, 0
     with open(file, encoding="utf-8") as lines:
         for line in lines:
             line = line.rstrip("\r\n")
             number += 1
             found += check_line(file, number, line)
-            source = failed_login_from(line)
-            if source is not None:
+            fields = fields_of(line)
+            if fields is None:
+                continue
+            source, message = fields
+            if FAILED_LOGIN.search(message):
                 failed[source] = failed.get(source, 0) + 1
-                if failed[source] == MAX_FAILED_LOGINS:
-                    found.append(finding("brute_force", "high", file, number, source, f"{MAX_FAILED_LOGINS} failed logins"))
+                if failed[source] == settings["max_failed_logins"]:
+                    found.append(finding("SEN-201", file, number, source, f"{failed[source]} failed logins"))
+            elif ACCEPTED_LOGIN.search(message) and failed.get(source, 0) >= settings["max_failed_logins"]:
+                found.append(finding("SEN-202", file, number, source,
+                                     f"accepted after {failed[source]} failed logins: {shown(message)}"))
+            if NOT_FOUND.search(message):
+                missing[source] = missing.get(source, 0) + 1
+                if missing[source] == settings["max_not_found"]:
+                    found.append(finding("SEN-203", file, number, source, f"{missing[source]} requests answered 404"))
     return number, found
 
 
-def scan(files):
+def scan(settings):
     read_files, lines, skipped, findings = 0, 0, [], []
-    for file in files:
+    for file in settings["logs"]:
         if not inside_logs(file):
-            skipped.append(f"{shown(file)}: outside logs/")
+            skipped.append((shown(file), "outside logs/"))
             continue
         try:
-            number, found = scan_file(file)
+            number, found = scan_file(file, settings)
         except UnicodeDecodeError:
-            skipped.append(f'{file}: Invalid data: the file "{file}" is not UTF-8')
+            skipped.append((file, f'Invalid data: the file "{file}" is not UTF-8'))
         except FileNotFoundError:
-            skipped.append(f'{file}: File "{file}" not found')
+            skipped.append((file, f'File "{file}" not found'))
         else:
             read_files += 1
             lines += number
@@ -101,16 +127,33 @@ def scan(files):
     return read_files, lines, skipped, findings
 
 
-def to_block(findings, never):
-    out = []
-    for f in findings:
-        if f["severity"] == "high" and f["source"] not in out and f["source"] not in never:
-            out.append(f["source"])
-    return out
+def count_of(findings, severity):
+    return sum(1 for f in findings if f["severity"] == severity)
+
+
+def score_of(findings):
+    return 10 * count_of(findings, "high") + 4 * count_of(findings, "medium") + count_of(findings, "low")
+
+
+def sources(findings, never):
+    rows = []
+    for source in dict.fromkeys(f["source"] for f in findings if f["source"] != "-"):
+        own = [f for f in findings if f["source"] == source]
+        proposal = "watch"
+        if count_of(own, "high") > 0:
+            proposal = "protected" if source in never else "block"
+        rows.append({"address": source, "score": score_of(own), "high": count_of(own, "high"),
+                     "medium": count_of(own, "medium"), "low": count_of(own, "low"),
+                     "rules": list(dict.fromkeys(f["rule"] for f in own)), "proposal": proposal})
+    return sorted(rows, key=lambda row: -row["score"])  # stable: the first found comes first
+
+
+def to_block(rows):
+    return [row["address"] for row in rows if row["proposal"] == "block"]
 
 
 def digest(findings):
-    return "".join(f'{f["severity"]} {f["rule"]} from {f["source"]} at {f["file"]}:{f["line"]}\n' for f in findings)
+    return "".join(f'{f["severity"]} {f["name"]} from {f["source"]} at {f["file"]}:{f["line"]}\n' for f in findings)
 
 
 def advice(findings):
@@ -118,8 +161,8 @@ def advice(findings):
     body = {"model": "llama3.2", "stream": False, "messages": [
         {"role": "system", "content": "Summarise these security findings for the engineer on call, in two sentences"},
         {"role": "user", "content": digest(findings)}]}
-    request = urllib.request.Request(os.environ.get("OLLAMA_HOST", "http://localhost:11434") + "/api/chat", json.dumps(body).encode(),
-                                     {"Content-Type": "application/json"})
+    request = urllib.request.Request(os.environ.get("OLLAMA_HOST", "http://localhost:11434") + "/api/chat",
+                                     json.dumps(body).encode(), {"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=20) as answer:
         return json.load(answer)["message"]["content"]
 
@@ -128,6 +171,11 @@ def block(firewall, source):
     body = json.dumps({"address": source, "by": "sentinel"}).encode()
     request = urllib.request.Request(f"{firewall}/block", body, {"Content-Type": "application/json"})
     urllib.request.urlopen(request, timeout=5).close()
+
+
+def write_json(path, value):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(value, indent=2, ensure_ascii=False))
 
 
 def record(events):
@@ -139,8 +187,7 @@ def record(events):
     for event, detail in events:
         at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
         records.append({"number": len(records) + 1, "at": at, "event": event, "detail": detail})
-    with open("audit.json", "w", encoding="utf-8") as f:
-        f.write(json.dumps(records, indent=2, ensure_ascii=False))
+    write_json("audit.json", records)
 
 
 def yes(question):
@@ -148,22 +195,50 @@ def yes(question):
     return sys.stdin.readline().strip().lower() == "yes"
 
 
+def print_report(files, lines, skipped, findings, rows):
+    print("NEXO SENTINEL - security report of the logs")
+    print()
+    print(f"Scanned {files} files and {lines} lines; skipped {len(skipped)} files.")
+    print(f'Findings: {len(findings)} (high {count_of(findings, "high")}, medium {count_of(findings, "medium")}, '
+          f'low {count_of(findings, "low")})')
+    if skipped:
+        print("\nSKIPPED")
+        for file, reason in skipped:
+            print(f"  {file:<24}{reason}")
+    if findings:
+        print("\nFINDINGS")
+        print(f'  {"SEVERITY":<10}{"RULE":<9}{"NAME":<22}{"WHERE":<23}{"SOURCE":<17}EVIDENCE')
+        for f in findings:
+            where = f'{f["file"]}:{f["line"]}'
+            print(f'  {f["severity"]:<10}{f["rule"]:<9}{f["name"]:<22}{where:<23}{f["source"]:<17}{f["evidence"]}')
+    if rows:
+        print("\nSOURCES")
+        print(f'  {"ADDRESS":<17}{"SCORE":<7}{"HIGH":<6}{"MEDIUM":<8}{"LOW":<5}{"PROPOSAL":<11}RULES')
+        for row in rows:
+            print(f'  {row["address"]:<17}{row["score"]:<7}{row["high"]:<6}{row["medium"]:<8}{row["low"]:<5}'
+                  f'{row["proposal"]:<11}{", ".join(row["rules"])}')
+    if findings:
+        print("\nRECOMMENDED")
+        for rule in RULES:
+            if any(f["rule"] == rule[0] for f in findings):
+                print(f"  {rule[0]:<9}{rule[1]:<22}{rule[5]} ({rule[3]})")
+    print()
+
+
 def main():
     with open("sentinel.json", encoding="utf-8") as f:
         settings = json.load(f)
-    files, lines, skipped, findings = scan(settings["logs"])
+    files, lines, skipped, findings = scan(settings)
+    rows = sources(findings, settings["never_block"])
+    print_report(files, lines, skipped, findings, rows)
     events = [("scan", f"{files} files, {lines} lines, {len(findings)} findings")]
-    print("Nexo Sentinel")
-    print(f"Scanned {files} files, {lines} lines.")
-    for reason in skipped:
-        print(f"Skipped {reason}")
-        events.append(("skipped", reason))
-    print(f"Findings: {len(findings)}")
-    for f in findings:
-        print(f'  [{f["severity"]}] {f["rule"]} {f["file"]}:{f["line"]} {f["source"]}: {f["evidence"]}')
-    count = lambda severity: sum(1 for f in findings if f["severity"] == severity)
-    print(f'High: {count("high")}, medium: {count("medium")}, low: {count("low")}')
-    addresses = to_block(findings, settings["never_block"])
+    events += [("skipped", f"{file}: {reason}") for file, reason in skipped]
+    write_json("report.json", {"files": files, "lines": lines,
+                               "skipped": [{"file": file, "reason": reason} for file, reason in skipped],
+                               "findings": findings, "sources": rows})
+    print("The report is in report.json.")
+    events.append(("report", "report.json"))
+    addresses = to_block(rows)
     if findings and yes("Ask the local model for a summary?"):
         try:
             print(f"Advice (not acted on): {advice(findings)}")
@@ -174,8 +249,8 @@ def main():
     if not addresses:
         print("Nothing to block.")
     else:
-        print(f"Addresses to block: {json.dumps(addresses)}")
-        if yes("Block them on the firewall?"):
+        print(f'Proposed: block {", ".join(addresses)} on the firewall.')
+        if yes("Block them?"):
             events.append(("approval", "yes"))
             for source in addresses:
                 try:

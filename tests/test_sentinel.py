@@ -18,8 +18,8 @@ from phases import ROOT, commands, compiler, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
 EXPECTED = (SENTINEL / "sentinel.expected").read_text(encoding="utf-8")
-BLOCKED = ["203.0.113.9", "198.51.100.23"]
-ADVICE = "Block 192.0.2.10 at once. Block them on the firewall? yes"
+BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.23"]
+ADVICE = "Block 192.0.2.10 at once. Block them? yes"
 
 
 class Outside(BaseHTTPRequestHandler):
@@ -92,13 +92,20 @@ def test_findings_need_no_model(phase, work):
     assert (code, out) == (0, EXPECTED)
     assert Outside.seen == []
     # every labelled finding and no other: precision and recall are 1
-    found = [[file, int(line), rule] for rule, file, line in re.findall(r"^  \[\w+\] (\w+) (\S+):(\d+) ", out, re.M)]
+    found = [[file, int(line), rule] for rule, file, line in
+             re.findall(r"^  (?:high|medium|low) +(SEN-\d+) +\w+ +(\S+):(\d+) ", out, re.M)]
     labels = json.loads((work / "findings.json").read_text(encoding="utf-8"))
     assert sorted(found) == sorted(labels)
     assert not any(file == "logs/benign.log" for file, _, _ in found)
     # what the log hides is named, never printed
     assert not re.search("[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff\x1b]", out)
-    assert audit(work)[0] == ("scan", "4 files, 35 lines, 15 findings")
+    # report.json holds the same findings, and the proposal for each address
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert [[f["file"], f["line"], f["rule"]] for f in report["findings"]] == found
+    assert {r["address"]: r["proposal"] for r in report["sources"] if r["proposal"] != "watch"} == {
+        **{address: "block" for address in BLOCKED}, "192.0.2.10": "protected"}
+    assert [r["score"] for r in report["sources"]] == sorted((r["score"] for r in report["sources"]), reverse=True)
+    assert audit(work)[0] == ("scan", "4 files, 56 lines, 23 findings")
     assert audit(work)[-1] == ("approval", "no")
 
 
@@ -115,10 +122,10 @@ def test_a_refusal_changes_nothing_outside(phase, work, answer):
 def test_an_approval_blocks_the_addresses_shown(phase, work):
     code, out = sentinel(phase[1], work, "no\nyes\n")
     assert code == 0
-    assert out.endswith("Blocked 203.0.113.9\nBlocked 198.51.100.23\n")
-    assert blocks() == BLOCKED and len(Outside.seen) == 2
+    assert out.endswith("".join(f"Blocked {address}\n" for address in BLOCKED))
+    assert blocks() == BLOCKED and len(Outside.seen) == 3
     # 192.0.2.10 has a high finding and is in never_block
-    assert audit(work)[-3:] == [("approval", "yes"), ("blocked", BLOCKED[0]), ("blocked", BLOCKED[1])]
+    assert audit(work)[-4:] == [("approval", "yes"), *(("blocked", address) for address in BLOCKED)]
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -142,7 +149,7 @@ def test_a_firewall_that_fails_is_recorded(phase, work):
     (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     code, out = sentinel(phase[1], work, "no\nyes\n")
     assert code == 0 and "Could not block 203.0.113.9: " in out
-    assert audit(work)[-2:] == [("block failed", BLOCKED[0]), ("block failed", BLOCKED[1])]
+    assert audit(work)[-3:] == [("block failed", address) for address in BLOCKED]
 
 
 @pytest.mark.parametrize("answers", ["no\nno\n", "no\nyes\n", "yes\nyes\n"])
@@ -152,8 +159,11 @@ def test_the_python_comparison_is_the_same(work, server, answers):
     seen, records = [(path, body) for path, body in Outside.seen if path == "/block"], audit(work)
     asked = len(Outside.seen)
     Outside.seen.clear()
+    report = (work / "report.json").read_bytes()
     (work / "audit.json").unlink()
+    (work / "report.json").unlink()
     assert python(work, answers, server) == nexo
+    assert (work / "report.json").read_bytes() == report
     assert len(Outside.seen) == asked and audit(work) == records
     assert [(path, body) for path, body in Outside.seen if path == "/block"] == seen
 
@@ -162,7 +172,7 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "6 tests: 6 passed, 0 failed" in out, out
+    assert proc.returncode == 0 and "7 tests: 7 passed, 0 failed" in out, out
     before = (work / "sentinel.nexo").read_bytes()
     assert run(phase[1], ["fmt", "sentinel.nexo"], work).returncode == 0
     assert (work / "sentinel.nexo").read_bytes() == before
@@ -187,3 +197,18 @@ def test_a_release_build_cannot_read_outside_logs(work):
     assert proc.returncode == 1
     assert 'The policy does not allow reading "logs/link.log".' in out
     assert "203.0.113.50" not in out and Outside.seen == []
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_settings_are_checked_and_limits_are_read(phase, work):
+    settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
+    settings["max_failed_logins"] = 7
+    (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    # 6 failed logins are under the limit now, so the login after them is not reported either
+    assert code == 0 and "SEN-201" not in out and "SEN-202" not in out
+    del settings["firewall"]
+    (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert out.startswith("Sentinel stopped: ") and "firewall" in out
+    assert Outside.seen == []

