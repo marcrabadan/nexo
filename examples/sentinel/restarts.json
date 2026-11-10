@@ -4,5 +4,7 @@
   "window": "1h",
   "namespace": "",
   "lines": 200,
-  "tenant": ""
+  "tenant": "",
+  "auth": false,
+  "crash_loop_restarts": 5
 }

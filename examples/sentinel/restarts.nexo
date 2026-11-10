@@ -1,10 +1,14 @@
 ## Nexo Sentinel, restarts: asks Prometheus which containers restarted,
-## reads the last lines of each one from Loki and says why it restarted.
-## It only reads; the report is written to restarts-report.json.
+## with their exit code, state and memory, reads the last lines of each
+## one from Loki and says why it restarted and how serious it is. It only
+## reads from both; the report is written to restarts-report.json and,
+## to share, restarts-report.md.
 
 policy:
     allow read "restarts.json"
     allow write "restarts-report.json"
+    allow write "restarts-report.md"
+    allow env "SENTINEL_AUTH"
     allow net "127.0.0.1"
     allow net "localhost"
     deny shell
@@ -16,6 +20,8 @@ type Settings:
     namespace: str
     lines: int
     tenant: str
+    auth: bool
+    crash_loop_restarts: int
 
 ## A cause of a restart: `pattern` is looked for in the lines of the
 ## container. The first cause of the table that matches is the one given.
@@ -26,26 +32,38 @@ type Cause:
     action: str
 
 type Restart:
+    severity: "critical" | "high" | "medium" | "low"
     namespace: str
     pod: str
     container: str
     restarts: int
+    state: str
     reason: str
+    exit_code: str
+    memory: str
     cause: str
     name: str
     proof: "metrics" | "logs" | "none"
     evidence: str
+    context: list
 
 CAUSES = [
     Cause("RST-101", "out_of_memory", "(?i)out of memory|OOMKilled|oom-kill|OutOfMemoryError|cannot allocate memory|MemoryError", "Raise the memory limit of the container or find what grows; compare its use with the limit."),
     Cause("RST-102", "crash", "(?i)panic:|fatal error|segmentation fault|SIGSEGV|unhandled exception|Traceback \\(most recent call last\\)|core dumped", "Read the stack in the lines named and fix the fault; the program stops itself."),
-    Cause("RST-103", "dependency", "(?i)connection refused|ECONNREFUSED|no such host|connection reset|dial tcp|could not connect to|ETIMEDOUT", "Check the service it could not reach; make the start wait and retry."),
-    Cause("RST-104", "configuration", "(?i)missing (required )?(environment variable|env var|config)|invalid configuration|no such file or directory|permission denied|failed to (load|parse) config", "Compare the variables, secrets and mounted files of the deployment with what the program needs."),
-    Cause("RST-105", "stopped_by_platform", "(?i)SIGTERM|signal terminated|liveness probe failed|shutting down|graceful shutdown", "Look at the probes and their timeouts, and at evictions of the node."),
+    Cause("RST-103", "storage", "(?i)no space left on device|disk quota exceeded|read-only file system", "Free or grow the volume; move logs and temporary files off the container's disk."),
+    Cause("RST-104", "certificate", "(?i)certificate has expired|certificate is not yet valid|x509:|certificate verify failed|TLS handshake (error|failed)", "Renew the certificate named and check the clock and the trusted authorities of the container."),
+    Cause("RST-105", "port_in_use", "(?i)address already in use|EADDRINUSE", "Two processes want the same port: check the command of the container and its sidecars."),
+    Cause("RST-106", "configuration", "(?i)missing (required )?(environment variable|env var|config)|invalid configuration|no such file or directory|permission denied|failed to (load|parse) config", "Compare the variables, secrets and mounted files of the deployment with what the program needs."),
+    Cause("RST-107", "dependency", "(?i)connection refused|ECONNREFUSED|no such host|connection reset|dial tcp|could not connect to|ETIMEDOUT", "Check the service it could not reach; make the start wait and retry."),
+    Cause("RST-108", "stopped_by_platform", "(?i)SIGTERM|signal terminated|liveness probe failed|shutting down|graceful shutdown", "Look at the probes and their timeouts, and at evictions of the node."),
+    Cause("RST-109", "start_failure", "", "Read the events of the pod: the image, its command or a mounted secret is wrong."),
     Cause("RST-900", "unknown", "", "Raise `lines` in restarts.json or read the events of the pod.")
 ]
 
 PATTERNS = [regex(cause.pattern) for cause in CAUSES if cause.pattern != ""]
+SEVERITIES = ["critical", "high", "medium", "low"]
+SERIOUS = ["RST-101", "RST-102", "RST-103", "RST-104"]
+START_FAILURES = ["ImagePullBackOff", "ErrImagePull", "InvalidImageName", "CreateContainerConfigError", "CreateContainerError", "RunContainerError"]
 
 ## The names Kubernetes accepts; anything else is not put in a query.
 kube_name = regex("^[a-z0-9]([-a-z0-9.]{{0,251}[a-z0-9])?$")
@@ -66,28 +84,44 @@ fn shown(text: str) -> str:
 ## A query as it goes in an address.
 fn encoded(query: str) -> str:
     var out = query.replace("%", "%25")
-    for pair in [[" ", "%20"], ["\"", "%22"], ["{{", "%7B"], ["}", "%7D"], ["=", "%3D"], [",", "%2C"], ["[", "%5B"], ["]", "%5D"], [">", "%3E"], ["(", "%28"], [")", "%29"], ["+", "%2B"], ["&", "%26"], ["#", "%23"]]:
+    for pair in [[" ", "%20"], ["\"", "%22"], ["{{", "%7B"], ["}", "%7D"], ["=", "%3D"], [",", "%2C"], ["[", "%5B"], ["]", "%5D"], [">", "%3E"], ["(", "%28"], [")", "%29"], ["+", "%2B"], ["&", "%26"], ["#", "%23"], ["!", "%21"], ["*", "%2A"], ["/", "%2F"]]:
         out = out.replace(pair[0], pair[1])
     return out
 
 fn cause_of(id: str) -> Cause:
     return [cause for cause in CAUSES if cause.id == id][0]
 
+## The headers of every request: the tenant of Loki and, with `auth`,
+## the Authorization header kept in the variable SENTINEL_AUTH.
+fn headers_of(settings: Settings) -> map:
+    var headers = {}
+    if settings.tenant != "":
+        headers["X-Scope-OrgID"] = settings.tenant
+    if settings.auth:
+        headers["Authorization"] = secret("SENTINEL_AUTH")
+    return headers
+
 ## What Prometheus answers to a query: a list of {{metric, value}.
 fn metrics(settings: Settings, query: str) -> list!:
-    answer = http.get("{settings.prometheus}/api/v1/query?query={encoded(query)}", timeout: 15s)?
+    answer = http.get("{settings.prometheus}/api/v1/query?query={encoded(query)}", headers: headers_of(settings), timeout: 15s)?
     body = answer.json()
     if body["status"] != "success":
         fail("Prometheus did not answer the query {query}")
     return body["data"]["result"]
 
+## The same, for what a report can do without: a failure is said once
+## and the answer is empty.
+fn extra_metrics(settings: Settings, what: str, query: str) -> list:
+    try:
+        return metrics(settings, query)
+    else e:
+        print("Without {what}: {e.message}")
+        return []
+
 ## The last lines of a container, the newest first.
 fn lines_of(settings: Settings, namespace: str, pod: str, container: str) -> list!:
     query = "{{namespace=\"{namespace}\", pod=\"{pod}\", container=\"{container}\"}"
-    var headers = {}
-    if settings.tenant != "":
-        headers = {"X-Scope-OrgID": settings.tenant}
-    answer = http.get("{settings.loki}/loki/api/v1/query_range?query={encoded(query)}&since={settings.window}&limit={settings.lines}&direction=backward", headers: headers, timeout: 15s)?
+    answer = http.get("{settings.loki}/loki/api/v1/query_range?query={encoded(query)}&since={settings.window}&limit={settings.lines}&direction=backward", headers: headers_of(settings), timeout: 15s)?
     body = answer.json()
     if body["status"] != "success":
         fail("Loki did not answer for {namespace}/{pod}")
@@ -97,63 +131,146 @@ fn lines_of(settings: Settings, namespace: str, pod: str, container: str) -> lis
             lines.add(value[1])
     return lines
 
-## The cause the lines show and the line that shows it: [id, evidence].
+## The cause the lines show, the line that shows it and the lines around
+## it, the oldest first: [id, evidence, context].
 fn cause_in(lines: list) -> list:
     var index = 0
     for cause in CAUSES:
         if cause.pattern != "":
+            var position = 0
             for line in lines:
                 if PATTERNS[index].find(line) != none:
-                    return [cause.id, shown(line)]
+                    var around = []
+                    var other = 0
+                    for near in lines:
+                        if other >= position - 1 and other <= position + 2:
+                            around = [shown(near)] + around
+                        other += 1
+                    return [cause.id, shown(line), around]
+                position += 1
             index += 1
-    return ["RST-900", ""]
+    return ["RST-900", "", []]
 
-## Why a container restarted. The reason Kubernetes gives comes first:
-## a container killed for its memory leaves no line in its log.
-fn explain(namespace: str, pod: str, container: str, restarts: int, reason: str, lines: list) -> Restart:
+## Why a container restarted: [id, proof, evidence, context]. What
+## Kubernetes recorded comes first (a container killed for its memory
+## leaves no line), then its lines, then its exit code and state.
+fn decide(reason: str, exit_code: str, state: str, memory: int?, lines: list) -> list:
     found = cause_in(lines)
-    var id = found[0]
-    var proof = "logs"
-    var evidence = found[1]
     if reason == "OOMKilled":
-        id = "RST-101"
-        proof = "metrics"
-        if found[0] != "RST-101":
-            evidence = "Kubernetes ended it: OOMKilled"
-    elif id == "RST-900":
-        proof = "none"
-        evidence = "{len(lines)} lines read, none explains it"
-    return Restart(namespace, pod, container, restarts, reason, id, cause_of(id).name, proof, evidence)
+        if found[0] == "RST-101":
+            return ["RST-101", "metrics", found[1], found[2]]
+        return ["RST-101", "metrics", "Kubernetes ended it: OOMKilled", []]
+    if found[0] != "RST-900":
+        return [found[0], "logs", found[1], found[2]]
+    if exit_code == "137" and (memory ?? 0) >= 90:
+        return ["RST-101", "metrics", "exit code 137 with its memory at {memory}% of the limit", []]
+    if exit_code == "139" or exit_code == "134":
+        return ["RST-102", "metrics", "exit code {exit_code}: the program was ended by a fault", []]
+    if exit_code == "137" or exit_code == "143":
+        return ["RST-108", "metrics", "exit code {exit_code}: the container was told to stop", []]
+    if state in START_FAILURES:
+        return ["RST-109", "metrics", "Kubernetes cannot start it: {state}", []]
+    return ["RST-900", "none", "{len(lines)} lines read, none explains it", []]
 
-fn selector(settings: Settings) -> str:
+## Critical when it keeps restarting, high for the causes that lose work
+## or data, low for a stop the platform asked for, medium for the rest.
+fn severity_of(cause: str, restarts: int, state: str, limit: int) -> str:
+    if state == "CrashLoopBackOff" or restarts >= limit:
+        return "critical"
+    if cause in SERIOUS:
+        return "high"
+    if cause == "RST-108":
+        return "low"
+    return "medium"
+
+fn explain(namespace: str, pod: str, container: str, restarts: int, state: str, reason: str, exit_code: str, memory: int?, lines: list, limit: int) -> Restart:
+    found = decide(reason, exit_code, state, memory, lines)
+    var memory_text = "-"
+    if memory != none:
+        memory_text = "{memory}%"
+    return Restart(severity_of(found[0], restarts, state, limit), namespace, pod, container, restarts, state, reason, exit_code, memory_text, found[0], cause_of(found[0]).name, found[1], found[2], found[3])
+
+## The labels of a query: the namespace of the settings and `more`.
+fn labels(settings: Settings, more: str) -> str:
     if settings.namespace == "":
-        return ""
-    return "{{namespace=\"{settings.namespace}\"}"
+        if more == "":
+            return ""
+        return "{{{more}}"
+    if more == "":
+        return "{{namespace=\"{settings.namespace}\"}"
+    return "{{namespace=\"{settings.namespace}\", {more}}"
+
+## The sample of a container in an answer of Prometheus, or none.
+fn sample_of(samples: list, namespace: str, pod: str, container: str) -> map?:
+    for sample in samples:
+        their = sample["metric"]
+        if their["namespace"] == namespace and their["pod"] == pod and their["container"] == container:
+            return sample
+    return none
+
+fn whole(text: str) -> int!:
+    number: float = validate(text, as: float)?
+    return int(round(number))
 
 fn collect(settings: Settings) -> list!:
-    restarted = metrics(settings, "increase(kube_pod_container_status_restarts_total{selector(settings)}[{settings.window}]) > 0")?
-    reasons = metrics(settings, "kube_pod_container_status_last_terminated_reason{selector(settings)} == 1")?
+    by = "by (namespace, pod, container)"
+    restarted = metrics(settings, "increase(kube_pod_container_status_restarts_total{labels(settings, "")}[{settings.window}]) > 0")?
+    reasons = extra_metrics(settings, "the reasons", "kube_pod_container_status_last_terminated_reason{labels(settings, "")} == 1")
+    codes = extra_metrics(settings, "the exit codes", "kube_pod_container_status_last_terminated_exitcode{labels(settings, "")}")
+    waiting = extra_metrics(settings, "the states", "kube_pod_container_status_waiting_reason{labels(settings, "")} == 1")
+    memory = extra_metrics(settings, "the memory", "100 * max {by} (max_over_time(container_memory_working_set_bytes{labels(settings, "container!=\"\"")}[{settings.window}])) / on (namespace, pod, container) max {by} (kube_pod_container_resource_limits{labels(settings, "resource=\"memory\"")})")
     var out = []
     for sample in restarted:
-        labels = sample["metric"]
-        namespace = labels["namespace"] ?? ""
-        pod = labels["pod"] ?? ""
-        container = labels["container"] ?? ""
+        their = sample["metric"]
+        namespace = their["namespace"] ?? ""
+        pod = their["pod"] ?? ""
+        container = their["container"] ?? ""
         if kube_name.find(namespace) == none or kube_name.find(pod) == none or kube_name.find(container) == none:
             print("Left out a container whose name is not a Kubernetes name: {shown("{namespace}/{pod}/{container}")}")
         else:
             var reason = "-"
-            for other in reasons:
-                their = other["metric"]
-                if their["namespace"] == namespace and their["pod"] == pod and their["container"] == container:
-                    reason = shown(their["reason"] ?? "-")
+            found = sample_of(reasons, namespace, pod, container)
+            if found != none:
+                reason = shown(found["metric"]["reason"] ?? "-")
+            var state = "running"
+            found_state = sample_of(waiting, namespace, pod, container)
+            if found_state != none:
+                state = shown(found_state["metric"]["reason"] ?? "waiting")
+            var exit_code = "-"
+            found_code = sample_of(codes, namespace, pod, container)
+            if found_code != none:
+                exit_code = str(whole(found_code["value"][1])?)
+            var used: int? = none
+            found_memory = sample_of(memory, namespace, pod, container)
+            if found_memory != none:
+                used = whole(found_memory["value"][1])?
             var lines = []
             try:
                 lines = lines_of(settings, namespace, pod, container)
             else e:
                 print("No logs of {namespace}/{pod}: {e.message}")
-            times: float = validate(sample["value"][1], as: float)?
-            out.add(explain(namespace, pod, container, int(round(times)), reason, lines))
+            out.add(explain(namespace, pod, container, whole(sample["value"][1])?, state, reason, exit_code, used, lines, settings.crash_loop_restarts))
+    return sorted(out)
+
+## The most serious first and, among equals, the one that restarted most.
+fn sorted(restarts: list) -> list:
+    var out = []
+    for severity in SEVERITIES:
+        var group = []
+        for r in restarts:
+            if r.severity == severity:
+                var next = []
+                var placed = false
+                for other in group:
+                    if not placed and other.restarts < r.restarts:
+                        next.add(r)
+                        placed = true
+                    next.add(other)
+                if not placed:
+                    next.add(r)
+                group = next
+        for r in group:
+            out.add(r)
     return out
 
 fn pad(text: str, width: int) -> str:
@@ -162,24 +279,67 @@ fn pad(text: str, width: int) -> str:
         out = "{out} "
     return "{out} "
 
+fn count_of(restarts: list, severity: str) -> int:
+    return [r for r in restarts if r.severity == severity] |> count
+
+fn summary(restarts: list) -> str:
+    return "{len(restarts)} containers restarted: {count_of(restarts, "critical")} critical, {count_of(restarts, "high")} high, {count_of(restarts, "medium")} medium, {count_of(restarts, "low")} low"
+
+fn namespaces(restarts: list) -> list:
+    var out = []
+    for r in restarts:
+        if not (r.namespace in out):
+            out.add(r.namespace)
+    return out
+
+fn total(restarts: list) -> int:
+    return [r.restarts for r in restarts].sum()
+
 fn print_report(settings: Settings, restarts: list):
     print("NEXO SENTINEL - restarts of the last {settings.window}")
     print("")
     if len(restarts) == 0:
         print("No container restarted.")
         return
-    print("Containers that restarted: {len(restarts)}")
+    print(summary(restarts))
     print("")
     print("RESTARTS")
-    print("  {pad("CONTAINER", 44)}{pad("TIMES", 5)}{pad("REASON", 10)}{pad("CAUSE", 19)}{pad("PROOF", 7)}EVIDENCE")
+    print("  {pad("SEVERITY", 8)}{pad("CONTAINER", 38)}{pad("TIMES", 5)}{pad("STATE", 16)}{pad("REASON", 9)}{pad("EXIT", 4)}{pad("MEMORY", 6)}{pad("CAUSE", 19)}PROOF")
     for r in restarts:
-        print("  {pad("{r.namespace}/{r.pod}/{r.container}", 44)}{pad(str(r.restarts), 5)}{pad(r.reason, 10)}{pad(r.name, 19)}{pad(r.proof, 7)}{r.evidence}")
+        print("  {pad(r.severity, 8)}{pad("{r.namespace}/{r.pod}/{r.container}", 38)}{pad(str(r.restarts), 5)}{pad(r.state, 16)}{pad(r.reason, 9)}{pad(r.exit_code, 4)}{pad(r.memory, 6)}{pad(r.name, 19)}{r.proof}")
+    print("")
+    print("EVIDENCE")
+    for r in restarts:
+        print("  {pad("{r.namespace}/{r.pod}/{r.container}", 38)}{r.evidence}")
+    print("")
+    print("BY NAMESPACE")
+    for namespace in namespaces(restarts):
+        own = [r for r in restarts if r.namespace == namespace]
+        print("  {pad(namespace, 12)}{len(own)} containers, {total(own)} restarts")
     print("")
     print("RECOMMENDED")
     for cause in CAUSES:
-        if len([r for r in restarts if r.cause == cause.id]) > 0:
-            print("  {pad(cause.id, 7)}{pad(cause.name, 19)}{cause.action}")
+        own = [r for r in restarts if r.cause == cause.id]
+        if len(own) > 0:
+            print("  {pad(cause.id, 7)}{pad(cause.name, 19)}{pad("x{len(own)}", 3)}{cause.action}")
     print("")
+
+## The report as Markdown, to paste where an incident is discussed.
+fn markdown(settings: Settings, restarts: list) -> str:
+    var text = "# Restarts of the last {settings.window}\n\n{summary(restarts)}.\n"
+    if len(restarts) == 0:
+        return text
+    text = "{text}\n| Severity | Container | Times | State | Exit | Memory | Cause | Proof |\n|---|---|---|---|---|---|---|---|\n"
+    for r in restarts:
+        text = "{text}| {r.severity} | `{r.namespace}/{r.pod}/{r.container}` | {r.restarts} | {r.state} | {r.exit_code} | {r.memory} | {r.cause} {r.name} | {r.proof} |\n"
+    for r in restarts:
+        text = "{text}\n## {r.namespace}/{r.pod}/{r.container}\n\n{r.severity}: {r.name} ({r.cause}), from {r.proof}. {r.evidence.replace("`", "'")}\n\n{cause_of(r.cause).action}\n"
+        if len(r.context) > 0:
+            text = "{text}\n```\n"
+            for line in r.context:
+                text = "{text}{line.replace("`", "'")}\n"
+            text = "{text}```\n"
+    return text
 
 fn main():
     settings: Settings = json.parse(read("restarts.json")?, as: Settings)?
@@ -187,29 +347,47 @@ fn main():
         fail("window must be a number and s, m, h or d, such as 1h")
     if settings.namespace != "" and kube_name.find(settings.namespace) == none:
         fail("namespace is not a Kubernetes name")
+    if settings.lines < 1 or settings.lines > 5000:
+        fail("lines must be from 1 to 5000")
     restarts = collect(settings)?
     print_report(settings, restarts)
-    write("restarts-report.json", convert({"window": settings.window, "restarts": restarts}, to: json))?
-    print("The report is in restarts-report.json.")
+    write("restarts-report.json", convert({"window": settings.window, "summary": summary(restarts), "restarts": restarts}, to: json))?
+    write("restarts-report.md", markdown(settings, restarts))?
+    print("The report is in restarts-report.json and restarts-report.md.")
 
 try:
     main()
 else e:
     print("Sentinel stopped: {e.message}")
 
-test "the first cause of the table wins":
-    lines = ["shutting down", "dial tcp 10.0.0.5:5432: connection refused", "panic: nil map"]
-    assert cause_in(lines) == ["RST-102", "panic: nil map"]
-    assert cause_in(["listening on :8080"]) == ["RST-900", ""]
+test "the first cause of the table wins, with the lines around it":
+    lines = ["shutting down", "dial tcp 10.0.0.5:5432: connection refused", "panic: nil map", "job 7", "job 6", "job 5"]
+    assert cause_in(lines) == ["RST-102", "panic: nil map", ["job 6", "job 7", "panic: nil map", "dial tcp 10.0.0.5:5432: connection refused"]]
+    assert cause_in(["listening on :8080"]) == ["RST-900", "", []]
 
 test "a container killed for its memory needs no line":
-    r = explain("shop", "api-1", "api", 3, "OOMKilled", ["listening on :8080"])
-    assert r.name == "out_of_memory" and r.proof == "metrics"
-    assert r.evidence == "Kubernetes ended it: OOMKilled"
+    found = decide("OOMKilled", "137", "running", none, ["listening on :8080"])
+    assert found == ["RST-101", "metrics", "Kubernetes ended it: OOMKilled", []]
 
-test "a restart nothing explains says so":
-    r = explain("shop", "api-1", "api", 1, "Error", [])
-    assert r.name == "unknown" and r.proof == "none"
+test "the exit code explains what the lines do not":
+    assert decide("Error", "137", "running", 97, [])[0] == "RST-101"
+    assert decide("Error", "137", "running", 40, [])[0] == "RST-108"
+    assert decide("Error", "139", "running", none, [])[0] == "RST-102"
+    assert decide("Error", "1", "ImagePullBackOff", none, [])[0] == "RST-109"
+    assert decide("Error", "1", "running", none, []) == ["RST-900", "none", "0 lines read, none explains it", []]
+
+test "a container that keeps restarting is critical":
+    assert severity_of("RST-107", 2, "CrashLoopBackOff", 5) == "critical"
+    assert severity_of("RST-107", 5, "running", 5) == "critical"
+    assert severity_of("RST-101", 1, "running", 5) == "high"
+    assert severity_of("RST-107", 1, "running", 5) == "medium"
+    assert severity_of("RST-108", 1, "running", 5) == "low"
+
+test "the most serious comes first":
+    a = explain("shop", "a", "a", 1, "running", "Error", "1", none, ["connection refused"], 5)
+    b = explain("shop", "b", "b", 2, "running", "OOMKilled", "137", none, [], 5)
+    c = explain("shop", "c", "c", 3, "running", "OOMKilled", "137", none, [], 5)
+    assert [r.pod for r in sorted([a, b, c])] == ["c", "b", "a"]
 
 test "a query is encoded and names are checked":
     assert encoded("{{pod=\"a b\"}") == "%7Bpod%3D%22a%20b%22%7D"

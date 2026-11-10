@@ -104,18 +104,37 @@ prints the same and writes the same `report.json`.
 ## Restarts, with Prometheus and Loki
 
 `restarts.nexo` is a second program. It asks Prometheus which containers
-restarted in the last `window`, reads the last lines of each from Loki and
-says why each one restarted. It only reads from both; it changes nothing.
+restarted in the last `window`, with their exit code, state and memory,
+reads the last lines of each from Loki and says why each one restarted and
+how serious it is. It only reads from both; it changes nothing.
 
 ```
 cd examples/sentinel
 ../../.venv/bin/nexo restarts.nexo
+../../.venv/bin/nexo test restarts.nexo
 ```
 
-It needs kube-state-metrics in Prometheus (the metrics
-`kube_pod_container_status_restarts_total` and
-`kube_pod_container_status_last_terminated_reason`) and logs in Loki with
-the labels `namespace`, `pod` and `container`. Settings are in
+The report has the restarts with the most serious first, the evidence of
+each, the count for each namespace and what to do about each cause. It is
+also written to `restarts-report.json`, for other tools, and to
+`restarts-report.md`, to paste where an incident is discussed; the
+Markdown has the lines around the evidence of each container.
+
+### What it needs
+
+- Prometheus with kube-state-metrics: `kube_pod_container_status_restarts_total`
+  is required. `..._last_terminated_reason`, `..._last_terminated_exitcode`
+  and `..._waiting_reason` are used when present.
+- For the memory column, cAdvisor's `container_memory_working_set_bytes`
+  and `kube_pod_container_resource_limits`. The column is the highest use
+  in the window as a percentage of the limit.
+- Loki with the labels `namespace`, `pod` and `container` on the logs.
+
+When a query other than the first fails, the report says what it is
+without and goes on.
+
+### Settings
+
 `restarts.json`:
 
 | Field | Meaning |
@@ -123,36 +142,55 @@ the labels `namespace`, `pod` and `container`. Settings are in
 | `prometheus`, `loki` | the addresses of the two services |
 | `window` | how far back to look, such as `30m`, `1h` or `2d` |
 | `namespace` | one namespace, or `""` for all |
-| `lines` | how many lines of each container to read from Loki |
-| `tenant` | the `X-Scope-OrgID` header for Loki, or `""` |
+| `lines` | how many lines of each container to read from Loki (1 to 5000) |
+| `tenant` | the `X-Scope-OrgID` header, or `""` |
+| `auth` | `true` to send the variable `SENTINEL_AUTH` as the `Authorization` header |
+| `crash_loop_restarts` | restarts in the window from which a container is critical |
+
+With `auth`, set the whole header in the environment, for example
+`export SENTINEL_AUTH="Bearer <token>"` or `"Basic <base64>"`. It is read
+as a secret: it is never printed, and it is sent to both services.
 
 The `policy` block allows the network of this machine only. For services
 elsewhere, add their hosts, for example `allow net "loki.example.com"`.
 A release build needs that; development mode warns and goes on.
 
+### Causes
+
 | Cause | Name | Given when |
 |---|---|---|
-| RST-101 | `out_of_memory` | Kubernetes says `OOMKilled`, or a line speaks of memory running out |
-| RST-102 | `crash` | a line has a panic, a fatal error, a segmentation fault or a traceback |
-| RST-103 | `dependency` | a line has a refused or reset connection, or a host not found |
-| RST-104 | `configuration` | a line has a missing variable, file or permission, or a configuration that does not load |
-| RST-105 | `stopped_by_platform` | a line has SIGTERM, a failed liveness probe or a shutdown |
+| RST-101 | `out_of_memory` | Kubernetes says `OOMKilled`; a line speaks of memory running out; or exit code 137 with memory at 90% of the limit or more |
+| RST-102 | `crash` | a line has a panic, a fatal error, a segmentation fault or a traceback; or exit code 139 or 134 |
+| RST-103 | `storage` | a line has no space left, a quota exceeded or a read-only file system |
+| RST-104 | `certificate` | a line has an expired or unverified certificate or a failed TLS handshake |
+| RST-105 | `port_in_use` | a line has an address already in use |
+| RST-106 | `configuration` | a line has a missing variable, file or permission, or a configuration that does not load |
+| RST-107 | `dependency` | a line has a refused or reset connection, or a host not found |
+| RST-108 | `stopped_by_platform` | a line has SIGTERM, a failed liveness probe or a shutdown; or exit code 137 or 143 |
+| RST-109 | `start_failure` | the container waits with `ImagePullBackOff`, `CreateContainerConfigError` or alike |
 | RST-900 | `unknown` | nothing above matched |
 
-The first cause of the table that matches any line is given, with the line
-as evidence. `PROOF` says where it comes from: `metrics` (the reason
-Kubernetes recorded), `logs` or `none`. The report is also written to
-`restarts-report.json`.
+`OOMKilled` comes first, then the first cause of the table that matches
+any line, then the exit code and the state. `PROOF` says where the cause
+comes from: `metrics`, `logs` or `none`.
+
+| Severity | Given when |
+|---|---|
+| critical | the container waits in `CrashLoopBackOff`, or restarted `crash_loop_restarts` times or more |
+| high | the cause is RST-101 to RST-104 |
+| low | the cause is RST-108 |
+| medium | the rest |
 
 Names that come back from Prometheus are checked against the form of a
 Kubernetes name before they go into a Loki query, and the window and
 namespace of the settings are checked the same way, so neither can change
-a query.
+a query. Lines of a log are shown as the security report shows them, with
+hidden and control characters named.
 
-Limits: there is no login yet (no bearer token or basic auth, only the
-tenant header), and it has run against stand-ins for the two services
-that answer their HTTP APIs (`tests/test_sentinel_restarts.py`), not
-against a real Prometheus or Loki.
+Limits: it has run against stand-ins for the two services that answer
+their HTTP APIs (`tests/test_sentinel_restarts.py`), not against a real
+Prometheus or Loki; and it reads the container that is running now, so
+the lines of a pod that was replaced (a new name) are not looked for.
 
 Not done yet from the roadmap: the measurements against Python (startup,
 throughput, memory, size) and running both under the same isolation
