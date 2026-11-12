@@ -18,7 +18,7 @@ from phases import ROOT, commands, compiler, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
 EXPECTED = (SENTINEL / "sentinel.expected").read_text(encoding="utf-8")
-BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.23"]
+BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.23", "198.51.100.180", "198.51.100.190"]
 ADVICE = "Block 192.0.2.10 at once. Block them? yes"
 
 
@@ -105,7 +105,7 @@ def test_findings_need_no_model(phase, work):
     assert {r["address"]: r["proposal"] for r in report["sources"] if r["proposal"] != "watch"} == {
         **{address: "block" for address in BLOCKED}, "192.0.2.10": "protected"}
     assert [r["score"] for r in report["sources"]] == sorted((r["score"] for r in report["sources"]), reverse=True)
-    assert audit(work)[0] == ("scan", "4 files, 56 lines, 23 findings")
+    assert audit(work)[0] == ("scan", "4 files, 75 lines, 25 findings")
     assert audit(work)[-1] == ("approval", "no")
 
 
@@ -123,9 +123,9 @@ def test_an_approval_blocks_the_addresses_shown(phase, work):
     code, out = sentinel(phase[1], work, "no\nyes\n")
     assert code == 0
     assert out.endswith("".join(f"Blocked {address}\n" for address in BLOCKED))
-    assert blocks() == BLOCKED and len(Outside.seen) == 3
+    assert blocks() == BLOCKED and len(Outside.seen) == len(BLOCKED)
     # 192.0.2.10 has a high finding and is in never_block
-    assert audit(work)[-4:] == [("approval", "yes"), *(("blocked", address) for address in BLOCKED)]
+    assert audit(work)[-len(BLOCKED) - 1:] == [("approval", "yes"), *(("blocked", address) for address in BLOCKED)]
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -149,7 +149,7 @@ def test_a_firewall_that_fails_is_recorded(phase, work):
     (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     code, out = sentinel(phase[1], work, "no\nyes\n")
     assert code == 0 and "Could not block 203.0.113.9: " in out
-    assert audit(work)[-3:] == [("block failed", address) for address in BLOCKED]
+    assert audit(work)[-len(BLOCKED):] == [("block failed", address) for address in BLOCKED]
 
 
 @pytest.mark.parametrize("answers", ["no\nno\n", "no\nyes\n", "yes\nyes\n"])
@@ -172,7 +172,7 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "7 tests: 7 passed, 0 failed" in out, out
+    assert proc.returncode == 0 and "8 tests: 8 passed, 0 failed" in out, out
     before = (work / "sentinel.nexo").read_bytes()
     assert run(phase[1], ["fmt", "sentinel.nexo"], work).returncode == 0
     assert (work / "sentinel.nexo").read_bytes() == before
@@ -212,3 +212,27 @@ def test_settings_are_checked_and_limits_are_read(phase, work):
     code, out = sentinel(phase[1], work, "no\nyes\n")
     assert out.startswith("Sentinel stopped: ") and "firewall" in out
     assert Outside.seen == []
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_idor_is_found_from_ids_and_owners(phase, work):
+    """One address walks the ids of a route; one user is answered the
+    objects of another. A user reading their own objects is not reported."""
+    (work / "logs" / "idor.log").write_text("".join(
+        [f"2026-11-03T10:00:{i:02d}Z 198.51.100.5 web GET /api/docs/{i}/download 200 user=9\n" for i in range(1, 4)]
+        + [f"2026-11-03T10:01:{i:02d}Z 198.51.100.6 web GET /export?doc_id={i} 200\n" for i in range(1, 4)]
+        + ["2026-11-03T10:02:00Z 198.51.100.7 web GET /accounts/12/statement 200 user=12\n",
+           "2026-11-03T10:02:01Z 198.51.100.7 web GET /accounts/13/statement 200 user=12\n",
+           "2026-11-03T10:02:02Z 198.51.100.7 web GET /accounts/13/statement 200 user=12\n",
+           "2026-11-03T10:02:03Z 198.51.100.7 web GET /accounts/14/statement 403 user=12\n"]), encoding="utf-8")
+    settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
+    settings.update(logs=["logs/idor.log"], max_object_ids=3)
+    (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert [(f["rule"], f["line"], f["source"], f["evidence"].split(":")[0]) for f in report["findings"]] == [
+        ("SEN-204", 3, "198.51.100.5", "3 different ids of /api/docs/{id}/download"),
+        ("SEN-204", 6, "198.51.100.6", "3 different ids of /export?doc_id={id}"),
+        ("SEN-205", 8, "198.51.100.7", "user 12 was answered an object of user 13"),
+        # accounts 12, 13 and 14: the refused one counts as an id asked for
+        ("SEN-204", 10, "198.51.100.7", "3 different ids of /accounts/{id}/statement")]

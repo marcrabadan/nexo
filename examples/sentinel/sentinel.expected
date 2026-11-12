@@ -1,7 +1,7 @@
 NEXO SENTINEL - security report of the logs
 
-Scanned 4 files and 56 lines; skipped 3 files.
-Findings: 23 (high 7, medium 13, low 3)
+Scanned 4 files and 75 lines; skipped 3 files.
+Findings: 25 (high 9, medium 13, low 3)
 
 SKIPPED
   logs/binary.log         Invalid data: the file "logs/binary.log" is not UTF-8
@@ -28,6 +28,8 @@ FINDINGS
   medium    SEN-103  cross_site_scripting  logs/attack.log:20     198.51.100.150   GET /profile?name=<img+src=x+onerror=alert(1)> 200
   medium    SEN-106  scanner               logs/attack.log:21     198.51.100.160   GET / 200 "sqlmap/1.8.4#stable"
   medium    SEN-203  enumeration           logs/attack.log:31     198.51.100.170   10 requests answered 404
+  high      SEN-204  object_enumeration    logs/attack.log:40     198.51.100.180   8 different ids of /api/v1/orders/{id}
+  high      SEN-205  foreign_object        logs/attack.log:43     198.51.100.190   user 42 was answered an object of user 57: GET /api/users/57/profile 200 user=42
   medium    SEN-301  hidden_text           logs/unicode.log:3     198.51.100.90    GET /files/invoice<hidden>gpj.exe 200
   medium    SEN-301  hidden_text           logs/unicode.log:4     198.51.100.90    login accepted user=ad<hidden>min
   medium    SEN-301  hidden_text           logs/unicode.log:5     198.51.100.90    GET /<control>[2Jcleared 400
@@ -42,6 +44,8 @@ SOURCES
   198.51.100.77    16     0     4       0    watch      SEN-104, SEN-105
   198.51.100.90    12     0     3       0    watch      SEN-301
   192.0.2.10       10     1     0       0    protected  SEN-101
+  198.51.100.180   10     1     0       0    block      SEN-204
+  198.51.100.190   10     1     0       0    block      SEN-205
   198.51.100.150   8      0     2       0    watch      SEN-103
   198.51.100.160   4      0     1       0    watch      SEN-106
   198.51.100.170   4      0     1       0    watch      SEN-203
@@ -57,10 +61,12 @@ RECOMMENDED
   SEN-201  brute_force           Lock the accounts tried and require a second factor. (CWE-307, ATT&CK T1110)
   SEN-202  login_after_failures  Treat the account as compromised: end its sessions and reset its password. (ATT&CK T1078)
   SEN-203  enumeration           Rate-limit requests that are answered 404. (ATT&CK T1595.003)
+  SEN-204  object_enumeration    Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed. (CWE-639 (IDOR))
+  SEN-205  foreign_object        Confirm the user may read that object; if not, the endpoint does not check the owner. (CWE-639 (IDOR))
   SEN-301  hidden_text           Open the line with a tool that shows every character before trusting it. (CWE-117, ATT&CK T1036.002)
   SEN-302  oversized_line        Limit the length of a request at the proxy. (CWE-400)
   SEN-303  malformed_line        Check what writes this log; a broken line can hide an entry. (CWE-117)
 
 The report is in report.json.
-Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.23 on the firewall.
+Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.23, 198.51.100.180, 198.51.100.190 on the firewall.
 Block them? (yes/no) Nothing was changed.

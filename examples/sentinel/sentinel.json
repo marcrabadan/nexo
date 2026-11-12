@@ -11,5 +11,6 @@
   "never_block": ["192.0.2.10"],
   "firewall": "http://127.0.0.1:8787",
   "max_failed_logins": 5,
-  "max_not_found": 10
+  "max_not_found": 10,
+  "max_object_ids": 8
 }

@@ -22,6 +22,8 @@ RULES = [
     ("SEN-201", "brute_force", "high", "CWE-307, ATT&CK T1110", "", "Lock the accounts tried and require a second factor."),
     ("SEN-202", "login_after_failures", "high", "ATT&CK T1078", "", "Treat the account as compromised: end its sessions and reset its password."),
     ("SEN-203", "enumeration", "medium", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
+    ("SEN-204", "object_enumeration", "high", "CWE-639 (IDOR)", "", "Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed."),
+    ("SEN-205", "foreign_object", "high", "CWE-639 (IDOR)", "", "Confirm the user may read that object; if not, the endpoint does not check the owner."),
     ("SEN-301", "hidden_text", "medium", "CWE-117, ATT&CK T1036.002", "", "Open the line with a tool that shows every character before trusting it."),
     ("SEN-302", "oversized_line", "low", "CWE-400", "", "Limit the length of a request at the proxy."),
     ("SEN-303", "malformed_line", "low", "CWE-117", "", "Check what writes this log; a broken line can hide an entry."),
@@ -34,6 +36,9 @@ ADDRESS = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
 FAILED_LOGIN = re.compile(r"(?i)login failed|authentication failure|invalid password")
 ACCEPTED_LOGIN = re.compile(r"(?i)login accepted|session opened")
 NOT_FOUND = re.compile(r" 404( |$)")
+OBJECT_IN_PATH = re.compile(r"^[A-Z]+ ((/[^/ ?]+)*?)/([0-9]+)(/[^ ?]*)?(\?[^ ]*)? [0-9]{3}( |$)")
+OBJECT_IN_QUERY = re.compile(r"^[A-Z]+ ([^ ?]+)\?([^ ]*&)?([a-z_]*id)=([0-9]+)(&[^ ]*)? [0-9]{3}( |$)")
+OWNED_OBJECT = re.compile(r"^[A-Z]+ [^ ?]*/(users|accounts|customers|profiles|members)/([0-9]+)[^ ]* 2[0-9]{2}( .*)? user=([0-9]+)( |$)")
 HIDDEN = re.compile("[​-‏‪-‮⁦-⁩﻿]")
 CONTROL = re.compile("[\u0000-\u0008\u000b-\u001f\u007f]")
 
@@ -83,8 +88,26 @@ def check_line(file, number, line):
     return found
 
 
+def object_of(message):
+    path = OBJECT_IN_PATH.search(message)
+    if path:
+        return f"{path.group(1)}/{{id}}{path.group(4) or ''}", path.group(3)
+    query = OBJECT_IN_QUERY.search(message)
+    if query:
+        return f"{query.group(1)}?{query.group(3)}={{id}}", query.group(4)
+    return None
+
+
+def foreign_object(message):
+    found = OWNED_OBJECT.search(message)
+    if found is None or found.group(2) == found.group(4):
+        return None
+    return found.group(4), found.group(2)
+
+
 def scan_file(file, settings):
     found, failed, missing, number = [], {}, {}, 0
+    objects, foreign = {}, []
     with open(file, encoding="utf-8") as lines:
         for line in lines:
             line = line.rstrip("\r\n")
@@ -105,6 +128,19 @@ def scan_file(file, settings):
                 missing[source] = missing.get(source, 0) + 1
                 if missing[source] == settings["max_not_found"]:
                     found.append(finding("SEN-203", file, number, source, f"{missing[source]} requests answered 404"))
+            asked = object_of(message)
+            if asked:
+                ids = objects.setdefault(f"{source} {asked[0]}", [])
+                if asked[1] not in ids:
+                    ids.append(asked[1])
+                    if len(ids) == settings["max_object_ids"]:
+                        found.append(finding("SEN-204", file, number, source,
+                                             f"{len(ids)} different ids of {shown(asked[0])}"))
+            other = foreign_object(message)
+            if other and other not in foreign:
+                foreign.append(other)
+                found.append(finding("SEN-205", file, number, source,
+                                     f"user {other[0]} was answered an object of user {other[1]}: {shown(message)}"))
     return number, found
 
 

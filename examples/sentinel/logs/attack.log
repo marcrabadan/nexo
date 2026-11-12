@@ -30,3 +30,17 @@ this line is not a log entry
 2026-11-02T09:24:08Z 198.51.100.170 web GET /db 404
 2026-11-02T09:24:09Z 198.51.100.170 web GET /login.bak 404
 2026-11-02T09:24:10Z 198.51.100.170 web GET /staging 404
+2026-11-02T09:30:00Z 198.51.100.180 web GET /api/v1/orders/1000 403 user=42
+2026-11-02T09:30:01Z 198.51.100.180 web GET /api/v1/orders/1001 200 user=42
+2026-11-02T09:30:02Z 198.51.100.180 web GET /api/v1/orders/1002 200 user=42
+2026-11-02T09:30:03Z 198.51.100.180 web GET /api/v1/orders/1003 403 user=42
+2026-11-02T09:30:04Z 198.51.100.180 web GET /api/v1/orders/1004 200 user=42
+2026-11-02T09:30:05Z 198.51.100.180 web GET /api/v1/orders/1005 200 user=42
+2026-11-02T09:30:06Z 198.51.100.180 web GET /api/v1/orders/1006 403 user=42
+2026-11-02T09:30:07Z 198.51.100.180 web GET /api/v1/orders/1007 200 user=42
+2026-11-02T09:30:08Z 198.51.100.180 web GET /api/v1/orders/1008 200 user=42
+2026-11-02T09:31:00Z 198.51.100.190 web GET /api/users/42/profile 200 user=42
+2026-11-02T09:31:05Z 198.51.100.190 web GET /api/users/57/profile 200 user=42
+2026-11-02T09:31:09Z 198.51.100.190 web GET /api/users/57/cards 200 user=42
+2026-11-02T09:31:12Z 198.51.100.190 web GET /api/users/58/profile 403 user=42
+2026-11-02T09:31:20Z 198.51.100.190 web GET /invoice?account_id=311 200 user=42

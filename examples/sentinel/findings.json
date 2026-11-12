@@ -17,6 +17,8 @@
   ["logs/attack.log", 20, "SEN-103"],
   ["logs/attack.log", 21, "SEN-106"],
   ["logs/attack.log", 31, "SEN-203"],
+  ["logs/attack.log", 40, "SEN-204"],
+  ["logs/attack.log", 43, "SEN-205"],
   ["logs/unicode.log", 3, "SEN-301"],
   ["logs/unicode.log", 4, "SEN-301"],
   ["logs/unicode.log", 5, "SEN-301"],

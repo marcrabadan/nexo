@@ -46,9 +46,17 @@ takes part.
 | SEN-201 | `brute_force` | high | an address reaches `max_failed_logins` failed logins in a file |
 | SEN-202 | `login_after_failures` | high | a login is accepted from an address that reached that limit |
 | SEN-203 | `enumeration` | medium | an address reaches `max_not_found` requests answered 404 in a file |
+| SEN-204 | `object_enumeration` | high | an address asks for `max_object_ids` different numbers on one route (`/api/orders/{id}`, `?doc_id={id}`) in a file |
+| SEN-205 | `foreign_object` | high | a request with `user=N` is answered 2xx for `/users/M/...` (also accounts, customers, profiles, members) and M is not N |
 | SEN-301 | `hidden_text` | medium | the line has invisible or direction-changing Unicode characters, or control characters such as terminal escapes |
 | SEN-302 | `oversized_line` | low | the line is longer than 4096 characters; it is not examined further |
 | SEN-303 | `malformed_line` | low | the line is not a log entry, or its address is not an IPv4 address |
+
+SEN-204 and SEN-205 are the signs of IDOR (insecure direct object
+reference, CWE-639) that a log can show. They are suspicions: a log does
+not say who owns an object, so an administrator who reads the object of a
+user, or a client that lists many orders of its own, is reported too.
+SEN-205 needs the user in the log, as `user=N` after the status.
 
 The score of an address is 10 for each high finding, 4 for each medium one
 and 1 for each low one; the highest score comes first.
@@ -69,6 +77,7 @@ read; a missing or wrong field stops the program.
 | `firewall` | the address of the firewall's API |
 | `max_failed_logins` | failed logins of one address before SEN-201 |
 | `max_not_found` | 404 answers to one address before SEN-203 |
+| `max_object_ids` | different ids of one route asked by one address before SEN-204 |
 
 ## What it may touch
 
