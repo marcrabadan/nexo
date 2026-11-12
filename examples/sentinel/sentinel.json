@@ -4,6 +4,7 @@
     "logs/attack.log",
     "logs/unicode.log",
     "logs/oversized.log",
+    "logs/nginx.log",
     "logs/binary.log",
     "logs/../sentinel.json",
     "/etc/passwd"

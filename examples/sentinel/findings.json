@@ -23,5 +23,10 @@
   ["logs/unicode.log", 4, "SEN-301"],
   ["logs/unicode.log", 5, "SEN-301"],
   ["logs/unicode.log", 7, "SEN-301"],
-  ["logs/oversized.log", 2, "SEN-302"]
+  ["logs/oversized.log", 2, "SEN-302"],
+  ["logs/nginx.log", 4, "SEN-107"],
+  ["logs/nginx.log", 5, "SEN-108"],
+  ["logs/nginx.log", 6, "SEN-205"],
+  ["logs/nginx.log", 7, "SEN-109"],
+  ["logs/nginx.log", 9, "SEN-106"]
 ]

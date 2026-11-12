@@ -63,6 +63,9 @@ RULES = [
     Rule("SEN-104", "path_traversal", "medium", "CWE-22", "(?i)\\.\\./|\\.\\.\\\\|%2e%2e(/|%2f)|\\.\\.%2f", "Resolve file names inside one folder and refuse the rest."),
     Rule("SEN-105", "sensitive_file", "medium", "CWE-538", "(?i)/etc/(passwd|shadow)|/\\.env|/\\.git/|/\\.ssh/|/wp-config\\.php", "Make sure the file is not served; rotate any secret that was answered with 200."),
     Rule("SEN-106", "scanner", "medium", "ATT&CK T1595.002", "(?i)sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wpscan|acunetix|nuclei", "Expect more requests from this address; rate-limit it."),
+    Rule("SEN-107", "server_side_request", "high", "CWE-918 (SSRF)", "(?i)(url|uri|dest|destination|redirect|next|target|callback|webhook)=(https?(:|%3a)(/|%2f)(/|%2f))?(169\\.254\\.169\\.254|localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|metadata\\.google\\.internal)", "Allow only the hosts the feature needs; never fetch an address a request gives."),
+    Rule("SEN-108", "jndi_injection", "high", "CWE-917, CVE-2021-44228", "(?i)(\\$|%24)(\\{{|%7b)jndi(:|%3a)", "Update Log4j and check the host for connections to the address named."),
+    Rule("SEN-109", "secret_in_request", "medium", "CWE-598", "(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& \"]+|AKIA[0-9A-Z]{{16}|eyJ[A-Za-z0-9_-]{{8,}\\.eyJ[A-Za-z0-9_-]{{8,}\\.[A-Za-z0-9_-]+", "Rotate the secret: it is now in every log and proxy on the way; send secrets in a header or the body."),
     Rule("SEN-201", "brute_force", "high", "CWE-307, ATT&CK T1110", "", "Lock the accounts tried and require a second factor."),
     Rule("SEN-202", "login_after_failures", "high", "ATT&CK T1078", "", "Treat the account as compromised: end its sessions and reset its password."),
     Rule("SEN-203", "enumeration", "medium", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
@@ -80,6 +83,9 @@ address = regex("^[0-9]{{1,3}(\\.[0-9]{{1,3}){{3}$")
 failed_login = regex("(?i)login failed|authentication failure|invalid password")
 accepted_login = regex("(?i)login accepted|session opened")
 not_found = regex(" 404( |$)")
+combined = regex("^(\\S+) \\S+ (\\S+) \\[[^\\]]+\\] \"([A-Z]+) (\\S+)[^\"]*\" ([0-9]{{3}) \\S+( \"[^\"]*\" (\"[^\"]*\"))?")
+named_secret = regex("(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& \"]+")
+bare_secret = regex("AKIA[0-9A-Z]{{16}|eyJ[A-Za-z0-9_-]{{8,}\\.eyJ[A-Za-z0-9_-]{{8,}\\.[A-Za-z0-9_-]+")
 object_in_path = regex("^[A-Z]+ ((/[^/ ?]+)*?)/([0-9]+)(/[^ ?]*)?(\\?[^ ]*)? [0-9]{{3}( |$)")
 object_in_query = regex("^[A-Z]+ ([^ ?]+)\\?([^ ]*&)?([a-z_]*id)=([0-9]+)(&[^ ]*)? [0-9]{{3}( |$)")
 owned_object = regex("^[A-Z]+ [^ ?]*/(users|accounts|customers|profiles|members)/([0-9]+)[^ ]* 2[0-9]{{2}( .*)? user=([0-9]+)( |$)")
@@ -87,10 +93,19 @@ hidden = regex("[​-‏‪-‮⁦-⁩﻿]")
 control = regex("[\u0000-\u0008\u000b-\u001f\u007f]")
 start = regex("^.{{0,80}")
 
-## What a person can read safely: hidden and control characters are named
-## instead of printed, and the text is cut at 80 characters.
+## A text without the secrets it carries: the value after password=,
+## token= and alike, access keys and signed tokens.
+fn redacted(text: str) -> str:
+    var out = bare_secret.replace(text, "<redacted>")
+    for found in named_secret.find_all(out):
+        out = out.replace(found, "{found.split("=")[0]}=<redacted>")
+    return out
+
+## What a person can read safely: secrets are left out, hidden and
+## control characters are named instead of printed, and the text is cut
+## at 80 characters.
 fn shown(text: str) -> str:
-    clean = control.replace(hidden.replace(text, "<hidden>"), "<control>")
+    clean = control.replace(hidden.replace(redacted(text), "<hidden>"), "<control>")
     short = start.find(clean) ?? ""
     if len(short) < len(clean):
         return "{short}..."
@@ -109,9 +124,19 @@ fn finding(id: str, file: str, line: int, source: str, evidence: str) -> Finding
     return Finding(id, rule.name, rule.severity, file, line, source, evidence)
 
 ## The address and message of a log entry, or none for any other line.
+## A line of a web server (the combined format of nginx and Apache) is
+## read as `METHOD path status "agent" user=name`.
 fn fields_of(line: str) -> list?:
     if len(line) > MAX_LINE:
         return none
+    web = combined.groups(line)
+    if web != none and address.find(web[0]) != none:
+        var message = "{web[2]} {web[3]} {web[4]}"
+        if web[6] != none:
+            message = "{message} {web[6]}"
+        if web[1] != "-":
+            message = "{message} user={web[1]}"
+        return [web[0], message]
     fields = entry.groups(line)
     if fields == none or address.find(fields[1]) == none:
         return none
@@ -414,6 +439,17 @@ test "the object of a request and its owner":
     assert foreign_object("GET /api/users/57/profile 200 user=42") == ["42", "57"]
     assert foreign_object("GET /api/users/42/profile 200 user=42") == none
     assert foreign_object("GET /api/users/57/profile 403 user=42") == none
+
+test "a line of nginx or Apache is read too":
+    line = "203.0.113.7 - 42 [02/Nov/2026:09:40:00 +0000] \"GET /api/users/57/cards HTTP/1.1\" 200 512 \"-\" \"curl/8.5\""
+    assert fields_of(line) == ["203.0.113.7", "GET /api/users/57/cards 200 \"curl/8.5\" user=42"]
+    assert [f.rule for f in check_line("logs/a.log", 1, "203.0.113.7 - - [02/Nov/2026:09:40:00 +0000] \"GET /.env HTTP/1.1\" 404 0")] == ["SEN-105"]
+
+test "a secret is reported and never shown":
+    found = check_line("logs/a.log", 1, "2026-11-02T09:40:00Z 192.0.2.44 web GET /login?user=ana&password=hunter2&next=/home 200")
+    assert [f.rule for f in found] == ["SEN-109"]
+    assert found[0].evidence == "GET /login?user=ana&password=<redacted>&next=/home 200"
+    assert shown("key AKIAIOSFODNN7EXAMPLE end") == "key <redacted> end"
 
 test "only logs/ is scanned":
     assert inside_logs("logs/app.log")

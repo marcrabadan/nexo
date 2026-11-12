@@ -18,7 +18,8 @@ from phases import ROOT, commands, compiler, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
 EXPECTED = (SENTINEL / "sentinel.expected").read_text(encoding="utf-8")
-BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.23", "198.51.100.180", "198.51.100.190"]
+BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.23", "198.51.100.210", "198.51.100.180", "198.51.100.190",
+           "198.51.100.220"]
 ADVICE = "Block 192.0.2.10 at once. Block them? yes"
 
 
@@ -97,6 +98,9 @@ def test_findings_need_no_model(phase, work):
     labels = json.loads((work / "findings.json").read_text(encoding="utf-8"))
     assert sorted(found) == sorted(labels)
     assert not any(file == "logs/benign.log" for file, _, _ in found)
+    # a secret in a request is reported without its value, on screen and in the report
+    assert "9f8e7d6c5b4a3f2e" not in out and "token=<redacted>" in out
+    assert "9f8e7d6c5b4a3f2e" not in (work / "report.json").read_text(encoding="utf-8")
     # what the log hides is named, never printed
     assert not re.search("[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff\x1b]", out)
     # report.json holds the same findings, and the proposal for each address
@@ -105,7 +109,7 @@ def test_findings_need_no_model(phase, work):
     assert {r["address"]: r["proposal"] for r in report["sources"] if r["proposal"] != "watch"} == {
         **{address: "block" for address in BLOCKED}, "192.0.2.10": "protected"}
     assert [r["score"] for r in report["sources"]] == sorted((r["score"] for r in report["sources"]), reverse=True)
-    assert audit(work)[0] == ("scan", "4 files, 75 lines, 25 findings")
+    assert audit(work)[0] == ("scan", "5 files, 84 lines, 30 findings")
     assert audit(work)[-1] == ("approval", "no")
 
 
@@ -172,7 +176,7 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "8 tests: 8 passed, 0 failed" in out, out
+    assert proc.returncode == 0 and "10 tests: 10 passed, 0 failed" in out, out
     before = (work / "sentinel.nexo").read_bytes()
     assert run(phase[1], ["fmt", "sentinel.nexo"], work).returncode == 0
     assert (work / "sentinel.nexo").read_bytes() == before

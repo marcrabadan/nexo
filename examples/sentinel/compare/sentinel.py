@@ -19,6 +19,9 @@ RULES = [
     ("SEN-104", "path_traversal", "medium", "CWE-22", r"(?i)\.\./|\.\.\\|%2e%2e(/|%2f)|\.\.%2f", "Resolve file names inside one folder and refuse the rest."),
     ("SEN-105", "sensitive_file", "medium", "CWE-538", r"(?i)/etc/(passwd|shadow)|/\.env|/\.git/|/\.ssh/|/wp-config\.php", "Make sure the file is not served; rotate any secret that was answered with 200."),
     ("SEN-106", "scanner", "medium", "ATT&CK T1595.002", r"(?i)sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wpscan|acunetix|nuclei", "Expect more requests from this address; rate-limit it."),
+    ("SEN-107", "server_side_request", "high", "CWE-918 (SSRF)", r"(?i)(url|uri|dest|destination|redirect|next|target|callback|webhook)=(https?(:|%3a)(/|%2f)(/|%2f))?(169\.254\.169\.254|localhost|127\.0\.0\.1|0\.0\.0\.0|metadata\.google\.internal)", "Allow only the hosts the feature needs; never fetch an address a request gives."),
+    ("SEN-108", "jndi_injection", "high", "CWE-917, CVE-2021-44228", r"(?i)(\$|%24)(\{|%7b)jndi(:|%3a)", "Update Log4j and check the host for connections to the address named."),
+    ("SEN-109", "secret_in_request", "medium", "CWE-598", r"""(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+""", "Rotate the secret: it is now in every log and proxy on the way; send secrets in a header or the body."),
     ("SEN-201", "brute_force", "high", "CWE-307, ATT&CK T1110", "", "Lock the accounts tried and require a second factor."),
     ("SEN-202", "login_after_failures", "high", "ATT&CK T1078", "", "Treat the account as compromised: end its sessions and reset its password."),
     ("SEN-203", "enumeration", "medium", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
@@ -36,6 +39,9 @@ ADDRESS = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
 FAILED_LOGIN = re.compile(r"(?i)login failed|authentication failure|invalid password")
 ACCEPTED_LOGIN = re.compile(r"(?i)login accepted|session opened")
 NOT_FOUND = re.compile(r" 404( |$)")
+COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[[^\]]+\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*"))?''')
+NAMED_SECRET = re.compile(r'''(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+''')
+BARE_SECRET = re.compile(r"AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+")
 OBJECT_IN_PATH = re.compile(r"^[A-Z]+ ((/[^/ ?]+)*?)/([0-9]+)(/[^ ?]*)?(\?[^ ]*)? [0-9]{3}( |$)")
 OBJECT_IN_QUERY = re.compile(r"^[A-Z]+ ([^ ?]+)\?([^ ]*&)?([a-z_]*id)=([0-9]+)(&[^ ]*)? [0-9]{3}( |$)")
 OWNED_OBJECT = re.compile(r"^[A-Z]+ [^ ?]*/(users|accounts|customers|profiles|members)/([0-9]+)[^ ]* 2[0-9]{2}( .*)? user=([0-9]+)( |$)")
@@ -43,8 +49,15 @@ HIDDEN = re.compile("[​-‏‪-‮⁦-⁩﻿]")
 CONTROL = re.compile("[\u0000-\u0008\u000b-\u001f\u007f]")
 
 
+def redacted(text):
+    out = BARE_SECRET.sub("<redacted>", text)
+    for found in [m.group(0) for m in NAMED_SECRET.finditer(out)]:
+        out = out.replace(found, found.split("=")[0] + "=<redacted>")
+    return out
+
+
 def shown(text):
-    clean = CONTROL.sub("<control>", HIDDEN.sub("<hidden>", text))
+    clean = CONTROL.sub("<control>", HIDDEN.sub("<hidden>", redacted(text)))
     return clean[:80] + "..." if len(clean) > 80 else clean
 
 
@@ -60,6 +73,14 @@ def finding(rule, file, line, source, evidence):
 def fields_of(line):
     if len(line) > MAX_LINE:
         return None
+    web = COMBINED.search(line)
+    if web and ADDRESS.search(web.group(1)):
+        message = f"{web.group(3)} {web.group(4)} {web.group(5)}"
+        if web.group(7) is not None:
+            message += f" {web.group(7)}"
+        if web.group(2) != "-":
+            message += f" user={web.group(2)}"
+        return web.group(1), message
     fields = ENTRY.search(line)
     if fields is None or ADDRESS.search(fields.group(2)) is None:
         return None

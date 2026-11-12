@@ -31,7 +31,9 @@ Then it asks two questions. Anything but `yes` (an empty answer too) is a no.
 
 ## What it detects
 
-A log line is `time address service message`. The rules are fixed: regular
+A log line is `time address service message`, or a line of nginx or Apache
+in the combined format (`address - user [time] "GET /path HTTP/1.1" status
+size "referer" "agent"`), which is read as the same message. The rules are fixed: regular
 expressions and counts, in the `RULES` table of the program. No model
 takes part.
 
@@ -43,6 +45,9 @@ takes part.
 | SEN-104 | `path_traversal` | medium | the message has `../` (also URL-encoded) |
 | SEN-105 | `sensitive_file` | medium | the message asks for `/etc/passwd`, `/.env`, `/.git/`, `/.ssh/` or `wp-config.php` |
 | SEN-106 | `scanner` | medium | the message names a scanning tool (sqlmap, nikto, nmap and others) |
+| SEN-107 | `server_side_request` | high | a `url=`, `redirect=`, `callback=` or alike points at this machine or at a cloud's metadata address (SSRF) |
+| SEN-108 | `jndi_injection` | high | the message has `${jndi:` (Log4Shell), also URL-encoded |
+| SEN-109 | `secret_in_request` | medium | the request carries `password=`, `token=`, `api_key=` or alike, an AWS access key or a signed token (JWT) |
 | SEN-201 | `brute_force` | high | an address reaches `max_failed_logins` failed logins in a file |
 | SEN-202 | `login_after_failures` | high | a login is accepted from an address that reached that limit |
 | SEN-203 | `enumeration` | medium | an address reaches `max_not_found` requests answered 404 in a file |
@@ -61,8 +66,9 @@ SEN-205 needs the user in the log, as `user=N` after the status.
 The score of an address is 10 for each high finding, 4 for each medium one
 and 1 for each low one; the highest score comes first.
 
-Evidence is cut at 80 characters and hidden or control characters are
-printed as `<hidden>` and `<control>`, so a log cannot rewrite the terminal
+The value of a secret is replaced by `<redacted>` wherever a line is
+shown, on screen and in `report.json`. Evidence is cut at 80 characters
+and hidden or control characters are printed as `<hidden>` and `<control>`, so a log cannot rewrite the terminal
 of whoever reads the report.
 
 ## Settings
@@ -97,7 +103,7 @@ every address blocked or not.
 
 - `logs/`: the fixed corpus. `benign.log` (no findings, with look-alikes
   such as `/search?q=union+station+hotel` and `/docs/javascript-guide.html`), `attack.log`, `unicode.log`,
-  `oversized.log` and `binary.log` (not UTF-8, skipped).
+  `nginx.log` (the combined format), `oversized.log` and `binary.log` (not UTF-8, skipped).
 - `findings.json`: the findings the corpus must give, each `[file, line, rule]`.
 - `sentinel.expected`: the output when both questions are answered `no`.
 - `compare/sentinel.py`: the same program in Python, with the same output
