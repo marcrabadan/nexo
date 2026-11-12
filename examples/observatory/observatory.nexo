@@ -1,0 +1,202 @@
+## Internet observatory: how a part of the internet looks from here.
+## Without a domain it gives the overview (a list of well-known sites:
+## which answer, how fast, what serves them); with one it gives that
+## domain's report: its DNS records, its answer over HTTPS, the security
+## headers it sends and the files it publishes for robots and researchers.
+##     nexo observatory.nexo         asks for a domain, or "overview"
+##     nexo test observatory.nexo    both reports on answers written here
+## The policy names the resolver and the sites of the overview; another
+## domain is reported as undeclared in development mode, and a release
+## build needs its `allow net` line.
+policy:
+    allow net "cloudflare-dns.com"
+    allow net "wikipedia.org", "github.com", "cloudflare.com", "mozilla.org", "python.org", "rust-lang.org"
+    allow net "debian.org", "archive.org", "ietf.org", "w3.org", "openstreetmap.org", "example.com"
+    allow net "*.wikipedia.org", "*.github.com", "*.cloudflare.com", "*.mozilla.org", "*.python.org", "*.rust-lang.org"
+    allow net "*.debian.org", "*.archive.org", "*.ietf.org", "*.w3.org", "*.openstreetmap.org", "*.example.com"
+
+SITES = ["wikipedia.org", "github.com", "cloudflare.com", "mozilla.org", "python.org", "rust-lang.org", "debian.org", "archive.org", "ietf.org", "w3.org", "openstreetmap.org", "example.com"]
+RESOLVER = "https://cloudflare-dns.com/dns-query"
+RECORDS = ["A", "AAAA", "NS", "MX", "TXT", "CAA"]
+SECURITY_HEADERS = ["strict-transport-security", "content-security-policy", "x-content-type-options", "x-frame-options", "referrer-policy", "permissions-policy"]
+FILES = ["/robots.txt", "/.well-known/security.txt"]
+
+## What one request to a site told us.
+type Probe:
+    domain: str
+    up: bool
+    status: int
+    ms: int
+    server: str
+    headers: map
+    note: str
+
+fn pad(text: str, width: int) -> str:
+    var out = text
+    while len(out) < width:
+        out = out + " "
+    return out
+
+## One of two texts.
+fn either(cond: bool, yes: str, no: str) -> str:
+    if cond:
+        return yes
+    return no
+
+## The first word of a Server header: "nginx/1.25 (Ubuntu)" is "nginx".
+fn software(server: str) -> str:
+    if server == "":
+        return "(not said)"
+    return server.split("/")[0].split(" ")[0].lower()
+
+## The status in the message of an HTTPError ("GET url answered 404 Not Found").
+fn status_of(message: str) -> int:
+    found = regex("answered (\\d+)").groups(message)
+    if found == none:
+        return 0
+    try:
+        return validate(found[0], as: int)
+    else e:
+        return 0
+
+## One GET of https://domain/ with its time. An answer of 400 or more
+## still means the site is up; only a network error means it is not.
+fn probe(domain: str) -> Probe:
+    start = now
+    try:
+        r = http.get("https://{domain}/", timeout: 10s, retries: 0)
+        ms = int((now - start) / 1ms)
+        return Probe(domain: domain, up: true, status: r.status, ms: ms, server: r.headers["server"] ?? "", headers: r.headers, note: "")
+    else e:
+        ms = int((now - start) / 1ms)
+        return Probe(domain: domain, up: e is HTTPError, status: status_of(e.message), ms: ms, server: "", headers: {}, note: e.message)
+
+## The records of one type, asked to a resolver over HTTPS (RFC 8484, as JSON).
+fn dns(domain: str, kind: str) -> list!:
+    r = http.get("{RESOLVER}?name={domain}&type={kind}", headers: {"accept": "application/dns-json"}, timeout: 10s)?
+    answer = r.json()?["Answer"] ?? []
+    return [a["data"] for a in answer]
+
+## Whether the site publishes a file (any answer below 400).
+fn publishes(domain: str, path: str) -> bool:
+    try:
+        http.get("https://{domain}{path}", timeout: 10s, retries: 0)
+        return true
+    else e:
+        return false
+
+fn median(values: list) -> int:
+    sorted = values |> sort by it
+    return sorted[(len(sorted) - 1) // 2]
+
+fn slowest(values: list) -> int:
+    return (values |> sort by it desc)[0]
+
+fn show_overview(probes: list):
+    print("Internet observatory: overview of {len(probes)} sites")
+    print("")
+    print("{pad("site", 20)}{pad("state", 8)}{pad("status", 8)}{pad("ms", 7)}{pad("https only", 12)}server")
+    for p in probes:
+        state = either(p.up, "up", "down")
+        status = either(p.status > 0, str(p.status), "-")
+        strict = either("strict-transport-security" in p.headers, "yes", "no")
+        print("{pad(p.domain, 20)}{pad(state, 8)}{pad(status, 8)}{pad(str(p.ms), 7)}{pad(strict, 12)}{software(p.server)}")
+    up = probes |> where it.up
+    print("")
+    print("Up: {len(up)} of {len(probes)}")
+    if len(up) > 0:
+        times = [p.ms for p in up]
+        print("Answer time: median {median(times)} ms, slowest {slowest(times)} ms")
+        strict = up |> where "strict-transport-security" in it.headers |> count
+        print("HTTPS only (HSTS): {strict} of {len(up)}")
+        print("Servers:")
+        servers = up |> map {"server": software(it.server)} |> group by server |> count |> sort by count desc
+        for row in servers:
+            print("  {pad(row["server"], 16)}{row["count"]}")
+    for p in probes |> where not it.up:
+        print("Down: {p.domain}: {p.note}")
+
+fn overview(sites: list):
+    probes = parallel for site in sites, max: 8:
+        return probe(site)
+    show_overview(probes)
+
+fn show_dns(domain: str):
+    print("DNS")
+    for kind in RECORDS:
+        try:
+            values = dns(domain, kind)
+            if len(values) == 0:
+                print("  {pad(kind, 6)}(none)")
+            for v in values:
+                print("  {pad(kind, 6)}{v}")
+        else e:
+            print("  {pad(kind, 6)}not answered: {e.message}")
+
+fn show_site(p: Probe):
+    print("HTTPS")
+    if not p.up:
+        print("  no answer: {p.note}")
+        return
+    print("  status   {either(p.status > 0, str(p.status), p.note)}")
+    print("  time     {p.ms} ms")
+    print("  server   {software(p.server)}")
+    print("")
+    print("Security headers")
+    var sent = 0
+    for h in SECURITY_HEADERS:
+        if h in p.headers:
+            sent += 1
+        print("  {either(h in p.headers, "yes", "no ")}  {h}")
+    print("  {sent} of {len(SECURITY_HEADERS)} sent")
+    print("")
+    print("Published files")
+    for f in FILES:
+        print("  {either(publishes(p.domain, f), "yes", "no ")}  {f}")
+
+fn report(domain: str):
+    print("Internet observatory: {domain}")
+    print("")
+    show_dns(domain)
+    print("")
+    show_site(probe(domain))
+
+choice = input("Domain, or \"overview\": ").trim().lower()
+if choice == "":
+    print("Nothing to observe: give a domain (example.com) or \"overview\".")
+elif choice == "overview":
+    overview(SITES)
+else:
+    report(choice)
+
+test "the software of a Server header":
+    assert software("nginx/1.25 (Ubuntu)") == "nginx"
+    assert software("cloudflare") == "cloudflare"
+    assert software("") == "(not said)"
+
+test "the status of an HTTP error":
+    assert status_of("GET https://example.com/ answered 404 Not Found") == 404
+    assert status_of("Cannot reach https://example.com/: timed out") == 0
+
+test "the middle and the slowest time":
+    assert median([40, 10, 30]) == 30
+    assert slowest([40, 10, 30]) == 40
+
+test "the overview of three sites":
+    strict = {"strict-transport-security": "max-age=31536000"}
+    show_overview([
+        Probe(domain: "fast.example", up: true, status: 200, ms: 40, server: "nginx/1.25", headers: strict, note: ""),
+        Probe(domain: "old.example", up: true, status: 404, ms: 120, server: "", headers: {}, note: "GET https://old.example/ answered 404 Not Found"),
+        Probe(domain: "gone.example", up: false, status: 0, ms: 10000, server: "", headers: {}, note: "Cannot reach https://gone.example/: timed out")
+    ])
+
+test "the report of a domain":
+    fake dns returns ["192.0.2.7"]
+    fake publishes returns true
+    fake probe returns Probe(domain: "shop.example", up: true, status: 200, ms: 85, server: "Caddy", headers: {"strict-transport-security": "max-age=600", "x-frame-options": "DENY"}, note: "")
+    report("shop.example")
+
+test "the report of a domain that does not answer":
+    fake dns returns []
+    fake probe returns Probe(domain: "gone.example", up: false, status: 0, ms: 10000, server: "", headers: {}, note: "Cannot reach https://gone.example/: timed out")
+    report("gone.example")

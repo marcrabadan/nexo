@@ -1,0 +1,61 @@
+Domain, or "overview": Nothing to observe: give a domain (example.com) or "overview".
+✓ the software of a Server header
+✓ the status of an HTTP error
+✓ the middle and the slowest time
+Internet observatory: overview of 3 sites
+
+site                state   status  ms     https only  server
+fast.example        up      200     40     yes         nginx
+old.example         up      404     120    no          (not said)
+gone.example        down    -       10000  no          (not said)
+
+Up: 2 of 3
+Answer time: median 40 ms, slowest 120 ms
+HTTPS only (HSTS): 1 of 2
+Servers:
+  nginx           1
+  (not said)      1
+Down: gone.example: Cannot reach https://gone.example/: timed out
+✓ the overview of three sites
+Internet observatory: shop.example
+
+DNS
+  A     192.0.2.7
+  AAAA  192.0.2.7
+  NS    192.0.2.7
+  MX    192.0.2.7
+  TXT   192.0.2.7
+  CAA   192.0.2.7
+
+HTTPS
+  status   200
+  time     85 ms
+  server   caddy
+
+Security headers
+  yes  strict-transport-security
+  no   content-security-policy
+  no   x-content-type-options
+  yes  x-frame-options
+  no   referrer-policy
+  no   permissions-policy
+  2 of 6 sent
+
+Published files
+  yes  /robots.txt
+  yes  /.well-known/security.txt
+✓ the report of a domain
+Internet observatory: gone.example
+
+DNS
+  A     (none)
+  AAAA  (none)
+  NS    (none)
+  MX    (none)
+  TXT   (none)
+  CAA   (none)
+
+HTTPS
+  no answer: Cannot reach https://gone.example/: timed out
+✓ the report of a domain that does not answer
+6 tests: 6 passed, 0 failed
