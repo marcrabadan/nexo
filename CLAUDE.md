@@ -124,12 +124,10 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
   shop_api/       the exit criterion of phase 4 (tests/test_exit_criterion.py)
   deploy/         the exit criterion of phase 5 (tests/test_exit_criterion_5.py)
   events/         streams and flags, run with `nexo test` (tests/test_examples.py)
-  observatory/    an internet observatory: observatory.nexo (overview or one
-                  domain, as text), survey.nexo (the module that surveys a
-                  domain: DNS, routes, routers, outages), map.nexo (writes
-                  the survey as the page map.html) and site.nexo (serves it
-                  as a website from site/, D206), run with `nexo test` on
-                  written answers (tests/test_examples.py)
+  observatory/    an internet observatory: site.nexo serves a website from
+                  site/ (D206) and its API; survey.nexo is the module that
+                  surveys a domain (DNS, routes, routers, outages); run with
+                  `nexo test` on written answers (tests/test_examples.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 docs/guarantees.md the state of each guarantee of the specification (phase 6)

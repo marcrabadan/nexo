@@ -1,6 +1,5 @@
-/* The page of the internet observatory. As a website (site.nexo) it asks its
-   own server for the survey of the domain in the address; as one file
-   (map.nexo) the survey is already in window.OBSERVATORY. */
+/* The page of the internet observatory: it asks its own server (site.nexo)
+   for the survey of the domain in the address and draws it. */
 function render(WORLD, CABLES, LANDINGS, DATA) {
   const NS = "http://www.w3.org/2000/svg", STRONG = 20;
   const $ = id => document.getElementById(id);
@@ -209,7 +208,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   /* header and verdicts */
   $("title").replaceChildren("Trace of ", el("span", {}, DATA.domain));
   $("when").textContent = "asked " + DATA.time + (me ? " from " + me.ip + " (AS" + me.asn + " " + me.holder + ")" : "");
-  if (!window.OBSERVATORY) $("when").append(" · ", el("a", { href: "?domain=" + encodeURIComponent(DATA.domain) + "&fresh=1" }, "survey again"));
+  $("when").append(" · ", el("a", { href: "?domain=" + encodeURIComponent(DATA.domain) + "&fresh=1" }, "survey again"));
   function verdict(tone, q, a, why) {
     $("verdicts").append(el("div", { class: "verdict " + tone }, el("div", { class: "q" }, q), el("div", { class: "a" }, el("i"), el("span", {}, a)), el("div", { class: "why" }, why)));
   }
@@ -430,9 +429,8 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
 }
 
 (async function () {
-  const boot = window.OBSERVATORY, $ = id => document.getElementById(id);
+  const $ = id => document.getElementById(id);
   const say = text => { $("status").textContent = text; $("status").hidden = !text; };
-  if (boot) { $("ask").hidden = true; render(boot.world, boot.cables, boot.landings, boot.data); return; }
   $("report").hidden = true;
   const get = async url => {
     const r = await fetch(url);

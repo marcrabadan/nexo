@@ -1,5 +1,4 @@
 ✓ a domain name
-✓ a text inside a script
 ✓ the zones above a name
 ✓ the records of one type
 ✓ an edge in front of a site
@@ -13,4 +12,4 @@
 ✓ what DNS and a certificate say
 ✓ the state of a route
 ✓ the outages still open
-15 tests: 15 passed, 0 failed
+14 tests: 14 passed, 0 failed

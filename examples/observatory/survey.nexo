@@ -1,7 +1,7 @@
 ## Internet observatory, the survey of a domain: where its names and
 ## addresses are, what answers for it, the routers on the way, which
 ## networks carry its route, and where the internet has an outage right
-## now. map.nexo writes it as one page; site.nexo serves it as a website.
+## now. site.nexo serves it as a website.
 ##     nexo test survey.nexo    the parts that read the answers
 ## Every figure is asked when a survey runs: DNS to two resolvers over
 ## HTTPS, places, networks and routes to RIPEstat, the routers on the way
@@ -14,7 +14,7 @@
 ## outage signal, or named as a candidate where a trace crosses a sea.
 ## With RIPE_ATLAS_KEY set to "Key <your key>", a domain nobody traces
 ## gets a measurement started; its routers are read on a later run.
-## A module has no policy of its own: the programs that use it list what
+## A module has no policy of its own: the program that uses it lists what
 ## it reaches.
 use nexo.db
 
@@ -917,25 +917,6 @@ pub fn surveyed() -> list:
     else e:
         return []
 
-## A JSON text that can stand inside a page's script: what came from the
-## network must not be able to close the script.
-fn inline(text: str) -> str:
-    return text.replace("</", "<\\/")
-
-## Writes the survey as one page that needs nothing else: the page of the
-## website (site/index.html) with its style, its script, the world, the
-## cables and the survey inside it.
-pub fn page(data: map) -> str!:
-    html = read("site/index.html")?
-    css = read("site/map.css")?
-    script = read("site/map.js")?
-    world = read("site/world.json")?
-    inside = "window.OBSERVATORY = {{ world: {world}, cables: {inline(cable_file("cable/cable-geo.json"))}, landings: {inline(cable_file("landing-point/landing-point-geo.json"))}, data: {inline(convert(data, to: json))} };"
-    fonts = "<link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap\">"
-    out = html.replace("<!doctype html>\n", "").replace("<link rel=\"stylesheet\" href=\"map.css\">", "{fonts}\n<style>\n{css}</style>").replace("<script src=\"map.js\"></script>", "<script>\n{inside}\n</script>\n<script>\n{script}</script>")
-    write("map.html", out)?
-    return "map.html"
-
 test "a domain name":
     assert valid("wikipedia.org")
     assert valid("en.wikipedia.org")
@@ -944,9 +925,6 @@ test "a domain name":
     assert not valid("example.com/path")
     assert not valid("-bad.example")
     assert not valid("")
-
-test "a text inside a script":
-    assert inline("{{\"server\":\"</script>\"}") == "{{\"server\":\"<\\/script>\"}"
 
 test "the zones above a name":
     assert zones_of("en.wikipedia.org") == [".", "org", "wikipedia.org", "en.wikipedia.org"]
