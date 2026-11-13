@@ -45,6 +45,15 @@ SECURE = [
     ("X-Frame-Options", "DENY"),
     ("Cache-Control", "no-store"),
 ]
+# the files of a server's folder (D206): their own scripts, styles and
+# data from the same server, and nothing from anywhere else
+FILES_CSP = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+FILE_TYPES = {
+    "html": "text/html; charset=utf-8", "css": "text/css; charset=utf-8", "js": "text/javascript; charset=utf-8",
+    "mjs": "text/javascript; charset=utf-8", "json": "application/json", "txt": "text/plain; charset=utf-8",
+    "svg": "image/svg+xml", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
+    "webp": "image/webp", "ico": "image/x-icon", "woff": "font/woff", "woff2": "font/woff2", "wasm": "application/wasm",
+}
 WINDOWS = {"second": 1, "seconds": 1, "minute": 60, "minutes": 60, "hour": 3600, "hours": 3600,
            "day": 86400, "days": 86400, "month": 2592000, "months": 2592000}
 PER = ("ip", "user")
@@ -221,8 +230,8 @@ MISTAKES: list = []
 class Server(Native):
     type_name = "server"
 
-    def __init__(self, name, port, auth):
-        self.name, self.port, self.auth = name, port, auth
+    def __init__(self, name, port, auth, files=None):
+        self.name, self.port, self.auth, self.files = name, port, auth, files
         self.routes: list[Route] = []
         self.lock = threading.RLock()
         from .. import security_context
@@ -282,13 +291,15 @@ class Server(Native):
         if len(answer.body) > 8388608:
             raise NexoError("security_web_request", call.span)
         response_headers = dict(SECURE)
+        if answer.csp:
+            response_headers["Content-Security-Policy"] = answer.csp
         if answer.ctype:
             response_headers["Content-Type"] = answer.ctype
         response_headers.update(answer.extra)
         return {"status": answer.status, "body": answer.body.decode("utf-8", errors="replace"), "headers": response_headers}
 
 
-def b_web_server(call, name, port=8080, auth=None):
+def b_web_server(call, name, port=8080, auth=None, files=None):
     require_mode(call.span)
     if memory_profile() and (not isinstance(name, str) or not name or len(name) > 256 or len(name.encode("utf-8")) > 256):
         raise NexoError("security_web_request", call.span)
@@ -297,9 +308,16 @@ def b_web_server(call, name, port=8080, auth=None):
         raise expects(call, "port", "int", port)
     if auth is not None and not isinstance(auth, Jwt):
         raise expects(call, "auth", "jwt", auth)
+    if files is not None:
+        if not isinstance(files, str):
+            raise expects(call, "files", "str", files)
+        from .policy import check as policy
+        policy(call, "read", files)
+        if not os.path.isdir(files):
+            raise NexoError("web_files", call.span, server=name, path=files)
     from ..security_budget import charge
     charge([("web_servers", 1), ("registrations", 1)], call.span)
-    server = Server(name, port, auth)
+    server = Server(name, port, auth, files)
     SERVERS.append(server)
     return server
 
@@ -363,8 +381,8 @@ class Request(Native):
 
 
 class Answer:
-    def __init__(self, status: int, body: bytes = b"", ctype: str | None = None, extra=()):
-        self.status, self.body, self.ctype, self.extra = status, body, ctype, list(extra)
+    def __init__(self, status: int, body: bytes = b"", ctype: str | None = None, extra=(), csp: str | None = None):
+        self.status, self.body, self.ctype, self.extra, self.csp = status, body, ctype, list(extra), csp
 
 
 def error_answer(status: int, message: str | None = None, extra=()) -> Answer:
@@ -424,7 +442,7 @@ def write_answer(conn: socket.socket, a: Answer) -> None:
     for k, v in a.extra:
         lines.append(f"{k}: {v}")
     for k, v in SECURE:
-        lines.append(f"{k}: {v}")
+        lines.append(f"{k}: {a.csp if a.csp and k == 'Content-Security-Policy' else v}")
     lines.append("Connection: close")
     head = ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8")
     try:
@@ -482,11 +500,40 @@ def handle_server(interp, server, method, target, headers, body, ip):
     if found is None:
         if allowed:
             return error_answer(405, extra=[("Allow", ", ".join(allowed))])
+        if server.files is not None and method == "GET":
+            return file_answer(server.files, parts)
         return error_answer(404)
     route, path_params = found
     from .. import security_context
     with security_context.intersect(route.security):
         return handle_route(interp, server, route, path_params, url, method, target, headers, body, ip)
+
+
+def file_answer(folder: str, parts: list[str]) -> Answer:
+    """A file of the server's folder (D206): `/` and a folder are their
+    index.html; a hidden name, `..`, a link that leads out of the folder or
+    anything that is not a file is 404."""
+    from .policy import resolve
+    for p in parts:
+        if not p or p.startswith(".") or "/" in p or "\\" in p or "\0" in p:
+            return error_answer(404)
+    root = resolve(folder)
+    path = resolve("/".join([folder] + parts))
+    if path != root and not path.startswith(root.rstrip("/") + "/"):
+        return error_answer(404)
+    if os.path.isdir(path):
+        path = resolve(path + "/index.html")
+        if not path.startswith(root.rstrip("/") + "/"):
+            return error_answer(404)
+    if not os.path.isfile(path):
+        return error_answer(404)
+    try:
+        with open(path, "rb") as f:
+            body = f.read()
+    except OSError:
+        return error_answer(404)
+    ext = path.rsplit("/", 1)[-1].rpartition(".")[2].lower() if "." in path.rsplit("/", 1)[-1] else ""
+    return Answer(200, body, FILE_TYPES.get(ext, "application/octet-stream"), csp=FILES_CSP)
 
 
 def handle_route(interp, server, route, path_params, url, method, target, headers, body, ip):

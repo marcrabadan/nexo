@@ -1,0 +1,17 @@
+✓ a domain name
+✓ the zones above a name
+✓ the records of one type
+✓ an edge in front of a site
+✓ the networks of the paths
+✓ the usual path of a collector
+✓ private addresses
+✓ the routers of a traceroute
+✓ the city in a router's name
+✓ the links between networks
+✓ the origins a prefix has had
+✓ what DNS and a certificate say
+✓ only the traceroutes of the last week
+✓ the hops traceroute and tracert print
+✓ the state of a route
+✓ the outages still open
+16 tests: 16 passed, 0 failed

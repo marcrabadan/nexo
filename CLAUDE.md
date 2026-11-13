@@ -124,6 +124,10 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
   shop_api/       the exit criterion of phase 4 (tests/test_exit_criterion.py)
   deploy/         the exit criterion of phase 5 (tests/test_exit_criterion_5.py)
   events/         streams and flags, run with `nexo test` (tests/test_examples.py)
+  observatory/    an internet observatory: site.nexo serves a website from
+                  site/ (D206) and its API; survey.nexo is the module that
+                  surveys a domain (DNS, routes, routers, outages); run with
+                  `nexo test` on written answers (tests/test_examples.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 docs/guarantees.md the state of each guarantee of the specification (phase 6)
@@ -220,7 +224,7 @@ and secrets, the `http` client and `fake` (D92-D99, D105, D112).
 (D100-D101), `pick`, `group by` and relations in SQL (D161-D162), and
 PostgreSQL (D163) and MySQL (D170) through their own protocols, and the
 document stores MongoDB (D171) and Elasticsearch (D172); `nexo.web` servers
-(D102-D104); `nexo.ai`: `ask`, blocks, tools and agents (D106-D109),
+(D102-D104) with a folder of files, `files = "site"` (D206); `nexo.ai`: `ask`, blocks, tools and agents (D106-D109),
 `stream: true` as the answer arrives (D164), budgets (D165),
 `mcp("name")` tools (D166) and the providers mistral, gemini, azure and
 bedrock (D173, tests/test_ai_providers.py); `use c` and `use python` (D110-D111).

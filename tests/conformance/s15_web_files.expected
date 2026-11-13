@@ -1,0 +1,10 @@
+default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+✓ the folder answers what no route answers
+default-src 'none'; frame-ancestors 'none'
+✓ routes keep their answers
+/missing.html: GET URL/missing.html answered 404 Not Found
+/.hidden/key.txt: GET URL/.hidden/key.txt answered 404 Not Found
+/%2E%2E/s15_web.nexo: GET URL/%2E%2E/s15_web.nexo answered 404 Not Found
+/css/..%2F..%2Fs15_web.nexo: GET URL/css/..%2F..%2Fs15_web.nexo answered 404 Not Found
+✓ nothing outside the folder
+3 tests: 3 passed, 0 failed

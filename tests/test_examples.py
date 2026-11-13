@@ -61,3 +61,17 @@ def test_events_example(phase, tmp_path):
     shutil.copytree(EXAMPLES / "events", work)
     proc = run_phase(phase[1], ["test", "events.nexo"], work)
     assert proc.stdout.decode("utf-8") == (work / "events.expected").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("program", ["survey", "site"])
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_observatory_example(phase, program, tmp_path):
+    """examples/observatory asks the internet, so its programs run under
+    `nexo test` only, on answers written in the tests (site.nexo serves its
+    pages and its API to them); both phases print NAME.expected."""
+    work = tmp_path / "observatory"
+    # what earlier runs left behind is not part of the example
+    shutil.copytree(EXAMPLES / "observatory", work, ignore=shutil.ignore_patterns("observatory.db*"))
+    proc = run_phase(phase[1], ["test", f"{program}.nexo"], work)
+    assert proc.returncode == 0, proc.stdout.decode("utf-8")
+    assert proc.stdout.decode("utf-8") == (work / f"{program}.expected").read_text(encoding="utf-8")

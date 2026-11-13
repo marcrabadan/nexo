@@ -1,0 +1,4 @@
+Error in s15_web_files_missing.nexo, line 2:
+  server site:
+  ^^^^^^
+The folder "no_such_folder" of the server site does not exist. Create the folder, or give files = the path of an existing one, relative to where the program runs.

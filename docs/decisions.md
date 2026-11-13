@@ -3323,3 +3323,39 @@ See RFC-0010 for the implemented experimental contract. SSRApplication.from_file
 
 **D205. M6: Owned typed subscriptions.**
 See RFC-0011 for the implemented experimental contract. SSRApplication.from_file(..., hydrate=True, channels={localPath: EventChannel(schema)}) enables connectEvents(handle, localPath, {schema, onValue, onError, maxRetries}). subscriptions=True can enable an externally hosted same-origin SSE endpoint instead. The generated module exports the adapter; default onValue applies a checked root-state patch. Invalid JSON, shape, type, oversized payload or event envelope closes the connection before reporting a generic error. Duplicate/stale sequence IDs within an epoch are ignored. Retry errors are bounded (default 3, maximum 10). Root destruction and explicit close remove handlers and close EventSource.
+
+
+**D206. A server's folder of files.** Section 15 gives a `server` routes
+that answer data and says the secure headers "cannot be turned off";
+D104 makes a text `text/plain` and anything else JSON, and D102 sends
+`Content-Security-Policy: default-src 'none'` with every answer. So a
+program could not serve the page that uses its own API. Both phases add
+one key to the block, next to `port` and `auth`:
+
+- `files = "site"` names a folder (relative to where the program runs).
+  A GET that no route matches is answered with the file of that path;
+  `/` and a folder are their `index.html`. Routes come first, so a route
+  can never be hidden by a file. Other methods are not answered by files.
+- The content type comes from the extension (html, css, js, mjs, json,
+  txt, svg, png, jpg, jpeg, gif, webp, ico, woff, woff2, wasm; anything
+  else is `application/octet-stream`).
+- Nothing outside the folder is served: a part of the path that is
+  empty, starts with a dot (`..`, hidden files) or holds a slash, a
+  backslash or a NUL is 404, and the path is resolved as the policy
+  resolves paths (D142), one component at a time, so a symbolic link
+  that leads out of the folder is 404 too.
+- The headers stay on. A file is sent with
+  `Content-Security-Policy: default-src 'self'; frame-ancestors 'none';
+  base-uri 'none'; form-action 'self'`: a page may load the scripts,
+  styles, images and data of its own server and nothing else, and no
+  inline script or style runs. The answers of routes keep
+  `default-src 'none'`. Nothing is turned off, so no `unsafe` is needed.
+- The folder is an access of the program: `policy.check("read", folder)`
+  runs when the server is made (D142), and a folder that does not exist
+  is a diagnostic (`web_files`). Files need no token even with `auth`:
+  a page has to load before it can log in; data belongs behind routes.
+- The simplest option was chosen over a `html(...)` answer or a content
+  type per route: one key, no new value type, and pages cannot mix
+  untrusted text into markup on the server. Tests: the `s15_web_files*`
+  conformance cases, in both phases.
+

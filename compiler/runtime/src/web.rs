@@ -76,6 +76,30 @@ const SECURE: &[(&str, &str)] = &[
     ("Cache-Control", "no-store"),
 ];
 
+/// the files of a server's folder (D206): their own scripts, styles and
+/// data from the same server, and nothing from anywhere else
+const FILES_CSP: &str = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+fn file_type(ext: &str) -> &'static str {
+    match ext {
+        "html" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "txt" => "text/plain; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+
 fn window(unit: &str) -> Option<i64> {
     Some(match unit {
         "second" | "seconds" => 1,
@@ -284,6 +308,7 @@ pub struct Server {
     name: String,
     port: Mutex<i64>,
     auth: Option<Val>,
+    files: Option<String>,
     routes: Mutex<Vec<std::sync::Arc<Route>>>,
 }
 
@@ -349,7 +374,7 @@ impl Server {
             Outcome::Diag => return Err(crate::state::Fail),
         };
         if answer.body.len() > 8388608 { return Err(invalid_request(span)); }
-        let mut headers: Vec<_> = SECURE.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut headers: Vec<_> = SECURE.iter().map(|(k, v)| (k.to_string(), secure_value(k, v, answer.csp).to_string())).collect();
         if let Some(ctype) = answer.ctype { headers.push(("Content-Type".into(), ctype.into())); }
         headers.extend(answer.extra);
         Ok(crate::coll::map_from(vec![
@@ -360,7 +385,7 @@ impl Server {
     }
 }
 
-pub fn server(name: V, port: Option<V>, auth: Option<V>, span: u32) -> R<Val> {
+pub fn server(name: V, port: Option<V>, auth: Option<V>, files: Option<V>, span: u32) -> R<Val> {
     require_mode(span)?;
     if protected_profile() && name.as_str().is_none_or(|s| s.is_empty() || s.len() > 256) { return Err(invalid_request(span)); }
     let p = match port {
@@ -376,6 +401,18 @@ pub fn server(name: V, port: Option<V>, auth: Option<V>, span: u32) -> R<Val> {
             return Err(expects("auth", "jwt", a, span));
         }
     }
+    let files = match files.filter(|f| !f.is_none()) {
+        None => None,
+        Some(f) => {
+            let Some(path) = f.as_str() else { return Err(expects("files", "str", f, span)); };
+            crate::policy::check("read", path, span)?;
+            if !std::path::Path::new(path).is_dir() {
+                let d = Diagnostic::new_spanless("web_files").arg("server", name.as_str().unwrap_or("").to_string()).arg("path", path.to_string());
+                return Err(diag(d, span));
+            }
+            Some(path.to_string())
+        }
+    };
     use crate::security::budget::{charge, Resource};
     charge(&[(Resource::WebServers, 1), (Resource::Registrations, 1)], span)?;
     let s = native(Server {
@@ -383,6 +420,7 @@ pub fn server(name: V, port: Option<V>, auth: Option<V>, span: u32) -> R<Val> {
         name: name.as_str().unwrap_or("").to_string(),
         port: Mutex::new(p),
         auth: auth.map(Val::from),
+        files,
         routes: Mutex::new(Vec::new()),
     });
     SERVERS.lock().unwrap().push(s.clone());
@@ -501,17 +539,59 @@ struct Answer {
     body: Vec<u8>,
     ctype: Option<&'static str>,
     extra: Vec<(String, String)>,
+    /// the Content-Security-Policy of a file of the server's folder
+    csp: Option<&'static str>,
+}
+
+/// The value of a secure header: a file's own policy replaces the usual one.
+fn secure_value<'a>(name: &str, usual: &'a str, csp: Option<&'a str>) -> &'a str {
+    match csp {
+        Some(c) if name == "Content-Security-Policy" => c,
+        _ => usual,
+    }
+}
+
+/// A file of the server's folder (D206): `/` and a folder are their
+/// index.html; a hidden name, `..`, a link that leads out of the folder or
+/// anything that is not a file is 404.
+fn file_answer(folder: &str, parts: &[String]) -> Answer {
+    let missing = || error_answer(404, None, Vec::new());
+    if parts.iter().any(|p| p.is_empty() || p.starts_with('.') || p.contains('/') || p.contains('\\') || p.contains('\0')) {
+        return missing();
+    }
+    let resolve = crate::security::matching::resolve;
+    let root = resolve(folder);
+    let inside = format!("{}/", root.trim_end_matches('/'));
+    let mut wanted = vec![folder.to_string()];
+    wanted.extend(parts.iter().cloned());
+    let mut path = resolve(&wanted.join("/"));
+    if path != root && !path.starts_with(&inside) {
+        return missing();
+    }
+    if std::path::Path::new(&path).is_dir() {
+        path = resolve(&format!("{path}/index.html"));
+        if !path.starts_with(&inside) {
+            return missing();
+        }
+    }
+    if !std::path::Path::new(&path).is_file() {
+        return missing();
+    }
+    let Ok(body) = std::fs::read(&path) else { return missing() };
+    let name = path.rsplit('/').next().unwrap_or("");
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
+    Answer { status: 200, body, ctype: Some(file_type(&ext)), extra: Vec::new(), csp: Some(FILES_CSP) }
 }
 
 impl Answer {
     fn new(status: i64) -> Answer {
-        Answer { status, body: Vec::new(), ctype: None, extra: Vec::new() }
+        Answer { status, body: Vec::new(), ctype: None, extra: Vec::new(), csp: None }
     }
 }
 
 fn error_answer(status: i64, message: Option<String>, extra: Vec<(String, String)>) -> Answer {
     let text = format!("{{\"error\":{}}}", crate::data::json_string(&message.unwrap_or_else(|| reason(status).to_string())));
-    Answer { status, body: text.into_bytes(), ctype: Some("application/json"), extra }
+    Answer { status, body: text.into_bytes(), ctype: Some("application/json"), extra, csp: None }
 }
 
 enum Read_ {
@@ -615,7 +695,7 @@ fn write_answer(conn: &mut TcpStream, a: &Answer) {
         lines.push(format!("{k}: {v}"));
     }
     for (k, v) in SECURE {
-        lines.push(format!("{k}: {v}"));
+        lines.push(format!("{k}: {}", secure_value(k, v, a.csp)));
     }
     lines.push("Connection: close".into());
     let mut out = (lines.join("\r\n") + "\r\n\r\n").into_bytes();
@@ -724,6 +804,9 @@ fn handle(server: &Server, method: &str, target: &str, headers: &[(String, Strin
     let Some((route, path_params)) = found else {
         if !allowed.is_empty() {
             return Outcome::Answer(error_answer(405, None, vec![("Allow".into(), allowed.join(", "))]));
+        }
+        if let (Some(folder), "GET") = (&server.files, method) {
+            return Outcome::Answer(file_answer(folder, &parts));
         }
         return Outcome::Answer(error_answer(404, None, Vec::new()));
     };
@@ -906,10 +989,10 @@ fn answer_of(result: Val, method: &str, span: u32) -> R<Answer> {
         return Ok(Answer::new(n));
     }
     if let Some(s) = value.as_str() {
-        return Ok(Answer { status: ok, body: s.as_bytes().to_vec(), ctype: Some("text/plain; charset=utf-8"), extra: Vec::new() });
+        return Ok(Answer { status: ok, body: s.as_bytes().to_vec(), ctype: Some("text/plain; charset=utf-8"), extra: Vec::new(), csp: None });
     }
     crate::fmt::show_checked(value.v(), span)?;
-    Ok(Answer { status: ok, body: crate::data::to_json_compact(value.v()).into_bytes(), ctype: Some("application/json"), extra: Vec::new() })
+    Ok(Answer { status: ok, body: crate::data::to_json_compact(value.v()).into_bytes(), ctype: Some("application/json"), extra: Vec::new(), csp: None })
 }
 
 // ---------------------------------------------------------------- serving
