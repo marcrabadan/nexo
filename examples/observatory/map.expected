@@ -7,6 +7,10 @@ Domain: Nothing to trace: give a domain (example.com).
 ✓ the usual path of a collector
 ✓ private addresses
 ✓ the routers of a traceroute
+✓ the city in a router's name
+✓ the links between networks
+✓ the origins a prefix has had
+✓ what DNS and a certificate say
 ✓ the state of a route
 ✓ the outages still open
-10 tests: 10 passed, 0 failed
+14 tests: 14 passed, 0 failed
