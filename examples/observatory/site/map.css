@@ -1,0 +1,99 @@
+/* Layout: a verdict strip, then the chart of the sea floor full width, then the readings in columns. */
+:root {
+  --bg: #0b1420; --panel: #111d2c; --line: #22344a; --land: #1b2a3d; --coast: #2f4560;
+  --fg: #dce6f2; --dim: #8ea3bb; --cable: #3f7f93; --trace: #f2b544; --dns: #7cc4ff;
+  --good: #4fc98a; --warn: #f0a23a; --bad: #f0625a; --bgp: #b79cf5; --fac: #e58fb8;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #f3f6f9; --panel: #ffffff; --line: #d3dce6; --land: #dfe7ee; --coast: #b4c2d0;
+  --fg: #14212f; --dim: #566a80; --cable: #3c8a9e; --trace: #b06a00; --dns: #1668b8;
+  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; --bgp: #6a45c9; --fac: #b03a78; color-scheme: light } }
+:root[data-theme="light"] {
+  --bg: #f3f6f9; --panel: #ffffff; --line: #d3dce6; --land: #dfe7ee; --coast: #b4c2d0;
+  --fg: #14212f; --dim: #566a80; --cable: #3c8a9e; --trace: #b06a00; --dns: #1668b8;
+  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; --bgp: #6a45c9; --fac: #b03a78; color-scheme: light }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans);
+  padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
+main { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px }
+h1 { font: 600 26px/1.2 var(--sans); margin: 0; text-wrap: balance }
+h1 span { font-family: var(--mono); font-weight: 500; color: var(--trace) }
+h2 { font: 600 12px/1.3 var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--dim); margin: 0 0 10px }
+.when { color: var(--dim); font: 13px var(--mono); margin-top: 4px }
+.verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px }
+.verdict { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; min-width: 0 }
+.verdict .q { font-size: 12px; color: var(--dim) }
+.verdict .a { font: 600 17px/1.3 var(--sans); margin-top: 2px; display: flex; gap: 8px; align-items: baseline }
+.verdict .a i { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--dim); transform: translateY(-1px) }
+.verdict.good .a i { background: var(--good) } .verdict.warn .a i { background: var(--warn) } .verdict.bad .a i { background: var(--bad) }
+.verdict .why { font-size: 13px; color: var(--dim); margin-top: 4px; overflow-wrap: anywhere }
+.chart { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden }
+.chart svg { display: block; width: 100%; height: auto; touch-action: none; cursor: grab }
+.zoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 4px }
+.zoom button { width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); font: 500 16px var(--mono); cursor: pointer }
+.zoom button:hover { border-color: var(--dim) } button:focus-visible { outline: 2px solid var(--trace); outline-offset: 2px }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--dim) }
+.legend span { display: inline-flex; align-items: center; gap: 7px }
+.legend svg { width: 26px; height: 10px; flex: none; cursor: default }
+.tip { position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--dim); border-radius: 4px; padding: 6px 9px; font-size: 13px; max-width: 280px; z-index: 2; overflow-wrap: anywhere }
+.tip b { display: block; font-weight: 600 } .tip small { color: var(--dim); font: 12px var(--mono) }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; align-items: start }
+section { min-width: 0 }
+.land { fill: var(--land); stroke: var(--coast); stroke-width: .35 }
+.cable { fill: none; stroke: var(--cable); stroke-width: .5; opacity: .55 }
+.legend .cable { stroke-width: 1.5; opacity: 1 }
+.cable.hit { stroke: var(--bad); stroke-width: 1; opacity: .95 }
+.cable:hover { stroke: var(--fg); stroke-width: 1.4; opacity: 1 }
+.hop { fill: none; stroke-width: 1.2 } .hop.dns { stroke: var(--dns); stroke-dasharray: 3 3 } .hop.web { stroke: var(--trace) }
+.pt { stroke: var(--bg); stroke-width: .8 } .pt.observer { fill: var(--fg) } .pt.ns { fill: var(--dns) } .pt.site { fill: var(--trace) }
+.bgp { fill: none; stroke: var(--bgp); stroke-width: .6; opacity: .7 } .pt.col { fill: var(--bgp) }
+.rt { fill: none; stroke: var(--good); stroke-width: 1.1 } .rt.lost { stroke: var(--bad); stroke-dasharray: 2 2 } .pt.probe { fill: var(--good) } .pt.probe.lost { fill: var(--bad) }
+.layers { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 10px 14px 0; font-size: 13px }
+.layers label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer }
+details { border-bottom: 1px solid var(--line); padding: 6px 0 } summary { cursor: pointer; font-size: 14px } summary small { color: var(--dim) }
+details table { margin-top: 6px } .ok { color: var(--good) } .no { color: var(--bad) }
+.spark { display: flex; align-items: flex-end; gap: 2px; height: 56px; margin-top: 6px; border-bottom: 1px solid var(--line) }
+.spark div { flex: 1; display: flex; flex-direction: column-reverse; min-width: 0 } .spark i { display: block; background: var(--bgp) } .spark i.w { background: var(--bad) }
+.axis { display: flex; justify-content: space-between; font: 12px var(--mono); color: var(--dim); margin-top: 3px }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0 0 12px; font-size: 14px } dt { color: var(--dim) } dd { margin: 0; overflow-wrap: anywhere }
+.cable.cand { stroke: var(--trace); stroke-width: 1.6; opacity: 1 } .rt.on { stroke-width: 2.4 }
+.fac { fill: var(--fac); stroke: var(--bg); stroke-width: .5 }
+.wide { grid-column: 1 / -1 } .scroll { overflow-x: auto }
+.graph { display: block; min-width: 640px; width: 100%; height: auto }
+.graph .edge { fill: none; stroke: var(--bgp); opacity: .45 } .graph rect { fill: var(--bg); stroke: var(--line) } .graph rect.origin { stroke: var(--trace) }
+.graph text { font: 11px var(--mono); fill: var(--fg) } .graph text.dim { fill: var(--dim); font-size: 10px }
+.lat { display: block; width: 100%; max-width: 420px; height: auto; margin-top: 8px }
+.lat path { fill: none; stroke: var(--good); stroke-width: 1.5 } .lat circle { fill: var(--good) } .lat circle.jump { fill: var(--warn) } .lat circle.none { fill: var(--line) }
+.lat text { font: 10px var(--mono); fill: var(--dim) } .lat line { stroke: var(--line) }
+ul.plain { list-style: none; margin: 0; padding: 0; font-size: 14px; display: flex; flex-direction: column; gap: 5px } ul.plain li { overflow-wrap: anywhere }
+.changed { color: var(--warn) }
+.ring { fill: none; stroke: var(--bad); stroke-width: 1 }
+.ptl { font: 500 7px var(--mono); fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 2.4px }
+ol.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column }
+ol.chain li { position: relative; padding: 0 0 14px 22px }
+ol.chain li::before { content: ""; position: absolute; left: 4px; top: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--dns) }
+ol.chain li::after { content: ""; position: absolute; left: 8px; top: 18px; bottom: -5px; width: 1px; background: var(--line) }
+ol.chain li:last-child::after { display: none } ol.chain li.end::before { background: var(--trace) }
+.zone { font: 500 15px var(--mono) } .sub { font-size: 13px; color: var(--dim); overflow-wrap: anywhere }
+.mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums }
+td, th { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top }
+th { font-weight: 500; color: var(--dim) } td.n, th.n { text-align: right; padding: 5px 0 5px 12px; white-space: nowrap }
+.bar { height: 5px; background: var(--line); border-radius: 3px; margin-top: 4px } .bar b { display: block; height: 100%; border-radius: 3px; background: var(--trace) }
+.bar.out b { background: var(--bad) }
+.note { font-size: 13px; color: var(--dim); margin: 10px 0 0; max-width: 65ch }
+footer { font-size: 13px; color: var(--dim); border-top: 1px solid var(--line); padding-top: 14px; max-width: 80ch }
+footer a { color: var(--fg) }
+h1 a, .when a, .recent a { color: inherit }
+form.ask { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px }
+form.ask label { font-size: 13px; color: var(--dim) }
+form.ask input { flex: 1 1 220px; max-width: 360px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--fg); font: 15px var(--mono) }
+form.ask button { padding: 8px 16px; border: 1px solid var(--trace); border-radius: 4px; background: var(--trace); color: var(--bg); font: 600 14px var(--sans); cursor: pointer }
+form.ask input:focus-visible { outline: 2px solid var(--trace); outline-offset: 1px }
+.status { margin: 12px 0 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); max-width: 80ch }
+.recent { margin-top: 14px; font-size: 14px; color: var(--dim) } .recent ul { margin: 6px 0 0; padding-left: 18px } .recent li { margin: 3px 0 } .recent a { color: var(--fg) }
+#report { display: flex; flex-direction: column; gap: 18px }
+h2.gap { margin-top: 18px }

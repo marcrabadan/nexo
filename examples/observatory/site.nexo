@@ -1,0 +1,60 @@
+## Internet observatory, the website: a page where any domain is typed
+## and surveyed (survey.nexo), with the map, the routers and the routes.
+##     nexo site.nexo         serves http://127.0.0.1:8080
+##     nexo test site.nexo    the pages and the API, without the internet
+## The page and its script are the files of site/; the routes below are
+## the API the script asks. A survey takes a minute or two and is kept
+## for a quarter of an hour. NEXO_WEB_LOCAL=1 listens on this machine
+## only; without it anyone who reaches the port can make the server
+## survey a domain.
+policy:
+    allow net "cloudflare-dns.com", "dns.google", "stat.ripe.net", "atlas.ripe.net", "api.ioda.inetintel.cc.gatech.edu"
+    allow net "www.submarinecablemap.com", "www.peeringdb.com", "crt.sh", "127.0.0.1"
+    allow read "site", "data", "observatory.db"
+    allow write "observatory.db"
+    allow env "RIPE_ATLAS_KEY"
+
+use survey
+
+server observatory:
+    port = 8080
+    files = "site"
+
+    ## The survey of a domain; fresh=true asks again now.
+    get "/api/trace/{domain}"(domain: str, fresh: bool = false):
+        name = domain.trim().lower()
+        if not survey.valid(name):
+            return 400
+        return survey.report(name, fresh)
+
+    ## The domains surveyed here before, the latest first.
+    get "/api/runs"():
+        return survey.surveyed()
+
+    ## The routes of the submarine cables, for the map.
+    get "/api/cables"():
+        return survey.cables()
+
+    ## The places where the cables land.
+    get "/api/landings"():
+        return survey.landings()
+
+test "the page and its files":
+    home = http.get("{observatory.url}/")
+    assert home.headers["content-type"] == "text/html; charset=utf-8"
+    assert "Internet observatory" in home.text
+    assert "<script src=\"map.js\"></script>" in home.text
+    assert http.get("{observatory.url}/map.js").headers["content-type"] == "text/javascript; charset=utf-8"
+    assert http.get("{observatory.url}/map.css").headers["content-type"] == "text/css; charset=utf-8"
+    assert http.get("{observatory.url}/world.json").json()["type"] == "Topology"
+
+test "only a domain name is surveyed":
+    for name in ["localhost", "127.0.0.1", "bad_name.example"]:
+        try:
+            http.get("{observatory.url}/api/trace/{name}", retries: 0)
+            print("{name}: surveyed")
+        else e is HTTPError:
+            print("{name}: {e.message.replace(observatory.url, "URL")}")
+
+test "the domains surveyed before":
+    assert http.get("{observatory.url}/api/runs").json() == []

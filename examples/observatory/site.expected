@@ -1,0 +1,7 @@
+✓ the page and its files
+localhost: GET URL/api/trace/localhost answered 400 Bad Request
+127.0.0.1: GET URL/api/trace/127.0.0.1 answered 400 Bad Request
+bad_name.example: GET URL/api/trace/bad_name.example answered 400 Bad Request
+✓ only a domain name is surveyed
+✓ the domains surveyed before
+3 tests: 3 passed, 0 failed

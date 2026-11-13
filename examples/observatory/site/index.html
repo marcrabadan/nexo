@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Internet Observatory Map</title>
+<link rel="stylesheet" href="map.css">
+<main>
+  <header>
+    <h1 id="title">Internet observatory</h1>
+    <div class="when" id="when"></div>
+    <form class="ask" id="ask" method="get" action=".">
+      <label for="field">Domain</label>
+      <input id="field" name="domain" type="text" placeholder="example.com" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <button type="submit">Survey</button>
+    </form>
+    <p class="status" id="status" role="status" hidden></p>
+    <div class="recent" id="recent"></div>
+  </header>
+  <div id="report">
+  <div class="verdicts" id="verdicts"></div>
+  <div class="chart" id="chart">
+    <svg id="map" viewBox="0 14 1000 400" role="img" aria-label="World map with submarine cables, outage signals and the places of this trace"></svg>
+    <div class="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button><button id="zreset" aria-label="Whole world">⌂</button></div>
+    <div class="tip" id="tip" hidden></div>
+    <div class="layers">
+      <label><input type="checkbox" id="l-cables" checked> submarine cables</label>
+      <label><input type="checkbox" id="l-routers" checked> router traces</label>
+      <label><input type="checkbox" id="l-bgp" checked> BGP route collectors</label>
+      <label><input type="checkbox" id="l-fac" checked> exchange buildings</label>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="cols">
+    <section class="wide" id="since-box"><h2>Since the last run</h2><div id="since"></div></section>
+    <section><h2>DNS trace</h2><ol class="chain" id="dns"></ol><p class="note">Each zone hands the question to the name servers of the next one. Root and top-level servers answer from many places at once, so only the domain's own servers are placed on the map.</p></section>
+    <section><h2>DNS health and mail</h2><div id="health"></div></section>
+    <section><h2>What answered</h2><div id="front"></div><h2 class="gap">Certificates in the public logs</h2><div id="certs"></div></section>
+    <section class="wide"><h2>Router traces</h2><div id="routers"></div></section>
+    <section class="wide"><h2>Network path graph</h2><div class="scroll" id="graph"></div></section>
+    <section><h2>Backbone networks on the route</h2><div id="route"></div></section>
+    <section><h2>BGP: the route itself</h2><div id="bgp"></div></section>
+    <section><h2>IPv6</h2><div id="v6"></div></section>
+    <section><h2>Exchange points</h2><div id="peering"></div></section>
+    <section><h2>Outage signals open now</h2><div id="outages"></div></section>
+    <section><h2>Earlier runs</h2><div id="history"></div></section>
+  </div>
+  </div>
+  <footer id="foot"></footer>
+</main>
+<script src="map.js"></script>

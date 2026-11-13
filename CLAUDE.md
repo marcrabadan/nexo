@@ -125,9 +125,11 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
   deploy/         the exit criterion of phase 5 (tests/test_exit_criterion_5.py)
   events/         streams and flags, run with `nexo test` (tests/test_examples.py)
   observatory/    an internet observatory: observatory.nexo (overview or one
-                  domain) and map.nexo (a domain's trace written as the page
-                  map.html), run with `nexo test` on written answers
-                  (tests/test_examples.py)
+                  domain, as text), survey.nexo (the module that surveys a
+                  domain: DNS, routes, routers, outages), map.nexo (writes
+                  the survey as the page map.html) and site.nexo (serves it
+                  as a website from site/, D206), run with `nexo test` on
+                  written answers (tests/test_examples.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 docs/guarantees.md the state of each guarantee of the specification (phase 6)
