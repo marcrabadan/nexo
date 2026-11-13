@@ -159,7 +159,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     p.line = p.stops.length > 1 ? el("path", { class: "rt" + cls, d: line(p.stops.map(s => s.at)) }) : null;
     if (p.line) gRouters.append(p.line);
     const dot = el("circle", { class: "pt probe" + cls, cx: X(p.lon), cy: Y(p.lat), r: 3 });
-    hint(dot, "Probe " + p.id + " in " + p.country, (p.reached ? "reached the site in " : "did not reach the site; stopped after ") + p.hops.length + " hops" + (p.stops.length > 1 ? " · via " + p.stops.slice(1).map(s => s.label).join(", ") : ""));
+    hint(dot, "Probe " + p.id + " in " + p.country, (p.reached ? "reached its target in " : "did not reach its target; stopped after ") + p.hops.length + " hops" + (p.stops.length > 1 ? " · via " + p.stops.slice(1).map(s => s.label).join(", ") : ""));
     gRouters.append(dot);
   }
   /* exchange buildings of the origin network */
@@ -225,8 +225,9 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     route.total ? route.seeing + " of " + route.total + " routers watching worldwide have a route to " + route.prefix : route.error || "no address to route to");
 
   const got = (routers.probes || []).filter(p => p.reached).length, sent = (routers.probes || []).length;
-  verdict(!sent ? "" : got === sent ? "good" : got ? "warn" : "bad", "Do routers get through?", sent ? got + " of " + sent + " probes arrived" : "Not measured",
-    sent ? "traceroutes run by RIPE Atlas probes in " + [...new Set(routers.probes.map(p => p.country))].join(", ") : routers.note || "");
+  const toNetwork = routers.kind === "network";
+  verdict(!sent ? "" : got === sent ? "good" : got ? "warn" : "bad", toNetwork ? "Do routers reach its network?" : "Do routers get through?", sent ? got + " of " + sent + " probes arrived" : "Not measured",
+    sent ? (toNetwork ? "nobody traces " + DATA.domain + " itself: these traceroutes go to " + routers.name + ", in the same network, from " : "traceroutes run by RIPE Atlas probes in ") + [...new Set(routers.probes.map(p => p.country))].join(", ") : routers.note || "");
 
   /* DNS chain */
   for (const s of DATA.steps || []) $("dns").append(el("li", {}, el("div", { class: "zone" }, s.zone === "." ? ". (root)" : s.zone),
@@ -286,7 +287,9 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     $("routers").append(d);
   }
   $("routers").append(el("p", { class: "note" }, (routers.probes || []).length
-    ? "Traceroutes that RIPE Atlas probes run to " + (routers.target || DATA.domain) + " (measurement " + routers.measurement + "), the latest from each probe. A router is placed by the city code in its host name where it has one, and its line on the map joins those. " +
+    ? (toNetwork ? "Nobody is tracing " + DATA.domain + " itself, so these are the traceroutes RIPE Atlas probes run to " + routers.name + " (" + routers.target + "), another address of the same network, AS" + route.origin +
+        ": they show the routers on the way into that network, and the last hops are that site's, not this one's. Measurement " + routers.measurement + ", the latest from each probe. "
+      : "Traceroutes that RIPE Atlas probes run to " + (routers.target || DATA.domain) + " (measurement " + routers.measurement + "), the latest from each probe. ") + "A router is placed by the city code in its host name where it has one, and its line on the map joins those. " +
       "Where two such routers are far apart, the cables that land near both are named and lit on the map while the probe is open: candidates, since no trace says which cable carried it. A hop with no answer is a router that does not reply, or a firewall dropping the packets."
     : routers.note || "No router traces."));
   if (routers.note && (routers.probes || []).length) $("routers").append(el("p", { class: "note" }, routers.note));

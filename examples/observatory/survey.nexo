@@ -583,38 +583,72 @@ fn start_trace(domain: str) -> int!:
     r = http.post("{ATLAS}/measurements/", body, headers: {"Authorization": secret("RIPE_ATLAS_KEY")}, timeout: 30s)?
     return r.json()?["measurements"][0]
 
-## The measurement to read the routers from: the public one with most
-## probes that is running now, else one this observatory started before,
-## else a new one when there is a key. big: it has too many probes to
-## read them all.
-fn measurement_of(domain: str) -> map:
-    var out = {"id": none, "target": "", "big": false, "note": ""}
+## Starts a traceroute to a domain nobody traces and says what happened.
+fn begin(domain: str) -> str:
     try:
-        found = http.get("{ATLAS}/measurements/?target={domain}&type=traceroute&status=2&af=4&page_size=50&fields=id,target_ip,participant_count", timeout: 30s)?.json()?["results"]
-        if len(found) > 0:
-            chosen = (found |> sort by participant_count desc)[0]
-            return {"id": chosen["id"], "target": chosen["target_ip"] ?? "", "big": chosen["participant_count"] > 50, "note": ""}
+        id = start_trace(domain)
+        db.Started.add(domain: domain, measurement: id, moment: now)
+        return "Measurement {id} was started on RIPE Atlas for {domain} itself; its routers are read on the next run, in a few minutes."
+    else e:
+        return "To trace {domain} itself, set RIPE_ATLAS_KEY to \"Key <your key>\" (free at atlas.ripe.net)."
+
+## The traceroute running now with most probes among those a search of
+## RIPE Atlas finds, or none.
+fn running(search: str) -> map?:
+    try:
+        found = http.get("{ATLAS}/measurements/?{search}&type=traceroute&status=2&af=4&page_size=50&fields=id,target,target_ip,participant_count", timeout: 30s).json()["results"]
+        live = found |> where it["participant_count"] != none and it["participant_count"] > 0 |> sort by participant_count desc
+        if len(live) == 0:
+            return none
+        return live[0]
+    else e:
+        return none
+
+## The measurement to read the routers from. First the public one to the
+## domain with most probes that is running now, then one this observatory
+## started before. Few domains are traced, so the next choice is a
+## traceroute to another address of the same network (origin): its
+## routers are the way into that network, not to this very site, and the
+## page says so. big: it has too many probes to read them all.
+fn measurement_of(domain: str, origin: str) -> map:
+    var out = {"id": none, "target": "", "name": domain, "kind": "domain", "big": false, "note": ""}
+    try:
+        chosen = running("target={domain}")
+        if chosen != none:
+            out["id"] = chosen["id"]
+            out["target"] = chosen["target_ip"] ?? ""
+            out["big"] = chosen["participant_count"] > 50
+            return out
         wanted = domain
         mine = db.Started |> where domain == wanted |> sort by moment desc |> take 1
         if len(mine) > 0:
             out["id"] = mine[0].measurement
             return out
-        out["note"] = "No probe of RIPE Atlas is tracing {domain} now."
-        id = start_trace(domain)
-        db.Started.add(domain: domain, measurement: id, moment: now)
-        out["note"] = "Nobody was tracing {domain}, so measurement {id} was started on RIPE Atlas. Its routers are read on the next run, in a few minutes."
+        out["note"] = "No probe of RIPE Atlas is tracing {domain} now. {begin(domain)}"
+        if origin != "":
+            near = running("target_asn={origin}")
+            if near != none:
+                out["id"] = near["id"]
+                out["target"] = near["target_ip"] ?? ""
+                out["name"] = near["target"] ?? ""
+                out["kind"] = "network"
+                out["big"] = near["participant_count"] > 50
     else e:
-        if out["note"] == "":
-            out["note"] = "RIPE Atlas did not answer: {e.message}"
-        else:
-            out["note"] = "{out["note"]} To start a measurement, set RIPE_ATLAS_KEY to \"Key <your key>\" (free at atlas.ripe.net). ({e.message})"
+        out["note"] = "{out["note"]} RIPE Atlas did not answer: {e.message}".trim()
     return out
 
-## The traceroutes RIPE Atlas probes run to the domain, read from up to
-## eight probes, each hop with its place and network.
-fn traceroutes(domain: str) -> map:
-    chosen = measurement_of(domain)
-    var out = {"measurement": chosen["id"], "target": chosen["target"], "probes": [], "note": chosen["note"]}
+## Only the traceroutes of the last week: a probe that left years ago
+## still has its last result.
+fn recent(results: list) -> list:
+    since = epoch() - 604800
+    return [r for r in results if (r["timestamp"] ?? 0) > since]
+
+## The traceroutes RIPE Atlas probes run to the domain (or, when nobody
+## traces it, to its network: origin), read from up to eight probes, each
+## hop with its place and network.
+fn traceroutes(domain: str, origin: str) -> map:
+    chosen = measurement_of(domain, origin)
+    var out = {"measurement": chosen["id"], "target": chosen["target"], "name": chosen["name"], "kind": chosen["kind"], "probes": [], "note": chosen["note"]}
     if chosen["id"] == none:
         return out
     try:
@@ -625,9 +659,9 @@ fn traceroutes(domain: str) -> map:
                 return probe_in(country)
             probes = [p for p in picked if p != none]
             ids = [str(p["id"]) for p in probes]
-            results = http.get("{ATLAS}/measurements/{chosen["id"]}/latest/?probe_ids={joined(ids)}", timeout: 60s)?.json()?
+            results = recent(http.get("{ATLAS}/measurements/{chosen["id"]}/latest/?probe_ids={joined(ids)}", timeout: 60s)?.json()?)
         else:
-            results = http.get("{ATLAS}/measurements/{chosen["id"]}/latest/", timeout: 60s)?.json()? |> take 8
+            results = recent(http.get("{ATLAS}/measurements/{chosen["id"]}/latest/", timeout: 60s)?.json()?) |> take 8
             picked = parallel for r in results:
                 return probe_of(r["prb_id"])
             probes = [p for p in picked if p != none]
@@ -874,7 +908,7 @@ pub fn trace(domain: str) -> map:
         meets = peering(route["origin"])
         print("  on {len(meets["exchanges"])} exchanges, in {len(meets["facilities"])} buildings")
     print("Routers: the traceroutes of RIPE Atlas")
-    routers = traceroutes(domain)
+    routers = traceroutes(domain, route["origin"])
     reached = routers["probes"] |> where it["reached"] |> count
     print("  {reached} of {len(routers["probes"])} probes reached it {routers["note"]}")
     print("IPv6")
@@ -999,6 +1033,10 @@ test "what DNS and a certificate say":
     assert first_text(answers, "v=DMARC1") == ""
     assert issuer_of("C=US, O=Let's Encrypt, CN=YE2") == "Let's Encrypt"
     assert issuer_of("C=US, O=\"DigiCert, Inc.\", CN=G2") == "DigiCert"
+
+test "only the traceroutes of the last week":
+    fresh = [{"prb_id": 1, "timestamp": epoch() - 60}, {"prb_id": 2, "timestamp": 1500000000}, {"prb_id": 3}]
+    assert [r["prb_id"] for r in recent(fresh)] == [1]
 
 test "the state of a route":
     assert route_state(318, 318) == "whole"
