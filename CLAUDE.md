@@ -224,7 +224,7 @@ and secrets, the `http` client and `fake` (D92-D99, D105, D112).
 (D100-D101), `pick`, `group by` and relations in SQL (D161-D162), and
 PostgreSQL (D163) and MySQL (D170) through their own protocols, and the
 document stores MongoDB (D171) and Elasticsearch (D172); `nexo.web` servers
-(D102-D104); `nexo.ai`: `ask`, blocks, tools and agents (D106-D109),
+(D102-D104) with a folder of files, `files = "site"` (D206); `nexo.ai`: `ask`, blocks, tools and agents (D106-D109),
 `stream: true` as the answer arrives (D164), budgets (D165),
 `mcp("name")` tools (D166) and the providers mistral, gemini, azure and
 bedrock (D173, tests/test_ai_providers.py); `use c` and `use python` (D110-D111).

@@ -1,0 +1,32 @@
+# a server with a folder of files (D206): routes answer first, then the
+# files; the files may load their own scripts and styles, nothing else
+server site:
+    port = 8080
+    files = "site"
+
+    get "/api/hello"(name: str = "world"):
+        return {"hello": name}
+
+test "the folder answers what no route answers":
+    home = http.get("{site.url}/")
+    assert home.status == 200
+    assert home.headers["content-type"] == "text/html; charset=utf-8"
+    assert "Hello from a file." in home.text
+    print(home.headers["content-security-policy"])
+    css = http.get("{site.url}/css/page.css")
+    assert css.headers["content-type"] == "text/css; charset=utf-8"
+    assert css.text == "p {{ color: teal; }\n"
+    assert "Docs" in http.get("{site.url}/docs").text
+
+test "routes keep their answers":
+    r = http.get("{site.url}/api/hello?name=Ana")
+    assert r.json()["hello"] == "Ana"
+    print(r.headers["content-security-policy"])
+
+test "nothing outside the folder":
+    for path in ["/missing.html", "/.hidden/key.txt", "/%2E%2E/s15_web.nexo", "/css/..%2F..%2Fs15_web.nexo"]:
+        try:
+            http.get("{site.url}{path}", retries: 0)
+            print("{path}: served")
+        else e is HTTPError:
+            print("{path}: {e.message.replace(site.url, "URL")}")

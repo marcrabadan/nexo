@@ -143,3 +143,67 @@ def test_web_api(phase, tmp_path):
     finally:
         proc.kill()
         proc.wait()
+
+
+FILES_PROGRAM = """server site:
+    port = 8080
+    auth = jwt(key: secret("JWT_KEY"))
+    files = "public"
+
+    get "/api/private"():
+        return "private"
+
+    @public
+    post "/api/echo"(text: str):
+        return text
+"""
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_web_files(phase, tmp_path):
+    """The folder of a server (D206): files answer what no route does, with
+    their own Content-Security-Policy, and nothing outside it is served."""
+    public = tmp_path / "public"
+    (public / "js").mkdir(parents=True)
+    (public / "index.html").write_text("<p>home</p>\n", encoding="utf-8")
+    (public / "js" / "app.js").write_text("console.log(1)\n", encoding="utf-8")
+    (public / "data.bin").write_bytes(b"\x00\x01\x7f")
+    (public / ".env").write_text("KEY=1\n", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("outside\n", encoding="utf-8")
+    os.symlink(tmp_path / "secret.txt", public / "link.txt")
+    os.symlink(tmp_path, public / "up")
+    (tmp_path / "api.nexo").write_text(FILES_PROGRAM, encoding="utf-8")
+    port = free_port()
+    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8", NEXO_WEB_LOCAL="1",
+               PORT=str(port), JWT_KEY="s3cr3t")
+    proc = subprocess.Popen([*phase[1], "api.nexo"], cwd=tmp_path, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    try:
+        line = proc.stderr.readline().decode("utf-8")
+        assert line == f"site listens on http://127.0.0.1:{port}\n", line + proc.stderr.read().decode()
+        csp = "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+        for path in ("/", "/index.html"):
+            status, headers, body = request(port, "GET", path)
+            assert (status, headers["Content-Type"], body) == (200, "text/html; charset=utf-8", "<p>home</p>\n")
+            assert headers["Content-Security-Policy"] == csp
+            assert headers["X-Content-Type-Options"] == "nosniff"
+            assert headers["X-Frame-Options"] == "DENY"
+        status, headers, body = request(port, "GET", "/js/app.js?v=2")
+        assert (status, headers["Content-Type"], body) == (200, "text/javascript; charset=utf-8", "console.log(1)\n")
+        status, headers, _ = request(port, "GET", "/data.bin")
+        assert (status, headers["Content-Type"], headers["Content-Length"]) == (200, "application/octet-stream", "3")
+        # files need no token; routes keep theirs, and their own policy
+        status, headers, _ = request(port, "GET", "/api/private")
+        assert status == 401
+        assert headers["Content-Security-Policy"] == "default-src 'none'; frame-ancestors 'none'"
+        # nothing outside the folder, by name or through a link
+        for path in ("/.env", "/..", "/../secret.txt", "/%2e%2e/secret.txt", "/js/..%2f..%2fsecret.txt",
+                     "/link.txt", "/up/secret.txt", "/up/api.nexo", "/js", "/missing"):
+            assert request(port, "GET", path)[::2] == (404, '{"error":"Not Found"}'), path
+        # only GET reads files; a path that is a route for another method says so
+        assert request(port, "POST", "/index.html", "x")[0] == 404
+        status, headers, _ = request(port, "GET", "/api/echo")
+        assert (status, headers["Allow"]) == (405, "POST")
+    finally:
+        proc.kill()
+        proc.wait()

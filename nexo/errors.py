@@ -397,6 +397,8 @@ MESSAGES: dict[str, str] = {
     "fix.web_status": "Return a number between 100 and 599 (204, 404...), or the value to send as JSON.",
     "web_port": "The server {server} cannot listen on port {port}: {reason}.",
     "fix.web_port": "Use another port with port = ... or the environment variable PORT.",
+    "web_files": "The folder \"{path}\" of the server {server} does not exist.",
+    "fix.web_files": "Create the folder, or give files = the path of an existing one, relative to where the program runs.",
     "detail.bad_token": "the token is not valid or has expired",
     "detail.csrf": "the request comes from another origin",
     "detail.need_token": "a valid token is missing in Authorization: Bearer",

@@ -1,0 +1,6 @@
+# the folder of a server must exist (D206)
+server site:
+    files = "no_such_folder"
+
+    get "/"():
+        return "home"
