@@ -1,0 +1,9 @@
+Domain: Nothing to trace: give a domain (example.com).
+✓ a text inside a script
+✓ the zones above a name
+✓ the records of one type
+✓ an edge in front of a site
+✓ the networks of the paths
+✓ the state of a route
+✓ the outages still open
+7 tests: 7 passed, 0 failed

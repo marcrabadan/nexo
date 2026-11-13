@@ -63,13 +63,14 @@ def test_events_example(phase, tmp_path):
     assert proc.stdout.decode("utf-8") == (work / "events.expected").read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("program", ["observatory", "map"])
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
-def test_observatory_example(phase, tmp_path):
-    """examples/observatory asks the internet, so it runs under `nexo test`
-    only, where its reports are made from answers written in the tests;
-    both phases print observatory.expected."""
+def test_observatory_example(phase, program, tmp_path):
+    """examples/observatory asks the internet, so its programs run under
+    `nexo test` only, on answers written in the tests; both phases print
+    NAME.expected."""
     work = tmp_path / "observatory"
     shutil.copytree(EXAMPLES / "observatory", work)
-    proc = run_phase(phase[1], ["test", "observatory.nexo"], work)
+    proc = run_phase(phase[1], ["test", f"{program}.nexo"], work)
     assert proc.returncode == 0, proc.stdout.decode("utf-8")
-    assert proc.stdout.decode("utf-8") == (work / "observatory.expected").read_text(encoding="utf-8")
+    assert proc.stdout.decode("utf-8") == (work / f"{program}.expected").read_text(encoding="utf-8")

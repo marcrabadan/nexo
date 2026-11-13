@@ -1,0 +1,299 @@
+<meta charset="utf-8">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Internet Observatory Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a verdict strip, then the chart of the sea floor full width, then the readings in columns. */
+:root {
+  --bg: #0b1420; --panel: #111d2c; --line: #22344a; --land: #1b2a3d; --coast: #2f4560;
+  --fg: #dce6f2; --dim: #8ea3bb; --cable: #3f7f93; --trace: #f2b544; --dns: #7cc4ff;
+  --good: #4fc98a; --warn: #f0a23a; --bad: #f0625a;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #f3f6f9; --panel: #ffffff; --line: #d3dce6; --land: #dfe7ee; --coast: #b4c2d0;
+  --fg: #14212f; --dim: #566a80; --cable: #3c8a9e; --trace: #b06a00; --dns: #1668b8;
+  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; color-scheme: light } }
+:root[data-theme="light"] {
+  --bg: #f3f6f9; --panel: #ffffff; --line: #d3dce6; --land: #dfe7ee; --coast: #b4c2d0;
+  --fg: #14212f; --dim: #566a80; --cable: #3c8a9e; --trace: #b06a00; --dns: #1668b8;
+  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; color-scheme: light }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans);
+  padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
+main { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px }
+h1 { font: 600 26px/1.2 var(--sans); margin: 0; text-wrap: balance }
+h1 span { font-family: var(--mono); font-weight: 500; color: var(--trace) }
+h2 { font: 600 12px/1.3 var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--dim); margin: 0 0 10px }
+.when { color: var(--dim); font: 13px var(--mono); margin-top: 4px }
+.verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px }
+.verdict { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; min-width: 0 }
+.verdict .q { font-size: 12px; color: var(--dim) }
+.verdict .a { font: 600 17px/1.3 var(--sans); margin-top: 2px; display: flex; gap: 8px; align-items: baseline }
+.verdict .a i { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--dim); transform: translateY(-1px) }
+.verdict.good .a i { background: var(--good) } .verdict.warn .a i { background: var(--warn) } .verdict.bad .a i { background: var(--bad) }
+.verdict .why { font-size: 13px; color: var(--dim); margin-top: 4px; overflow-wrap: anywhere }
+.chart { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow: hidden }
+.chart svg { display: block; width: 100%; height: auto; touch-action: none; cursor: grab }
+.zoom { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 4px }
+.zoom button { width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--fg); font: 500 16px var(--mono); cursor: pointer }
+.zoom button:hover { border-color: var(--dim) } button:focus-visible { outline: 2px solid var(--trace); outline-offset: 2px }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 10px 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--dim) }
+.legend span { display: inline-flex; align-items: center; gap: 7px }
+.legend svg { width: 26px; height: 10px; flex: none; cursor: default }
+.tip { position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--dim); border-radius: 4px; padding: 6px 9px; font-size: 13px; max-width: 280px; z-index: 2; overflow-wrap: anywhere }
+.tip b { display: block; font-weight: 600 } .tip small { color: var(--dim); font: 12px var(--mono) }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; align-items: start }
+section { min-width: 0 }
+.land { fill: var(--land); stroke: var(--coast); stroke-width: .35 }
+.cable { fill: none; stroke: var(--cable); stroke-width: .5; opacity: .55 }
+.legend .cable { stroke-width: 1.5; opacity: 1 }
+.cable.hit { stroke: var(--bad); stroke-width: 1; opacity: .95 }
+.cable:hover { stroke: var(--fg); stroke-width: 1.4; opacity: 1 }
+.hop { fill: none; stroke-width: 1.2 } .hop.dns { stroke: var(--dns); stroke-dasharray: 3 3 } .hop.web { stroke: var(--trace) }
+.pt { stroke: var(--bg); stroke-width: .8 } .pt.observer { fill: var(--fg) } .pt.ns { fill: var(--dns) } .pt.site { fill: var(--trace) }
+.ring { fill: none; stroke: var(--bad); stroke-width: 1 }
+.ptl { font: 500 7px var(--mono); fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 2.4px }
+ol.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column }
+ol.chain li { position: relative; padding: 0 0 14px 22px }
+ol.chain li::before { content: ""; position: absolute; left: 4px; top: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--dns) }
+ol.chain li::after { content: ""; position: absolute; left: 8px; top: 18px; bottom: -5px; width: 1px; background: var(--line) }
+ol.chain li:last-child::after { display: none } ol.chain li.end::before { background: var(--trace) }
+.zone { font: 500 15px var(--mono) } .sub { font-size: 13px; color: var(--dim); overflow-wrap: anywhere }
+.mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums }
+td, th { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top }
+th { font-weight: 500; color: var(--dim) } td.n, th.n { text-align: right; padding-right: 0; white-space: nowrap }
+.bar { height: 5px; background: var(--line); border-radius: 3px; margin-top: 4px } .bar b { display: block; height: 100%; border-radius: 3px; background: var(--trace) }
+.bar.out b { background: var(--bad) }
+.note { font-size: 13px; color: var(--dim); margin: 10px 0 0; max-width: 65ch }
+footer { font-size: 13px; color: var(--dim); border-top: 1px solid var(--line); padding-top: 14px; max-width: 80ch }
+footer a { color: var(--fg) }
+</style>
+<main>
+  <header>
+    <h1>Trace of <span id="domain"></span></h1>
+    <div class="when" id="when"></div>
+  </header>
+  <div class="verdicts" id="verdicts"></div>
+  <div class="chart" id="chart">
+    <svg id="map" viewBox="0 14 1000 400" role="img" aria-label="World map with submarine cables, outage signals and the places of this trace"></svg>
+    <div class="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button><button id="zreset" aria-label="Whole world">⌂</button></div>
+    <div class="tip" id="tip" hidden></div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="cols">
+    <section><h2>DNS trace</h2><ol class="chain" id="dns"></ol><p class="note">Each zone hands the question to the name servers of the next one. Root and top-level servers answer from many places at once, so only the domain's own servers are placed on the map.</p></section>
+    <section><h2>What answered</h2><div id="front"></div></section>
+    <section><h2>Backbone networks on the route</h2><div id="route"></div></section>
+    <section><h2>Outage signals open now</h2><div id="outages"></div></section>
+  </div>
+  <footer id="foot"></footer>
+</main>
+<script>
+const WORLD = "__WORLD__", CABLES = "__CABLES__", LANDINGS = "__LANDINGS__", DATA = "__DATA__";
+const NS = "http://www.w3.org/2000/svg", STRONG = 20;
+const $ = id => document.getElementById(id);
+function el(tag, attrs, ...kids) {
+  const svg = ["svg", "path", "circle", "g", "text", "line"].includes(tag);
+  const e = svg ? document.createElementNS(NS, tag) : document.createElement(tag);
+  for (const k in attrs || {}) e.setAttribute(k, attrs[k]);
+  for (const kid of kids) if (kid != null) e.append(kid);
+  return e;
+}
+const X = lon => (lon + 180) / 360 * 1000, Y = lat => (90 - lat) / 180 * 500;
+function line(points) {
+  let d = "", prev = null;
+  for (const p of points) {
+    const jump = prev && Math.abs(p[0] - prev[0]) > 180;
+    d += (prev && !jump ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1);
+    prev = p;
+  }
+  return d;
+}
+const plain = s => (s || "").toLowerCase().normalize("NFD").replace(/[^a-z ]/g, "").trim();
+const ALIAS = { "united states": "united states of america", "czech republic": "czechia", "bosnia and herzegovina": "bosnia and herz",
+  "dominican republic": "dominican rep", "democratic republic of the congo": "dem rep congo", "central african republic": "central african rep",
+  "south sudan": "s sudan", "equatorial guinea": "eq guinea", "ivory coast": "cote divoire", "western sahara": "w sahara",
+  "solomon islands": "solomon is", "falkland islands": "falkland is", "north macedonia": "macedonia", "swaziland": "eswatini" };
+const SIGNAL = { bgp: "routes announced (BGP)", gtr: "Google traffic", "ping-slash24": "active probes", "merit-nt": "telescope traffic" };
+const signal = s => SIGNAL[s] || s;
+
+/* ---- the world, from TopoJSON ---- */
+function rings(topo) {
+  const [sx, sy] = topo.transform.scale, [tx, ty] = topo.transform.translate;
+  const arcs = topo.arcs.map(a => { let x = 0, y = 0; return a.map(p => [(x += p[0]) * sx + tx, (y += p[1]) * sy + ty]); });
+  const ring = idx => idx.flatMap(i => i < 0 ? arcs[~i].slice().reverse() : arcs[i]);
+  return topo.objects.countries.geometries.map(g => ({
+    name: g.properties.name,
+    rings: (g.type === "Polygon" ? [g.arcs] : g.arcs).flat().map(ring)
+  }));
+}
+
+const map = $("map"), tip = $("tip");
+function hint(node, title, detail) {
+  node.addEventListener("pointerenter", () => {
+    tip.replaceChildren(el("b", {}, title), detail ? el("small", {}, detail) : null);
+    tip.hidden = false;
+  });
+  node.addEventListener("pointermove", e => {
+    const box = $("chart").getBoundingClientRect();
+    tip.style.left = Math.min(e.clientX - box.left + 12, box.width - 290 < 0 ? 8 : box.width - 290) + "px";
+    tip.style.top = (e.clientY - box.top + 14) + "px";
+  });
+  node.addEventListener("pointerleave", () => { tip.hidden = true; });
+}
+
+/* a cable fault shows in routes and probes, so only those signals mark a cable */
+const strong = (DATA.outages || []).filter(o => o.fall >= STRONG && o.signal !== "gtr");
+const worst = {};
+for (const o of DATA.outages || []) { const k = plain(o.country); if (!(k in worst) || worst[k].fall < o.fall) worst[k] = o; }
+
+/* land */
+const gLand = el("g"), named = new Set();
+for (const c of rings(WORLD)) {
+  const key = plain(c.name), hit = Object.values(worst).find(o => (ALIAS[plain(o.country)] || plain(o.country)) === key);
+  const p = el("path", { class: "land", d: c.rings.map(r => line(r) + "Z").join("") });
+  if (hit) { named.add(plain(hit.country)); p.style.fill = "color-mix(in srgb, var(--bad) " + Math.min(75, 12 + hit.fall) + "%, var(--land))"; }
+  hint(p, c.name, hit ? signal(hit.signal) + " down " + hit.fall + "%" : "no outage signal");
+  gLand.append(p);
+}
+map.append(gLand);
+
+/* cables: one that lands in a country with a strong outage signal is marked */
+const landings = (LANDINGS && LANDINGS.features) || [];
+const country = f => plain(f.properties.name.split(",").pop());
+const hot = landings.filter(f => strong.some(o => plain(o.country) === country(f)));
+const gCable = el("g"); let marked = 0;
+for (const f of (CABLES && CABLES.features) || []) {
+  const lines = f.geometry.type === "LineString" ? [f.geometry.coordinates] : f.geometry.coordinates;
+  const ends = lines.flatMap(l => [l[0], l[l.length - 1]]);
+  const land = hot.find(h => ends.some(e => Math.abs(e[0] - h.geometry.coordinates[0]) < .3 && Math.abs(e[1] - h.geometry.coordinates[1]) < .3));
+  const p = el("path", { class: "cable" + (land ? " hit" : ""), d: lines.map(line).join("") });
+  if (land) marked++;
+  hint(p, f.properties.name, land ? "lands at " + land.properties.name + ", where an outage signal is open" : "submarine cable, no outage signal at its landings");
+  gCable.append(p);
+}
+map.append(gCable);
+
+/* outage rings for places too small for the map */
+const gRing = el("g");
+for (const o of strong) {
+  if (named.has(plain(o.country))) continue;
+  const here = landings.filter(f => country(f) === plain(o.country));
+  if (!here.length) continue;
+  const lon = here.reduce((s, f) => s + f.geometry.coordinates[0], 0) / here.length, lat = here.reduce((s, f) => s + f.geometry.coordinates[1], 0) / here.length;
+  const c = el("circle", { class: "ring", cx: X(lon), cy: Y(lat), r: 5 });
+  hint(c, o.country, signal(o.signal) + " down " + o.fall + "%");
+  gRing.append(c);
+}
+map.append(gRing);
+
+/* the trace: observer, name servers, site */
+const places = [DATA.observer].concat(DATA.places || []).filter(p => p && p.lat != null);
+const groups = {};
+for (const p of places) (groups[p.lat + "," + p.lon] = groups[p.lat + "," + p.lon] || []).push(p);
+for (const g of Object.values(groups)) g.forEach((p, i) => {
+  const a = i / g.length * 2 * Math.PI, r = g.length > 1 ? 9 : 0;
+  p.x = X(p.lon) + r * Math.cos(a); p.y = Y(p.lat) + r * Math.sin(a);
+});
+const gTrace = el("g"), me = places.find(p => p.kind === "observer");
+for (const p of places) {
+  if (!me || p === me) continue;
+  const mx = (me.x + p.x) / 2, my = (me.y + p.y) / 2 - Math.hypot(p.x - me.x, p.y - me.y) * .22;
+  gTrace.append(el("path", { class: "hop " + (p.kind === "site" ? "web" : "dns"), d: `M${me.x} ${me.y}Q${mx} ${my} ${p.x} ${p.y}` }));
+}
+for (const p of places) {
+  const cls = p.kind === "observer" ? "observer" : p.kind === "site" ? "site" : "ns";
+  const c = el("circle", { class: "pt " + cls, cx: p.x, cy: p.y, r: p.kind === "site" ? 4.5 : 3.5 });
+  hint(c, p.name + (p.ip ? "  " + p.ip : ""), [p.kind, p.country, p.asn ? "AS" + p.asn + " " + p.holder : ""].filter(Boolean).join(" · "));
+  gTrace.append(c);
+}
+map.append(gTrace);
+
+/* zoom and pan on the viewBox */
+const HOME = [0, 14, 1000, 400]; let view = HOME.slice();
+const show = () => map.setAttribute("viewBox", view.join(" "));
+function zoom(f, cx, cy) {
+  const w = Math.min(1000, Math.max(60, view[2] * f)), h = w * .4;
+  cx = cx ?? view[0] + view[2] / 2; cy = cy ?? view[1] + view[3] / 2;
+  view = [cx - (cx - view[0]) * w / view[2], cy - (cy - view[1]) * h / view[3], w, h];
+  view[0] = Math.max(0, Math.min(1000 - w, view[0])); view[1] = Math.max(0, Math.min(500 - h, view[1])); show();
+}
+$("zin").onclick = () => zoom(.6); $("zout").onclick = () => zoom(1.6); $("zreset").onclick = () => { view = HOME.slice(); show(); };
+map.addEventListener("wheel", e => { e.preventDefault(); const b = map.getBoundingClientRect();
+  zoom(e.deltaY < 0 ? .8 : 1.25, view[0] + (e.clientX - b.left) / b.width * view[2], view[1] + (e.clientY - b.top) / b.height * view[3]); }, { passive: false });
+let drag = null;
+map.addEventListener("pointerdown", e => { drag = [e.clientX, e.clientY, view[0], view[1]]; map.setPointerCapture(e.pointerId); });
+map.addEventListener("pointermove", e => { if (!drag) return; const b = map.getBoundingClientRect();
+  view[0] = Math.max(0, Math.min(1000 - view[2], drag[2] - (e.clientX - drag[0]) / b.width * view[2]));
+  view[1] = Math.max(0, Math.min(500 - view[3], drag[3] - (e.clientY - drag[1]) / b.height * view[3])); show(); });
+map.addEventListener("pointerup", () => { drag = null; });
+
+/* legend */
+const key = (shape, text) => el("span", {}, shape, text);
+const sw = (cls, kind) => { const s = el("svg", { viewBox: "0 0 26 10" });
+  s.append(kind === "dot" ? el("circle", { class: cls, cx: 13, cy: 5, r: 4 }) : el("path", { class: cls, d: "M1 5H25" })); return s; };
+$("legend").append(
+  key(sw("pt observer", "dot"), "where this was run from"), key(sw("pt ns", "dot"), "the domain's name servers"), key(sw("pt site", "dot"), "the site's address"),
+  key(sw("hop dns", "l"), "DNS question"), key(sw("hop web", "l"), "HTTPS request"),
+  key(sw("cable", "l"), ((CABLES && CABLES.features) || []).length + " submarine cables"),
+  key(sw("cable hit", "l"), marked + " landing where routes or probes are down " + STRONG + "% or more"));
+
+/* header and verdicts */
+$("domain").textContent = DATA.domain;
+$("when").textContent = "asked " + DATA.time + (me ? " from " + me.ip + " (AS" + me.asn + " " + me.holder + ")" : "");
+function verdict(tone, q, a, why) {
+  $("verdicts").append(el("div", { class: "verdict " + tone }, el("div", { class: "q" }, q), el("div", { class: "a" }, el("i"), el("span", {}, a)), el("div", { class: "why" }, why)));
+}
+const site = DATA.site || {}, front = site.front || {}, route = DATA.route || {};
+const last = (DATA.steps || []).slice(-1)[0];
+verdict(last && last.servers.length ? "good" : "bad", "Does the name resolve?", (DATA.places || []).some(p => p.kind === "site") ? "Yes" : "No address",
+  (DATA.steps || []).map(s => s.zone).join(" → ") + ((DATA.aliases || []).length ? " → alias " + DATA.aliases.join(" → ") : ""));
+verdict(front.kind === "edge" ? "warn" : front.kind === "server" ? "good" : "bad", "Firewall or server?",
+  front.kind === "edge" ? "Through an edge: " + front.name : front.kind === "server" ? "The server itself" + (front.name ? " (" + front.name + ")" : "") : "No answer",
+  front.kind === "edge" ? "The answer carries the marks of a CDN, cache or web firewall in front of the server." : front.kind === "server" ? "No CDN, cache or firewall marked the answer." : site.note || "");
+verdict(site.up ? "good" : "bad", "Did the site answer?", site.up ? (site.status || "an error") + " in " + site.ms + " ms" : "No", site.up ? "one HTTPS request to https://" + DATA.domain + "/" : site.note || "");
+const tone = { whole: "good", "partly cut": "warn", cut: "bad" }[route.state] || "";
+verdict(tone, "Is the backbone route whole?", route.state === "whole" ? "Yes, whole" : route.state === "partly cut" ? "Partly cut" : route.state === "cut" ? "Cut" : "Not known",
+  route.total ? route.seeing + " of " + route.total + " routers watching worldwide have a route to " + route.prefix : route.error || "no address to route to");
+
+/* DNS chain */
+for (const s of DATA.steps || []) $("dns").append(el("li", {}, el("div", { class: "zone" }, s.zone === "." ? ". (root)" : s.zone),
+  el("div", { class: "sub" }, s.servers.length ? s.servers.length + " name servers: " + s.servers.join(", ") : "not answered: " + (s.error || ""))));
+for (const p of (DATA.places || []).filter(p => p.kind === "site")) $("dns").append(el("li", { class: "end" }, el("div", { class: "zone" }, p.ip),
+  el("div", { class: "sub" }, [p.country, p.asn ? "AS" + p.asn + " " + p.holder : "", p.prefix].filter(Boolean).join(" · "))));
+
+/* what answered */
+$("front").append(el("p", { style: "margin:0 0 8px" }, front.kind === "edge" ? "The request passed through " + front.name + " before reaching the server."
+  : front.kind === "server" ? "The request was answered by the server itself" + (front.name ? ", which says it is " + front.name + "." : ".") : "Nothing answered: " + (site.note || "")));
+for (const e of front.evidence || []) $("front").append(el("div", { class: "mono" }, e));
+$("front").append(el("p", { class: "note" }, "This reads the headers of the answer. A firewall that only filters packets leaves no mark there, so it cannot be seen this way."));
+
+/* route */
+if (route.transits && route.transits.length) {
+  const t = el("table", {}, el("tr", {}, el("th", {}, "network"), el("th", { class: "n" }, "share of " + route.paths + " paths")));
+  for (const r of route.transits) { const pct = Math.round(r.paths * 100 / route.paths), bar = el("div", { class: "bar" }, el("b", { style: "width:" + pct + "%" }));
+    t.append(el("tr", {}, el("td", {}, r.holder || "AS" + r.asn, el("div", { class: "sub mono" }, "AS" + r.asn), bar), el("td", { class: "n" }, pct + "%"))); }
+  $("route").append(t, el("p", { class: "note" }, "Paths seen by route collectors around the world towards AS" + route.origin + " " + (route.origin_holder || "") +
+    ". These are the networks that carry the traffic; BGP names networks, not the cables they use."));
+} else $("route").append(el("p", { class: "note" }, route.error || "No route data."));
+
+/* outages */
+const outs = DATA.outages || [];
+if (outs.length) {
+  const t = el("table", {}, el("tr", {}, el("th", {}, "country"), el("th", {}, "signal"), el("th", { class: "n" }, "down")));
+  for (const o of outs) t.append(el("tr", {}, el("td", {}, o.country, el("div", { class: "bar out" }, el("b", { style: "width:" + Math.min(100, o.fall) + "%" }))),
+    el("td", {}, signal(o.signal), el("div", { class: "sub" }, "since " + new Date(o.since * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC")), el("td", { class: "n" }, o.fall + "%")));
+  $("outages").append(t);
+} else $("outages").append(el("p", { class: "note" }, "No country has an outage signal open."));
+$("outages").append(el("p", { class: "note" }, "No public feed reports cable faults. A cable is marked red when it lands in a country whose routes or probes are down " + STRONG +
+  "% or more. That says where to look. It does not say the cable is cut. A fall in Google traffic alone tints the country and marks no cable."));
+
+const src = (t, u) => el("a", { href: u }, t);
+$("foot").append("Sources, all asked when this page was made: DNS from Cloudflare's resolver over HTTPS; places, networks and routes from ", src("RIPEstat", "https://stat.ripe.net/"),
+  "; outage signals from ", src("IODA", "https://ioda.inetintel.cc.gatech.edu/"), " (Georgia Tech); cables from the ", src("Submarine Cable Map", "https://www.submarinecablemap.com/"),
+  " (TeleGeography); coastlines from Natural Earth. Places are those of the address register, usually exact to the country only.");
+</script>
