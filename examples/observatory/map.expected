@@ -4,6 +4,9 @@ Domain: Nothing to trace: give a domain (example.com).
 ✓ the records of one type
 ✓ an edge in front of a site
 ✓ the networks of the paths
+✓ the usual path of a collector
+✓ private addresses
+✓ the routers of a traceroute
 ✓ the state of a route
 ✓ the outages still open
-7 tests: 7 passed, 0 failed
+10 tests: 10 passed, 0 failed

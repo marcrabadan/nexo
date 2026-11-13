@@ -4,12 +4,13 @@
 ##     nexo map.nexo         asks for a domain and writes map.html
 ##     nexo test map.nexo    the parts that read the answers
 ## Every figure is asked when the program runs: DNS to a resolver over
-## HTTPS, places, networks and routes to RIPEstat, outages to IODA and the
-## cables to the Submarine Cable Map. What nobody publishes is not shown:
+## HTTPS, places, networks and routes to RIPEstat, the routers on the way
+## to RIPE Atlas (the traceroutes its probes already run to the domain),
+## outages to IODA and the cables to the Submarine Cable Map. What nobody publishes is not shown:
 ## there is no public feed of cable faults, so a cable is only marked
 ## when it lands in a country with an outage signal.
 policy:
-    allow net "cloudflare-dns.com", "stat.ripe.net", "api.ioda.inetintel.cc.gatech.edu", "www.submarinecablemap.com"
+    allow net "cloudflare-dns.com", "stat.ripe.net", "atlas.ripe.net", "api.ioda.inetintel.cc.gatech.edu", "www.submarinecablemap.com"
     allow read "map.template.html", "data"
     allow write "map.html"
 
@@ -17,6 +18,36 @@ RESOLVER = "https://cloudflare-dns.com/dns-query"
 RIPE = "https://stat.ripe.net/data"
 IODA = "https://api.ioda.inetintel.cc.gatech.edu/v2/outages/alerts"
 CABLES = "https://www.submarinecablemap.com/api/v3"
+ATLAS = "https://atlas.ripe.net/api/v2"
+
+## Where to take a probe from when a traceroute has thousands of them.
+PROBE_COUNTRIES = ["US", "BR", "DE", "ZA", "IN", "JP", "AU", "GB"]
+
+## The cities of the RIS route collectors: latitude and longitude.
+CITIES = {
+    "Amsterdam, NL": [52.37, 4.90],
+    "Barcelona, ES": [41.39, 2.17],
+    "Bucharest, RO": [44.43, 26.10],
+    "Dubai, AE": [25.20, 55.27],
+    "Frankfurt, DE": [50.11, 8.68],
+    "Geneva, CH": [46.20, 6.14],
+    "Johannesburg, ZA": [-26.20, 28.05],
+    "London, GB": [51.51, -0.13],
+    "Miami, FL, US": [25.76, -80.19],
+    "Milan, IT": [45.46, 9.19],
+    "Montevideo, UY": [-34.90, -56.16],
+    "Moscow, RU": [55.76, 37.62],
+    "New York, NY, US": [40.71, -74.01],
+    "Palo Alto, CA, US": [37.44, -122.14],
+    "Paris, FR": [48.86, 2.35],
+    "San Jose, CA, US": [37.34, -121.89],
+    "Sao Paulo, BR": [-23.55, -46.63],
+    "Singapore, SG": [1.35, 103.82],
+    "Stockholm, SE": [59.33, 18.07],
+    "Tokyo, JP": [35.68, 139.69],
+    "Vienna, AT": [48.21, 16.37],
+    "Zurich, CH": [47.38, 8.54]
+}
 
 ## What tells that an answer came through an edge (a CDN, a cache or a
 ## web firewall) and not straight from the server: a header, a text its
@@ -84,9 +115,9 @@ fn delegation(domain: str) -> list:
             steps.add({"zone": zone, "servers": [], "error": e.message})
     return steps
 
-## One data call of RIPEstat.
-fn ripe(call: str, resource: str) -> map!:
-    r = http.get("{RIPE}/{call}/data.json?resource={resource}", timeout: 30s)?
+## One data call of RIPEstat (more: further parameters, "&prefix=...").
+fn ripe(call: str, resource: str, more: str = "") -> map!:
+    r = http.get("{RIPE}/{call}/data.json?resource={resource}{more}", timeout: 30s)?
     return r.json()?["data"]
 
 ## The holder of a network, by its number.
@@ -97,13 +128,13 @@ fn holder_of(asn: str) -> str:
         return ""
 
 ## Where an address is registered and which network announces it. The
-## place is the register's, so an anycast address is in one place here
-## and in many on the internet.
+## place is the register's; an address answered from many places at once
+## (anycast) has none.
 fn locate(kind: str, name: str, ip: str) -> map:
     var place = {"kind": kind, "name": name, "ip": ip, "lat": none, "lon": none, "country": "", "city": "", "asn": "", "holder": "", "prefix": ""}
     try:
         found = ripe("maxmind-geo-lite", ip)["located_resources"]
-        if len(found) > 0 and len(found[0]["locations"]) > 0:
+        if len(found) > 0 and len(found[0]["locations"]) > 0 and found[0]["locations"][0]["country"] != "?":
             spot = found[0]["locations"][0]
             place["lat"] = spot["latitude"]
             place["lon"] = spot["longitude"]
@@ -156,10 +187,21 @@ fn transits(paths: list, origin: str) -> list:
     rows = [{"asn": asn, "paths": seen[asn]} for asn in seen.keys()]
     return rows |> sort by paths desc
 
+## The path most of a collector's peers have.
+fn usual(paths: list) -> str:
+    var count = {}
+    for path in paths:
+        count[path] = (count[path] ?? 0) + 1
+    var best = ""
+    for path in count.keys():
+        if best == "" or count[path] > count[best]:
+            best = path
+    return best
+
 ## How the world's routers see the route to an address: how many of the
 ## RIS collectors' peers have it, and the networks its paths go through.
 fn route_of(ip: str) -> map:
-    var route = {"ip": ip, "prefix": "", "origin": "", "seeing": 0, "total": 0, "state": "unknown", "paths": 0, "transits": []}
+    var route = {"ip": ip, "prefix": "", "origin": "", "seeing": 0, "total": 0, "state": "unknown", "paths": 0, "transits": [], "collectors": [], "updates": [], "upstreams": [], "rpki": "unknown"}
     try:
         status = ripe("routing-status", ip)
         family = "v4"
@@ -173,15 +215,26 @@ fn route_of(ip: str) -> map:
         if len(status["origins"]) > 0:
             route["origin"] = str(status["origins"][0]["origin"])
         var paths = []
+        var collectors = []
         for collector in ripe("looking-glass", ip)["rrcs"]:
-            for peer in collector["peers"]:
-                paths.add(peer["as_path"])
+            mine = [peer["as_path"] for peer in collector["peers"]]
+            for path in mine:
+                paths.add(path)
+            spot = CITIES[collector["location"]] ?? [none, none]
+            collectors.add({"name": collector["rrc"], "city": collector["location"], "lat": spot[0], "lon": spot[1], "peers": len(mine), "path": usual(mine)})
+        route["collectors"] = collectors
         route["paths"] = len(paths)
         top = transits(paths, route["origin"]) |> take 8
         holders = parallel for row in top:
             return holder_of(row["asn"])
         route["transits"] = [{"asn": top[i]["asn"], "paths": top[i]["paths"], "holder": holders[i]} for i in range(len(top))]
         route["origin_holder"] = holder_of(route["origin"])
+        route["rpki"] = ripe("rpki-validation", route["origin"], more: "&prefix={route["prefix"]}")["status"] ?? "unknown"
+        route["updates"] = [{"at": u["starttime"], "announced": u["announcements"], "withdrawn": u["withdrawals"]} for u in ripe("bgp-update-activity", route["prefix"])["updates"]]
+        near = ripe("asn-neighbours", "AS{route["origin"]}")["neighbours"] |> where it["type"] == "left" |> sort by power desc |> take 5
+        names = parallel for n in near:
+            return holder_of(str(n["asn"]))
+        route["upstreams"] = [{"asn": str(near[i]["asn"]), "holder": names[i]} for i in range(len(near))]
     else e:
         route["error"] = e.message
     return route
@@ -196,6 +249,149 @@ fn route_state(seeing: int, total: int) -> str:
     if seeing * 100 < total * 95:
         return "partly cut"
     return "whole"
+
+## An address of a private network (RFC 1918, or the carriers' shared
+## range), which is nowhere on the internet.
+fn is_private(ip: str) -> bool:
+    if ip.starts_with("10.") or ip.starts_with("192.168.") or ip.starts_with("127."):
+        return true
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return false
+    try:
+        second = validate(parts[1], as: int)
+        return (parts[0] == "172" and second >= 16 and second <= 31) or (parts[0] == "100" and second >= 64 and second <= 127)
+    else e:
+        return false
+
+## The routers of one traceroute: for each hop the first router that
+## answered and its time, or "" when none did.
+fn hops_of(result: list) -> list:
+    var hops = []
+    for hop in result:
+        var ip = ""
+        var ms = none
+        for reply in hop["result"] ?? []:
+            sender = reply["from"] ?? ""
+            if ip == "" and sender != "":
+                ip = sender
+                ms = reply["rtt"] ?? none
+        hops.add({"n": hop["hop"], "ip": ip, "ms": ms})
+    return hops
+
+## Texts in one, with commas between them.
+fn joined(items: list) -> str:
+    var out = ""
+    for item in items:
+        if out != "":
+            out = out + ","
+        out = out + item
+    return out
+
+## One probe of RIPE Atlas in a country, or none.
+fn probe_in(country: str) -> map?:
+    try:
+        r = http.get("{ATLAS}/probes/?country_code={country}&status=1&is_public=true&tags=system-ipv4-works&page_size=1&fields=id,country_code,geometry,asn_v4", timeout: 30s)
+        found = r.json()["results"]
+        if len(found) > 0 and found[0]["geometry"] != none:
+            return found[0]
+        return none
+    else e:
+        return none
+
+## A probe by its number, or none.
+fn probe_of(id: int) -> map?:
+    try:
+        found = http.get("{ATLAS}/probes/{id}/?fields=id,country_code,geometry,asn_v4", timeout: 30s).json()
+        if found["geometry"] != none:
+            return found
+        return none
+    else e:
+        return none
+
+## Where a router is: the register's place and its network, without the
+## network's name.
+fn router(ip: str) -> map:
+    var place = {"ip": ip, "lat": none, "lon": none, "country": "", "asn": ""}
+    if ip == "" or is_private(ip):
+        return place
+    try:
+        found = ripe("maxmind-geo-lite", ip)["located_resources"]
+        if len(found) > 0 and len(found[0]["locations"]) > 0 and found[0]["locations"][0]["country"] != "?":
+            spot = found[0]["locations"][0]
+            place["lat"] = spot["latitude"]
+            place["lon"] = spot["longitude"]
+            place["country"] = spot["country"]
+        asns = ripe("network-info", ip)["asns"]
+        if len(asns) > 0:
+            place["asn"] = asns[0]
+    else e:
+        place["error"] = e.message
+    return place
+
+## A hop with the place and network of its router.
+fn placed(hop: map, place: map, names: map) -> map:
+    asn = place["asn"] ?? ""
+    return {"n": hop["n"], "ip": hop["ip"], "ms": hop["ms"], "lat": place["lat"] ?? none, "lon": place["lon"] ?? none, "country": place["country"] ?? "", "asn": asn, "holder": names[asn] ?? ""}
+
+## The traceroutes RIPE Atlas probes already run to the domain: the
+## public measurement with most probes, read from up to eight of them,
+## each hop with its place and network.
+fn traceroutes(domain: str) -> map:
+    var out = {"measurement": none, "target": "", "probes": [], "note": ""}
+    try:
+        found = http.get("{ATLAS}/measurements/?target={domain}&type=traceroute&status=2&af=4&page_size=50&fields=id,target_ip,participant_count", timeout: 30s)?.json()?["results"]
+        if len(found) == 0:
+            out["note"] = "No probe of RIPE Atlas is tracing {domain} now. A measurement can be started at atlas.ripe.net with a free account."
+            return out
+        chosen = (found |> sort by participant_count desc)[0]
+        out["measurement"] = chosen["id"]
+        out["target"] = chosen["target_ip"] ?? ""
+        var probes = []
+        var results = []
+        if chosen["participant_count"] > 50:
+            picked = parallel for country in PROBE_COUNTRIES:
+                return probe_in(country)
+            probes = [p for p in picked if p != none]
+            ids = [str(p["id"]) for p in probes]
+            results = http.get("{ATLAS}/measurements/{chosen["id"]}/latest/?probe_ids={joined(ids)}", timeout: 60s)?.json()?
+        else:
+            results = http.get("{ATLAS}/measurements/{chosen["id"]}/latest/", timeout: 60s)?.json()? |> take 8
+            picked = parallel for r in results:
+                return probe_of(r["prb_id"])
+            probes = [p for p in picked if p != none]
+        var ips = []
+        var traces = []
+        for r in results:
+            hops = hops_of(r["result"] ?? [])
+            for h in hops:
+                if h["ip"] != "" and not (h["ip"] in ips):
+                    ips.add(h["ip"])
+            traces.add({"probe": r["prb_id"], "from": r["from"] ?? "", "reached": r["destination_ip_responded"] ?? false, "hops": hops})
+        routers = parallel for ip in ips, max: 16:
+            return router(ip)
+        var where = {}
+        var asns = []
+        for place in routers:
+            where[place["ip"]] = place
+            if place["asn"] != "" and not (place["asn"] in asns):
+                asns.add(place["asn"])
+        holders = parallel for asn in asns, max: 8:
+            return holder_of(asn)
+        var names = {}
+        for i in range(len(asns)):
+            names[asns[i]] = holders[i]
+        for t in traces:
+            var probe = none
+            for p in probes:
+                if p["id"] == t["probe"]:
+                    probe = p
+            if probe != none:
+                hops = [placed(h, where[h["ip"]] ?? {}, names) for h in t["hops"]]
+                out["probes"].add({"id": t["probe"], "country": probe["country_code"], "lon": probe["geometry"]["coordinates"][0], "lat": probe["geometry"]["coordinates"][1], "asn": str(probe["asn_v4"] ?? ""), "reached": t["reached"], "hops": hops})
+    else e:
+        out["note"] = "RIPE Atlas did not answer: {e.message}"
+    return out
 
 ## The outages still open: for each country and signal, the last alert,
 ## kept when it is critical, with how far the signal fell.
@@ -269,10 +465,14 @@ fn trace(domain: str) -> map:
         print("Route to {addresses[0]}")
         route = route_of(addresses[0])
         print("  {route["state"]}: {route["seeing"]} of {route["total"]} peers have it")
+    print("Routers: the traceroutes of RIPE Atlas")
+    routers = traceroutes(domain)
+    reached = routers["probes"] |> where it["reached"] |> count
+    print("  {reached} of {len(routers["probes"])} probes reached it {routers["note"]}")
     print("Outages and cables")
     open = outages()
     print("  {len(open)} outage signals open")
-    return {"domain": domain, "time": str(now.to_zone("UTC")), "observer": observer, "steps": steps, "aliases": aliases, "places": server_places + site_places, "site": site, "route": route, "outages": open}
+    return {"domain": domain, "time": str(now.to_zone("UTC")), "observer": observer, "steps": steps, "aliases": aliases, "places": server_places + site_places, "site": site, "route": route, "routers": routers, "outages": open}
 
 ## A JSON text that can stand inside a page's script: what came from the
 ## network must not be able to close the script.
@@ -324,6 +524,25 @@ test "the networks of the paths":
     rows = transits(["8218 6461 3356 14907", "6894 3257 3356 3356 14907", "1299 14907"], "14907")
     assert rows[0] == {"asn": "3356", "paths": 2}
     assert len(rows) == 6
+
+test "the usual path of a collector":
+    assert usual(["1 2 3", "4 3", "1 2 3"]) == "1 2 3"
+    assert usual([]) == ""
+
+test "private addresses":
+    assert is_private("10.0.0.1")
+    assert is_private("172.20.1.1")
+    assert is_private("100.64.0.1")
+    assert not is_private("172.32.0.1")
+    assert not is_private("104.16.132.229")
+
+test "the routers of a traceroute":
+    result = [
+        {"hop": 1, "result": [{"from": "202.214.97.2", "rtt": 1.2}, {"from": "202.214.97.2", "rtt": 1.3}]},
+        {"hop": 2, "result": [{"x": "*"}, {"x": "*"}]},
+        {"hop": 3, "result": [{"x": "*"}, {"from": "104.16.132.229", "rtt": 1.6}]}
+    ]
+    assert hops_of(result) == [{"n": 1, "ip": "202.214.97.2", "ms": 1.2}, {"n": 2, "ip": "", "ms": none}, {"n": 3, "ip": "104.16.132.229", "ms": 1.6}]
 
 test "the state of a route":
     assert route_state(318, 318) == "whole"

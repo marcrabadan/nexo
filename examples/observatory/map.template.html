@@ -7,7 +7,7 @@
 :root {
   --bg: #0b1420; --panel: #111d2c; --line: #22344a; --land: #1b2a3d; --coast: #2f4560;
   --fg: #dce6f2; --dim: #8ea3bb; --cable: #3f7f93; --trace: #f2b544; --dns: #7cc4ff;
-  --good: #4fc98a; --warn: #f0a23a; --bad: #f0625a;
+  --good: #4fc98a; --warn: #f0a23a; --bad: #f0625a; --bgp: #b79cf5;
   --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   color-scheme: dark;
@@ -15,11 +15,11 @@
 @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
   --bg: #f3f6f9; --panel: #ffffff; --line: #d3dce6; --land: #dfe7ee; --coast: #b4c2d0;
   --fg: #14212f; --dim: #566a80; --cable: #3c8a9e; --trace: #b06a00; --dns: #1668b8;
-  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; color-scheme: light } }
+  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; --bgp: #6a45c9; color-scheme: light } }
 :root[data-theme="light"] {
   --bg: #f3f6f9; --panel: #ffffff; --line: #d3dce6; --land: #dfe7ee; --coast: #b4c2d0;
   --fg: #14212f; --dim: #566a80; --cable: #3c8a9e; --trace: #b06a00; --dns: #1668b8;
-  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; color-scheme: light }
+  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; --bgp: #6a45c9; color-scheme: light }
 * { box-sizing: border-box }
 body { background: var(--bg); color: var(--fg); font: 15px/1.5 var(--sans);
   padding-block: 20px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
@@ -54,6 +54,16 @@ section { min-width: 0 }
 .cable:hover { stroke: var(--fg); stroke-width: 1.4; opacity: 1 }
 .hop { fill: none; stroke-width: 1.2 } .hop.dns { stroke: var(--dns); stroke-dasharray: 3 3 } .hop.web { stroke: var(--trace) }
 .pt { stroke: var(--bg); stroke-width: .8 } .pt.observer { fill: var(--fg) } .pt.ns { fill: var(--dns) } .pt.site { fill: var(--trace) }
+.bgp { fill: none; stroke: var(--bgp); stroke-width: .6; opacity: .7 } .pt.col { fill: var(--bgp) }
+.rt { fill: none; stroke: var(--good); stroke-width: 1.1 } .rt.lost { stroke: var(--bad); stroke-dasharray: 2 2 } .pt.probe { fill: var(--good) } .pt.probe.lost { fill: var(--bad) }
+.layers { display: flex; flex-wrap: wrap; gap: 4px 18px; padding: 10px 14px 0; font-size: 13px }
+.layers label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer }
+details { border-bottom: 1px solid var(--line); padding: 6px 0 } summary { cursor: pointer; font-size: 14px } summary small { color: var(--dim) }
+details table { margin-top: 6px } .ok { color: var(--good) } .no { color: var(--bad) }
+.spark { display: flex; align-items: flex-end; gap: 2px; height: 56px; margin-top: 6px; border-bottom: 1px solid var(--line) }
+.spark div { flex: 1; display: flex; flex-direction: column-reverse; min-width: 0 } .spark i { display: block; background: var(--bgp) } .spark i.w { background: var(--bad) }
+.axis { display: flex; justify-content: space-between; font: 12px var(--mono); color: var(--dim); margin-top: 3px }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0 0 12px; font-size: 14px } dt { color: var(--dim) } dd { margin: 0; overflow-wrap: anywhere }
 .ring { fill: none; stroke: var(--bad); stroke-width: 1 }
 .ptl { font: 500 7px var(--mono); fill: var(--fg); paint-order: stroke; stroke: var(--bg); stroke-width: 2.4px }
 ol.chain { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column }
@@ -82,12 +92,19 @@ footer a { color: var(--fg) }
     <svg id="map" viewBox="0 14 1000 400" role="img" aria-label="World map with submarine cables, outage signals and the places of this trace"></svg>
     <div class="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button><button id="zreset" aria-label="Whole world">⌂</button></div>
     <div class="tip" id="tip" hidden></div>
+    <div class="layers">
+      <label><input type="checkbox" id="l-cables" checked> submarine cables</label>
+      <label><input type="checkbox" id="l-routers" checked> router traces</label>
+      <label><input type="checkbox" id="l-bgp" checked> BGP route collectors</label>
+    </div>
     <div class="legend" id="legend"></div>
   </div>
   <div class="cols">
     <section><h2>DNS trace</h2><ol class="chain" id="dns"></ol><p class="note">Each zone hands the question to the name servers of the next one. Root and top-level servers answer from many places at once, so only the domain's own servers are placed on the map.</p></section>
     <section><h2>What answered</h2><div id="front"></div></section>
+    <section><h2>Router traces</h2><div id="routers"></div></section>
     <section><h2>Backbone networks on the route</h2><div id="route"></div></section>
+    <section><h2>BGP: the route itself</h2><div id="bgp"></div></section>
     <section><h2>Outage signals open now</h2><div id="outages"></div></section>
   </div>
   <footer id="foot"></footer>
@@ -211,7 +228,32 @@ for (const p of places) {
   hint(c, p.name + (p.ip ? "  " + p.ip : ""), [p.kind, p.country, p.asn ? "AS" + p.asn + " " + p.holder : ""].filter(Boolean).join(" · "));
   gTrace.append(c);
 }
-map.append(gTrace);
+
+/* BGP: the route collectors and the path each one has */
+const route = DATA.route || {}, routers = DATA.routers || { probes: [] };
+const target = places.find(p => p.kind === "site");
+const gBgp = el("g");
+for (const c of route.collectors || []) {
+  if (c.lat == null) continue;
+  const x = X(c.lon), y = Y(c.lat);
+  if (target) gBgp.append(el("path", { class: "bgp", d: `M${x} ${y}Q${(x + target.x) / 2} ${(y + target.y) / 2 - Math.hypot(target.x - x, target.y - y) * .15} ${target.x} ${target.y}` }));
+  const dot = el("circle", { class: "pt col", cx: x, cy: y, r: 2.6 });
+  hint(dot, c.name + " " + c.city, c.peers + " peers · usual path AS" + c.path.split(" ").join(" → AS"));
+  gBgp.append(dot);
+}
+/* routers: each probe's traceroute through the routers that could be placed */
+const gRouters = el("g");
+for (const p of routers.probes || []) {
+  const pts = [[X(p.lon), Y(p.lat)]];
+  for (const h of p.hops) if (h.lat != null) { const q = [X(h.lon), Y(h.lat)], l = pts[pts.length - 1]; if (q[0] !== l[0] || q[1] !== l[1]) pts.push(q); }
+  const cls = p.reached ? "" : " lost";
+  if (pts.length > 1) gRouters.append(el("path", { class: "rt" + cls, d: "M" + pts.map(q => q[0].toFixed(1) + " " + q[1].toFixed(1)).join("L") }));
+  const dot = el("circle", { class: "pt probe" + cls, cx: pts[0][0], cy: pts[0][1], r: 3 });
+  hint(dot, "Probe " + p.id + " in " + p.country, (p.reached ? "reached the site in " : "did not reach the site; stopped after ") + p.hops.length + " hops");
+  gRouters.append(dot);
+}
+map.append(gBgp, gRouters, gTrace);
+for (const [id, g] of [["l-cables", gCable], ["l-routers", gRouters], ["l-bgp", gBgp]]) $(id).onchange = e => { g.style.display = e.target.checked ? "" : "none"; };
 
 /* zoom and pan on the viewBox */
 const HOME = [0, 14, 1000, 400]; let view = HOME.slice();
@@ -239,6 +281,8 @@ const sw = (cls, kind) => { const s = el("svg", { viewBox: "0 0 26 10" });
 $("legend").append(
   key(sw("pt observer", "dot"), "where this was run from"), key(sw("pt ns", "dot"), "the domain's name servers"), key(sw("pt site", "dot"), "the site's address"),
   key(sw("hop dns", "l"), "DNS question"), key(sw("hop web", "l"), "HTTPS request"),
+  key(sw("pt probe", "dot"), "probe whose traceroute arrived"), key(sw("pt probe lost", "dot"), "probe whose traceroute did not"),
+  key(sw("pt col", "dot"), "BGP route collector"),
   key(sw("cable", "l"), ((CABLES && CABLES.features) || []).length + " submarine cables"),
   key(sw("cable hit", "l"), marked + " landing where routes or probes are down " + STRONG + "% or more"));
 
@@ -248,7 +292,7 @@ $("when").textContent = "asked " + DATA.time + (me ? " from " + me.ip + " (AS" +
 function verdict(tone, q, a, why) {
   $("verdicts").append(el("div", { class: "verdict " + tone }, el("div", { class: "q" }, q), el("div", { class: "a" }, el("i"), el("span", {}, a)), el("div", { class: "why" }, why)));
 }
-const site = DATA.site || {}, front = site.front || {}, route = DATA.route || {};
+const site = DATA.site || {}, front = site.front || {};
 const last = (DATA.steps || []).slice(-1)[0];
 verdict(last && last.servers.length ? "good" : "bad", "Does the name resolve?", (DATA.places || []).some(p => p.kind === "site") ? "Yes" : "No address",
   (DATA.steps || []).map(s => s.zone).join(" → ") + ((DATA.aliases || []).length ? " → alias " + DATA.aliases.join(" → ") : ""));
@@ -259,6 +303,10 @@ verdict(site.up ? "good" : "bad", "Did the site answer?", site.up ? (site.status
 const tone = { whole: "good", "partly cut": "warn", cut: "bad" }[route.state] || "";
 verdict(tone, "Is the backbone route whole?", route.state === "whole" ? "Yes, whole" : route.state === "partly cut" ? "Partly cut" : route.state === "cut" ? "Cut" : "Not known",
   route.total ? route.seeing + " of " + route.total + " routers watching worldwide have a route to " + route.prefix : route.error || "no address to route to");
+
+const got = (routers.probes || []).filter(p => p.reached).length, sent = (routers.probes || []).length;
+verdict(!sent ? "" : got === sent ? "good" : got ? "warn" : "bad", "Do routers get through?", sent ? got + " of " + sent + " probes arrived" : "Not measured",
+  sent ? "traceroutes run by RIPE Atlas probes in " + [...new Set(routers.probes.map(p => p.country))].join(", ") : routers.note || "");
 
 /* DNS chain */
 for (const s of DATA.steps || []) $("dns").append(el("li", {}, el("div", { class: "zone" }, s.zone === "." ? ". (root)" : s.zone),
@@ -281,6 +329,37 @@ if (route.transits && route.transits.length) {
     ". These are the networks that carry the traffic; BGP names networks, not the cables they use."));
 } else $("route").append(el("p", { class: "note" }, route.error || "No route data."));
 
+/* router traces */
+for (const p of routers.probes || []) {
+  const t = el("table", {}, el("tr", {}, el("th", {}, "hop"), el("th", {}, "router"), el("th", { class: "n" }, "ms")));
+  for (const h of p.hops) t.append(el("tr", {}, el("td", {}, String(h.n)),
+    el("td", {}, el("span", { class: "mono" }, h.ip || "no answer"), h.ip ? el("div", { class: "sub" }, [h.country, h.asn ? "AS" + h.asn + " " + h.holder : (h.lat == null ? "private or unplaced" : "")].filter(Boolean).join(" · ")) : null),
+    el("td", { class: "n" }, h.ms == null ? "" : h.ms.toFixed(1))));
+  $("routers").append(el("details", {}, el("summary", {}, "Probe " + p.id + " in " + p.country + " ", el("small", { class: p.reached ? "ok" : "no" }, p.reached ? "arrived in " + p.hops.length + " hops" : "did not arrive")), t));
+}
+$("routers").append(el("p", { class: "note" }, (routers.probes || []).length
+  ? "Traceroutes that RIPE Atlas probes run to " + (routers.target || DATA.domain) + " (measurement " + routers.measurement + "), the latest from each probe. A hop with no answer is a router that does not reply, or a firewall dropping the packets. On the map a line joins the registered places of the routers, which can be far from where a router really stands."
+  : routers.note || "No router traces."));
+
+/* BGP: validity, upstreams, changes */
+if (route.prefix) {
+  const dl = el("dl", {}, el("dt", {}, "prefix"), el("dd", { class: "mono" }, route.prefix), el("dt", {}, "origin"), el("dd", {}, "AS" + route.origin + " " + (route.origin_holder || "")),
+    el("dt", {}, "RPKI"), el("dd", { class: route.rpki === "valid" ? "ok" : route.rpki === "unknown" ? "" : "no" },
+      route.rpki === "valid" ? "valid: the origin is authorised to announce it" : route.rpki === "unknown" ? "no authorisation published" : route.rpki),
+    el("dt", {}, "upstreams"), el("dd", {}, (route.upstreams || []).map(u => (u.holder || "").split(" ")[0] + " (AS" + u.asn + ")").join(", ") || "none seen"));
+  $("bgp").append(dl);
+  const ups = route.updates || [];
+  if (ups.length) {
+    const max = Math.max(1, ...ups.map(u => u.announced + u.withdrawn)), spark = el("div", { class: "spark" });
+    for (const u of ups) { const col = el("div", { title: u.at.replace("T", " ").slice(0, 16) + ": " + u.announced + " announced, " + u.withdrawn + " withdrawn" },
+      el("i", { style: "height:" + (u.announced / max * 56).toFixed(1) + "px" }), el("i", { class: "w", style: "height:" + (u.withdrawn / max * 56).toFixed(1) + "px" })); spark.append(col); }
+    const sum = k => ups.reduce((n, u) => n + u[k], 0);
+    $("bgp").append(el("div", { class: "sub" }, "Route changes, 6 hours per bar (tallest: " + max + ")"), spark,
+      el("div", { class: "axis" }, el("span", {}, ups[0].at.slice(0, 10)), el("span", {}, ups[ups.length - 1].at.slice(0, 10))),
+      el("p", { class: "note" }, sum("announced") + " announcements and " + sum("withdrawn") + " withdrawals (red) in this period. A burst of withdrawals is what a broken link looks like in BGP."));
+  }
+} else $("bgp").append(el("p", { class: "note" }, route.error || "No route data."));
+
 /* outages */
 const outs = DATA.outages || [];
 if (outs.length) {
@@ -293,7 +372,7 @@ $("outages").append(el("p", { class: "note" }, "No public feed reports cable fau
   "% or more. That says where to look. It does not say the cable is cut. A fall in Google traffic alone tints the country and marks no cable."));
 
 const src = (t, u) => el("a", { href: u }, t);
-$("foot").append("Sources, all asked when this page was made: DNS from Cloudflare's resolver over HTTPS; places, networks and routes from ", src("RIPEstat", "https://stat.ripe.net/"),
+$("foot").append("Sources, all asked when this page was made: DNS from Cloudflare's resolver over HTTPS; places, networks and routes from ", src("RIPEstat", "https://stat.ripe.net/"), "; router traces from ", src("RIPE Atlas", "https://atlas.ripe.net/"),
   "; outage signals from ", src("IODA", "https://ioda.inetintel.cc.gatech.edu/"), " (Georgia Tech); cables from the ", src("Submarine Cable Map", "https://www.submarinecablemap.com/"),
   " (TeleGeography); coastlines from Natural Earth. Places are those of the address register, usually exact to the country only.");
 </script>
