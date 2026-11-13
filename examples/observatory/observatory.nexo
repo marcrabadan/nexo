@@ -77,13 +77,16 @@ fn dns(domain: str, kind: str) -> list!:
     answer = r.json()?["Answer"] ?? []
     return [a["data"] for a in answer]
 
-## Whether the site publishes a file (any answer below 400).
-fn publishes(domain: str, path: str) -> bool:
+## Whether the site publishes a file: yes for an answer below 400, no for
+## another answer, and "?" with the reason when nothing answered.
+fn published(domain: str, path: str) -> str:
     try:
         http.get("https://{domain}{path}", timeout: 10s, retries: 0)
-        return true
+        return "yes  {path}"
     else e:
-        return false
+        if e is HTTPError:
+            return "no   {path} (answered {status_of(e.message)})"
+        return "?    {path} ({e.message})"
 
 fn median(values: list) -> int:
     sorted = values |> sort by it
@@ -152,7 +155,7 @@ fn show_site(p: Probe):
     print("")
     print("Published files")
     for f in FILES:
-        print("  {either(publishes(p.domain, f), "yes", "no ")}  {f}")
+        print("  {published(p.domain, f)}")
 
 fn report(domain: str):
     print("Internet observatory: {domain}")
@@ -192,7 +195,7 @@ test "the overview of three sites":
 
 test "the report of a domain":
     fake dns returns ["192.0.2.7"]
-    fake publishes returns true
+    fake published returns "yes  (every file)"
     fake probe returns Probe(domain: "shop.example", up: true, status: 200, ms: 85, server: "Caddy", headers: {"strict-transport-security": "max-age=600", "x-frame-options": "DENY"}, note: "")
     report("shop.example")
 

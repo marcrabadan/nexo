@@ -42,8 +42,8 @@ Security headers
   2 of 6 sent
 
 Published files
-  yes  /robots.txt
-  yes  /.well-known/security.txt
+  yes  (every file)
+  yes  (every file)
 ✓ the report of a domain
 Internet observatory: gone.example
 
