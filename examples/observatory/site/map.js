@@ -439,7 +439,17 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     if (!r.ok) throw new Error((body && body.error) || r.status + " " + r.statusText);
     return body;
   };
-  const query = new URLSearchParams(location.search), domain = (query.get("domain") || "").trim().toLowerCase();
+  /* what is typed becomes a domain name: an address pasted whole loses its scheme, path and port */
+  const clean = text => text.trim().toLowerCase().replace(/^[a-z]+:\/\//, "").replace(/[\/?#:].*$/, "").replace(/\.$/, "");
+  const isDomain = name => name.length <= 253 && /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(name);
+  $("ask").addEventListener("submit", e => {
+    e.preventDefault();
+    const name = clean($("field").value);
+    $("field").value = name;
+    if (!isDomain(name)) { say("\"" + name + "\" is not a domain name. Type one like example.com."); $("field").focus(); return; }
+    location.search = "?domain=" + encodeURIComponent(name);
+  });
+  const query = new URLSearchParams(location.search), domain = clean(query.get("domain") || "");
   if (!domain) {
     /* nothing asked: the domains surveyed here before */
     const runs = await get("api/runs").catch(() => []);
@@ -456,6 +466,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     return;
   }
   $("field").value = domain;
+  if (!isDomain(domain)) { say("\"" + domain + "\" is not a domain name. Type one like example.com."); return; }
   say("Surveying " + domain + ": DNS, routes, routers, certificates, outages. A new survey takes one to two minutes; one made in the last quarter of an hour comes at once.");
   try {
     const world = await get("world.json"), cables = await get("api/cables"), landings = await get("api/landings");
