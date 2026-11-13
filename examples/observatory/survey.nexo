@@ -17,6 +17,9 @@
 ## A module has no policy of its own: the program that uses it lists what
 ## it reaches.
 use nexo.db
+use python subprocess as subprocess
+use python platform as platform
+use python shutil as shutil
 
 db = connect("observatory.db")
 
@@ -63,6 +66,9 @@ GOOGLE = "https://dns.google/resolve"
 PEERINGDB = "https://www.peeringdb.com/api"
 CRT = "https://crt.sh"
 LETTERS = regex("[^a-z]+")
+HOP_LINE = regex("^\\s*(\\d+)\\s+(.*)$")
+ADDRESS = regex("\\d+\\.\\d+\\.\\d+\\.\\d+")
+HOP_TIME = regex("<?([0-9.]+)\\s*ms")
 LAST_DOT = regex("\\.$")
 DOMAIN = regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{{2,}$")
 ORGANISATION = regex("O=\"?([^,\"]+)")
@@ -698,6 +704,75 @@ fn traceroutes(domain: str, origin: str) -> map:
         out["note"] = "RIPE Atlas did not answer: {e.message}"
     return out
 
+## The command that traces a route on a system: tracert on Windows,
+## traceroute on Linux and macOS. Addresses are shown as numbers, each
+## hop is asked once (three times by tracert, which has no fewer) and
+## waited for two seconds, up to thirty hops.
+fn trace_command(system: str, address: str) -> list:
+    if system == "Windows":
+        return ["tracert", "-d", "-h", "30", "-w", "2000", address]
+    return ["traceroute", "-n", "-q", "1", "-w", "2", "-m", "30", address]
+
+## The hops in what traceroute or tracert printed: a line that starts
+## with the number of a hop has the router's address and its time, or
+## stars when nothing answered.
+fn local_hops(output: str) -> list:
+    var hops = []
+    for line in output.split("\n"):
+        found = HOP_LINE.groups(line.replace("\r", ""))
+        if found != none:
+            ip = ADDRESS.find(found[1]) ?? ""
+            var ms = none
+            var n = 0
+            try:
+                n = validate(found[0], as: int)
+                time = HOP_TIME.groups(found[1])
+                if time != none and ip != "":
+                    ms = validate(time[0], as: float)
+            else e:
+                ms = none
+            var lost = 0
+            if ip == "":
+                lost = 1
+            hops.add({"n": n, "ip": ip, "ms": ms, "sent": 1, "lost": lost})
+    return hops
+
+## The route from this machine to an address, traced by the system's own
+## command, as a probe like those of RIPE Atlas, placed where this
+## observatory is. probe is none, with a note, when the command is not
+## installed or gives nothing.
+fn local_probe(address: str, observer: map) -> map:
+    var out = {"probe": none, "note": ""}
+    try:
+        system = platform.system()
+        command = trace_command(system, address)
+        if shutil.which(command[0]) == none:
+            out["note"] = "This machine has no {command[0]} command, so its own route is not traced."
+            return out
+        done = subprocess.run(command, capture_output: true, text: true, timeout: 150)
+        found = local_hops(done.stdout)
+        if len(found) == 0:
+            out["note"] = "The {command[0]} of this machine gave no hops."
+            return out
+        var ips = []
+        for h in found:
+            if h["ip"] != "" and not (h["ip"] in ips):
+                ips.add(h["ip"])
+        routers = parallel for ip in ips, max: 16:
+            return router(ip)
+        var where = {}
+        var asns = []
+        for place in routers:
+            where[place["ip"]] = place
+            if place["asn"] != "" and not (place["asn"] in asns):
+                asns.add(place["asn"])
+        names = names_of(asns)
+        hops = [placed(h, where[h["ip"]] ?? {}, names) for h in found]
+        out["probe"] = {"id": "this machine", "local": true, "tool": command[0], "country": observer["country"] ?? "", "lon": observer["lon"] ?? none, "lat": observer["lat"] ?? none, "asn": observer["asn"] ?? "", "reached": found[len(found) - 1]["ip"] == address, "hops": hops}
+    else e:
+        out["note"] = "The route of this machine was not traced: {e.message}"
+    return out
+
 ## The same over IPv6: the addresses, the route, and whether the same
 ## probes reach the site.
 fn six(domain: str, probes: list) -> map:
@@ -921,6 +996,16 @@ pub fn trace(domain: str) -> map:
     if route["origin"] != "":
         path_open = outages("asn", joined(on_path))
     print("  {len(open)} outage signals open in countries, {len(path_open)} on the networks of the route")
+    routers["local_note"] = ""
+    if len(addresses) > 0:
+        print("This machine's own route to {addresses[0]}")
+        mine = local_probe(addresses[0], observer)
+        routers["local_note"] = mine["note"]
+        if mine["probe"] != none:
+            routers["probes"] = [mine["probe"]] + routers["probes"]
+            print("  {len(mine["probe"]["hops"])} hops, arrived: {mine["probe"]["reached"]}")
+        else:
+            print("  {mine["note"]}")
     var data = {"domain": domain, "time": str(now.to_zone("UTC")), "observer": observer, "steps": steps, "aliases": aliases, "health": health, "places": server_places + site_places, "site": site, "certificates": certs, "route": route, "peering": meets, "routers": routers, "v6": v6, "outages": open, "path_outages": path_open}
     data["history"] = remember(data)
     print("  {len(data["history"])} earlier runs of {domain} kept")
@@ -1037,6 +1122,19 @@ test "what DNS and a certificate say":
 test "only the traceroutes of the last week":
     fresh = [{"prb_id": 1, "timestamp": epoch() - 60}, {"prb_id": 2, "timestamp": 1500000000}, {"prb_id": 3}]
     assert [r["prb_id"] for r in recent(fresh)] == [1]
+
+test "the hops traceroute and tracert print":
+    assert trace_command("Linux", "192.0.2.7")[0] == "traceroute"
+    assert trace_command("Darwin", "192.0.2.7")[0] == "traceroute"
+    assert trace_command("Windows", "192.0.2.7") == ["tracert", "-d", "-h", "30", "-w", "2000", "192.0.2.7"]
+    unix = local_hops("traceroute to 192.0.2.7 (192.0.2.7), 30 hops max, 60 byte packets\n 1  192.168.1.1  0.182 ms\n 2  *\n 3  192.0.2.7  12.5 ms\n")
+    assert unix[0] == {"n": 1, "ip": "192.168.1.1", "ms": 0.182, "sent": 1, "lost": 0}
+    assert unix[1] == {"n": 2, "ip": "", "ms": none, "sent": 1, "lost": 1}
+    assert unix[2]["ip"] == "192.0.2.7"
+    windows = local_hops("Tracing route to 192.0.2.7 over a maximum of 30 hops\r\n\r\n  1    <1 ms    <1 ms    <1 ms  192.168.1.1\r\n  2     *        *        *     Request timed out.\r\n  3    12 ms    11 ms    13 ms  192.0.2.7\r\n\r\nTrace complete.\r\n")
+    assert windows[0] == {"n": 1, "ip": "192.168.1.1", "ms": 1.0, "sent": 1, "lost": 0}
+    assert windows[1]["lost"] == 1
+    assert windows[2] == {"n": 3, "ip": "192.0.2.7", "ms": 12.0, "sent": 1, "lost": 0}
 
 test "the state of a route":
     assert route_state(318, 318) == "whole"

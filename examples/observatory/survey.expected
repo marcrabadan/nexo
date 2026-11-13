@@ -11,6 +11,7 @@
 ✓ the origins a prefix has had
 ✓ what DNS and a certificate say
 ✓ only the traceroutes of the last week
+✓ the hops traceroute and tracert print
 ✓ the state of a route
 ✓ the outages still open
-15 tests: 15 passed, 0 failed
+16 tests: 16 passed, 0 failed

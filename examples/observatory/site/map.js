@@ -141,11 +141,13 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   const gRouters = el("g");
   for (const p of routers.probes || []) {
     const sure = p.hops.some(h => h.by === "name");
-    p.stops = [{ at: [p.lon, p.lat], label: "probe in " + p.country, sure: true }];
+    /* this machine's own traceroute comes first; its place is the register's, so its first leg is not a sure one */
+    p.label = p.local ? "This machine" + (p.country ? " in " + p.country : "") : "Probe " + p.id + " in " + p.country;
+    p.stops = p.lat == null ? [] : [{ at: [p.lon, p.lat], label: p.local ? "this machine" : "probe in " + p.country, sure: !p.local }];
     for (const h of p.hops) {
       if (h.lat == null || (sure && h.by !== "name")) continue;
       const l = p.stops[p.stops.length - 1];
-      if (l.at[0] !== h.lon || l.at[1] !== h.lat) p.stops.push({ at: [h.lon, h.lat], label: h.city || h.country, sure: h.by === "name" });
+      if (!l || l.at[0] !== h.lon || l.at[1] !== h.lat) p.stops.push({ at: [h.lon, h.lat], label: h.city || h.country, sure: h.by === "name" });
     }
     /* a long jump between two sure places may cross a sea: the cables that land near both ends */
     p.seas = [];
@@ -158,8 +160,9 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     const cls = p.reached ? "" : " lost";
     p.line = p.stops.length > 1 ? el("path", { class: "rt" + cls, d: line(p.stops.map(s => s.at)) }) : null;
     if (p.line) gRouters.append(p.line);
-    const dot = el("circle", { class: "pt probe" + cls, cx: X(p.lon), cy: Y(p.lat), r: 3 });
-    hint(dot, "Probe " + p.id + " in " + p.country, (p.reached ? "reached its target in " : "did not reach its target; stopped after ") + p.hops.length + " hops" + (p.stops.length > 1 ? " · via " + p.stops.slice(1).map(s => s.label).join(", ") : ""));
+    if (p.lat == null) continue;
+    const dot = el("circle", { class: "pt probe" + cls, cx: X(p.lon), cy: Y(p.lat), r: p.local ? 4 : 3 });
+    hint(dot, p.label, (p.reached ? "reached its target in " : "did not reach its target; stopped after ") + p.hops.length + " hops" + (p.stops.length > 1 ? " · via " + p.stops.slice(1).map(s => s.label).join(", ") : ""));
     gRouters.append(dot);
   }
   /* exchange buildings of the origin network */
@@ -281,7 +284,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     for (const sea of p.seas) side.append(el("p", { class: "note" }, sea.from + " → " + sea.to + ", about " + sea.km.toLocaleString("en") + " km. " + sea.cables.length +
       (sea.cables.length === 1 ? " cable lands" : " cables land") + " near both ends: " + sea.cables.slice(0, 8).map(c => c.name).join(", ") + (sea.cables.length > 8 ? " and " + (sea.cables.length - 8) + " more" : "") + "."));
     body.append(el("div", { class: "scroll", style: "min-width:0" }, t), side);
-    const d = el("details", {}, el("summary", {}, "Probe " + p.id + " in " + p.country + " ", el("small", { class: p.reached ? "ok" : "no" }, p.reached ? "arrived in " + p.hops.length + " hops" : "did not arrive"),
+    const d = el("details", {}, el("summary", {}, p.label + " ", el("small", { class: p.reached ? "ok" : "no" }, p.reached ? "arrived in " + p.hops.length + " hops" : "did not arrive"),
       p.seas.length ? el("small", {}, " · " + p.seas.length + (p.seas.length === 1 ? " sea crossing" : " sea crossings")) : null), body);
     d.addEventListener("toggle", () => { if (p.line) p.line.classList.toggle("on", d.open); for (const sea of p.seas) for (const c of sea.cables) c.node.classList.toggle("cand", d.open); });
     $("routers").append(d);
@@ -293,6 +296,9 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
       "Where two such routers are far apart, the cables that land near both are named and lit on the map while the probe is open: candidates, since no trace says which cable carried it. A hop with no answer is a router that does not reply, or a firewall dropping the packets."
     : routers.note || "No router traces."));
   if (routers.note && (routers.probes || []).length) $("routers").append(el("p", { class: "note" }, routers.note));
+  $("routers").append(el("p", { class: "note" }, routers.local_note || (routers.probes || []).some(p => p.local)
+    ? routers.local_note || "The first trace is this machine's own, run with its " + routers.probes.find(p => p.local).tool + " command to the site's address: the real route from where the observatory runs."
+    : ""));
 
   /* network path graph: the links the collectors' paths use most, origin on the right */
   (function () {
