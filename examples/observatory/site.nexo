@@ -6,8 +6,9 @@
 ## the API the script asks. A survey takes a minute or two and is kept
 ## for a quarter of an hour. NEXO_WEB_LOCAL=1 listens on this machine
 ## only; without it anyone who reaches the port can make the server
-## survey a domain. The survey also runs this machine's own traceroute
-## (tracert on Windows), through Python's subprocess.
+## survey a domain. The survey also traces this machine's own route with
+## the system's command (tracert on Windows; traceroute, tracepath or
+## ping on Linux and macOS), through Python's subprocess.
 policy:
     allow net "cloudflare-dns.com", "dns.google", "stat.ripe.net", "atlas.ripe.net", "api.ioda.inetintel.cc.gatech.edu"
     allow net "www.submarinecablemap.com", "www.peeringdb.com", "crt.sh", "internetdb.shodan.io", "127.0.0.1"

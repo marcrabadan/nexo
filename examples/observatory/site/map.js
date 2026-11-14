@@ -275,6 +275,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   } else $("route").append(el("p", { class: "note" }, route.error || "No route data."));
 
   /* router traces: hops, time and loss per hop, and the sea crossings */
+  const FLAGS = { "!H": "the router has no way to the host", "!N": "the router has no way to the network", "!P": "the protocol is refused", "!X": "a firewall forbids it", "!F": "the packet is too big for the link", "!S": "the source route failed" };
   function latency(p) {
     const got = p.hops.filter(h => h.ms != null);
     if (got.length < 2) return null;
@@ -292,14 +293,34 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     return { svg, jump: jump && jump.d > 20 ? jump : null };
   }
   for (const p of routers.probes || []) {
-    const t = el("table", {}, el("tr", {}, el("th", {}, "hop"), el("th", {}, "router"), el("th", { class: "n" }, "ms"), el("th", { class: "n" }, "lost")));
+    const t = el("table", {}, el("tr", {}, el("th", {}, "hop"), el("th", {}, "router"), el("th", { class: "n" }, "ms"), el("th", { class: "n" }, "lost"), el("th", {}, "what happens here")));
+    let network = "", before = null;
+    const crossed = [];
     for (const h of p.hops) {
+      /* what this hop says: whose network the packet enters, a wait that grows, a router that refuses */
+      const says = [];
+      if (h.range) { says.push(h.range === "private network" ? "inside your own network" : h.range); if (!crossed.length) crossed.push("your network"); }
+      if (h.asn && h.asn !== network) { says.push((network ? "enters " : "") + "AS" + h.asn + " " + (h.holder || "").split(" - ")[0].split(" ")[0]); network = h.asn; crossed.push("AS" + h.asn + " " + (h.holder || "").split(" - ")[0].split(" ")[0]); }
+      if (h.ms != null && before != null && h.ms - before > 20) says.push("+" + (h.ms - before).toFixed(0) + " ms: a long link" + (h.city ? " to " + h.city : ""));
+      if (h.ms != null) before = h.ms;
+      if ((h.also || []).length) says.push("load shared with " + h.also.join(", "));
+      if (h.flag) says.push(h.flag + ": " + (FLAGS[h.flag] || "the router refused the packet"));
+      if (!h.ip) says.push("no answer: the router keeps quiet, or a firewall drops the packet");
       const where = h.by === "name" ? h.city + " (from its name)" : h.country ? h.country + " (register)" : "";
       t.append(el("tr", {}, el("td", {}, String(h.n)),
         el("td", {}, el("span", { class: "mono" }, h.host || h.ip || "no answer"), h.ip ? el("div", { class: "sub" }, [h.host ? h.ip : "", where, h.asn ? "AS" + h.asn + " " + h.holder : (h.lat == null && !h.host ? "private or unplaced" : "")].filter(Boolean).join(" · ")) : null),
-        el("td", { class: "n" }, h.ms == null ? "" : h.ms.toFixed(1)), el("td", { class: "n" + (h.lost && h.lost < h.sent ? " changed" : "") }, h.sent ? h.lost + "/" + h.sent : "")));
+        el("td", { class: "n" }, h.ms == null ? "" : h.ms.toFixed(1), h.avg != null && h.sent - h.lost > 1 ? el("div", { class: "sub" }, "avg " + h.avg.toFixed(1) + " · max " + h.worst.toFixed(1)) : null),
+        el("td", { class: "n" + (h.lost && h.lost < h.sent ? " changed" : "") }, h.sent ? h.lost + "/" + h.sent : ""),
+        el("td", { class: "sub" }, says.join("; "))));
     }
     const chart = latency(p), body = el("div", { class: "cols", style: "margin-top:8px" }), side = el("div", { style: "min-width:0" });
+    if (p.local) {
+      const last = p.hops.filter(h => h.ip).pop();
+      side.append(el("p", { style: "margin:0 0 8px" }, p.reached ? "Arrived in " + p.hops.length + " hops" + (last && last.ms != null ? ", " + last.ms.toFixed(1) + " ms away." : ".")
+        : "Did not arrive. The last router that answered is hop " + (last ? last.n + ", " + (last.host || last.ip) + (last.asn ? " (AS" + last.asn + " " + last.holder + ")" : "") : "none") + ": past it, routers keep quiet or a firewall drops the packets. The site can still be up."));
+      if (crossed.length) side.append(el("p", { class: "note", style: "margin-top:0" }, "Networks crossed: " + crossed.join(" → ")));
+      side.append(el("p", { class: "note" }, "Traced on " + (p.system || "this machine") + " with " + p.tool + ((p.tried || []).length > 1 ? " (tried: " + p.tried.join("; ") + ")" : "") + "."));
+    }
     if (chart) side.append(el("div", { class: "sub" }, "Time to each hop" + (chart.jump ? ". Biggest step: +" + chart.jump.d.toFixed(0) + " ms at hop " + chart.jump.hop.n + (chart.jump.hop.city ? " (" + chart.jump.hop.city + ")" : "") : "")), chart.svg);
     if (p.stops.length > 1) side.append(el("p", { class: "note" }, "Path: " + p.stops.map(s => s.label).join(" → ")));
     for (const sea of p.seas) side.append(el("p", { class: "note" }, sea.from + " → " + sea.to + ", about " + sea.km.toLocaleString("en") + " km. " + sea.cables.length +
@@ -308,6 +329,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     const d = el("details", {}, el("summary", {}, p.label + " ", el("small", { class: p.reached ? "ok" : "no" }, p.reached ? "arrived in " + p.hops.length + " hops" : "did not arrive"),
       p.seas.length ? el("small", {}, " · " + p.seas.length + (p.seas.length === 1 ? " sea crossing" : " sea crossings")) : null), body);
     d.addEventListener("toggle", () => { if (p.line) p.line.classList.toggle("on", d.open); for (const sea of p.seas) for (const c of sea.cables) c.node.classList.toggle("cand", d.open); });
+    if (p.local) d.open = true;
     $("routers").append(d);
   }
   $("routers").append(el("p", { class: "note" }, (routers.probes || []).length
@@ -318,7 +340,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     : routers.note || "No router traces."));
   if (routers.note && (routers.probes || []).length) $("routers").append(el("p", { class: "note" }, routers.note));
   $("routers").append(el("p", { class: "note" }, routers.local_note || (routers.probes || []).some(p => p.local)
-    ? routers.local_note || "The first trace is this machine's own, run with its " + routers.probes.find(p => p.local).tool + " command to the site's address: the real route from where the observatory runs."
+    ? routers.local_note || "The first trace is this machine's own, to the site's address: the real route from where the observatory runs, each hop asked three times. A hop that loses packets while the hops after it do not is a router that answers few questions, not a fault; loss that goes on to the end is real."
     : ""));
 
   /* network path graph: the links the collectors' paths use most, origin on the right */

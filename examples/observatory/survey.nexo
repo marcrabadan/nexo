@@ -19,6 +19,9 @@
 ## What nobody publishes is not shown: there is no public feed of cable
 ## faults, so a cable is only marked when it lands in a country with an
 ## outage signal, or named as a candidate where a trace crosses a sea.
+## The route from this machine needs no RIPE Atlas: the system's own
+## command traces it, each hop asked three times, and every router on
+## the way is given its name, city, network and what happens there.
 ## With RIPE_ATLAS_KEY set to "Key <your key>", a domain nobody traces
 ## gets a measurement started; its routers are read on a later run.
 ## A module has no policy of its own: the program that uses it lists what
@@ -75,7 +78,9 @@ CRT = "https://crt.sh"
 SHODAN = "https://internetdb.shodan.io"
 SPF_SIGN = regex("^[+~?-]")
 LETTERS = regex("[^a-z]+")
-HOP_LINE = regex("^\\s*(\\d+)\\s+(.*)$")
+HOP_LINE = regex("^\\s*(\\d+)[:?]*\\s+(.*)$")
+HOP_FLAG = regex("![A-Z]")
+PING_TIME = regex("time[=<]([0-9.]+)")
 ADDRESS = regex("\\d+\\.\\d+\\.\\d+\\.\\d+")
 HOP_TIME = regex("<?([0-9.]+)\\s*ms")
 LAST_DOT = regex("\\.$")
@@ -754,10 +759,22 @@ fn router(ip: str) -> map:
         place["error"] = e.message
     return place
 
+## The range an address that is not on the internet belongs to, or "".
+fn range_of(ip: str) -> str:
+    if ip.starts_with("100.") and is_private(ip):
+        return "carrier NAT"
+    if ip.starts_with("127."):
+        return "this machine"
+    if ip.starts_with("169.254."):
+        return "link-local"
+    if is_private(ip):
+        return "private network"
+    return ""
+
 ## A hop with the place and network of its router.
 fn placed(hop: map, place: map, names: map) -> map:
     asn = place["asn"] ?? ""
-    return {"n": hop["n"], "ip": hop["ip"], "ms": hop["ms"], "sent": hop["sent"], "lost": hop["lost"], "host": place["host"] ?? "", "lat": place["lat"] ?? none, "lon": place["lon"] ?? none, "city": place["city"] ?? "", "country": place["country"] ?? "", "by": place["by"] ?? "", "asn": asn, "holder": names[asn] ?? ""}
+    return {"n": hop["n"], "ip": hop["ip"], "ms": hop["ms"], "avg": hop["avg"] ?? none, "worst": hop["worst"] ?? none, "also": hop["also"] ?? [], "flag": hop["flag"] ?? "", "range": range_of(hop["ip"]), "sent": hop["sent"], "lost": hop["lost"], "host": place["host"] ?? "", "lat": place["lat"] ?? none, "lon": place["lon"] ?? none, "city": place["city"] ?? "", "country": place["country"] ?? "", "by": place["by"] ?? "", "asn": asn, "holder": names[asn] ?? ""}
 
 ## Asks RIPE Atlas for a traceroute to a domain from eight probes around
 ## the world, once. It needs RIPE_ATLAS_KEY, as "Key <your key>".
@@ -881,60 +898,198 @@ fn traceroutes(domain: str, origin: str) -> map:
         out["note"] = "RIPE Atlas did not answer: {e.message}"
     return out
 
-## The command that traces a route on a system: tracert on Windows,
-## traceroute on Linux and macOS. Addresses are shown as numbers, each
-## hop is asked once (three times by tracert, which has no fewer) and
-## waited for two seconds, up to thirty hops.
-fn trace_command(system: str, address: str) -> list:
+## The commands that can trace a route on a system, the best first:
+## tracert on Windows, traceroute on macOS, and on Linux traceroute with
+## UDP packets, then with ICMP ones (some firewalls let only those
+## through; it may need root), then tracepath. Addresses are shown as
+## numbers, each hop is asked three times and waited for two seconds, up
+## to thirty hops.
+fn trace_commands(system: str, address: str) -> list:
     if system == "Windows":
-        return ["tracert", "-d", "-h", "30", "-w", "2000", address]
-    return ["traceroute", "-n", "-q", "1", "-w", "2", "-m", "30", address]
+        return [["tracert", "-d", "-h", "30", "-w", "2000", address]]
+    usual = ["traceroute", "-n", "-q", "3", "-w", "2", "-m", "30", address]
+    if system == "Darwin":
+        return [usual]
+    return [usual, ["traceroute", "-I", "-n", "-q", "3", "-w", "2", "-m", "30", address], ["tracepath", "-n", "-m", "30", address]]
 
-## The hops in what traceroute or tracert printed: a line that starts
-## with the number of a hop has the router's address and its time, or
-## stars when nothing answered.
+## One packet that may cross only `ttl` routers: the router where it
+## dies says so, and that is how a route is traced with ping alone.
+fn ping_command(system: str, address: str, ttl: int) -> list:
+    if system == "Windows":
+        return ["ping", "-n", "1", "-w", "2000", "-i", str(ttl), address]
+    if system == "Darwin":
+        return ["ping", "-n", "-c", "1", "-W", "2000", "-m", str(ttl), address]
+    return ["ping", "-n", "-c", "1", "-W", "2", "-t", str(ttl), address]
+
+## Who answered a ping, and in how long when the answer says it: the
+## first line with "from" has the address of the router, or of the
+## target when the packet arrived.
+fn ping_reply(output: str) -> map:
+    for line in output.split("\n"):
+        low = line.lower()
+        if "from " in low:
+            ip = ADDRESS.find(line) ?? ""
+            if ip != "":
+                var ms = none
+                time = PING_TIME.groups(low)
+                if time != none:
+                    ms = number_or(time[0], none)
+                return {"ip": ip, "ms": ms}
+    return {"ip": "", "ms": none}
+
+## The decimal number a text holds, or another value when it holds none.
+fn number_or(text: str, other):
+    try:
+        return validate(text, as: float)
+    else e:
+        return other
+
+## One hop from its times and what else its line said.
+fn hop_of(n: int, ips: list, times: list, stars: int, flag: str) -> map:
+    var ip = ""
+    var also = []
+    for found in ips:
+        if ip == "":
+            ip = found
+        elif found != ip and not (found in also):
+            also.add(found)
+    var best = none
+    var worst = none
+    var sum = 0.0
+    for t in times:
+        sum += t
+        if best == none or t < best:
+            best = t
+        if worst == none or t > worst:
+            worst = t
+    var avg = none
+    if len(times) > 0:
+        avg = sum / len(times)
+    var lost = stars
+    if ip == "" and lost == 0:
+        lost = 1
+    return {"n": n, "ip": ip, "ms": best, "avg": avg, "worst": worst, "sent": len(times) + lost, "lost": lost, "also": also, "flag": flag}
+
+## The hops in what traceroute, tracert or tracepath printed: a line
+## that starts with the number of a hop has the routers that answered,
+## a time for each answer and a star for each packet with none. Two
+## routers on one hop are a load balancer; "!X" and its like are a
+## router saying it will not pass the packet on. tracepath writes a hop
+## on several lines, which are read as one.
 fn local_hops(output: str) -> list:
-    var hops = []
+    var order = []
+    var ips = {}
+    var times = {}
+    var stars = {}
+    var flags = {}
     for line in output.split("\n"):
         found = HOP_LINE.groups(line.replace("\r", ""))
         if found != none:
-            ip = ADDRESS.find(found[1]) ?? ""
-            var ms = none
-            var n = 0
-            try:
-                n = validate(found[0], as: int)
-                time = HOP_TIME.groups(found[1])
-                if time != none and ip != "":
-                    ms = validate(time[0], as: float)
-            else e:
-                ms = none
-            var lost = 0
-            if ip == "":
-                lost = 1
-            hops.add({"n": n, "ip": ip, "ms": ms, "sent": 1, "lost": lost})
+            n = number(found[0])
+            rest = found[1]
+            key = str(n)
+            if not (key in order):
+                order.add(key)
+                ips[key] = []
+                times[key] = []
+                stars[key] = 0
+                flags[key] = ""
+            for ip in ADDRESS.find_all(rest):
+                ips[key].add(ip)
+            for t in HOP_TIME.find_all(rest):
+                ms = number_or(t.replace("<", "").replace("ms", "").trim(), none)
+                if ms != none:
+                    times[key].add(ms)
+            stars[key] = stars[key] + len(rest.split("*")) - 1
+            flag = HOP_FLAG.find(rest) ?? ""
+            if flag != "":
+                flags[key] = flag
+    var hops = []
+    for key in order:
+        var lost = stars[key]
+        if len(ips[key]) > 0 and len(times[key]) > 0 and lost > 3:
+            lost = 3
+        hops.add(hop_of(number(key), ips[key], times[key], lost, flags[key]))
     return hops
 
+## A route traced with ping alone, one packet per hop, for a machine
+## with no traceroute. Routers do not say how long they took, so the
+## time of a hop is that of the whole command, a little over the real.
+fn ping_trace(system: str, address: str) -> list:
+    var hops = []
+    var silent = 0
+    var going = true
+    for ttl in range(1, 31):
+        if going:
+            start = now
+            done = subprocess.run(ping_command(system, address, ttl), capture_output: true, text: true, timeout: 10)
+            reply = ping_reply(done.stdout)
+            if reply["ip"] != "":
+                silent = 0
+                hops.add(hop_of(ttl, [reply["ip"]], [reply["ms"] ?? float(int((now - start) / 1ms))], 0, ""))
+            else:
+                silent += 1
+                hops.add(hop_of(ttl, [], [], 1, ""))
+            going = reply["ip"] != address and silent < 8
+    return hops
+
+## How far a trace got: the hops that answered, and many more when it
+## arrived.
+fn depth_of(hops: list, address: str) -> int:
+    var n = 0
+    for h in hops:
+        if h["ip"] != "":
+            n += 1
+        if h["ip"] == address:
+            n += 1000
+    return n
+
+## A trace without the silent hops after the last router that answered.
+fn trimmed(hops: list) -> list:
+    var last = 0
+    for i in range(len(hops)):
+        if hops[i]["ip"] != "":
+            last = i + 1
+    return hops |> take last
+
 ## The route from this machine to an address, traced by the system's own
-## command, as a probe like those of RIPE Atlas, placed where this
-## observatory is. probe is none, with a note, when the command is not
-## installed or gives nothing.
+## commands, as a probe like those of RIPE Atlas, placed where this
+## observatory is. Every command the system has is tried until one
+## arrives, and the one that got furthest is kept; with none, the route
+## is traced with ping. probe is none, with a note, when nothing gives a
+## hop.
 fn local_probe(address: str, observer: map) -> map:
     var out = {"probe": none, "note": ""}
     try:
         system = platform.system()
-        command = trace_command(system, address)
-        if shutil.which(command[0]) == none:
-            out["note"] = "This machine has no {command[0]} command, so its own route is not traced."
-            return out
-        done = subprocess.run(command, capture_output: true, text: true, timeout: 150)
-        found = local_hops(done.stdout)
+        var found = []
+        var tool = ""
+        var tried = []
+        for command in trace_commands(system, address):
+            if shutil.which(command[0]) != none and depth_of(found, address) < 1000:
+                done = subprocess.run(command, capture_output: true, text: true, timeout: 240)
+                hops = local_hops(done.stdout)
+                name = "{command[0]} {command[1]}".replace(" -n", "").replace(" -d", "")
+                tried.add("{name}: {depth_of(hops, address) % 1000} routers answered")
+                if depth_of(hops, address) > depth_of(found, address):
+                    found = hops
+                    tool = name
+        if depth_of(found, address) == 0 and shutil.which("ping") != none:
+            found = ping_trace(system, address)
+            tool = "ping, one packet per hop"
+            tried.add("ping: {depth_of(found, address) % 1000} routers answered")
+        found = trimmed(found)
         if len(found) == 0:
-            out["note"] = "The {command[0]} of this machine gave no hops."
+            if len(tried) == 0:
+                out["note"] = "This machine has no traceroute, tracepath or ping command, so its own route is not traced. Install traceroute (Linux: apt install traceroute)."
+            else:
+                out["note"] = "No router answered this machine ({joined(tried).replace(",", "; ")}): a firewall here drops the packets or their answers."
             return out
         var ips = []
         for h in found:
-            if h["ip"] != "" and not (h["ip"] in ips):
-                ips.add(h["ip"])
+            for ip in [h["ip"]] + h["also"]:
+                if ip != "" and not (ip in ips):
+                    ips.add(ip)
         routers = parallel for ip in ips, max: 16:
             return router(ip)
         var where = {}
@@ -945,7 +1100,7 @@ fn local_probe(address: str, observer: map) -> map:
                 asns.add(place["asn"])
         names = names_of(asns)
         hops = [placed(h, where[h["ip"]] ?? {}, names) for h in found]
-        out["probe"] = {"id": "this machine", "local": true, "tool": command[0], "country": observer["country"] ?? "", "lon": observer["lon"] ?? none, "lat": observer["lat"] ?? none, "asn": observer["asn"] ?? "", "reached": found[len(found) - 1]["ip"] == address, "hops": hops}
+        out["probe"] = {"id": "this machine", "local": true, "tool": tool, "tried": tried, "system": system, "country": observer["country"] ?? "", "lon": observer["lon"] ?? none, "lat": observer["lat"] ?? none, "asn": observer["asn"] ?? "", "reached": depth_of(found, address) >= 1000, "hops": hops}
     else e:
         out["note"] = "The route of this machine was not traced: {e.message}"
     return out
@@ -1564,17 +1719,40 @@ test "only the traceroutes of the last week":
     assert [r["prb_id"] for r in recent(fresh)] == [1]
 
 test "the hops traceroute and tracert print":
-    assert trace_command("Linux", "192.0.2.7")[0] == "traceroute"
-    assert trace_command("Darwin", "192.0.2.7")[0] == "traceroute"
-    assert trace_command("Windows", "192.0.2.7") == ["tracert", "-d", "-h", "30", "-w", "2000", "192.0.2.7"]
-    unix = local_hops("traceroute to 192.0.2.7 (192.0.2.7), 30 hops max, 60 byte packets\n 1  192.168.1.1  0.182 ms\n 2  *\n 3  192.0.2.7  12.5 ms\n")
-    assert unix[0] == {"n": 1, "ip": "192.168.1.1", "ms": 0.182, "sent": 1, "lost": 0}
-    assert unix[1] == {"n": 2, "ip": "", "ms": none, "sent": 1, "lost": 1}
-    assert unix[2]["ip"] == "192.0.2.7"
+    assert trace_commands("Linux", "192.0.2.7")[0][0] == "traceroute"
+    assert trace_commands("Linux", "192.0.2.7")[1][1] == "-I"
+    assert trace_commands("Linux", "192.0.2.7")[2][0] == "tracepath"
+    assert len(trace_commands("Darwin", "192.0.2.7")) == 1
+    assert trace_commands("Windows", "192.0.2.7") == [["tracert", "-d", "-h", "30", "-w", "2000", "192.0.2.7"]]
+    unix = local_hops("traceroute to 192.0.2.7 (192.0.2.7), 30 hops max, 60 byte packets\n 1  192.168.1.1  0.182 ms  0.300 ms  0.250 ms\n 2  * * *\n 3  10.0.0.1  5.0 ms 10.0.0.2  7.0 ms *\n 4  192.0.2.7  12.5 ms !X  12.0 ms !X *\n")
+    assert unix[0] == {"n": 1, "ip": "192.168.1.1", "ms": 0.182, "avg": 0.244, "worst": 0.3, "sent": 3, "lost": 0, "also": [], "flag": ""}
+    assert unix[1] == {"n": 2, "ip": "", "ms": none, "avg": none, "worst": none, "sent": 3, "lost": 3, "also": [], "flag": ""}
+    assert unix[2]["also"] == ["10.0.0.2"]
+    assert unix[2]["lost"] == 1
+    assert unix[3]["flag"] == "!X"
+    assert depth_of(unix, "192.0.2.7") == 1003
     windows = local_hops("Tracing route to 192.0.2.7 over a maximum of 30 hops\r\n\r\n  1    <1 ms    <1 ms    <1 ms  192.168.1.1\r\n  2     *        *        *     Request timed out.\r\n  3    12 ms    11 ms    13 ms  192.0.2.7\r\n\r\nTrace complete.\r\n")
-    assert windows[0] == {"n": 1, "ip": "192.168.1.1", "ms": 1.0, "sent": 1, "lost": 0}
-    assert windows[1]["lost"] == 1
-    assert windows[2] == {"n": 3, "ip": "192.0.2.7", "ms": 12.0, "sent": 1, "lost": 0}
+    assert windows[0] == {"n": 1, "ip": "192.168.1.1", "ms": 1.0, "avg": 1.0, "worst": 1.0, "sent": 3, "lost": 0, "also": [], "flag": ""}
+    assert windows[1]["lost"] == 3
+    assert windows[2]["ms"] == 11.0
+    assert windows[2]["worst"] == 13.0
+    path = local_hops(" 1?: [LOCALHOST]                      pmtu 1500\n 1:  192.168.1.1                                           0.512ms \n 1:  192.168.1.1                                           0.404ms \n 2:  no reply\n 3:  192.0.2.7                                             5.123ms reached\n     Resume: pmtu 1500 hops 3 back 3 \n")
+    assert [h["ip"] for h in path] == ["192.168.1.1", "", "192.0.2.7"]
+    assert path[0]["ms"] == 0.404
+    assert path[1]["lost"] == 1
+    assert len(trimmed(local_hops(" 1  192.168.1.1  0.2 ms\n 2  * * *\n 3  * * *\n"))) == 1
+
+test "a route traced with ping":
+    assert ping_command("Linux", "192.0.2.7", 3) == ["ping", "-n", "-c", "1", "-W", "2", "-t", "3", "192.0.2.7"]
+    assert ping_command("Darwin", "192.0.2.7", 3)[6] == "-m"
+    assert ping_command("Windows", "192.0.2.7", 3)[5] == "-i"
+    assert ping_reply("PING 192.0.2.7 (192.0.2.7) 56(84) bytes of data.\nFrom 10.0.0.1 icmp_seq=1 Time to live exceeded\n\n--- 192.0.2.7 ping statistics ---\n") == {"ip": "10.0.0.1", "ms": none}
+    assert ping_reply("PING 192.0.2.7 (192.0.2.7): 56 data bytes\n64 bytes from 192.0.2.7: icmp_seq=0 ttl=57 time=12.3 ms\n") == {"ip": "192.0.2.7", "ms": 12.3}
+    assert ping_reply("Pinging 192.0.2.7 with 32 bytes of data:\r\nReply from 10.0.0.1: TTL expired in transit.\r\n") == {"ip": "10.0.0.1", "ms": none}
+    assert ping_reply("PING 192.0.2.7 (192.0.2.7) 56(84) bytes of data.\n\n--- 192.0.2.7 ping statistics ---\n1 packets transmitted, 0 received\n") == {"ip": "", "ms": none}
+    assert range_of("192.168.1.1") == "private network"
+    assert range_of("100.64.0.1") == "carrier NAT"
+    assert range_of("192.0.2.7") == ""
 
 test "the state of a route":
     assert route_state(318, 318) == "whole"

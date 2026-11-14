@@ -12,6 +12,7 @@
 ✓ what DNS and a certificate say
 ✓ only the traceroutes of the last week
 ✓ the hops traceroute and tracert print
+✓ a route traced with ping
 ✓ the state of a route
 ✓ the outages still open
 critical  Mail: SPF ends in +all: every server in the world is allowed to send mail as this domain.
@@ -47,4 +48,4 @@ Routes: 65 (3 alerts)
 Site: 15 (4 alerts)
 ✓ what is weak in DNS, the route and the site
 ✓ what the logs, a signature and Shodan say
-19 tests: 19 passed, 0 failed
+20 tests: 20 passed, 0 failed

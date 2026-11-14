@@ -166,3 +166,7 @@ footer a { color: var(--fg) }
 footer:empty { display: none }
 @media (max-width: 600px) { .verdicts { grid-template-columns: 1fr 1fr } .verdict { padding: 10px 12px } .verdict .a { font-size: 15px } }
 details.more { border: 0; padding: 4px 0 0 } details.more summary { color: var(--dim); font-size: 13px }
+.cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 18px 24px; align-items: start }
+@media (max-width: 860px) { .cols { grid-template-columns: minmax(0, 1fr) } }
+td.n + td:not(.n), th.n + th:not(.n) { padding-left: 16px }
+#routers table { min-width: 560px }
