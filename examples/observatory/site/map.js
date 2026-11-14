@@ -227,7 +227,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   });
 
   /* header and verdicts */
-  $("title").textContent = DATA.domain; document.title = DATA.domain + " · Internet observatory";
+  $("title").textContent = DATA.domain; document.title = DATA.domain + " · Nexo Observatory";
   $("when").textContent = "asked " + DATA.time + (me ? " from " + me.ip + " (AS" + me.asn + " " + me.holder + ")" : "");
   $("when").append(" · ", el("a", { href: "?domain=" + encodeURIComponent(DATA.domain) + "&fresh=1" }, "survey again"));
   function verdict(tone, q, a, why) {
