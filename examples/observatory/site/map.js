@@ -208,8 +208,15 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     key(sw("cable", "l"), ((CABLES && CABLES.features) || []).length + " submarine cables"),
     key(sw("cable hit", "l"), marked + " landing where routes or probes are down " + STRONG + "% or more"));
 
+  /* a long list of names: the first twelve, and the rest behind a line to open */
+  function some(names, sep) {
+    if (!names.length) return ["none listed"];
+    if (names.length <= 14) return [names.join(sep)];
+    return [names.slice(0, 12).join(sep), el("details", { class: "more" }, el("summary", {}, "and " + (names.length - 12) + " more"), names.slice(12).join(sep))];
+  }
+
   /* header and verdicts */
-  $("title").replaceChildren("Trace of ", el("span", {}, DATA.domain));
+  $("title").textContent = DATA.domain; document.title = DATA.domain + " · Internet observatory";
   $("when").textContent = "asked " + DATA.time + (me ? " from " + me.ip + " (AS" + me.asn + " " + me.holder + ")" : "");
   $("when").append(" · ", el("a", { href: "?domain=" + encodeURIComponent(DATA.domain) + "&fresh=1" }, "survey again"));
   function verdict(tone, q, a, why) {
@@ -387,7 +394,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     "% or more. That says where to look. It does not say the cable is cut. A fall in Google traffic alone tints the country and marks no cable."));
 
   const onPath = DATA.path_outages || [];
-  $("outages").append(el("h2", { style: "margin-top:18px" }, "On the networks of the route"), onPath.length
+  $("outages").append(el("h3", { class: "gap" }, "On the networks of the route"), onPath.length
     ? el("ul", { class: "plain" }, ...onPath.map(o => el("li", { class: "no" }, o.country + ": " + signal(o.signal) + " down " + o.fall + "%")))
     : el("p", { class: "note", style: "margin-top:0" }, "No outage signal on the origin or on any of the " + (route.transits || []).length + " transit networks."));
 
@@ -396,8 +403,15 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     const list = DATA.alerts, count = level => list.filter(a => a.level === level).length;
     if (!list) { $("alerts").append(el("p", { class: "note", style: "margin-top:0" }, "This survey was kept before the observatory raised alerts. Survey again for them.")); return; }
     const marks = DATA.scores || [];
-    if (marks.length) $("alerts").append(el("div", { class: "scores" }, ...marks.map(m => el("div", { class: "score " + (m.score >= 80 ? "good" : m.score >= 50 ? "warn" : "bad") },
-      el("b", {}, String(m.score)), el("span", {}, m.block), el("small", {}, m.alerts ? m.alerts + (m.alerts === 1 ? " alert" : " alerts") : "nothing found")))));
+    $("scores").append(...marks.map(m => el("div", { class: "score " + (m.score >= 80 ? "good" : m.score >= 50 ? "warn" : "bad") },
+      el("div", { class: "gauge", style: "--v:" + m.score, role: "img", "aria-label": m.block + ": " + m.score + " of 100" }, el("b", {}, String(m.score))),
+      el("div", {}, el("span", {}, m.block), el("small", {}, m.alerts ? m.alerts + (m.alerts === 1 ? " alert" : " alerts") : "nothing found")))));
+    /* on each part of the report, how many alerts it has and the worst of them */
+    const PART = { DNS: "g-dns", Subdomains: "g-dns", Mail: "g-dns", Site: "g-site", Certificates: "g-site", Exposure: "g-site", Route: "g-routes", Outages: "g-routes", Changes: "g-history", Routers: "g-reach", IPv6: "g-reach" };
+    for (const a of document.querySelectorAll("#parts a")) {
+      const id = a.getAttribute("href").slice(1), mine = (list || []).filter(x => id === "g-alerts" || PART[x.area] === id);
+      if (mine.length) a.append(el("b", { class: mine[0].level, title: mine.length + (mine.length === 1 ? " alert" : " alerts") }, String(mine.length)));
+    }
     if (!list.length) { $("alerts").append(el("p", { class: "note", style: "margin-top:0" }, "Nothing to look at: no check of this survey raised an alert.")); return; }
     $("alerts-title").textContent = "Alerts: " + ["critical", "warning", "notice"].filter(count).map(l => count(l) + " " + l).join(", ");
     $("alerts").append(el("ul", { class: "alerts" }, ...list.map(a => el("li", { class: a.level },
@@ -452,8 +466,8 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   (function () {
     if (!meet.name) { $("peering").append(el("p", { class: "note", style: "margin-top:0" }, meet.error || "The origin network has no PeeringDB record.")); return; }
     $("peering").append(el("dl", {}, el("dt", {}, "network"), el("dd", {}, meet.name + " (AS" + route.origin + ")"), el("dt", {}, "peering"), el("dd", {}, [meet.policy, meet.scope, meet.traffic].filter(Boolean).join(" · ")),
-      el("dt", {}, "exchanges"), el("dd", {}, (meet.exchanges || []).join(", ") || "none listed"),
-      el("dt", {}, "buildings"), el("dd", {}, (meet.facilities || []).map(f => f.name).join("; ") || "none listed")),
+      el("dt", {}, "exchanges"), el("dd", {}, ...some(meet.exchanges || [], ", ")),
+      el("dt", {}, "buildings"), el("dd", {}, ...some((meet.facilities || []).map(f => f.name), "; "))),
       el("p", { class: "note" }, "From PeeringDB, as the network declares it. The buildings are on the map."));
   })();
 
@@ -490,7 +504,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
 
 (async function () {
   const $ = id => document.getElementById(id);
-  const say = text => { $("status").textContent = text; $("status").hidden = !text; };
+  const say = (text, busy) => { $("status").textContent = text; $("status").hidden = !text; $("status").classList.toggle("busy", !!busy); };
   $("report").hidden = true;
   const get = async url => {
     const r = await fetch(url);
@@ -511,6 +525,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   });
   const query = new URLSearchParams(location.search), domain = clean(query.get("domain") || "");
   if (!domain) {
+    $("welcome").hidden = false;
     /* nothing asked: the domains surveyed here before */
     const runs = await get("api/runs").catch(() => []);
     if (runs && runs.length) {
@@ -518,7 +533,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
       for (const r of runs) {
         const li = document.createElement("li"), a = document.createElement("a");
         a.href = "?domain=" + encodeURIComponent(r.domain); a.textContent = r.domain;
-        li.append(a, " · route " + r.route + " · " + r.arrived + "/" + r.probes + " probes arrived · " + r.at.slice(0, 16).replace("T", " ") + " UTC");
+        li.append(a, "route " + r.route + " · " + r.arrived + "/" + r.probes + " probes arrived · " + r.at.slice(0, 16).replace("T", " ") + " UTC");
         list.append(li);
       }
       $("recent").append("Surveyed here before:", list);
@@ -527,7 +542,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   }
   $("field").value = domain;
   if (!isDomain(domain)) { say("\"" + domain + "\" is not a domain name. Type one like example.com."); return; }
-  say("Surveying " + domain + ": DNS, routes, routers, certificates, outages. A new survey takes one to two minutes; one made in the last quarter of an hour comes at once.");
+  say("Surveying " + domain + ": DNS, routes, routers, certificates, outages. A new survey takes one to two minutes; one made in the last quarter of an hour comes at once.", true);
   try {
     const world = await get("world.json"), cables = await get("api/cables"), landings = await get("api/landings");
     const data = await get("api/trace/" + encodeURIComponent(domain) + (query.get("fresh") ? "?fresh=true" : ""));
