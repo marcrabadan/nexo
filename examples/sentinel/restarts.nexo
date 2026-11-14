@@ -4,12 +4,14 @@
 ## reads from both; the report is written to restarts-report.json and,
 ## to share, restarts-report.md.
 use monitoring
+use notify
 
 policy:
     allow read "restarts.json"
     allow write "restarts-report.json"
     allow write "restarts-report.md"
     allow env "SENTINEL_AUTH"
+    allow env "SENTINEL_GRAFANA_AUTH"
     allow net "127.0.0.1"
     allow net "localhost"
     deny shell
@@ -23,6 +25,8 @@ type Settings:
     tenant: str
     auth: bool
     crash_loop_restarts: int
+    alertmanager: str
+    grafana: str
 
 ## A cause of a restart: `pattern` is looked for in the lines of the
 ## container. The first cause of the table that matches is the one given.
@@ -283,6 +287,38 @@ fn markdown(settings: Settings, restarts: list) -> str:
             text = "{text}```\n"
     return text
 
+## The restarts someone on call should hear of: the critical and the high.
+fn urgent(restarts: list) -> list:
+    return [r for r in restarts if r.severity == "critical" or r.severity == "high"]
+
+fn alerts_of(restarts: list) -> list:
+    var out = []
+    for r in urgent(restarts):
+        var severity = "warning"
+        if r.severity == "critical":
+            severity = "critical"
+        out.add(notify.alert("SentinelRestart", severity, {"namespace": r.namespace, "pod": r.pod, "container": r.container, "cause": r.name}, "{r.namespace}/{r.pod}/{r.container} restarted {r.restarts} times: {r.name}"))
+    return out
+
+## Tells Alertmanager and marks Grafana, when the settings name them. A
+## failure is said and the report stands.
+fn tell(settings: Settings, restarts: list):
+    if len(urgent(restarts)) == 0:
+        return
+    if settings.alertmanager != "":
+        try:
+            notify.alertmanager(settings.alertmanager, alerts_of(restarts), {})?
+            print("Alertmanager told: {len(urgent(restarts))} alerts.")
+        else e:
+            print("Alertmanager not told: {e.message}")
+    if settings.grafana != "":
+        try:
+            for r in urgent(restarts):
+                notify.annotation(settings.grafana, "{r.namespace}/{r.pod}/{r.container} restarted {r.restarts} times: {r.name}", ["nexo-sentinel", "restart", r.namespace, r.severity], {"Authorization": secret("SENTINEL_GRAFANA_AUTH")})?
+            print("Grafana marked: {len(urgent(restarts))} annotations.")
+        else e:
+            print("Grafana not marked: {e.message}")
+
 fn main():
     settings: Settings = json.parse(read("restarts.json")?, as: Settings)?
     if not monitoring.is_window(settings.window):
@@ -296,6 +332,7 @@ fn main():
     write("restarts-report.json", convert({"window": settings.window, "summary": summary(restarts), "restarts": restarts}, to: json))?
     write("restarts-report.md", markdown(settings, restarts))?
     print("The report is in restarts-report.json and restarts-report.md.")
+    tell(settings, restarts)
 
 try:
     main()

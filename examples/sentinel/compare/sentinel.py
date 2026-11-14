@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -40,6 +41,8 @@ ADDRESS = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
 FAILED_LOGIN = re.compile(r"(?i)login failed|authentication failure|invalid password")
 ACCEPTED_LOGIN = re.compile(r"(?i)login accepted|session opened")
 NOT_FOUND = re.compile(r" 404( |$)")
+STREAM_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}$")
+WINDOW = re.compile(r"^[0-9]{1,4}[smhd]$")
 STAMP = re.compile(r"[0-9][0-9A-Za-z:+/. -]{0,30}")
 COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*"))?''')
 NAMED_SECRET = re.compile(r'''(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+''')
@@ -136,55 +139,81 @@ def foreign_object(message):
     return found.group(4), found.group(2)
 
 
-def scan_file(file, settings, skip):
+def scan_file(file, settings, skip, given=None):
     found, failed, missing, number = [], {}, {}, 0
     objects, foreign, targets, first = {}, [], {}, ""
+    for line in (given if given is not None else file_lines(file)):
+        number += 1
+        if number == 1:
+            first = shown(line)
+        if number <= skip:
+            continue
+        found += check_line(file, number, line)
+        fields = fields_of(line)
+        if fields is None:
+            continue
+        source, message, time = fields
+        if FAILED_LOGIN.search(message):
+            failed[source] = failed.get(source, 0) + 1
+            if failed[source] == settings["max_failed_logins"]:
+                found.append(finding("SEN-201", time, file, number, source, f"{failed[source]} failed logins"))
+            user = LOGIN_USER.search(message)
+            if user:
+                origins = targets.setdefault(user.group(1), [])
+                if source not in origins:
+                    origins.append(source)
+                    if len(origins) == settings["max_login_sources"]:
+                        found.append(finding("SEN-206", time, file, number, "-",
+                                             f"user {shown(user.group(1))} failed to log in from {len(origins)} addresses"))
+        elif ACCEPTED_LOGIN.search(message) and failed.get(source, 0) >= settings["max_failed_logins"]:
+            found.append(finding("SEN-202", time, file, number, source,
+                                 f"accepted after {failed[source]} failed logins: {shown(message)}"))
+        if NOT_FOUND.search(message):
+            missing[source] = missing.get(source, 0) + 1
+            if missing[source] == settings["max_not_found"]:
+                found.append(finding("SEN-203", time, file, number, source, f"{missing[source]} requests answered 404"))
+        asked = object_of(message)
+        if asked:
+            ids = objects.setdefault(f"{source} {asked[0]}", [])
+            if asked[1] not in ids:
+                ids.append(asked[1])
+                if len(ids) == settings["max_object_ids"]:
+                    found.append(finding("SEN-204", time, file, number, source,
+                                         f"{len(ids)} different ids of {shown(asked[0])}"))
+        other = foreign_object(message)
+        if other and other not in foreign:
+            foreign.append(other)
+            found.append(finding("SEN-205", time, file, number, source,
+                                 f"user {other[0]} was answered an object of user {other[1]}: {shown(message)}"))
+    return number, found, first
+
+
+def file_lines(file):
     with open(file, encoding="utf-8") as lines:
         for line in lines:
-            line = line.rstrip("\r\n")
-            number += 1
-            if number == 1:
-                first = shown(line)
-            if number <= skip:
-                continue
-            found += check_line(file, number, line)
-            fields = fields_of(line)
-            if fields is None:
-                continue
-            source, message, time = fields
-            if FAILED_LOGIN.search(message):
-                failed[source] = failed.get(source, 0) + 1
-                if failed[source] == settings["max_failed_logins"]:
-                    found.append(finding("SEN-201", time, file, number, source, f"{failed[source]} failed logins"))
-                user = LOGIN_USER.search(message)
-                if user:
-                    origins = targets.setdefault(user.group(1), [])
-                    if source not in origins:
-                        origins.append(source)
-                        if len(origins) == settings["max_login_sources"]:
-                            found.append(finding("SEN-206", time, file, number, "-",
-                                                 f"user {shown(user.group(1))} failed to log in from {len(origins)} addresses"))
-            elif ACCEPTED_LOGIN.search(message) and failed.get(source, 0) >= settings["max_failed_logins"]:
-                found.append(finding("SEN-202", time, file, number, source,
-                                     f"accepted after {failed[source]} failed logins: {shown(message)}"))
-            if NOT_FOUND.search(message):
-                missing[source] = missing.get(source, 0) + 1
-                if missing[source] == settings["max_not_found"]:
-                    found.append(finding("SEN-203", time, file, number, source, f"{missing[source]} requests answered 404"))
-            asked = object_of(message)
-            if asked:
-                ids = objects.setdefault(f"{source} {asked[0]}", [])
-                if asked[1] not in ids:
-                    ids.append(asked[1])
-                    if len(ids) == settings["max_object_ids"]:
-                        found.append(finding("SEN-204", time, file, number, source,
-                                             f"{len(ids)} different ids of {shown(asked[0])}"))
-            other = foreign_object(message)
-            if other and other not in foreign:
-                foreign.append(other)
-                found.append(finding("SEN-205", time, file, number, source,
-                                     f"user {other[0]} was answered an object of user {other[1]}: {shown(message)}"))
-    return number, found, first
+            yield line.rstrip("\r\n")
+
+
+def loki_streams(settings):
+    out = []
+    if settings["loki"] == "":
+        return out
+    for entry in settings["loki_queries"]:
+        if STREAM_NAME.search(entry.get("name", "")) is None:
+            print(f'Left out a Loki query without a plain name: {shown(entry.get("name", ""))}')
+        else:
+            out.append((f'loki:{entry["name"]}', entry.get("query", "")))
+    return out
+
+
+def stream_lines(settings, query):
+    """The lines Loki has for a query in the window, the oldest first."""
+    asked = urllib.parse.urlencode({"query": query, "since": settings["loki_window"],
+                                    "limit": settings["loki_lines"], "direction": "backward"})
+    with urllib.request.urlopen(f'{settings["loki"]}/loki/api/v1/query_range?{asked}', timeout=15) as answer:
+        body = json.load(answer)
+    lines = [value[1] for stream in body["data"]["result"] for value in stream["values"]]
+    return lines[::-1]
 
 
 def first_line(file):
@@ -218,6 +247,16 @@ def scan(settings, state):
             lines += number
             new_lines += number - skip
             following[file] = {"lines": number, "first": first}
+            findings += found
+    for name, query in loki_streams(settings):
+        try:
+            number, found, first = scan_file(name, settings, 0, stream_lines(settings, query))
+        except Exception as e:
+            skipped.append((name, str(e)))
+        else:
+            read_files += 1
+            lines += number
+            new_lines += number
             findings += found
     return read_files, lines, new_lines, skipped, findings, following
 
@@ -310,6 +349,19 @@ def alert_text(rows):
         for row in urgent])
 
 
+def alerts_of(rows):
+    return [{"labels": {"alertname": "SentinelAttack", "severity": "critical" if row["priority"] == "P1" else "warning",
+                        "source": "nexo-sentinel", "instance": row["address"], "priority": row["priority"],
+                        "proposal": row["proposal"]},
+             "annotations": {"summary": f'{row["address"]}: {", ".join(row["tactics"])} ({", ".join(row["rules"])})'}}
+            for row in rows if row["priority"] in ("P1", "P2")]
+
+
+def post_json(url, value):
+    request = urllib.request.Request(url, json.dumps(value).encode(), {"Content-Type": "application/json"})
+    urllib.request.urlopen(request, timeout=5).close()
+
+
 def alert(webhook, text):
     request = urllib.request.Request(webhook, json.dumps({"text": text}).encode(), {"Content-Type": "application/json"})
     urllib.request.urlopen(request, timeout=5).close()
@@ -335,7 +387,7 @@ def yes(question):
 def print_report(files, lines, new_lines, skipped, findings, silenced, rows):
     print("NEXO SENTINEL - security report of the logs")
     print()
-    print(f"Scanned {files} files and {lines} lines ({new_lines} new); skipped {len(skipped)} files.")
+    print(f"Scanned {files} logs and {lines} lines ({new_lines} new); skipped {len(skipped)}.")
     print(f'Findings: {len(findings)} (high {count_of(findings, "high")}, medium {count_of(findings, "medium")}, '
           f'low {count_of(findings, "low")}); suppressed {len(silenced)}')
     print(f'Sources: {len(rows)}; to look at now (P1): {sum(1 for row in rows if row["priority"] == "P1")}')
@@ -373,6 +425,8 @@ def main():
     with open("sentinel.json", encoding="utf-8") as f:
         settings = json.load(f)
     check_suppress(settings["suppress"])
+    if settings["loki"] and WINDOW.search(settings["loki_window"]) is None:
+        raise ValueError("loki_window must be a number and s, m, h or d, such as 15m")
     state = {}
     if settings["incremental"]:
         try:
@@ -391,7 +445,7 @@ def main():
                              "reason": rule["reason"]})
     rows = sources(findings, settings["never_block"])
     print_report(files, lines, new_lines, skipped, findings, silenced, rows)
-    events = [("scan", f"{files} files, {lines} lines, {new_lines} new, {len(findings)} findings, {len(silenced)} suppressed")]
+    events = [("scan", f"{files} logs, {lines} lines, {new_lines} new, {len(findings)} findings, {len(silenced)} suppressed")]
     events += [("skipped", f"{file}: {reason}") for file, reason in skipped]
     events += [("suppressed", f'{e["rule"]} of {e["source"]} at {e["file"]}:{e["line"]}: {shown(e["reason"])}')
                for e in silenced]
@@ -411,6 +465,14 @@ def main():
         except Exception as e:
             print(f"Alert not sent: {e}")
             events.append(("alert", "failed"))
+    if settings["alertmanager"] and text:
+        try:
+            post_json(f'{settings["alertmanager"]}/api/v2/alerts', alerts_of(rows))
+            print("Alertmanager told.")
+            events.append(("alertmanager", "sent"))
+        except Exception as e:
+            print(f"Alertmanager not told: {e}")
+            events.append(("alertmanager", "failed"))
     addresses = to_block(rows)
     if findings and yes("Ask the local model for a summary?"):
         try:

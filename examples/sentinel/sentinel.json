@@ -23,5 +23,15 @@
   ],
   "max_login_sources": 4,
   "incremental": false,
-  "alert_webhook": ""
+  "alert_webhook": "",
+  "alertmanager": "",
+  "loki": "",
+  "loki_window": "15m",
+  "loki_lines": 1000,
+  "loki_queries": [
+    {
+      "name": "nginx",
+      "query": "{job=\"nginx\"}"
+    }
+  ]
 }

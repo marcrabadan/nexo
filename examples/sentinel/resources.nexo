@@ -4,6 +4,7 @@
 ## each of those logged meanwhile. It only reads from both; the report is
 ## written to resources-report.json.
 use monitoring
+use notify
 
 policy:
     allow read "resources.json"
@@ -24,6 +25,7 @@ type Settings:
     near_limit_percent: int
     throttled_percent: int
     lines: int
+    alertmanager: str
 
 type Rule:
     id: str
@@ -197,6 +199,14 @@ fn print_report(settings: Settings, uses: list, findings: list, logs: list):
             print("  {monitoring.pad(rule.id, 7)}{monitoring.pad(rule.name, 17)}{monitoring.pad("x{len(own)}", 3)}{rule.action}")
     print("")
 
+## The high findings as alerts for Alertmanager.
+fn alerts_of(findings: list) -> list:
+    var out = []
+    for f in findings:
+        if f.severity == "high":
+            out.add(notify.alert("SentinelResource", "warning", {"namespace": f.namespace, "pod": f.pod, "container": f.container, "rule": f.name}, "{f.namespace}/{f.pod}/{f.container}: {f.name}, {f.detail}"))
+    return out
+
 fn main():
     settings: Settings = json.parse(read("resources.json")?, as: Settings)?
     if not monitoring.is_window(settings.window):
@@ -223,13 +233,20 @@ fn main():
     print_report(settings, uses, findings, logs)
     write("resources-report.json", convert({"window": settings.window, "containers": len(uses), "findings": findings, "logs": logs, "use": uses}, to: json))?
     print("The report is in resources-report.json.")
+    alerts = alerts_of(findings)
+    if settings.alertmanager != "" and len(alerts) > 0:
+        try:
+            notify.alertmanager(settings.alertmanager, alerts, {})?
+            print("Alertmanager told: {len(alerts)} alerts.")
+        else e:
+            print("Alertmanager not told: {e.message}")
 
 try:
     main()
 else e:
     print("Sentinel stopped: {e.message}")
 
-SETTINGS = Settings("", "", "1h", "", "", false, 50, 90, 25, 50)
+SETTINGS = Settings("", "", "1h", "", "", false, 50, 90, 25, 50, "")
 
 test "a container that grew is reported once it is more than noise":
     grew = check(Use("shop", "api-1", "api", 400, 200, 0, 0, 300, 150, 0), SETTINGS)

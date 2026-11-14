@@ -39,12 +39,21 @@ LOGS = {
 class Monitoring(BaseHTTPRequestHandler):
     """Prometheus (/api/v1/query) and Loki (/loki/api/v1/query_range)."""
     seen: list = []
+    posted: list = []
     auth: list = []
     loki_down = False
     without: str = ""
 
     def log_message(self, *a):
         pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        Monitoring.posted.append((self.path, body, self.headers.get("Authorization")))
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
 
     def do_GET(self):
         url = urlparse(self.path)
@@ -102,6 +111,7 @@ def server():
 @pytest.fixture
 def work(tmp_path, server):
     Monitoring.seen.clear()
+    Monitoring.posted.clear()
     Monitoring.auth.clear()
     Monitoring.loki_down = False
     Monitoring.without = ""
@@ -217,3 +227,31 @@ def test_its_tests_pass_and_it_is_formatted(phase, work):
     assert run(phase[1], ["fmt", "restarts.nexo"], work).returncode == 0
     assert (work / "restarts.nexo").read_bytes() == before
     assert run(phase[1], ["lint", "restarts.nexo"], work).stdout.decode() == "No warnings in restarts.nexo.\n"
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_alertmanager_and_grafana_hear_of_the_serious_restarts(phase, work, server):
+    configure(work, alertmanager=server, grafana=server)
+    code, out = restarts(phase[1], work, env={"SENTINEL_GRAFANA_AUTH": "Bearer gr4fana"})
+    assert code == 0 and out.endswith("Alertmanager told: 4 alerts.\nGrafana marked: 4 annotations.\n")
+    (path, alerts, auth), *marks = Monitoring.posted
+    assert path == "/api/v2/alerts" and auth is None
+    assert alerts[0] == {
+        "labels": {"alertname": "SentinelRestart", "severity": "critical", "source": "nexo-sentinel",
+                   "namespace": "data", "pod": "importer-0", "container": "importer", "cause": "configuration"},
+        "annotations": {"summary": "data/importer-0/importer restarted 4 times: configuration"}}
+    assert [a["labels"]["severity"] for a in alerts] == ["critical", "warning", "warning", "warning"]
+    assert [(path, auth) for path, _, auth in marks] == [("/api/annotations", "Bearer gr4fana")] * 4
+    assert marks[0][1] == {"text": "data/importer-0/importer restarted 4 times: configuration",
+                           "tags": ["nexo-sentinel", "restart", "data", "critical"]}
+    # no line of a log leaves, and the token is not shown
+    assert "panic" not in json.dumps(Monitoring.posted) and "gr4fana" not in out
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_failed_notification_leaves_the_report(phase, work, server):
+    configure(work, alertmanager="http://127.0.0.1:1", grafana=server)
+    code, out = restarts(phase[1], work)
+    assert code == 0 and "Alertmanager not told: " in out and "Grafana not marked: " in out
+    assert "SENTINEL_GRAFANA_AUTH" in out and (work / "restarts-report.json").exists()
+    assert Monitoring.posted == []

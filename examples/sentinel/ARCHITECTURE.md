@@ -18,6 +18,11 @@ flowchart LR
     sentinel -. advice, optional .-> model[(Local model)]
     sentinel -. alert, if configured .-> hook[(Webhook)]
     sentinel <--> state[state.json]
+    loki -. as a source, if configured .-> sentinel
+    sentinel -. alerts .-> am[(Alertmanager)]
+    restarts -. alerts .-> am
+    resources -. alerts .-> am
+    restarts -. annotations .-> grafana[(Grafana)]
     restarts[restarts.nexo<br>why containers restart] --> rr[restarts-report.json / .md]
     resources[resources.nexo<br>CPU and memory] --> res[resources-report.json]
     person((Engineer on call)) --> sentinel
@@ -34,6 +39,10 @@ flowchart LR
 ```mermaid
 flowchart TD
     sentinel.nexo --> safe.nexo
+    sentinel.nexo --> monitoring.nexo
+    sentinel.nexo --> notify.nexo
+    restarts.nexo --> notify.nexo
+    resources.nexo --> notify.nexo
     restarts.nexo --> monitoring.nexo
     resources.nexo --> monitoring.nexo
     monitoring.nexo --> safe.nexo
@@ -46,6 +55,10 @@ flowchart TD
 - `monitoring.nexo`: the queries to Prometheus and Loki, the encoding of
   a query, the check of a Kubernetes name and of a window, and the
   request headers (tenant, `Authorization` from a secret).
+- `notify.nexo`: the two places that are told, Alertmanager and Grafana.
+  It builds an alert from labels and a summary; a program decides what
+  is worth one. Paging tools are reached through Alertmanager, so there
+  is one integration to keep instead of one for each tool.
 - Each program keeps what is its own: its settings type, its table of
   rules or causes, its decisions and its report.
 
@@ -163,7 +176,13 @@ a user that can read the logs and nothing more.
   other attacks spread over many addresses are not.
 - `restarts.nexo` and `resources.nexo` have run against stand-ins that
   answer the HTTP APIs of Prometheus and Loki, not against real ones.
-- An alert goes to one webhook and only from `sentinel.nexo`; the two
-  monitoring programs send none, and nothing schedules a run.
+- Alerts are sent again by every run that still sees the cause (which is
+  how Alertmanager keeps one firing), but nothing schedules a run, and
+  none is ever sent as resolved: it ends when its time in Alertmanager
+  runs out.
+- The lines `sentinel.nexo` reads from Loki are a window, not part of
+  `incremental`, and at most `loki_lines` for each query.
+- Alertmanager, Grafana and Loki have been reached only as stand-ins that
+  answer their HTTP APIs in the tests.
 - `audit.json` is a plain file; it is not signed or protected from
   whoever can write to the folder.

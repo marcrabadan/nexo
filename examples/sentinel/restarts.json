@@ -6,5 +6,7 @@
   "lines": 200,
   "tenant": "",
   "auth": false,
-  "crash_loop_restarts": 5
+  "crash_loop_restarts": 5,
+  "alertmanager": "",
+  "grafana": ""
 }

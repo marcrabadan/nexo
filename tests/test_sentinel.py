@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -26,9 +27,25 @@ ADVICE = "Block 192.0.2.10 at once. Block them? yes"
 class Outside(BaseHTTPRequestHandler):
     """The firewall (/block) and the local model (/api/chat)."""
     seen: list = []
+    asked: list = []
 
     def log_message(self, *a):
         pass
+
+    def do_GET(self):
+        """Loki: the lines of logs/nginx.log, the newest first."""
+        url = urlparse(self.path)
+        query = {k: v[0] for k, v in parse_qs(url.query).items()}
+        Outside.asked.append((url.path, query))
+        lines = (SENTINEL / "logs" / "nginx.log").read_text(encoding="utf-8").splitlines()[::-1]
+        values = [[str(1762768800000000000 - i), line] for i, line in enumerate(lines)]
+        data = json.dumps({"status": "success", "data": {"resultType": "streams", "result": [
+            {"stream": {"job": "nginx"}, "values": values}]}}).encode()
+        self.send_response(200 if url.path == "/loki/api/v1/query_range" else 404)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -53,6 +70,7 @@ def server():
 def work(tmp_path, server):
     """A copy of the example whose firewall and model are the test server."""
     Outside.seen.clear()
+    Outside.asked.clear()
     folder = tmp_path / "sentinel"
     shutil.copytree(SENTINEL, folder)
     settings = json.loads((folder / "sentinel.json").read_text(encoding="utf-8"))
@@ -120,7 +138,7 @@ def test_findings_need_no_model(phase, work):
     assert [(e["rule"], e["source"]) for e in report["suppressed"]] == [("SEN-109", "192.0.2.51")]
     assert not any(f["rule"] == "SEN-109" for f in report["findings"])
     assert any(event == "suppressed" and "SEC-142" in detail for event, detail in audit(work))
-    assert audit(work)[0] == ("scan", "5 files, 96 lines, 96 new, 31 findings, 1 suppressed")
+    assert audit(work)[0] == ("scan", "5 logs, 96 lines, 96 new, 31 findings, 1 suppressed")
     assert audit(work)[-1] == ("approval", "no")
 
 
@@ -170,7 +188,7 @@ def test_a_firewall_that_fails_is_recorded(phase, work):
 @pytest.mark.parametrize("answers", ["no\nno\n", "no\nyes\n", "yes\nyes\n"])
 def test_the_python_comparison_is_the_same(work, server, answers):
     settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
-    settings["alert_webhook"] = f"{server}/alert"
+    settings.update(alert_webhook=f"{server}/alert", alertmanager=server, loki=server)
     (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     nexo = sentinel(commands()[0][1], work, answers)
     # the same calls outside; each asks the model in its own words
@@ -362,3 +380,48 @@ def test_one_account_tried_from_many_addresses(phase, work):
         ("SEN-206", 4, "-", "user bob failed to log in from 3 addresses")]
     # no single address did enough to be blocked
     assert report["sources"] == [] and "Nothing to block." in out
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_logs_are_read_from_loki_too(phase, work, server):
+    """The lines of nginx.log, given by Loki, have the findings the file has."""
+    settings_of(work, logs=["logs/benign.log"], loki=server, loki_window="30m", loki_lines=500, suppress=[],
+                loki_queries=[{"name": "nginx", "query": '{job="nginx"}'}, {"name": "Bad Name!", "query": "{}"}])
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and out.startswith("Left out a Loki query without a plain name: Bad Name!\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    labels = json.loads((work / "findings.json").read_text(encoding="utf-8"))
+    # with the one sentinel.json suppresses in the file, which nothing suppresses here
+    assert [[f["file"], f["line"], f["rule"]] for f in report["findings"]] == sorted(
+        [["loki:nginx", line, rule] for file, line, rule in labels if file == "logs/nginx.log"]
+        + [["loki:nginx", 7, "SEN-109"]], key=lambda f: f[1])
+    assert (report["files"], report["lines"]) == (2, 28)
+    (path, query), = Outside.asked
+    assert path == "/loki/api/v1/query_range" and query == {
+        "query": '{job="nginx"}', "since": "30m", "limit": "500", "direction": "backward"}
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_loki_that_fails_is_skipped_and_a_wrong_window_stops(phase, work):
+    settings_of(work, loki="http://127.0.0.1:1")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and "  loki:nginx " in out and "skipped 4." in out
+    settings_of(work, loki_window="1h&limit=9")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert out.startswith("Sentinel stopped: loki_window")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_alertmanager_gets_an_alert_for_each_urgent_address(phase, work, server):
+    settings_of(work, alertmanager=server)
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and "Alertmanager told.\n" in out
+    (path, alerts), = Outside.seen
+    assert path == "/api/v2/alerts" and len(alerts) == 5
+    assert alerts[0] == {
+        "labels": {"alertname": "SentinelAttack", "severity": "critical", "source": "nexo-sentinel",
+                   "instance": "198.51.100.140", "priority": "P1", "proposal": "block"},
+        "annotations": {"summary": "198.51.100.140: Initial Access, Reconnaissance (SEN-102, SEN-105)"}}
+    assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 3 + ["warning"] * 2
+    assert "GET" not in json.dumps(alerts) and ("alertmanager", "sent") in audit(work)
+    assert blocks() == []

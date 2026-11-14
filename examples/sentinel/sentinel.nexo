@@ -6,6 +6,8 @@
 ## count and decision is added to audit.json.
 use nexo.ai
 use safe
+use monitoring
+use notify
 
 policy:
     allow read "sentinel.json"
@@ -34,6 +36,11 @@ type Settings:
     max_login_sources: int
     incremental: bool
     alert_webhook: str
+    alertmanager: str
+    loki: str
+    loki_window: str
+    loki_lines: int
+    loki_queries: list
 
 ## A detection: `pattern` is looked for in the message of a log entry;
 ## the rules without one are counted or checked by scan_file.
@@ -102,6 +109,7 @@ failed_login = regex("(?i)login failed|authentication failure|invalid password")
 accepted_login = regex("(?i)login accepted|session opened")
 not_found = regex(" 404( |$)")
 combined = regex("^(\\S+) \\S+ (\\S+) \\[([^\\]]+)\\] \"([A-Z]+) (\\S+)[^\"]*\" ([0-9]{{3}) \\S+( \"[^\"]*\" (\"[^\"]*\"))?")
+stream_name = regex("^[a-z0-9][a-z0-9_-]{{0,30}$")
 stamp = regex("[0-9][0-9A-Za-z:+/. -]{{0,30}")
 ID = "[0-9]+|[0-9a-fA-F]{{8}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{12}"
 login_user = regex(" user=([^ ]+)")
@@ -199,10 +207,10 @@ fn foreign_object(message: str) -> list?:
         return none
     return [found[3], found[1]]
 
-## The number of lines of a file, the findings of the lines after `skip`
-## and its first line; fails when the file cannot be read, and then
+## The number of lines of a file (or the lines `given`, read from
+## elsewhere), the findings of the lines after `skip` and its first line; fails when the file cannot be read, and then
 ## nothing of it is reported.
-fn scan_file(file: str, settings: Settings, skip: int) -> list!:
+fn scan_file(file: str, settings: Settings, skip: int, given: list?) -> list!:
     var found = []
     var failed = {}
     var missing = {}
@@ -211,7 +219,10 @@ fn scan_file(file: str, settings: Settings, skip: int) -> list!:
     var targets = {}
     var first = ""
     var number = 0
-    for line in read_lines(file)?:
+    var lines = given
+    if lines == none:
+        lines = read_lines(file)?
+    for line in lines:
         number += 1
         if number == 1:
             first = shown(line)
@@ -256,6 +267,26 @@ fn scan_file(file: str, settings: Settings, skip: int) -> list!:
                         found.add(finding("SEN-205", fields[2], file, number, source, "user {other[0]} was answered an object of user {other[1]}: {shown(fields[1])}"))
     return [number, found, first]
 
+## The streams of Loki to read: [name as a report shows it, query]. A
+## name that is not plain is left out and said.
+fn loki_streams(settings: Settings) -> list:
+    var out = []
+    if settings.loki == "":
+        return out
+    for entry in settings.loki_queries:
+        if stream_name.find(entry["name"] ?? "") == none:
+            print("Left out a Loki query without a plain name: {shown(entry["name"] ?? "")}")
+        else:
+            out.add(["loki:{entry["name"]}", entry["query"] ?? ""])
+    return out
+
+## The lines Loki has for a query in the window, the oldest first.
+fn stream_lines(settings: Settings, query: str) -> list!:
+    var lines = []
+    for line in monitoring.log_lines(settings.loki, query, settings.loki_window, settings.loki_lines, {})?:
+        lines = [line] + lines
+    return lines
+
 ## The first line of a file as state.json keeps it, to know the file
 ## again in the next run.
 fn first_line(file: str) -> str!:
@@ -284,10 +315,10 @@ fn scan(settings: Settings, state: map) -> Report:
                 if settings.incremental and before != none:
                     if first_line(file) == before["first"]:
                         skip = before["lines"]
-                var result = scan_file(file, settings, skip)
+                var result = scan_file(file, settings, skip, none)
                 if result[0] < skip:
                     skip = 0
-                    result = scan_file(file, settings, 0)
+                    result = scan_file(file, settings, 0, none)
                 read_files += 1
                 lines += result[0]
                 new_lines += result[0] - skip
@@ -296,6 +327,16 @@ fn scan(settings: Settings, state: map) -> Report:
                     findings.add(f)
             else e:
                 skipped.add([file, e.message])
+    for stream in loki_streams(settings):
+        try:
+            result = scan_file(stream[0], settings, 0, stream_lines(settings, stream[1]))
+            read_files += 1
+            lines += result[0]
+            new_lines += result[0]
+            for f in result[1]:
+                findings.add(f)
+        else e:
+            skipped.add([stream[0], e.message])
     return Report(read_files, lines, new_lines, skipped, findings, next)
 
 fn count_of(findings: list, severity: str) -> int:
@@ -410,6 +451,18 @@ fn alert_text(rows: list) -> str:
         text = "{text}\n{row["priority"]} {row["address"]} {row["proposal"]} ({joined(row["tactics"])}) {joined(row["rules"])}"
     return text
 
+## The same addresses as alerts for Alertmanager: P1 is critical, P2 a
+## warning.
+fn alerts_of(rows: list) -> list:
+    var out = []
+    for row in rows:
+        if row["priority"] == "P1" or row["priority"] == "P2":
+            var severity = "warning"
+            if row["priority"] == "P1":
+                severity = "critical"
+            out.add(notify.alert("SentinelAttack", severity, {"instance": row["address"], "priority": row["priority"], "proposal": row["proposal"]}, "{row["address"]}: {joined(row["tactics"])} ({joined(row["rules"])})"))
+    return out
+
 fn alert(webhook: str, text: str):
     http.post(webhook, {"text": text}, timeout: 5s)?
 
@@ -431,7 +484,7 @@ fn yes(question: str) -> bool:
 fn print_report(report: Report, findings: list, silenced: list, rows: list):
     print("NEXO SENTINEL - security report of the logs")
     print("")
-    print("Scanned {report.files} files and {report.lines} lines ({report.new_lines} new); skipped {len(report.skipped)} files.")
+    print("Scanned {report.files} logs and {report.lines} lines ({report.new_lines} new); skipped {len(report.skipped)}.")
     print("Findings: {len(findings)} (high {count_of(findings, "high")}, medium {count_of(findings, "medium")}, low {count_of(findings, "low")}); suppressed {len(silenced)}")
     urgent = [row for row in rows if row["priority"] == "P1"] |> count
     print("Sources: {len(rows)}; to look at now (P1): {urgent}")
@@ -472,6 +525,8 @@ fn main():
     settings: Settings = json.parse(read("sentinel.json")?, as: Settings)?
     check_suppress(settings.suppress)?
     var state = {}
+    if settings.loki != "" and not monitoring.is_window(settings.loki_window):
+        fail("loki_window must be a number and s, m, h or d, such as 15m")
     if settings.incremental:
         try:
             state = json.parse(read("state.json")?)?
@@ -488,7 +543,7 @@ fn main():
             silenced.add({"rule": f.rule, "file": f.file, "line": f.line, "source": f.source, "reason": rule["reason"]})
     rows = sources(findings, settings.never_block)
     print_report(report, findings, silenced, rows)
-    var events = [["scan", "{report.files} files, {report.lines} lines, {report.new_lines} new, {len(findings)} findings, {len(silenced)} suppressed"]]
+    var events = [["scan", "{report.files} logs, {report.lines} lines, {report.new_lines} new, {len(findings)} findings, {len(silenced)} suppressed"]]
     for reason in report.skipped:
         events.add(["skipped", "{reason[0]}: {reason[1]}"])
     for entry in silenced:
@@ -507,6 +562,14 @@ fn main():
         else e:
             print("Alert not sent: {e.message}")
             events.add(["alert", "failed"])
+    if settings.alertmanager != "" and text != "":
+        try:
+            notify.alertmanager(settings.alertmanager, alerts_of(rows), {})?
+            print("Alertmanager told.")
+            events.add(["alertmanager", "sent"])
+        else e:
+            print("Alertmanager not told: {e.message}")
+            events.add(["alertmanager", "failed"])
     addresses = to_block(rows)
     if len(findings) > 0 and yes("Ask the local model for a summary?"):
         try:

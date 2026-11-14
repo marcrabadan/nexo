@@ -99,6 +99,8 @@ read; a missing or wrong field stops the program.
 | `max_login_sources` | addresses from which the logins of one user fail before SEN-206 |
 | `incremental` | `true` to report only the lines added since the run before |
 | `alert_webhook` | an address to send the urgent addresses to, or `""` for none |
+| `alertmanager` | the address of Prometheus Alertmanager, or `""` for none |
+| `loki`, `loki_window`, `loki_lines`, `loki_queries` | logs to read from Loki besides the files: its address, how far back, the most lines for each query, and the queries, each `{"name", "query"}` |
 | `suppress` | findings to silence: each `{"rule", "source", "reason"}`, where `"*"` is any rule or any address (not both) |
 
 A suppressed finding is not scored and proposes nothing; it is listed
@@ -122,6 +124,26 @@ of a log is in it, so nothing an attacker wrote leaves the machine. An
 alert is not an approval: nothing is blocked by it. Add the host of the
 webhook to the `policy` block. A failed alert is said and recorded, and
 the run goes on.
+
+### Integrations
+
+| With | What happens | Setting |
+|---|---|---|
+| Loki, as a source | `sentinel.nexo` reads the lines of each query of `loki_queries` in the last `loki_window`, and every rule applies to them; a finding is shown at `loki:name:line` | `loki` in `sentinel.json` |
+| Alertmanager | one alert for each address of priority P1 (`critical`) or P2 (`warning`); for each restart that is critical or high; for each container near a limit. Alertmanager routes them to PagerDuty, Opsgenie, Slack, mail or whatever it is set up for | `alertmanager` in the three settings files |
+| A webhook | one message with the urgent addresses, in the form Slack takes | `alert_webhook` in `sentinel.json` |
+| Grafana | an annotation for each restart that is critical or high, with the tags `nexo-sentinel`, `restart`, the namespace and the severity, to see it on the dashboards | `grafana` in `restarts.json`, and its token in `SENTINEL_GRAFANA_AUTH` (`"Bearer <token>"`) |
+| Prometheus and Loki | the two monitoring programs below | `restarts.json`, `resources.json` |
+
+Alerts are named `SentinelAttack`, `SentinelRestart` and `SentinelResource`
+and carry the label `source="nexo-sentinel"`, to route them. None carries
+a line of a log. Each integration is off until its setting names an
+address, and the host of each has to be added to the `policy` block of
+the program. A failure to tell is said (and, in `sentinel.nexo`,
+recorded) and the report stands. The lines read from Loki are not part of
+`incremental`: each run reads the whole window.
+
+`notify.nexo` is the module with Alertmanager and Grafana.
 
 ## What it may touch
 

@@ -47,10 +47,18 @@ def series(query):
 
 class Monitoring(BaseHTTPRequestHandler):
     seen: list = []
+    posted: list = []
     without: str = ""
 
     def log_message(self, *a):
         pass
+
+    def do_POST(self):
+        Monitoring.posted.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"{}")
 
     def do_GET(self):
         url = urlparse(self.path)
@@ -90,6 +98,7 @@ def server():
 @pytest.fixture
 def work(tmp_path, server):
     Monitoring.seen.clear()
+    Monitoring.posted.clear()
     Monitoring.without = ""
     folder = tmp_path / "sentinel"
     shutil.copytree(SENTINEL, folder)
@@ -168,8 +177,21 @@ def test_wrong_settings_send_nothing(phase, work, change):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "resources.nexo"], work)
     assert proc.returncode == 0 and "3 tests: 3 passed, 0 failed" in proc.stdout.decode("utf-8")
-    for name in ("resources.nexo", "monitoring.nexo"):
+    for name in ("resources.nexo", "monitoring.nexo", "notify.nexo"):
         before = (work / name).read_bytes()
         assert run(phase[1], ["fmt", name], work).returncode == 0
         assert (work / name).read_bytes() == before
         assert run(phase[1], ["lint", name], work).stdout.decode() == f"No warnings in {name}.\n"
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_alertmanager_hears_of_the_containers_near_a_limit(phase, work, server):
+    configure(work, alertmanager=server)
+    code, out = resources(phase[1], work)
+    assert code == 0 and out.endswith("Alertmanager told: 2 alerts.\n")
+    (path, alerts), = Monitoring.posted
+    assert path == "/api/v2/alerts"
+    assert [(a["labels"]["rule"], a["labels"]["pod"], a["labels"]["severity"]) for a in alerts] == [
+        ("memory_near_limit", "api-7d9f8-x2k4p", "warning"), ("cpu_near_limit", "api-7d9f8-x2k4p", "warning")]
+    assert alerts[0]["annotations"]["summary"] == "shop/api-7d9f8-x2k4p/api: memory_near_limit, 480Mi of 512Mi (93%)"
+    assert alerts[0]["labels"]["alertname"] == "SentinelResource"

@@ -1,0 +1,20 @@
+## Where the Sentinel programs tell others: Prometheus Alertmanager, which
+## routes to whoever is on call, and Grafana, which marks a moment on its
+## dashboards. Nothing here changes a system, and no line of a log is sent.
+
+## An alert as Alertmanager takes it. `labels` say what it is about.
+pub fn alert(name: str, severity: str, labels: map, summary: str) -> map:
+    var all = {"alertname": name, "severity": severity, "source": "nexo-sentinel"}
+    for key in labels.keys():
+        all[key] = labels[key]
+    return {"labels": all, "annotations": {"summary": summary}}
+
+## Sends the alerts to Alertmanager (its API v2).
+pub fn alertmanager(url: str, alerts: list, headers: map) -> bool!:
+    http.post("{url}/api/v2/alerts", alerts, headers: headers, timeout: 5s)?
+    return true
+
+## Writes an annotation in Grafana, at the time it is sent.
+pub fn annotation(url: str, text: str, tags: list, headers: map) -> bool!:
+    http.post("{url}/api/annotations", {"text": text, "tags": tags}, headers: headers, timeout: 5s)?
+    return true
