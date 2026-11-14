@@ -15,7 +15,7 @@ policy:
     allow read "site", "data", "observatory.db"
     allow write "observatory.db"
     allow env "RIPE_ATLAS_KEY"
-    allow python "subprocess", "platform", "shutil", "socket"
+    allow python "subprocess", "platform", "shutil", "socket", "math"
 
 use survey
 

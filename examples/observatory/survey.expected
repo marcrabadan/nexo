@@ -14,14 +14,13 @@
 ✓ the hops traceroute and tracert print
 critical  Path: Hop 5 of the route from this machine, 1.10.16.9, is in 1.10.16.0/20 (SBL256894), which Spamhaus lists as hijacked or run by criminals.
 warning  Path: The first router is 192.168.1.254; on 2026-11-13 it was 192.168.1.1.
-warning  Path: The route from this machine now crosses AS64666, which it did not on 2026-11-13.
+critical  Path: The route from this machine now crosses AS64666, which it did not on 2026-11-13 and which is on none of the BGP paths seen to the site: a detour.
 notice  Path: The route from this machine now passes through RU, which it did not on 2026-11-13.
 warning  Path: The router at hop 4, 80.58.106.1 (AS3352), has its management open to the internet: Telnet.
 critical  Path: The router at hop 6, 62.115.1.1 (AS1299), runs software with a vulnerability being used in attacks: CVE-2023-20198.
 notice  Path: The router at hop 7, 62.115.2.2 (AS1299), shows 1 known vulnerabilities by its version numbers.
 warning  Path: Your own address, 203.0.113.9, shows to the whole internet: TR-069 remote management, Remote Desktop.
 notice  Path: 1 routers on the way answer from addresses no network announces: 193.149.1.26.
-notice  Path: The route from this machine crosses AS64666, which none of the BGP paths seen to the site includes.
 warning  Path: A TCP connection to port 443 is answered 4 hops away, and the site is 9 hops away: something on the way answers in its name.
 critical  Path: This system's resolver answers example.org with 10.0.0.5, an address that is not on the internet; the public resolvers give real ones.
 ✓ the security of the path

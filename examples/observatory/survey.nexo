@@ -37,6 +37,7 @@ use python subprocess as subprocess
 use python platform as platform
 use python shutil as shutil
 use python socket as socket
+use python math as math
 
 db = connect("observatory.db")
 
@@ -567,7 +568,7 @@ fn route_light(ip: str) -> map:
 ## What the route collectors see: each collector's usual path, the
 ## networks the paths go through and the links between them.
 fn paths_of(ip: str, origin: str) -> map:
-    var out = {"paths": 0, "collectors": [], "transits": [], "links": []}
+    var out = {"paths": 0, "collectors": [], "transits": [], "links": [], "seen": []}
     try:
         var paths = []
         for collector in ripe("looking-glass", ip)["rrcs"]:
@@ -577,6 +578,10 @@ fn paths_of(ip: str, origin: str) -> map:
             spot = CITIES[collector["location"]] ?? [none, none]
             out["collectors"].add({"name": collector["rrc"], "city": collector["location"], "lat": spot[0], "lon": spot[1], "peers": len(mine), "path": usual(mine)})
         out["paths"] = len(paths)
+        for path in paths:
+            for asn in path.split(" "):
+                if not (asn in out["seen"]):
+                    out["seen"].add(asn)
         out["transits"] = transits(paths, origin) |> take 8
         out["links"] = links(paths, 28)
     else e:
@@ -614,6 +619,7 @@ fn route_of(ip: str) -> map:
     route["paths"] = seen["paths"]
     route["collectors"] = seen["collectors"]
     route["links"] = seen["links"]
+    route["seen"] = seen["seen"]
     route["updates"] = []
     route["history"] = []
     var upstreams = []
@@ -1201,19 +1207,28 @@ fn system_addresses(domain: str) -> list:
     else e:
         return []
 
-## In how many hops a TCP connection to port 443 is answered, on Linux
-## (traceroute -T, which needs root); 0 when it cannot be told.
-fn tcp_hops(system: str, address: str) -> int:
+## How many routers away a TCP connection to port 443 is answered:
+## data/tcp_hops.py connects with packets that may cross fewer and fewer
+## routers, which needs no special rights on any system. 0 when it
+## cannot be told (no Python to run it with, or nothing answers).
+fn tcp_hops(address: str, most: int) -> int:
     try:
-        if system != "Linux" or shutil.which("traceroute") == none:
+        var python = shutil.which("python3")
+        if python == none:
+            python = shutil.which("python")
+        if python == none:
             return 0
-        done = subprocess.run(["traceroute", "-T", "-p", "443", "-n", "-q", "1", "-w", "2", "-m", "30", address], capture_output: true, text: true, timeout: 90)
-        hops = trimmed(local_hops(done.stdout))
-        if depth_of(hops, address) < 1000:
-            return 0
-        return hops[len(hops) - 1]["n"]
+        done = subprocess.run([str(python), "data/tcp_hops.py", address, str(most)], capture_output: true, text: true, timeout: 60)
+        return number(done.stdout.trim())
     else e:
         return 0
+
+## The kilometres between two places, over the surface of the earth.
+fn distance(lat: float, lon: float, other_lat: float, other_lon: float) -> float:
+    a = math.radians(lat)
+    b = math.radians(other_lat)
+    half = math.sin((b - a) / 2) * math.sin((b - a) / 2) + math.cos(a) * math.cos(b) * math.sin(math.radians(other_lon - lon) / 2) * math.sin(math.radians(other_lon - lon) / 2)
+    return 12742.0 * math.asin(math.sqrt(half))
 
 ## The networks and countries a trace crosses, in order, each once.
 fn crossed(hops: list) -> map:
@@ -1232,8 +1247,10 @@ fn crossed(hops: list) -> map:
 ## from addresses nobody announces; what Shodan has seen open at each
 ## router and at this machine's own address; whether TCP is answered
 ## nearer than the site is; and what this system's resolver says.
-fn path_security(domain: str, probe: map?, observer: map, route: map, addresses: list, public: list) -> map:
-    var out = {"traced": probe != none, "gateway": "", "networks": [], "countries": [], "listed": [], "unannounced": [], "outside": [], "routers": [], "own": none, "exploited": [], "hops": 0, "reached": false, "tcp": 0, "resolver": [], "resolver_asn": "", "before": none, "notes": []}
+## places: where the register puts the site's addresses, to tell an
+## answer that comes too soon for the distance.
+fn path_security(domain: str, probe: map?, observer: map, route: map, addresses: list, public: list, places: list) -> map:
+    var out = {"traced": probe != none, "gateway": "", "networks": [], "countries": [], "listed": [], "unannounced": [], "outside": [], "routers": [], "own": none, "exploited": [], "hops": 0, "reached": false, "tcp": 0, "km": none, "ms": none, "own_asn": str(observer["asn"] ?? ""), "resolver": [], "resolver_asn": "", "before": none, "notes": []}
     out["resolver"] = system_addresses(domain)
     var overlap = false
     for ip in out["resolver"]:
@@ -1258,7 +1275,7 @@ fn path_security(domain: str, probe: map?, observer: map, route: map, addresses:
     bad = drop_networks(listed("asndrop", "{DROP}/asndrop.json"))
     if len(blocks) == 0:
         out["notes"].add("The Spamhaus lists were not read.")
-    known = [str(asn) for asn in (route["names"] ?? {}).keys()] + [str(observer["asn"] ?? "")]
+    known = [str(asn) for asn in route["seen"] ?? []] + [str(asn) for asn in (route["names"] ?? {}).keys()] + [str(observer["asn"] ?? "")]
     var ips = []
     for h in hops:
         if h["ip"] != "" and h["range"] == "":
@@ -1292,7 +1309,11 @@ fn path_security(domain: str, probe: map?, observer: map, route: map, addresses:
         catalog = kev_list()
         out["exploited"] = [v for v in cves if v in catalog]
     if probe["reached"] and len(addresses) > 0:
-        out["tcp"] = tcp_hops(probe["system"] ?? "", addresses[0])
+        out["tcp"] = tcp_hops(addresses[0], len(hops) + 2)
+        out["ms"] = hops[len(hops) - 1]["ms"]
+        for p in places:
+            if p["ip"] == addresses[0] and p["lat"] != none and (observer["lat"] ?? none) != none:
+                out["km"] = int(distance(observer["lat"], observer["lon"], p["lat"], p["lon"]))
     return out
 
 ## The path of the run before, kept under the domain's name, and this
@@ -1304,7 +1325,7 @@ fn path_before(domain: str, path: map) -> map?:
         if saved != "":
             before = json.parse(saved)
         if path["traced"]:
-            keep("path {domain}", convert({"when": str(date(now)), "gateway": path["gateway"], "networks": path["networks"], "countries": path["countries"]}, to: json))
+            keep("path {domain}", convert({"when": str(date(now)), "own_asn": path["own_asn"], "gateway": path["gateway"], "networks": path["networks"], "countries": path["countries"]}, to: json))
     else e:
         before = none
     return before
@@ -1509,17 +1530,29 @@ fn subdomain_alerts(subs: map) -> list:
 ## and this machine's own address with a door open, an answer that
 ## comes from nearer than the site, a resolver that says otherwise.
 ## site_networks: the networks the public resolvers place the site in.
-fn path_alerts(path: map, domain: str, site_networks: list) -> list:
+## edge: what stands in front of the site, "" for the server itself.
+## A machine that is on another network than in the run before has a new
+## path for that reason, so the two are not compared. Light goes about
+## 100 km of fibre and back in a millisecond: an answer that comes
+## sooner than the distance allows comes from somewhere nearer.
+fn path_alerts(path: map, domain: str, site_networks: list, edge: str) -> list:
     var out = []
     exploited = path["exploited"] ?? []
     for l in path["listed"] ?? []:
         out.add(alert("critical", "Path", "Hop {l["n"]} of the route from this machine, {l["ip"]}, is in {l["what"]}, which Spamhaus lists as hijacked or run by criminals.", "Do not send traffic this way: tell your provider, and reach the site through another network or a VPN meanwhile."))
     before = path["before"] ?? none
-    if before != none and (path["traced"] ?? false):
+    var moved = false
+    if before != none and (before["own_asn"] ?? "") != "" and (path["own_asn"] ?? "") != "" and before["own_asn"] != path["own_asn"]:
+        moved = true
+        out.add(alert("notice", "Path", "This machine is in AS{path["own_asn"]} now and was in AS{before["own_asn"]} on {before["when"]}: it changed network, so its route is not compared with that one.", "Nothing to do if you moved the machine or changed provider."))
+    if before != none and (path["traced"] ?? false) and not moved:
         if before["gateway"] != "" and path["gateway"] != "" and before["gateway"] != path["gateway"]:
             out.add(alert("warning", "Path", "The first router is {path["gateway"]}; on {before["when"]} it was {before["gateway"]}.", "If this machine did not change network, something else is answering as its gateway: check the router and the ARP table of the machine."))
         for asn in [n for n in path["networks"] if not (n in before["networks"])] |> take 3:
-            out.add(alert("warning", "Path", "The route from this machine now crosses AS{asn}, which it did not on {before["when"]}.", "A provider changing its transit does this, and so does a hijacked route: compare with the BGP route and the origin."))
+            if asn in (path["outside"] ?? []):
+                out.add(alert("critical", "Path", "The route from this machine now crosses AS{asn}, which it did not on {before["when"]} and which is on none of the BGP paths seen to the site: a detour.", "Treat the path as intercepted until your provider explains it: check the certificate you are given, and use a VPN meanwhile."))
+            else:
+                out.add(alert("warning", "Path", "The route from this machine now crosses AS{asn}, which it did not on {before["when"]}.", "A provider changing its transit does this, and so does a hijacked route: compare with the BGP route and the origin."))
         for country in [c for c in path["countries"] if not (c in before["countries"])] |> take 3:
             out.add(alert("notice", "Path", "The route from this machine now passes through {country}, which it did not on {before["when"]}.", "Check it against where your traffic is allowed to go."))
     for r in path["routers"] ?? []:
@@ -1541,8 +1574,13 @@ fn path_alerts(path: map, domain: str, site_networks: list) -> list:
             out.add(alert("warning", "Path", "Your own address, {own["ip"]}, shows to the whole internet: {joined(doors).replace(",", ", ")}.", "Close those ports on your router, or open them to your own addresses only."))
     if len(path["unannounced"] ?? []) > 0:
         out.add(alert("notice", "Path", "{len(path["unannounced"])} routers on the way answer from addresses no network announces: {joined(path["unannounced"] |> take 3).replace(",", ", ")}.", "Usually an exchange point or an operator's inner network; in a path that changed, it can be a forged answer."))
-    if len(path["outside"] ?? []) > 0:
-        out.add(alert("notice", "Path", "The route from this machine crosses AS{joined(path["outside"] |> take 3).replace(",", ", AS")}, which none of the BGP paths seen to the site includes.", "The collectors do not see every path; if it is also new, treat it as a detour."))
+    km = path["km"] ?? none
+    ms = path["ms"] ?? none
+    if km != none and ms != none and km > 500 and ms * 100 < km * 0.7:
+        if edge != "":
+            out.add(alert("notice", "Path", "The site answers in {ms} ms and the register places its address {km} km away, too far for that: the answer comes from a nearer place, as the edge in front of it ({edge}) does.", "Nothing to do: an edge answers from the place nearest to you."))
+        else:
+            out.add(alert("warning", "Path", "The site answers in {ms} ms and the register places its address {km} km away, too far for that: something nearer answers in its name.", "An address announced from many places does this, and so does an interception: check the certificate you are given against the site's."))
     tcp = path["tcp"] ?? 0
     if tcp > 0 and (path["hops"] ?? 0) - tcp >= 2:
         out.add(alert("warning", "Path", "A TCP connection to port 443 is answered {tcp} hops away, and the site is {path["hops"]} hops away: something on the way answers in its name.", "A transparent proxy or a firewall that ends connections: check the certificate you are given against the site's."))
@@ -1683,7 +1721,7 @@ fn alerts_of(data: map, soon: str, lately: str, second: int) -> list:
     if data["site"]["front"]["kind"] == "edge":
         edge = data["site"]["front"]["name"]
     site_networks = [str(p["asn"]) for p in data["places"] if p["kind"] == "site" and str(p["asn"]) != ""]
-    found = dns_alerts(data["health"], data["places"], second) + subdomain_alerts(data["subdomains"] ?? {}) + site_alerts(data["site"], data["certificates"], soon, data["health"]["caa"] ?? []) + exposure_alerts(data["exposure"] ?? {}, edge, data["exploited"] ?? []) + path_alerts(data["path"] ?? {}, data["domain"] ?? "", site_networks) + route_alerts(data["route"], lately) + reach_alerts(data["routers"], data["path_outages"], data["v6"]) + change_alerts(data, before)
+    found = dns_alerts(data["health"], data["places"], second) + subdomain_alerts(data["subdomains"] ?? {}) + site_alerts(data["site"], data["certificates"], soon, data["health"]["caa"] ?? []) + exposure_alerts(data["exposure"] ?? {}, edge, data["exploited"] ?? []) + path_alerts(data["path"] ?? {}, data["domain"] ?? "", site_networks, edge) + route_alerts(data["route"], lately) + reach_alerts(data["routers"], data["path_outages"], data["v6"]) + change_alerts(data, before)
     var out = []
     for level in ["critical", "warning", "notice"]:
         for a in found:
@@ -1863,7 +1901,7 @@ pub fn trace(domain: str) -> map:
     for r in health["resolvers"]:
         for ip in r["addresses"]:
             public.add(ip)
-    var path = path_security(domain, local, observer, route, addresses, public)
+    var path = path_security(domain, local, observer, route, addresses, public, site_places)
     path["before"] = path_before(domain, path)
     var used = path["exploited"]
     if len(exposed["vulns"]) > 0:
@@ -2024,13 +2062,25 @@ test "the security of the path":
     hops = [{"asn": "", "country": ""}, {"asn": "3352", "country": "ES"}, {"asn": "3352", "country": "ES"}, {"asn": "1299", "country": "FR"}]
     assert crossed(hops) == {"networks": ["3352", "1299"], "countries": ["ES", "FR"]}
     path = {"traced": true, "gateway": "192.168.1.254", "networks": ["3352", "64666", "13335"], "countries": ["ES", "RU", "US"], "hops": 9, "tcp": 4, "listed": [{"n": 5, "ip": "1.10.16.9", "what": "1.10.16.0/20 (SBL256894)"}], "unannounced": ["193.149.1.26"], "outside": ["64666"], "routers": [{"n": 4, "ip": "80.58.106.1", "asn": "3352", "ports": [23, 80], "vulns": []}, {"n": 6, "ip": "62.115.1.1", "asn": "1299", "ports": [179], "vulns": ["CVE-2023-20198"]}, {"n": 7, "ip": "62.115.2.2", "asn": "1299", "ports": [], "vulns": ["CVE-2020-0001"]}], "own": {"known": true, "ip": "203.0.113.9", "ports": [7547, 3389], "vulns": []}, "exploited": ["CVE-2023-20198"], "resolver": ["10.0.0.5"], "resolver_asn": "", "before": {"when": "2026-11-13", "gateway": "192.168.1.1", "networks": ["3352", "13335"], "countries": ["ES", "US"]}}
-    for a in path_alerts(path, "example.org", ["13335"]):
+    for a in path_alerts(path, "example.org", ["13335"], ""):
         print("{a["level"]}  {a["area"]}: {a["text"]}")
     quiet = {"traced": true, "gateway": "192.168.1.1", "networks": ["3352", "13335"], "countries": ["ES"], "hops": 9, "tcp": 9, "listed": [], "unannounced": [], "outside": [], "routers": [], "own": {"known": false, "ip": "203.0.113.9", "ports": [], "vulns": []}, "exploited": [], "resolver": ["104.16.132.229"], "resolver_asn": "", "before": {"when": "2026-11-13", "gateway": "192.168.1.1", "networks": ["3352", "13335"], "countries": ["ES"]}}
-    assert path_alerts(quiet, "example.org", ["13335"]) == []
+    assert path_alerts(quiet, "example.org", ["13335"], "") == []
     quiet["resolver_asn"] = "64666"
-    assert len(path_alerts(quiet, "example.org", ["13335"])) == 1
-    assert path_alerts({}, "example.org", []) == []
+    assert len(path_alerts(quiet, "example.org", ["13335"], "")) == 1
+    assert path_alerts({}, "example.org", [], "") == []
+    path["own_asn"] = "12479"
+    path["before"]["own_asn"] = "3352"
+    moved = [a["text"] for a in path_alerts(path, "example.org", ["13335"], "")]
+    assert moved[0].starts_with("Hop 5")
+    assert moved[1].starts_with("This machine is in AS12479 now and was in AS3352")
+    assert len([t for t in moved if "first router" in t or "now crosses" in t or "now passes" in t]) == 0
+    madrid = distance(40.42, -3.70, 37.77, -122.42)
+    assert madrid > 9300.0 and madrid < 9350.0
+    near = {"km": 9320, "ms": 12.0}
+    assert path_alerts(near, "example.org", [], "")[0]["level"] == "warning"
+    assert path_alerts(near, "example.org", [], "Cloudflare")[0]["level"] == "notice"
+    assert path_alerts({"km": 9320, "ms": 140.0}, "example.org", [], "") == []
 
 test "a route traced with ping":
     assert ping_command("Linux", "192.0.2.7", 3) == ["ping", "-n", "-c", "1", "-W", "2", "-t", "3", "192.0.2.7"]

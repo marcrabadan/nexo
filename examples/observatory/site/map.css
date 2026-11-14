@@ -170,3 +170,27 @@ details.more { border: 0; padding: 4px 0 0 } details.more summary { color: var(-
 @media (max-width: 860px) { .cols { grid-template-columns: minmax(0, 1fr) } }
 td.n + td:not(.n), th.n + th:not(.n) { padding-left: 16px }
 #routers table { min-width: 560px }
+.export { margin-top: 12px; padding: 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg); font: 600 13px var(--sans); cursor: pointer }
+.export:hover { border-color: var(--dim) }
+
+/* on paper (Export PDF): light, without the controls, every trace open */
+@media print {
+  @page { margin: 12mm }
+  :root:root {
+  --bg: #f3f6f9; --panel: #ffffff; --line: #d3dce6; --land: #dfe7ee; --coast: #b4c2d0;
+  --fg: #14212f; --dim: #566a80; --cable: #3c8a9e; --trace: #b06a00; --dns: #1668b8;
+  --good: #1c8a54; --warn: #a86400; --bad: #c2332b; --bgp: #6a45c9; --fac: #b03a78; color-scheme: light; --bg: #ffffff }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact }
+  body { font-size: 10.5pt }
+  .top { background: none; border: 0 } .top .wrap { padding: 0 0 6px } form.ask, .parts, .zoom, .layers, .tip, .export, .recent, .status, .when a { display: none !important }
+  main { max-width: none; padding: 0; gap: 14px } #report { gap: 14px }
+  .summary { grid-template-columns: minmax(0, 1fr) } .scores { grid-template-columns: repeat(4, auto); justify-content: start } h1 { font-size: 24pt }
+  .verdicts { grid-template-columns: repeat(5, 1fr) } .verdict .a { font-size: 12pt }
+  .cards { grid-template-columns: 1fr 1fr } .cols { grid-template-columns: minmax(0, 1fr) }
+  .card, .verdict, .chart, .alerts li, tr, .score { break-inside: avoid }
+  .card:has(#routers), .card:has(#alerts), .card:has(#health), .card:has(#outages) { break-inside: auto }
+  h2, h3, .group > header { break-after: avoid }
+  .scroll { overflow: visible } .graph, #routers table { min-width: 0 }
+  details { break-inside: auto } summary { list-style: none }
+  a { text-decoration: none }
+}

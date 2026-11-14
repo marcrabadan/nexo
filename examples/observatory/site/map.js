@@ -215,6 +215,17 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     return [names.slice(0, 12).join(sep), el("details", { class: "more" }, el("summary", {}, "and " + (names.length - 12) + " more"), names.slice(12).join(sep))];
   }
 
+  /* export: the browser prints the report, and its dialog saves it as a PDF. Every trace is opened for the paper and closed again after. */
+  let closed = [];
+  window.addEventListener("beforeprint", () => { closed = [...document.querySelectorAll("details:not(.more):not([open])")]; for (const d of closed) d.open = true; });
+  window.addEventListener("afterprint", () => { for (const d of closed) d.open = false; closed = []; });
+  $("export").addEventListener("click", () => {
+    const title = document.title;
+    document.title = "observatory-" + DATA.domain + "-" + String(DATA.time).slice(0, 10);
+    window.print();
+    document.title = title;
+  });
+
   /* header and verdicts */
   $("title").textContent = DATA.domain; document.title = DATA.domain + " · Internet observatory";
   $("when").textContent = "asked " + DATA.time + (me ? " from " + me.ip + " (AS" + me.asn + " " + me.holder + ")" : "");
@@ -357,8 +368,11 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
       ...row("in blocklists", x.listed.length ? x.listed.map(l => "hop " + l.n + " " + l.ip + " in " + l.what).join("; ") : x.notes.length ? x.notes.join(" ") : "no router in the Spamhaus DROP lists", x.listed.length ? "no" : x.notes.length ? "" : "ok"),
       ...row("routers open", x.routers.length ? x.routers.map(r => "hop " + r.n + " " + r.ip + ": " + [r.ports.length ? "ports " + r.ports.join(", ") : "", r.vulns.length ? r.vulns.length + " CVE" : ""].filter(Boolean).join(", ")).join("; ") : "none with management ports or known vulnerabilities seen by Shodan", x.routers.length ? "changed" : ""),
       ...(x.unannounced.length ? row("not announced", x.unannounced.join(", ")) : []),
-      ...row("TCP 443", x.tcp ? "answered " + x.tcp + " hops away; the site is " + x.hops + " hops away" : "not compared: it needs a trace that arrives, and traceroute -T on Linux as root", x.tcp && x.hops - x.tcp >= 2 ? "no" : ""));
+      ...row("TCP 443", x.tcp ? "answered " + x.tcp + " hops away; the site is " + x.hops + " hops away" : "not compared: it needs a trace that arrives, a Python on this machine and an answer on port 443", x.tcp && x.hops - x.tcp >= 2 ? "no" : ""));
     else dl.append(...row("route", "not traced from this machine, so only its address and its resolver are checked"));
+    if (x.km != null && x.ms != null) { const soon = x.km > 500 && x.ms * 100 < x.km * 0.7;
+      dl.append(...row("distance", x.ms.toFixed(1) + " ms for " + x.km.toLocaleString("en") + " km by the register: " + (soon ? "too soon for that distance, so the answer comes from nearer" : "possible; light needs " + (x.km / 100).toFixed(0) + " ms there and back"), soon ? "changed" : "")); }
+    if (was && was.own_asn && x.own_asn && was.own_asn !== x.own_asn) dl.append(...row("this machine", "in AS" + x.own_asn + " now, in AS" + was.own_asn + " on " + was.when + ": another network, so the route is not compared", "changed"));
     if (own) dl.append(...row("your address", own.ip + ": " + (own.known ? (own.ports.length ? "ports " + own.ports.join(", ") : "no port") + " seen by Shodan" + (own.vulns.length ? ", " + own.vulns.length + " CVE" : "") : own.note.replace(/^Shodan has seen nothing open at .*$/, "nothing seen open by Shodan")), own.known && own.vulns.length ? "no" : ""));
     dl.append(...row("your resolver", x.resolver.length ? x.resolver.join(", ") + (x.resolver_asn ? " in AS" + x.resolver_asn + ": not where the public resolvers send the name" : "") : "gave no address for the name", x.resolver_asn ? "changed" : ""));
     if (x.exploited.length) dl.append(...row("used in attacks", x.exploited.join(", "), "no"));
