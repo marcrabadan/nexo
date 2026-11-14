@@ -27,4 +27,24 @@ warning  Changes: RPKI was valid in the last run and is invalid_asn now.
 notice  Mail: DMARC is p=none: forged mail is reported, and still delivered.
 notice  IPv6: The name has no IPv6 address.
 ✓ the alerts of a survey
-17 tests: 17 passed, 0 failed
+critical  DNS: The signatures of the zone end in less than three days: after that, resolvers that check them stop answering for the name.
+critical  Subdomains: old.example.org is an alias of old-shop.s3.amazonaws.com, which no longer exists at Amazon S3: whoever creates it there serves pages under your name.
+critical  Exposure: 2 known vulnerabilities in the software Shodan saw at 198.51.100.7: CVE-2024-0001, CVE-2024-0002. The address is the edge's (Cloudflare), not the server behind it.
+warning  DNS: The zone is signed with algorithm 5, which rests on SHA-1; resolvers are dropping it.
+warning  DNS: The name server ns2.gone.example has no address: part of the delegation leads nowhere.
+warning  Mail: The SPF record needs 12 more questions; receivers stop at ten and then treat it as broken.
+warning  Subdomains: lab.example.org is an alias of lab.gone.example, which does not exist.
+warning  Site: No HSTS header: a browser's first visit can be sent to plain http and read on the way.
+warning  Certificates: A certificate in force was issued by DigiCert, which the CAA records do not name.
+warning  Exposure: Port 3389 (Remote Desktop) is open to the whole internet at 198.51.100.7. The address is the edge's (Cloudflare), not the server behind it.
+warning  Route: The ROA allows prefixes as long as /24 and /23 is announced: a forged, more specific route would pass as valid.
+warning  Route: 198.51.100.0/24, a part of 198.51.100.0/23, is announced by AS64666: routers send it the traffic for those addresses. A customer's block, or a hijack.
+notice  Mail: Neither MTA-STS nor DANE: a network in between can make senders deliver the mail of this domain without encryption.
+notice  Route: No route object in the routing registries for 198.51.100.0/23 from AS64501: networks that filter by them may refuse the route.
+DNS: 0 (5 alerts)
+Mail: 80 (2 alerts)
+Routes: 65 (3 alerts)
+Site: 15 (4 alerts)
+✓ what is weak in DNS, the route and the site
+✓ what the logs, a signature and Shodan say
+19 tests: 19 passed, 0 failed

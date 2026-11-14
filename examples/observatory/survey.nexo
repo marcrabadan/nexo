@@ -69,6 +69,8 @@ ATLAS = "https://atlas.ripe.net/api/v2"
 GOOGLE = "https://dns.google/resolve"
 PEERINGDB = "https://www.peeringdb.com/api"
 CRT = "https://crt.sh"
+SHODAN = "https://internetdb.shodan.io"
+SPF_SIGN = regex("^[+~?-]")
 LETTERS = regex("[^a-z]+")
 HOP_LINE = regex("^\\s*(\\d+)\\s+(.*)$")
 ADDRESS = regex("\\d+\\.\\d+\\.\\d+\\.\\d+")
@@ -129,6 +131,65 @@ EDGES = [
     ["x-cache", "", "a cache"]
 ]
 
+## Services where a name that is no longer in use can be taken by
+## someone else: the end of the name a CNAME points to, and whose it is.
+TAKEOVER = [
+    [".s3.amazonaws.com", "Amazon S3"],
+    [".cloudfront.net", "Amazon CloudFront"],
+    [".elasticbeanstalk.com", "AWS Elastic Beanstalk"],
+    [".github.io", "GitHub Pages"],
+    [".herokuapp.com", "Heroku"],
+    [".herokudns.com", "Heroku"],
+    [".azurewebsites.net", "Azure App Service"],
+    [".cloudapp.net", "Azure"],
+    [".cloudapp.azure.com", "Azure"],
+    [".trafficmanager.net", "Azure Traffic Manager"],
+    [".blob.core.windows.net", "Azure Storage"],
+    [".azureedge.net", "Azure CDN"],
+    [".netlify.app", "Netlify"],
+    [".vercel.app", "Vercel"],
+    [".pages.dev", "Cloudflare Pages"],
+    [".fastly.net", "Fastly"],
+    [".myshopify.com", "Shopify"],
+    [".zendesk.com", "Zendesk"],
+    [".readthedocs.io", "Read the Docs"],
+    [".surge.sh", "Surge"],
+    [".ghost.io", "Ghost"]
+]
+
+## Ports that should not be open to the whole internet, and what
+## listens on each.
+RISKY = {
+    "21": "FTP",
+    "23": "Telnet",
+    "445": "Windows file sharing",
+    "1433": "SQL Server",
+    "3306": "MySQL",
+    "3389": "Remote Desktop",
+    "5432": "PostgreSQL",
+    "5900": "VNC",
+    "6379": "Redis",
+    "9200": "Elasticsearch",
+    "11211": "memcached",
+    "27017": "MongoDB"
+}
+
+## The names certificate authorities go by in a CAA record: how the
+## organisation of an issuer starts, and its names.
+AUTHORITIES = [
+    ["Let's Encrypt", "letsencrypt.org"],
+    ["DigiCert", "digicert.com"],
+    ["Google Trust Services", "pki.goog"],
+    ["Sectigo", "sectigo.com comodoca.com"],
+    ["ZeroSSL", "sectigo.com zerossl.com"],
+    ["Amazon", "amazon.com amazontrust.com awstrust.com amazonaws.com"],
+    ["GlobalSign", "globalsign.com"],
+    ["GoDaddy", "godaddy.com"],
+    ["Microsoft", "microsoft.com digicert.com"],
+    ["Buypass", "buypass.com"],
+    ["SSL Corp", "ssl.com"]
+]
+
 ## The zones a name is under, from the root down: "en.wikipedia.org" is
 ## under ".", "org", "wikipedia.org" and itself.
 fn zones_of(domain: str) -> list:
@@ -149,8 +210,8 @@ fn bare(name: str) -> str:
     return LAST_DOT.replace(name, "")
 
 ## The whole answer of a resolver to one question (RFC 8484, as JSON).
-fn answer(resolver: str, name: str, kind: str) -> map!:
-    r = http.get("{resolver}?name={name}&type={kind}", headers: {"accept": "application/dns-json"}, timeout: 15s)?
+fn answer(resolver: str, name: str, kind: str, more: str = "") -> map!:
+    r = http.get("{resolver}?name={name}&type={kind}{more}", headers: {"accept": "application/dns-json"}, timeout: 15s)?
     return r.json()?
 
 ## The records the usual resolver has for one question.
@@ -183,14 +244,44 @@ fn first_text(answers: list, mark: str) -> str:
             return clean
     return ""
 
+## The number a text holds; 0 when it holds none.
+fn number(text: str) -> int:
+    try:
+        return validate(text, as: int)
+    else e:
+        return 0
+
+## The signature of an answer asked with its signatures (type 46 is
+## RRSIG): its algorithm, and the second it stops being good at.
+fn signature_of(answers: list) -> map:
+    for a in answers:
+        if a["type"] == 46:
+            parts = a["data"].split(" ")
+            if len(parts) > 5:
+                return {"algorithm": number(parts[1]), "until": number(parts[4])}
+    return {"algorithm": 0, "until": 0}
+
+## How many more questions a receiver must ask to read an SPF record;
+## past ten it gives up, and the record counts for nothing.
+fn spf_lookups(spf: str) -> int:
+    var n = 0
+    for term in spf.lower().split(" "):
+        word = SPF_SIGN.replace(term, "").split(":")[0].split("/")[0].split("=")[0]
+        if word in ["include", "a", "mx", "ptr", "exists", "redirect"]:
+            n += 1
+    return n
+
 ## The health of a domain's DNS: whether the answer is signed and checked
 ## (DNSSEC), how long it may be kept, what two resolvers answer, and the
 ## records mail and certificates depend on.
 fn dns_health(domain: str) -> map:
-    var out = {"dnssec": false, "ttl": none, "serial": "", "resolvers": [], "mx": [], "spf": "", "dmarc": "", "caa": []}
+    var out = {"dnssec": false, "ttl": none, "serial": "", "resolvers": [], "mx": [], "spf": "", "dmarc": "", "caa": [], "algorithm": 0, "signed_until": 0, "mta_sts": "", "tls_rpt": "", "dane": false}
     try:
-        full = answer(RESOLVER, domain, "A")
+        full = answer(RESOLVER, domain, "A", more: "&do=1")
         out["dnssec"] = full["AD"] ?? false
+        signed = signature_of(full["Answer"] ?? [])
+        out["algorithm"] = signed["algorithm"]
+        out["signed_until"] = signed["until"]
         direct = [a for a in full["Answer"] ?? [] if a["type"] == 1]
         if len(direct) > 0:
             out["ttl"] = direct[0]["TTL"]
@@ -204,6 +295,12 @@ fn dns_health(domain: str) -> map:
         out["spf"] = first_text(ask_dns(domain, "TXT"), "v=spf1")
         out["dmarc"] = first_text(ask_dns("_dmarc.{domain}", "TXT"), "v=DMARC1")
         out["caa"] = records(ask_dns(domain, "CAA"), 257)
+        if len(out["mx"]) > 0:
+            out["mta_sts"] = first_text(ask_dns("_mta-sts.{domain}", "TXT"), "v=STSv1")
+            out["tls_rpt"] = first_text(ask_dns("_smtp._tls.{domain}", "TXT"), "v=TLSRPTv1")
+            first = out["mx"][0].split(" ")
+            if len(first) > 1 and first[1] != "":
+                out["dane"] = len(records(ask_dns("_25._tcp.{first[1]}", "TLSA"), 52)) > 0
     else e:
         out["error"] = e.message
     return out
@@ -215,15 +312,74 @@ fn issuer_of(issuer: str) -> str:
         return issuer
     return found[0]
 
-## The certificates in force that the public logs hold for a name, the
-## newest first.
-fn certificates(domain: str) -> list:
+## What the public logs hold for a name: its certificates in force.
+fn logged(domain: str) -> list:
     try:
-        found = http.get("{CRT}/?q={domain}&output=json&exclude=expired&deduplicate=Y", timeout: 40s).json()
-        rows = [{"issuer": issuer_of(c["issuer_name"] ?? ""), "name": c["common_name"] ?? "", "starts": c["not_before"], "ends": c["not_after"]} for c in found]
-        return rows |> sort by starts desc |> take 6
+        return http.get("{CRT}/?q={domain}&output=json&exclude=expired&deduplicate=Y", timeout: 40s).json()
     else e:
         return []
+
+## The certificates of the logs, the newest first.
+fn certificates(found: list) -> list:
+    rows = [{"issuer": issuer_of(c["issuer_name"] ?? ""), "name": c["common_name"] ?? "", "starts": c["not_before"], "ends": c["not_after"]} for c in found]
+    return rows |> sort by starts desc |> take 6
+
+## The names under a domain that its certificates are for: the logs are
+## a public list of a domain's subdomains.
+fn logged_names(found: list, domain: str) -> list:
+    var names = []
+    for c in found:
+        for raw in (c["name_value"] ?? "").split("\n"):
+            name = raw.trim().lower().replace("*.", "")
+            if name.ends_with(".{domain}") and not (name in names) and valid(name):
+                names.add(name)
+    return names |> take 12
+
+## Whose service a name is at, where a name left behind can be taken.
+fn service_of(target: str) -> str:
+    for rule in TAKEOVER:
+        if target.ends_with(rule[0]):
+            return rule[1]
+    return ""
+
+## A name left hanging: an alias of a name that does not exist (status 3
+## of a resolver's answer). Whoever makes that name answers for this one.
+fn hanging_of(name: str, reply: map) -> map?:
+    targets = records(reply["Answer"] ?? [], 5)
+    if (reply["Status"] ?? 0) != 3 or len(targets) == 0:
+        return none
+    target = targets[len(targets) - 1]
+    return {"name": name, "target": target, "service": service_of(target)}
+
+## The subdomains of the logs, and those left hanging.
+fn subdomains(found: list, domain: str) -> map:
+    names = logged_names(found, domain)
+    checked = parallel for name in names:
+        var hit = none
+        try:
+            hit = hanging_of(name, answer(RESOLVER, name, "A"))
+        else e:
+            hit = none
+        return hit
+    return {"checked": len(names), "hanging": [h for h in checked if h != none]}
+
+## What Shodan has seen open at an address, without asking the address
+## anything: ports, software and its known vulnerabilities.
+fn exposure(ip: str) -> map:
+    var out = {"ip": ip, "known": false, "ports": [], "vulns": [], "tags": [], "software": [], "note": ""}
+    try:
+        seen = http.get("{SHODAN}/{ip}", timeout: 20s, retries: 0).json()
+        out["known"] = true
+        out["ports"] = seen["ports"] ?? []
+        out["vulns"] = seen["vulns"] ?? []
+        out["tags"] = seen["tags"] ?? []
+        out["software"] = seen["cpes"] ?? []
+    else e:
+        if e is HTTPError:
+            out["note"] = "Shodan has seen nothing open at {ip}."
+        else:
+            out["note"] = "Not read: {e.message}"
+    return out
 
 ## One data call of RIPEstat (more: further parameters, "&prefix=...").
 fn ripe(call: str, resource: str, more: str = "") -> map!:
@@ -287,9 +443,9 @@ fn visit(domain: str) -> map:
     start = now
     try:
         r = http.get("https://{domain}/", timeout: 15s, retries: 0)
-        return {"up": true, "status": r.status, "ms": int((now - start) / 1ms), "front": front_of(r.headers), "note": ""}
+        return {"up": true, "status": r.status, "ms": int((now - start) / 1ms), "front": front_of(r.headers), "hsts": r.headers["strict-transport-security"] ?? "", "note": ""}
     else e:
-        return {"up": e is HTTPError, "status": 0, "ms": int((now - start) / 1ms), "front": {"kind": "unknown", "name": "", "evidence": []}, "note": e.message}
+        return {"up": e is HTTPError, "status": 0, "ms": int((now - start) / 1ms), "front": {"kind": "unknown", "name": "", "evidence": []}, "hsts": "", "note": e.message}
 
 ## The networks between the collectors and the origin: for each one, in
 ## how many of the paths it is. A path is "peer ... origin"; a network
@@ -343,10 +499,19 @@ fn origins_of(history: list, prefix: str) -> list:
                 rows.add({"origin": str(entry["origin"]), "first": spans[0]["starttime"], "last": spans[len(spans) - 1]["endtime"]})
     return rows |> sort by last desc
 
+## The longest prefix the authorisations (ROAs) that make a route valid
+## allow; 0 when none does.
+fn roa_max(roas: list) -> int:
+    var most = 0
+    for r in roas:
+        if r["validity"] == "valid" and r["max_length"] > most:
+            most = r["max_length"]
+    return most
+
 ## How many peers have the route to an address, and whether its origin
 ## is authorised to announce it.
 fn route_light(ip: str) -> map:
-    var route = {"ip": ip, "prefix": "", "origin": "", "seeing": 0, "total": 0, "state": "unknown", "rpki": "unknown", "more_specifics": 0}
+    var route = {"ip": ip, "prefix": "", "origin": "", "seeing": 0, "total": 0, "state": "unknown", "rpki": "unknown", "more_specifics": 0, "specifics": [], "roa_max": 0}
     try:
         status = ripe("routing-status", ip)
         var family = "v4"
@@ -358,9 +523,13 @@ fn route_light(ip: str) -> map:
         route["total"] = seen["total_ris_peers"]
         route["state"] = route_state(seen["ris_peers_seeing"], seen["total_ris_peers"])
         route["more_specifics"] = len(status["more_specifics"] ?? [])
+        route["specifics"] = [{"prefix": m["prefix"], "origin": str(m["origin"])} for m in status["more_specifics"] ?? []]
         if len(status["origins"]) > 0:
             route["origin"] = str(status["origins"][0]["origin"])
-            route["rpki"] = ripe("rpki-validation", route["origin"], more: "&prefix={route["prefix"]}")["status"] ?? "unknown"
+            route["irr"] = status["origins"][0]["route_objects"] ?? []
+            check = ripe("rpki-validation", route["origin"], more: "&prefix={route["prefix"]}")
+            route["rpki"] = check["status"] ?? "unknown"
+            route["roa_max"] = roa_max(check["validating_roas"] ?? [])
     else e:
         route["error"] = e.message
     return route
@@ -890,20 +1059,33 @@ fn alert(level: str, area: str, text: str, fix: str) -> map:
 fn day(moment: str) -> str:
     return moment.split("T")[0]
 
-## What the zone and its mail records leave open.
-fn dns_alerts(health: map, places: list) -> list:
+## What the zone and its mail records leave open. second: the one the
+## survey runs at, to tell a signature about to end.
+fn dns_alerts(health: map, places: list, second: int) -> list:
     var out = []
     if (health["error"] ?? "") != "":
         return out
+    until = health["signed_until"] ?? 0
     if not health["dnssec"]:
         out.add(alert("warning", "DNS", "The zone is not signed: a forged answer cannot be told from a true one.", "Sign the zone and publish its DS record at the registrar."))
+    elif until > 0 and until < second + 259200:
+        out.add(alert("critical", "DNS", "The signatures of the zone end in less than three days: after that, resolvers that check them stop answering for the name.", "Sign the zone again now, and find why the signer stopped."))
+    if (health["algorithm"] ?? 0) in [1, 3, 5, 6, 7]:
+        out.add(alert("warning", "DNS", "The zone is signed with algorithm {health["algorithm"]}, which rests on SHA-1; resolvers are dropping it.", "Sign with algorithm 13 (ECDSA P-256) or 15 (Ed25519)."))
     var networks = []
     var servers = 0
+    var named = 0
     for p in places:
+        if p["kind"] == "name server":
+            named += 1
+            if (p["ip"] ?? "") == "":
+                out.add(alert("warning", "DNS", "The name server {p["name"] ?? ""} has no address: part of the delegation leads nowhere.", "Take it out of the delegation, or give it an address. If its name can be registered by someone else, they can take the zone."))
         if p["kind"] == "name server" and str(p["asn"]) != "":
             servers += 1
             if not (str(p["asn"]) in networks):
                 networks.add(str(p["asn"]))
+    if named == 1:
+        out.add(alert("warning", "DNS", "The zone has one name server: when it stops, the name stops resolving.", "Add a second name server, in another network."))
     if servers > 1 and len(networks) == 1:
         out.add(alert("warning", "DNS", "The {servers} name servers placed are all in one network, AS{networks[0]}: when it fails, the name stops resolving.", "Add a name server in another network."))
     spf = health["spf"].lower()
@@ -913,6 +1095,11 @@ fn dns_alerts(health: map, places: list) -> list:
         out.add(alert("critical", "Mail", "SPF ends in +all: every server in the world is allowed to send mail as this domain.", "End the record with -all."))
     elif "?all" in spf:
         out.add(alert("warning", "Mail", "SPF ends in ?all: it says nothing about servers it does not list.", "End the record with -all, or ~all while the senders are counted."))
+    lookups = spf_lookups(spf)
+    if lookups > 10:
+        out.add(alert("warning", "Mail", "The SPF record needs {lookups} more questions; receivers stop at ten and then treat it as broken.", "Replace include and a/mx terms with ip4 and ip6 ranges until ten or fewer are left."))
+    if len(health["mx"] ?? []) > 0 and (health["mta_sts"] ?? "x") == "" and not (health["dane"] ?? true):
+        out.add(alert("notice", "Mail", "Neither MTA-STS nor DANE: a network in between can make senders deliver the mail of this domain without encryption.", "Publish an MTA-STS policy (and the _smtp._tls record to get the reports), or TLSA records if the zone is signed."))
     dmarc = health["dmarc"].lower().replace(" ", "")
     if dmarc == "":
         out.add(alert("warning", "Mail", "No DMARC record: receivers are not told what to do with forged mail.", "Publish a TXT record at _dmarc with p=quarantine or p=reject."))
@@ -922,18 +1109,71 @@ fn dns_alerts(health: map, places: list) -> list:
         out.add(alert("notice", "DNS", "No CAA record: any authority may issue a certificate for this name.", "Publish a CAA record that names the authorities you use."))
     return out
 
+## The names an authority goes by in CAA records; "" for one not known.
+fn authority_names(issuer: str) -> str:
+    for rule in AUTHORITIES:
+        if issuer.starts_with(rule[0]):
+            return rule[1]
+    return ""
+
+## An issuer the CAA records name, or one this table does not know.
+fn allowed_by(caa: list, issuer: str) -> bool:
+    names = authority_names(issuer)
+    rules = [c.lower() for c in caa if " issue" in c.lower()]
+    if names == "" or len(rules) == 0:
+        return true
+    for name in names.split(" "):
+        for rule in rules:
+            if name in rule:
+                return true
+    return false
+
+## The names left hanging among those of the certificate logs.
+fn subdomain_alerts(subs: map) -> list:
+    var out = []
+    for h in subs["hanging"] ?? []:
+        if h["service"] != "":
+            out.add(alert("critical", "Subdomains", "{h["name"]} is an alias of {h["target"]}, which no longer exists at {h["service"]}: whoever creates it there serves pages under your name.", "Delete the record, or create the resource again."))
+        else:
+            out.add(alert("warning", "Subdomains", "{h["name"]} is an alias of {h["target"]}, which does not exist.", "Delete the record; if the target's domain can be registered, someone else can answer for this name."))
+    return out
+
+## What Shodan has seen open at the site's address. edge: what stands
+## in front of the site, "" when the address is the server's own.
+fn exposure_alerts(exposed: map, edge: str) -> list:
+    var out = []
+    var whose = ""
+    if edge != "":
+        whose = " The address is the edge's ({edge}), not the server behind it."
+    vulns = exposed["vulns"] ?? []
+    if len(vulns) > 0:
+        out.add(alert("critical", "Exposure", "{len(vulns)} known vulnerabilities in the software Shodan saw at {exposed["ip"]}: {joined(vulns |> take 3).replace(",", ", ")}.{whose}", "Update that software, then read each CVE: Shodan goes by version numbers and can be wrong."))
+    for port in exposed["ports"] ?? []:
+        what = RISKY[str(port)] ?? ""
+        if what != "":
+            out.add(alert("warning", "Exposure", "Port {port} ({what}) is open to the whole internet at {exposed["ip"]}.{whose}", "Close it at the firewall, or leave it open to your own addresses only."))
+    return out
+
 ## What the site and its certificates show. soon: the day before which a
-## certificate that ends is an alert.
-fn site_alerts(site: map, certs: list, soon: str) -> list:
+## certificate that ends is an alert. caa: who may issue for the name.
+fn site_alerts(site: map, certs: list, soon: str, caa: list) -> list:
     var out = []
     if not site["up"]:
         out.add(alert("critical", "Site", "The site did not answer: {site["note"]}", "Check the server, and what stands in front of it."))
     elif site["status"] >= 500:
         out.add(alert("warning", "Site", "The site answered {site["status"]}, an error of the server.", "Read the server's log."))
+    elif site["status"] < 400 and (site["hsts"] ?? "x") == "":
+        out.add(alert("warning", "Site", "No HSTS header: a browser's first visit can be sent to plain http and read on the way.", "Send Strict-Transport-Security: max-age=31536000."))
     var latest = ""
+    var strangers = []
     for c in certs:
         if c["ends"] > latest:
             latest = c["ends"]
+        issuer = c["issuer"] ?? ""
+        if not allowed_by(caa, issuer) and not (issuer in strangers):
+            strangers.add(issuer)
+    for issuer in strangers:
+        out.add(alert("warning", "Certificates", "A certificate in force was issued by {issuer}, which the CAA records do not name.", "If you did not ask for it, have it revoked; if you did, add the authority to the CAA records."))
     if latest != "" and latest < soon:
         out.add(alert("warning", "Certificates", "The newest certificate in the public logs ends on {day(latest)}.", "Renew it, and check that the renewal still runs by itself."))
     return out
@@ -953,6 +1193,16 @@ fn route_alerts(route: map, lately: str) -> list:
         out.add(alert("critical", "Route", "RPKI says {rpki}: AS{origin} is not authorised to announce {prefix}. Networks that check drop this route; it can be a hijack.", "Publish a ROA for this prefix and origin, or stop the announcement if it is not yours."))
     elif rpki == "unknown" and origin != "":
         out.add(alert("warning", "Route", "No ROA covers {prefix}: nobody can check that AS{origin} may announce it.", "Publish a ROA at your regional registry."))
+    var length = 0
+    if "/" in prefix:
+        length = number(prefix.split("/")[1])
+    if rpki == "valid" and (route["roa_max"] ?? 0) > length:
+        out.add(alert("warning", "Route", "The ROA allows prefixes as long as /{route["roa_max"]} and /{length} is announced: a forged, more specific route would pass as valid.", "Set the maximum length of the ROA to /{length}."))
+    for m in (route["specifics"] ?? []) |> take 3:
+        if m["origin"] != origin:
+            out.add(alert("warning", "Route", "{m["prefix"]}, a part of {prefix}, is announced by AS{m["origin"]}: routers send it the traffic for those addresses. A customer's block, or a hijack.", "Check that AS{m["origin"]} holds that block from you."))
+    if origin != "" and len(route["irr"] ?? ["?"]) == 0:
+        out.add(alert("notice", "Route", "No route object in the routing registries for {prefix} from AS{origin}: networks that filter by them may refuse the route.", "Create the route object at your registry."))
     for h in route["history"] ?? []:
         if h["origin"] != origin and h["last"] >= lately:
             out.add(alert("critical", "Route", "AS{h["origin"]} also announced {prefix}, until {day(h["last"])}: a hand-over, or a hijack.", "Ask the holder of the prefix whether AS{h["origin"]} is theirs."))
@@ -1006,16 +1256,48 @@ fn change_alerts(data: map, before: map?) -> list:
 ## The alerts of a survey, the most serious first. soon and lately are
 ## days as text: a certificate that ends before `soon`, and a second
 ## origin seen since `lately`, are alerts.
-fn alerts_of(data: map, soon: str, lately: str) -> list:
+fn alerts_of(data: map, soon: str, lately: str, second: int) -> list:
     var before = none
     if len(data["history"]) > 0:
         before = data["history"][0]
-    found = dns_alerts(data["health"], data["places"]) + site_alerts(data["site"], data["certificates"], soon) + route_alerts(data["route"], lately) + reach_alerts(data["routers"], data["path_outages"], data["v6"]) + change_alerts(data, before)
+    var edge = ""
+    if data["site"]["front"]["kind"] == "edge":
+        edge = data["site"]["front"]["name"]
+    found = dns_alerts(data["health"], data["places"], second) + subdomain_alerts(data["subdomains"] ?? {}) + site_alerts(data["site"], data["certificates"], soon, data["health"]["caa"] ?? []) + exposure_alerts(data["exposure"] ?? {}, edge) + route_alerts(data["route"], lately) + reach_alerts(data["routers"], data["path_outages"], data["v6"]) + change_alerts(data, before)
     var out = []
     for level in ["critical", "warning", "notice"]:
         for a in found:
             if a["level"] == level:
                 out.add(a)
+    return out
+
+## The parts of a survey and the areas of the alerts each one answers for.
+BLOCKS = [
+    ["DNS", "DNS Subdomains"],
+    ["Mail", "Mail"],
+    ["Routes", "Route Routers Outages Changes"],
+    ["Site", "Site Certificates Exposure IPv6"]
+]
+
+## A mark from 0 to 100 for each part of a survey: 100 less 40 for each
+## critical alert, 15 for each warning and 5 for each notice.
+fn scores(alerts: list) -> list:
+    var out = []
+    for block in BLOCKS:
+        var mark = 100
+        var found = 0
+        for a in alerts:
+            if a["area"] in block[1].split(" "):
+                found += 1
+                if a["level"] == "critical":
+                    mark -= 40
+                elif a["level"] == "warning":
+                    mark -= 15
+                else:
+                    mark -= 5
+        if mark < 0:
+            mark = 0
+        out.add({"block": block[0], "score": mark, "alerts": found})
     return out
 
 ## The latest text kept under a name, when it is younger than an age;
@@ -1114,8 +1396,14 @@ pub fn trace(domain: str) -> map:
     print("HTTPS: one request, and the certificates in the logs")
     site = visit(domain)
     print("  {site["front"]["kind"]}: {site["front"]["name"]}")
-    certs = certificates(domain)
-    print("  {len(certs)} certificates in force")
+    found = logged(domain)
+    certs = certificates(found)
+    subs = subdomains(found, domain)
+    print("  {len(certs)} certificates in force, {subs["checked"]} names of the logs checked, {len(subs["hanging"])} left hanging")
+    var exposed = {"ip": "", "known": false, "ports": [], "vulns": [], "tags": [], "software": [], "note": ""}
+    if len(addresses) > 0:
+        exposed = exposure(addresses[0])
+        print("  {len(exposed["ports"])} ports seen open by Shodan, {len(exposed["vulns"])} known vulnerabilities")
     var route = {"state": "unknown", "transits": [], "origin": ""}
     var meets = {"exchanges": [], "facilities": []}
     if len(addresses) > 0:
@@ -1148,10 +1436,11 @@ pub fn trace(domain: str) -> map:
             print("  {len(mine["probe"]["hops"])} hops, arrived: {mine["probe"]["reached"]}")
         else:
             print("  {mine["note"]}")
-    var data = {"domain": domain, "time": str(now.to_zone("UTC")), "observer": observer, "steps": steps, "aliases": aliases, "health": health, "places": server_places + site_places, "site": site, "certificates": certs, "route": route, "peering": meets, "routers": routers, "v6": v6, "outages": open, "path_outages": path_open}
+    var data = {"domain": domain, "time": str(now.to_zone("UTC")), "observer": observer, "steps": steps, "aliases": aliases, "health": health, "places": server_places + site_places, "site": site, "certificates": certs, "subdomains": subs, "exposure": exposed, "route": route, "peering": meets, "routers": routers, "v6": v6, "outages": open, "path_outages": path_open}
     data["history"] = remember(data)
     print("  {len(data["history"])} earlier runs of {domain} kept")
-    data["alerts"] = alerts_of(data, str(date(now + 336h)), str(date(now - 720h)))
+    data["alerts"] = alerts_of(data, str(date(now + 336h)), str(date(now - 720h)), epoch())
+    data["scores"] = scores(data["alerts"])
     print("Alerts: {len(data["alerts"])}")
     return data
 
@@ -1303,7 +1592,7 @@ test "the alerts of a survey":
     routers = {"probes": [{"reached": true}, {"reached": false}]}
     earlier = [{"origin": "64999", "rpki": "valid", "address": "198.51.100.7", "front": "nginx"}]
     data = {"health": health, "places": places, "route": route, "site": site, "certificates": certs, "routers": routers, "path_outages": [], "v6": {"addresses": [], "note": "example.org has no IPv6 address."}, "history": earlier}
-    found = alerts_of(data, "2026-11-28", "2026-10-15")
+    found = alerts_of(data, "2026-11-28", "2026-10-15", 1794000000)
     for a in found:
         print("{a["level"]}  {a["area"]}: {a["text"]}")
     assert found[0]["fix"] == "End the record with -all."
@@ -1314,4 +1603,38 @@ test "the alerts of a survey":
     data["certificates"] = [{"ends": "2027-02-01T00:00:00"}]
     data["routers"] = {"probes": [{"reached": true}]}
     data["v6"] = {"addresses": [{"ip": "2001:db8::7"}], "note": ""}
-    assert alerts_of(data, "2026-11-28", "2026-10-15") == []
+    assert alerts_of(data, "2026-11-28", "2026-10-15", 1794000000) == []
+    assert scores([]) == [{"block": "DNS", "score": 100, "alerts": 0}, {"block": "Mail", "score": 100, "alerts": 0}, {"block": "Routes", "score": 100, "alerts": 0}, {"block": "Site", "score": 100, "alerts": 0}]
+
+test "what is weak in DNS, the route and the site":
+    health = {"dnssec": true, "algorithm": 5, "signed_until": 1794100000, "spf": "v=spf1 include:a.example include:b.example include:c.example include:d.example include:e.example include:f.example include:g.example a mx a:h.example mx:i.example exists:j.example -all", "dmarc": "v=DMARC1; p=reject", "caa": ["0 issue \"letsencrypt.org\""], "mx": ["10 mail.example.org"], "mta_sts": "", "dane": false}
+    places = [{"kind": "name server", "name": "ns1.example.org", "asn": "64500", "ip": "192.0.2.1"}, {"kind": "name server", "name": "ns2.gone.example", "asn": "", "ip": ""}]
+    route = {"state": "whole", "prefix": "198.51.100.0/23", "origin": "64501", "rpki": "valid", "roa_max": 24, "specifics": [{"prefix": "198.51.100.0/24", "origin": "64666"}, {"prefix": "198.51.101.0/24", "origin": "64501"}], "irr": [], "paths": 12, "history": [], "upstreams": [], "transits": []}
+    site = {"up": true, "status": 200, "hsts": "", "note": "", "front": {"kind": "edge", "name": "Cloudflare"}}
+    certs = [{"issuer": "Let's Encrypt", "ends": "2027-02-01T00:00:00"}, {"issuer": "DigiCert", "ends": "2027-01-01T00:00:00"}, {"issuer": "A Small Authority", "ends": "2027-01-01T00:00:00"}]
+    subs = {"checked": 2, "hanging": [{"name": "old.example.org", "target": "old-shop.s3.amazonaws.com", "service": "Amazon S3"}, {"name": "lab.example.org", "target": "lab.gone.example", "service": ""}]}
+    exposed = {"ip": "198.51.100.7", "ports": [443, 3389], "vulns": ["CVE-2024-0001", "CVE-2024-0002"]}
+    data = {"health": health, "places": places, "route": route, "site": site, "certificates": certs, "subdomains": subs, "exposure": exposed, "routers": {"probes": []}, "path_outages": [], "v6": {"addresses": [{"ip": "2001:db8::7"}], "note": ""}, "history": []}
+    found = alerts_of(data, "2026-11-28", "2026-10-15", 1794000000)
+    for a in found:
+        print("{a["level"]}  {a["area"]}: {a["text"]}")
+    for s in scores(found):
+        print("{s["block"]}: {s["score"]} ({s["alerts"]} alerts)")
+
+test "what the logs, a signature and Shodan say":
+    logs = [{"name_value": "*.example.org\nexample.org\nshop.example.org"}, {"name_value": "shop.example.org\nmail.other.example\nbad_name.example.org"}]
+    assert logged_names(logs, "example.org") == ["shop.example.org"]
+    gone = {"Status": 3, "Answer": [{"type": 5, "data": "old-shop.s3.amazonaws.com."}]}
+    assert hanging_of("old.example.org", gone) == {"name": "old.example.org", "target": "old-shop.s3.amazonaws.com", "service": "Amazon S3"}
+    assert hanging_of("www.example.org", {"Status": 0, "Answer": [{"type": 5, "data": "example.org."}, {"type": 1, "data": "192.0.2.1"}]}) == none
+    assert hanging_of("none.example.org", {"Status": 3}) == none
+    signed = [{"type": 1, "data": "104.16.132.229"}, {"type": 46, "data": "A 13 2 300 1794766414 1794586414 34505 cloudflare.com. wdFX=="}]
+    assert signature_of(signed) == {"algorithm": 13, "until": 1794766414}
+    assert signature_of([]) == {"algorithm": 0, "until": 0}
+    assert spf_lookups("v=spf1 ip4:192.0.2.0/24 include:_spf.example.org ~all") == 1
+    assert spf_lookups("v=spf1 a mx/24 +include:x.example redirect=y.example") == 4
+    assert roa_max([{"validity": "valid", "max_length": 23}, {"validity": "invalid_length", "max_length": 24}]) == 23
+    assert allowed_by(["0 issue \"letsencrypt.org\""], "Let's Encrypt")
+    assert not allowed_by(["0 issue \"letsencrypt.org\""], "DigiCert")
+    assert allowed_by([], "DigiCert")
+    assert allowed_by(["0 issue \"letsencrypt.org\""], "A Small Authority")
