@@ -22,6 +22,12 @@
 ## The route from this machine needs no RIPE Atlas: the system's own
 ## command traces it, each hop asked three times, and every router on
 ## the way is given its name, city, network and what happens there.
+## That route is also read for its security: a first router or a network
+## that was not there in the run before, routers in the Spamhaus DROP
+## lists, what Shodan has seen open at each router and at this
+## machine's own address (with CISA's list of the vulnerabilities used
+## in attacks), and whether this system's resolver agrees with the
+## public ones.
 ## With RIPE_ATLAS_KEY set to "Key <your key>", a domain nobody traces
 ## gets a measurement started; its routers are read on a later run.
 ## A module has no policy of its own: the program that uses it lists what
@@ -30,6 +36,7 @@ use nexo.db
 use python subprocess as subprocess
 use python platform as platform
 use python shutil as shutil
+use python socket as socket
 
 db = connect("observatory.db")
 
@@ -76,10 +83,13 @@ GOOGLE = "https://dns.google/resolve"
 PEERINGDB = "https://www.peeringdb.com/api"
 CRT = "https://crt.sh"
 SHODAN = "https://internetdb.shodan.io"
+DROP = "https://www.spamhaus.org/drop"
+KEV = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 SPF_SIGN = regex("^[+~?-]")
 LETTERS = regex("[^a-z]+")
 HOP_LINE = regex("^\\s*(\\d+)[:?]*\\s+(.*)$")
 HOP_FLAG = regex("![A-Z]")
+DROP_LINE = regex("\"asn\":(\\d+).*\"asname\":\"([^\"]*)\"")
 PING_TIME = regex("time[=<]([0-9.]+)")
 ADDRESS = regex("\\d+\\.\\d+\\.\\d+\\.\\d+")
 HOP_TIME = regex("<?([0-9.]+)\\s*ms")
@@ -180,6 +190,17 @@ RISKY = {
     "9200": "Elasticsearch",
     "11211": "memcached",
     "27017": "MongoDB"
+}
+
+## Ports through which a router is managed, which only its operator
+## should reach.
+MANAGEMENT = {
+    "23": "Telnet",
+    "161": "SNMP",
+    "179": "BGP",
+    "4786": "Cisco Smart Install",
+    "7547": "TR-069 remote management",
+    "8291": "MikroTik Winbox"
 }
 
 ## The names certificate authorities go by in a CAA record: how the
@@ -1105,6 +1126,189 @@ fn local_probe(address: str, observer: map) -> map:
         out["note"] = "The route of this machine was not traced: {e.message}"
     return out
 
+## A list published on the web, kept for a day; "" when it does not
+## answer.
+fn listed(name: str, url: str) -> str:
+    saved = kept(name, 24h)
+    if saved != "":
+        return saved
+    try:
+        body = http.get(url, timeout: 60s).text
+        keep(name, body)
+        return body
+    else e:
+        return ""
+
+## An IPv4 address as one number; -1 for anything else.
+fn address_number(ip: str) -> int:
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return -1
+    return ((number(parts[0]) * 256 + number(parts[1])) * 256 + number(parts[2])) * 256 + number(parts[3])
+
+## The blocks of the Spamhaus DROP list: addresses hijacked or run by
+## criminals, which no network should take traffic from. A line is
+## "1.10.16.0/20 ; SBL256894"; each block is its first and last address
+## as numbers, as written, and its record.
+fn drop_blocks(text: str) -> list:
+    var blocks = []
+    for line in text.split("\n"):
+        parts = line.split(";")
+        block = parts[0].trim()
+        if "/" in block and len(parts) > 1:
+            first = address_number(block.split("/")[0])
+            var size = 1
+            repeat 32 - number(block.split("/")[1]):
+                size = size * 2
+            if first >= 0:
+                blocks.add({"first": first, "last": first + size - 1, "block": block, "record": parts[1].trim()})
+    return blocks
+
+## The block of the list an address is in, or none.
+fn dropped(ip: str, blocks: list) -> map?:
+    n = address_number(ip)
+    for b in blocks:
+        if n >= b["first"] and n <= b["last"]:
+            return b
+    return none
+
+## The networks of the Spamhaus ASN-DROP list: one JSON object a line.
+fn drop_networks(text: str) -> map:
+    var names = {}
+    for line in text.split("\n"):
+        found = DROP_LINE.groups(line)
+        if found != none:
+            names[found[0]] = found[1]
+    return names
+
+## The vulnerabilities CISA knows are being used in attacks (its KEV
+## catalog), as their CVE numbers; kept for a day.
+fn kev_list() -> list:
+    saved = kept("kev", 24h)
+    if saved != "":
+        return saved.split(",")
+    try:
+        ids = [v["cveID"] for v in http.get(KEV, timeout: 60s).json()["vulnerabilities"]]
+        keep("kev", joined(ids))
+        return ids
+    else e:
+        return []
+
+## The addresses this system's own resolver gives for a name.
+fn system_addresses(domain: str) -> list:
+    try:
+        return [str(ip) for ip in socket.gethostbyname_ex(domain)[2]]
+    else e:
+        return []
+
+## In how many hops a TCP connection to port 443 is answered, on Linux
+## (traceroute -T, which needs root); 0 when it cannot be told.
+fn tcp_hops(system: str, address: str) -> int:
+    try:
+        if system != "Linux" or shutil.which("traceroute") == none:
+            return 0
+        done = subprocess.run(["traceroute", "-T", "-p", "443", "-n", "-q", "1", "-w", "2", "-m", "30", address], capture_output: true, text: true, timeout: 90)
+        hops = trimmed(local_hops(done.stdout))
+        if depth_of(hops, address) < 1000:
+            return 0
+        return hops[len(hops) - 1]["n"]
+    else e:
+        return 0
+
+## The networks and countries a trace crosses, in order, each once.
+fn crossed(hops: list) -> map:
+    var networks = []
+    var countries = []
+    for h in hops:
+        if h["asn"] != "" and not (h["asn"] in networks):
+            networks.add(h["asn"])
+        if h["country"] != "" and not (h["country"] in countries):
+            countries.add(h["country"])
+    return {"networks": networks, "countries": countries}
+
+## What the route from this machine says about its security: the first
+## router and the networks crossed, to compare with the run before; the
+## routers in lists of hijacked or criminal networks; those that answer
+## from addresses nobody announces; what Shodan has seen open at each
+## router and at this machine's own address; whether TCP is answered
+## nearer than the site is; and what this system's resolver says.
+fn path_security(domain: str, probe: map?, observer: map, route: map, addresses: list, public: list) -> map:
+    var out = {"traced": probe != none, "gateway": "", "networks": [], "countries": [], "listed": [], "unannounced": [], "outside": [], "routers": [], "own": none, "exploited": [], "hops": 0, "reached": false, "tcp": 0, "resolver": [], "resolver_asn": "", "before": none, "notes": []}
+    out["resolver"] = system_addresses(domain)
+    var overlap = false
+    for ip in out["resolver"]:
+        if ip in public:
+            overlap = true
+    if len(out["resolver"]) > 0 and len(public) > 0 and not overlap and range_of(out["resolver"][0]) == "":
+        out["resolver_asn"] = str(router(out["resolver"][0])["asn"])
+    own = observer["ip"] ?? ""
+    if own != "":
+        out["own"] = exposure(own)
+    if probe == none:
+        return out
+    hops = probe["hops"]
+    seen = crossed(hops)
+    out["networks"] = seen["networks"]
+    out["countries"] = seen["countries"]
+    out["hops"] = len(hops)
+    out["reached"] = probe["reached"]
+    if len(hops) > 0:
+        out["gateway"] = hops[0]["ip"]
+    blocks = drop_blocks(listed("drop", "{DROP}/drop.txt"))
+    bad = drop_networks(listed("asndrop", "{DROP}/asndrop.json"))
+    if len(blocks) == 0:
+        out["notes"].add("The Spamhaus lists were not read.")
+    known = [str(asn) for asn in (route["names"] ?? {}).keys()] + [str(observer["asn"] ?? "")]
+    var ips = []
+    for h in hops:
+        if h["ip"] != "" and h["range"] == "":
+            hit = dropped(h["ip"], blocks)
+            if hit != none:
+                out["listed"].add({"n": h["n"], "ip": h["ip"], "what": "{hit["block"]} ({hit["record"]})"})
+            elif h["asn"] != "" and h["asn"] in bad:
+                out["listed"].add({"n": h["n"], "ip": h["ip"], "what": "AS{h["asn"]} {bad[h["asn"]]}"})
+            if h["asn"] == "" and not (h["ip"] in addresses):
+                out["unannounced"].add(h["ip"])
+            if h["asn"] != "" and not (h["asn"] in known) and not (h["asn"] in out["outside"]):
+                out["outside"].add(h["asn"])
+            if not (h["ip"] in ips) and not (h["ip"] in addresses) and h["ip"] != own:
+                ips.add(h["ip"])
+    seen_open = parallel for ip in ips |> take 12, max: 12:
+        return exposure(ip)
+    var numbers = {}
+    for h in hops:
+        numbers[h["ip"]] = h
+    var cves = []
+    for x in seen_open:
+        if x["known"] and (len(x["vulns"]) > 0 or len([p for p in x["ports"] if str(p) in MANAGEMENT]) > 0):
+            hop = numbers[x["ip"]]
+            out["routers"].add({"n": hop["n"], "ip": x["ip"], "asn": hop["asn"], "holder": hop["holder"], "ports": x["ports"], "vulns": x["vulns"]})
+            for v in x["vulns"]:
+                cves.add(v)
+    if out["own"] != none:
+        for v in out["own"]["vulns"]:
+            cves.add(v)
+    if len(cves) > 0:
+        catalog = kev_list()
+        out["exploited"] = [v for v in cves if v in catalog]
+    if probe["reached"] and len(addresses) > 0:
+        out["tcp"] = tcp_hops(probe["system"] ?? "", addresses[0])
+    return out
+
+## The path of the run before, kept under the domain's name, and this
+## one in its place.
+fn path_before(domain: str, path: map) -> map?:
+    var before = none
+    try:
+        saved = kept("path {domain}", 8760h)
+        if saved != "":
+            before = json.parse(saved)
+        if path["traced"]:
+            keep("path {domain}", convert({"when": str(date(now)), "gateway": path["gateway"], "networks": path["networks"], "countries": path["countries"]}, to: json))
+    else e:
+        before = none
+    return before
+
 ## The same over IPv6: the addresses, the route, and whether the same
 ## probes reach the site.
 fn six(domain: str, probes: list) -> map:
@@ -1300,16 +1504,69 @@ fn subdomain_alerts(subs: map) -> list:
             out.add(alert("warning", "Subdomains", "{h["name"]} is an alias of {h["target"]}, which does not exist.", "Delete the record; if the target's domain can be registered, someone else can answer for this name."))
     return out
 
+## What the route from this machine shows: a new first router or a new
+## network on the way, a router in a list of hijacked networks, routers
+## and this machine's own address with a door open, an answer that
+## comes from nearer than the site, a resolver that says otherwise.
+## site_networks: the networks the public resolvers place the site in.
+fn path_alerts(path: map, domain: str, site_networks: list) -> list:
+    var out = []
+    exploited = path["exploited"] ?? []
+    for l in path["listed"] ?? []:
+        out.add(alert("critical", "Path", "Hop {l["n"]} of the route from this machine, {l["ip"]}, is in {l["what"]}, which Spamhaus lists as hijacked or run by criminals.", "Do not send traffic this way: tell your provider, and reach the site through another network or a VPN meanwhile."))
+    before = path["before"] ?? none
+    if before != none and (path["traced"] ?? false):
+        if before["gateway"] != "" and path["gateway"] != "" and before["gateway"] != path["gateway"]:
+            out.add(alert("warning", "Path", "The first router is {path["gateway"]}; on {before["when"]} it was {before["gateway"]}.", "If this machine did not change network, something else is answering as its gateway: check the router and the ARP table of the machine."))
+        for asn in [n for n in path["networks"] if not (n in before["networks"])] |> take 3:
+            out.add(alert("warning", "Path", "The route from this machine now crosses AS{asn}, which it did not on {before["when"]}.", "A provider changing its transit does this, and so does a hijacked route: compare with the BGP route and the origin."))
+        for country in [c for c in path["countries"] if not (c in before["countries"])] |> take 3:
+            out.add(alert("notice", "Path", "The route from this machine now passes through {country}, which it did not on {before["when"]}.", "Check it against where your traffic is allowed to go."))
+    for r in path["routers"] ?? []:
+        used = [v for v in r["vulns"] if v in exploited]
+        doors = [MANAGEMENT[str(p)] for p in r["ports"] if str(p) in MANAGEMENT]
+        if len(used) > 0:
+            out.add(alert("critical", "Path", "The router at hop {r["n"]}, {r["ip"]} (AS{r["asn"]}), runs software with a vulnerability being used in attacks: {joined(used |> take 3).replace(",", ", ")}.", "You cannot fix another network's router: tell its operator, and treat what crosses it as readable; use TLS end to end."))
+        elif len(doors) > 0:
+            out.add(alert("warning", "Path", "The router at hop {r["n"]}, {r["ip"]} (AS{r["asn"]}), has its management open to the internet: {joined(doors).replace(",", ", ")}.", "Tell its operator. If the router is yours, close those ports to everything but your own addresses."))
+        elif len(r["vulns"]) > 0:
+            out.add(alert("notice", "Path", "The router at hop {r["n"]}, {r["ip"]} (AS{r["asn"]}), shows {len(r["vulns"])} known vulnerabilities by its version numbers.", "None is in the list of those used in attacks; tell its operator if the router matters to you."))
+    own = path["own"] ?? none
+    if own != none and own["known"]:
+        used = [v for v in own["vulns"] if v in exploited]
+        doors = [(MANAGEMENT[str(p)] ?? RISKY[str(p)]) for p in own["ports"] if str(p) in MANAGEMENT or str(p) in RISKY]
+        if len(used) > 0:
+            out.add(alert("critical", "Path", "Your own address, {own["ip"]}, shows software with a vulnerability being used in attacks: {joined(used |> take 3).replace(",", ", ")}.", "Update the router or the service behind that address today, and close the port meanwhile."))
+        elif len(doors) > 0:
+            out.add(alert("warning", "Path", "Your own address, {own["ip"]}, shows to the whole internet: {joined(doors).replace(",", ", ")}.", "Close those ports on your router, or open them to your own addresses only."))
+    if len(path["unannounced"] ?? []) > 0:
+        out.add(alert("notice", "Path", "{len(path["unannounced"])} routers on the way answer from addresses no network announces: {joined(path["unannounced"] |> take 3).replace(",", ", ")}.", "Usually an exchange point or an operator's inner network; in a path that changed, it can be a forged answer."))
+    if len(path["outside"] ?? []) > 0:
+        out.add(alert("notice", "Path", "The route from this machine crosses AS{joined(path["outside"] |> take 3).replace(",", ", AS")}, which none of the BGP paths seen to the site includes.", "The collectors do not see every path; if it is also new, treat it as a detour."))
+    tcp = path["tcp"] ?? 0
+    if tcp > 0 and (path["hops"] ?? 0) - tcp >= 2:
+        out.add(alert("warning", "Path", "A TCP connection to port 443 is answered {tcp} hops away, and the site is {path["hops"]} hops away: something on the way answers in its name.", "A transparent proxy or a firewall that ends connections: check the certificate you are given against the site's."))
+    resolver = path["resolver"] ?? []
+    if len(resolver) > 0 and range_of(resolver[0]) != "" and len(site_networks) > 0:
+        out.add(alert("critical", "Path", "This system's resolver answers {domain} with {resolver[0]}, an address that is not on the internet; the public resolvers give real ones.", "A captive portal or a resolver that rewrites answers: set the system to a resolver you trust, over DoH or DoT."))
+    elif (path["resolver_asn"] ?? "") != "" and not (path["resolver_asn"] in site_networks):
+        out.add(alert("warning", "Path", "This system's resolver sends {domain} to {resolver[0]} in AS{path["resolver_asn"]}; the public resolvers send it to other networks.", "Some sites answer by where the question comes from; if this one does not, your resolver is rewriting the answer."))
+    return out
+
 ## What Shodan has seen open at the site's address. edge: what stands
 ## in front of the site, "" when the address is the server's own.
-fn exposure_alerts(exposed: map, edge: str) -> list:
+## exploited: of its vulnerabilities, those being used in attacks.
+fn exposure_alerts(exposed: map, edge: str, exploited: list) -> list:
     var out = []
     var whose = ""
     if edge != "":
         whose = " The address is the edge's ({edge}), not the server behind it."
     vulns = exposed["vulns"] ?? []
-    if len(vulns) > 0:
-        out.add(alert("critical", "Exposure", "{len(vulns)} known vulnerabilities in the software Shodan saw at {exposed["ip"]}: {joined(vulns |> take 3).replace(",", ", ")}.{whose}", "Update that software, then read each CVE: Shodan goes by version numbers and can be wrong."))
+    used = [v for v in vulns if v in exploited]
+    if len(used) > 0:
+        out.add(alert("critical", "Exposure", "The software Shodan saw at {exposed["ip"]} has a vulnerability being used in attacks: {joined(used |> take 3).replace(",", ", ")}.{whose}", "Update that software today."))
+    elif len(vulns) > 0:
+        out.add(alert("warning", "Exposure", "{len(vulns)} known vulnerabilities in the software Shodan saw at {exposed["ip"]}: {joined(vulns |> take 3).replace(",", ", ")}.{whose}", "Update that software, then read each CVE: Shodan goes by version numbers and can be wrong."))
     for port in exposed["ports"] ?? []:
         what = RISKY[str(port)] ?? ""
         if what != "":
@@ -1425,7 +1682,8 @@ fn alerts_of(data: map, soon: str, lately: str, second: int) -> list:
     var edge = ""
     if data["site"]["front"]["kind"] == "edge":
         edge = data["site"]["front"]["name"]
-    found = dns_alerts(data["health"], data["places"], second) + subdomain_alerts(data["subdomains"] ?? {}) + site_alerts(data["site"], data["certificates"], soon, data["health"]["caa"] ?? []) + exposure_alerts(data["exposure"] ?? {}, edge) + route_alerts(data["route"], lately) + reach_alerts(data["routers"], data["path_outages"], data["v6"]) + change_alerts(data, before)
+    site_networks = [str(p["asn"]) for p in data["places"] if p["kind"] == "site" and str(p["asn"]) != ""]
+    found = dns_alerts(data["health"], data["places"], second) + subdomain_alerts(data["subdomains"] ?? {}) + site_alerts(data["site"], data["certificates"], soon, data["health"]["caa"] ?? []) + exposure_alerts(data["exposure"] ?? {}, edge, data["exploited"] ?? []) + path_alerts(data["path"] ?? {}, data["domain"] ?? "", site_networks) + route_alerts(data["route"], lately) + reach_alerts(data["routers"], data["path_outages"], data["v6"]) + change_alerts(data, before)
     var out = []
     for level in ["critical", "warning", "notice"]:
         for a in found:
@@ -1437,7 +1695,7 @@ fn alerts_of(data: map, soon: str, lately: str, second: int) -> list:
 BLOCKS = [
     ["DNS", "DNS Subdomains"],
     ["Mail", "Mail"],
-    ["Routes", "Route Routers Outages Changes"],
+    ["Routes", "Route Routers Outages Changes Path"],
     ["Site", "Site Certificates Exposure IPv6"]
 ]
 
@@ -1589,16 +1847,30 @@ pub fn trace(domain: str) -> map:
         path_open = outages("asn", joined(on_path))
     print("  {len(open)} outage signals open in countries, {len(path_open)} on the networks of the route")
     routers["local_note"] = ""
+    var local = none
     if len(addresses) > 0:
         print("This machine's own route to {addresses[0]}")
         mine = local_probe(addresses[0], observer)
         routers["local_note"] = mine["note"]
         if mine["probe"] != none:
             routers["probes"] = [mine["probe"]] + routers["probes"]
+            local = mine["probe"]
             print("  {len(mine["probe"]["hops"])} hops, arrived: {mine["probe"]["reached"]}")
         else:
             print("  {mine["note"]}")
-    var data = {"domain": domain, "time": str(now.to_zone("UTC")), "observer": observer, "steps": steps, "aliases": aliases, "health": health, "places": server_places + site_places, "site": site, "certificates": certs, "subdomains": subs, "exposure": exposed, "route": route, "peering": meets, "routers": routers, "v6": v6, "outages": open, "path_outages": path_open}
+    print("Security of the path")
+    var public = []
+    for r in health["resolvers"]:
+        for ip in r["addresses"]:
+            public.add(ip)
+    var path = path_security(domain, local, observer, route, addresses, public)
+    path["before"] = path_before(domain, path)
+    var used = path["exploited"]
+    if len(exposed["vulns"]) > 0:
+        catalog = kev_list()
+        used = used + [v for v in exposed["vulns"] if v in catalog]
+    print("  {len(path["listed"])} routers in the Spamhaus lists, {len(path["routers"])} with something open, {len(used)} vulnerabilities being used in attacks")
+    var data = {"domain": domain, "path": path, "exploited": used, "time": str(now.to_zone("UTC")), "observer": observer, "steps": steps, "aliases": aliases, "health": health, "places": server_places + site_places, "site": site, "certificates": certs, "subdomains": subs, "exposure": exposed, "route": route, "peering": meets, "routers": routers, "v6": v6, "outages": open, "path_outages": path_open}
     data["history"] = remember(data)
     print("  {len(data["history"])} earlier runs of {domain} kept")
     data["alerts"] = alerts_of(data, str(date(now + 336h)), str(date(now - 720h)), epoch())
@@ -1742,6 +2014,24 @@ test "the hops traceroute and tracert print":
     assert path[1]["lost"] == 1
     assert len(trimmed(local_hops(" 1  192.168.1.1  0.2 ms\n 2  * * *\n 3  * * *\n"))) == 1
 
+test "the security of the path":
+    blocks = drop_blocks("; Spamhaus DROP List\n1.10.16.0/20 ; SBL256894\n2.27.5.0/24 ; SBL698390\n")
+    assert blocks[0] == {"first": 17436672, "last": 17440767, "block": "1.10.16.0/20", "record": "SBL256894"}
+    assert dropped("1.10.31.255", blocks)["record"] == "SBL256894"
+    assert dropped("1.10.32.0", blocks) == none
+    assert dropped("2.27.5.9", blocks)["block"] == "2.27.5.0/24"
+    assert drop_networks("{{\"asn\":245,\"rir\":\"arin\",\"asname\":\"PRC-AS\"}\n{{\"type\":\"metadata\"}\n") == {"245": "PRC-AS"}
+    hops = [{"asn": "", "country": ""}, {"asn": "3352", "country": "ES"}, {"asn": "3352", "country": "ES"}, {"asn": "1299", "country": "FR"}]
+    assert crossed(hops) == {"networks": ["3352", "1299"], "countries": ["ES", "FR"]}
+    path = {"traced": true, "gateway": "192.168.1.254", "networks": ["3352", "64666", "13335"], "countries": ["ES", "RU", "US"], "hops": 9, "tcp": 4, "listed": [{"n": 5, "ip": "1.10.16.9", "what": "1.10.16.0/20 (SBL256894)"}], "unannounced": ["193.149.1.26"], "outside": ["64666"], "routers": [{"n": 4, "ip": "80.58.106.1", "asn": "3352", "ports": [23, 80], "vulns": []}, {"n": 6, "ip": "62.115.1.1", "asn": "1299", "ports": [179], "vulns": ["CVE-2023-20198"]}, {"n": 7, "ip": "62.115.2.2", "asn": "1299", "ports": [], "vulns": ["CVE-2020-0001"]}], "own": {"known": true, "ip": "203.0.113.9", "ports": [7547, 3389], "vulns": []}, "exploited": ["CVE-2023-20198"], "resolver": ["10.0.0.5"], "resolver_asn": "", "before": {"when": "2026-11-13", "gateway": "192.168.1.1", "networks": ["3352", "13335"], "countries": ["ES", "US"]}}
+    for a in path_alerts(path, "example.org", ["13335"]):
+        print("{a["level"]}  {a["area"]}: {a["text"]}")
+    quiet = {"traced": true, "gateway": "192.168.1.1", "networks": ["3352", "13335"], "countries": ["ES"], "hops": 9, "tcp": 9, "listed": [], "unannounced": [], "outside": [], "routers": [], "own": {"known": false, "ip": "203.0.113.9", "ports": [], "vulns": []}, "exploited": [], "resolver": ["104.16.132.229"], "resolver_asn": "", "before": {"when": "2026-11-13", "gateway": "192.168.1.1", "networks": ["3352", "13335"], "countries": ["ES"]}}
+    assert path_alerts(quiet, "example.org", ["13335"]) == []
+    quiet["resolver_asn"] = "64666"
+    assert len(path_alerts(quiet, "example.org", ["13335"])) == 1
+    assert path_alerts({}, "example.org", []) == []
+
 test "a route traced with ping":
     assert ping_command("Linux", "192.0.2.7", 3) == ["ping", "-n", "-c", "1", "-W", "2", "-t", "3", "192.0.2.7"]
     assert ping_command("Darwin", "192.0.2.7", 3)[6] == "-m"
@@ -1799,7 +2089,7 @@ test "what is weak in DNS, the route and the site":
     certs = [{"issuer": "Let's Encrypt", "ends": "2027-02-01T00:00:00"}, {"issuer": "DigiCert", "ends": "2027-01-01T00:00:00"}, {"issuer": "A Small Authority", "ends": "2027-01-01T00:00:00"}]
     subs = {"checked": 2, "hanging": [{"name": "old.example.org", "target": "old-shop.s3.amazonaws.com", "service": "Amazon S3"}, {"name": "lab.example.org", "target": "lab.gone.example", "service": ""}]}
     exposed = {"ip": "198.51.100.7", "ports": [443, 3389], "vulns": ["CVE-2024-0001", "CVE-2024-0002"]}
-    data = {"health": health, "places": places, "route": route, "site": site, "certificates": certs, "subdomains": subs, "exposure": exposed, "routers": {"probes": []}, "path_outages": [], "v6": {"addresses": [{"ip": "2001:db8::7"}], "note": ""}, "history": []}
+    data = {"health": health, "places": places, "route": route, "site": site, "certificates": certs, "subdomains": subs, "exposure": exposed, "exploited": ["CVE-2024-0002"], "routers": {"probes": []}, "path_outages": [], "v6": {"addresses": [{"ip": "2001:db8::7"}], "note": ""}, "history": []}
     found = alerts_of(data, "2026-11-28", "2026-10-15", 1794000000)
     for a in found:
         print("{a["level"]}  {a["area"]}: {a["text"]}")

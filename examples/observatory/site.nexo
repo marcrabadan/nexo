@@ -11,11 +11,11 @@
 ## ping on Linux and macOS), through Python's subprocess.
 policy:
     allow net "cloudflare-dns.com", "dns.google", "stat.ripe.net", "atlas.ripe.net", "api.ioda.inetintel.cc.gatech.edu"
-    allow net "www.submarinecablemap.com", "www.peeringdb.com", "crt.sh", "internetdb.shodan.io", "127.0.0.1"
+    allow net "www.submarinecablemap.com", "www.peeringdb.com", "crt.sh", "internetdb.shodan.io", "www.spamhaus.org", "www.cisa.gov", "127.0.0.1"
     allow read "site", "data", "observatory.db"
     allow write "observatory.db"
     allow env "RIPE_ATLAS_KEY"
-    allow python "subprocess", "platform", "shutil"
+    allow python "subprocess", "platform", "shutil", "socket"
 
 use survey
 

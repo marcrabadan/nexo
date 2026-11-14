@@ -343,6 +343,28 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     ? routers.local_note || "The first trace is this machine's own, to the site's address: the real route from where the observatory runs, each hop asked three times. A hop that loses packets while the hops after it do not is a router that answers few questions, not a fault; loss that goes on to the end is real."
     : ""));
 
+  /* security of the path: what the route from this machine crosses, and what is open or listed on it */
+  (function () {
+    const x = DATA.path, names = route.names || {};
+    if (!x) { $("path").append(el("p", { class: "note", style: "margin-top:0" }, "This survey was kept before the observatory looked at the security of the path. Survey again for it.")); return; }
+    const row = (k, v, cls) => [el("dt", {}, k), el("dd", { class: cls || "" }, v)], was = x.before, own = x.own;
+    const holder = a => { const h = (routers.probes || []).filter(p => p.local).flatMap(p => p.hops).find(h => h.asn === a); return "AS" + a + " " + ((h && h.holder) || names[a] || "").split(" - ")[0].split(" ")[0]; };
+    const dl = el("dl", {});
+    if (x.traced) dl.append(
+      ...row("first router", x.gateway + (was && was.gateway && was.gateway !== x.gateway ? " — it was " + was.gateway + " on " + was.when : was ? " — the same as on " + was.when : ""), was && was.gateway && was.gateway !== x.gateway ? "changed" : ""),
+      ...row("networks", x.networks.map(holder).join(" → ") || "none placed", was && x.networks.some(n => !was.networks.includes(n)) ? "changed" : ""),
+      ...row("countries", x.countries.join(" → ") || "none placed", was && x.countries.some(c => !was.countries.includes(c)) ? "changed" : ""),
+      ...row("in blocklists", x.listed.length ? x.listed.map(l => "hop " + l.n + " " + l.ip + " in " + l.what).join("; ") : x.notes.length ? x.notes.join(" ") : "no router in the Spamhaus DROP lists", x.listed.length ? "no" : x.notes.length ? "" : "ok"),
+      ...row("routers open", x.routers.length ? x.routers.map(r => "hop " + r.n + " " + r.ip + ": " + [r.ports.length ? "ports " + r.ports.join(", ") : "", r.vulns.length ? r.vulns.length + " CVE" : ""].filter(Boolean).join(", ")).join("; ") : "none with management ports or known vulnerabilities seen by Shodan", x.routers.length ? "changed" : ""),
+      ...(x.unannounced.length ? row("not announced", x.unannounced.join(", ")) : []),
+      ...row("TCP 443", x.tcp ? "answered " + x.tcp + " hops away; the site is " + x.hops + " hops away" : "not compared: it needs a trace that arrives, and traceroute -T on Linux as root", x.tcp && x.hops - x.tcp >= 2 ? "no" : ""));
+    else dl.append(...row("route", "not traced from this machine, so only its address and its resolver are checked"));
+    if (own) dl.append(...row("your address", own.ip + ": " + (own.known ? (own.ports.length ? "ports " + own.ports.join(", ") : "no port") + " seen by Shodan" + (own.vulns.length ? ", " + own.vulns.length + " CVE" : "") : own.note.replace(/^Shodan has seen nothing open at .*$/, "nothing seen open by Shodan")), own.known && own.vulns.length ? "no" : ""));
+    dl.append(...row("your resolver", x.resolver.length ? x.resolver.join(", ") + (x.resolver_asn ? " in AS" + x.resolver_asn + ": not where the public resolvers send the name" : "") : "gave no address for the name", x.resolver_asn ? "changed" : ""));
+    if (x.exploited.length) dl.append(...row("used in attacks", x.exploited.join(", "), "no"));
+    $("path").append(dl, el("p", { class: "note" }, "The route is this machine's own trace, compared with the run before. Blocklists are Spamhaus DROP and ASN-DROP; open ports and vulnerabilities are what Shodan InternetDB has seen, checked against CISA's list of those used in attacks. The observatory sends nothing to the routers but the trace itself. A router that passes packets on without counting itself as a hop does not show in a trace."));
+  })();
+
   /* network path graph: the links the collectors' paths use most, origin on the right */
   (function () {
     const links = route.links || [], names = route.names || {};
@@ -429,7 +451,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
       el("div", { class: "gauge", style: "--v:" + m.score, role: "img", "aria-label": m.block + ": " + m.score + " of 100" }, el("b", {}, String(m.score))),
       el("div", {}, el("span", {}, m.block), el("small", {}, m.alerts ? m.alerts + (m.alerts === 1 ? " alert" : " alerts") : "nothing found")))));
     /* on each part of the report, how many alerts it has and the worst of them */
-    const PART = { DNS: "g-dns", Subdomains: "g-dns", Mail: "g-dns", Site: "g-site", Certificates: "g-site", Exposure: "g-site", Route: "g-routes", Outages: "g-routes", Changes: "g-history", Routers: "g-reach", IPv6: "g-reach" };
+    const PART = { DNS: "g-dns", Subdomains: "g-dns", Mail: "g-dns", Site: "g-site", Certificates: "g-site", Exposure: "g-site", Route: "g-routes", Outages: "g-routes", Changes: "g-history", Routers: "g-reach", IPv6: "g-reach", Path: "g-reach" };
     for (const a of document.querySelectorAll("#parts a")) {
       const id = a.getAttribute("href").slice(1), mine = (list || []).filter(x => id === "g-alerts" || PART[x.area] === id);
       if (mine.length) a.append(el("b", { class: mine[0].level, title: mine.length + (mine.length === 1 ? " alert" : " alerts") }, String(mine.length)));
