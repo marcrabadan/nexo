@@ -1,4 +1,4 @@
-## Internet observatory, the website: a page where any domain is typed
+## Nexo Observatory, the website of the internet observatory: a page where any domain is typed
 ## and surveyed (survey.nexo), with the map, the routers and the routes.
 ##     nexo site.nexo         serves http://127.0.0.1:8080
 ##     nexo test site.nexo    the pages and the API, without the internet
@@ -6,15 +6,16 @@
 ## the API the script asks. A survey takes a minute or two and is kept
 ## for a quarter of an hour. NEXO_WEB_LOCAL=1 listens on this machine
 ## only; without it anyone who reaches the port can make the server
-## survey a domain. The survey also runs this machine's own traceroute
-## (tracert on Windows), through Python's subprocess.
+## survey a domain. The survey also traces this machine's own route with
+## the system's command (tracert on Windows; traceroute, tracepath or
+## ping on Linux and macOS), through Python's subprocess.
 policy:
     allow net "cloudflare-dns.com", "dns.google", "stat.ripe.net", "atlas.ripe.net", "api.ioda.inetintel.cc.gatech.edu"
-    allow net "www.submarinecablemap.com", "www.peeringdb.com", "crt.sh", "127.0.0.1"
+    allow net "www.submarinecablemap.com", "www.peeringdb.com", "crt.sh", "internetdb.shodan.io", "www.spamhaus.org", "www.cisa.gov", "127.0.0.1"
     allow read "site", "data", "observatory.db"
     allow write "observatory.db"
     allow env "RIPE_ATLAS_KEY"
-    allow python "subprocess", "platform", "shutil"
+    allow python "subprocess", "platform", "shutil", "socket", "math"
 
 use survey
 
@@ -44,7 +45,7 @@ server observatory:
 test "the page and its files":
     home = http.get("{observatory.url}/")
     assert home.headers["content-type"] == "text/html; charset=utf-8"
-    assert "Internet observatory" in home.text
+    assert "Nexo Observatory" in home.text
     assert "<script src=\"map.js\"></script>" in home.text
     assert http.get("{observatory.url}/map.js").headers["content-type"] == "text/javascript; charset=utf-8"
     assert http.get("{observatory.url}/map.css").headers["content-type"] == "text/css; charset=utf-8"

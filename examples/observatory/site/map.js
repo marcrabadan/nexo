@@ -208,8 +208,26 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     key(sw("cable", "l"), ((CABLES && CABLES.features) || []).length + " submarine cables"),
     key(sw("cable hit", "l"), marked + " landing where routes or probes are down " + STRONG + "% or more"));
 
+  /* a long list of names: the first twelve, and the rest behind a line to open */
+  function some(names, sep) {
+    if (!names.length) return ["none listed"];
+    if (names.length <= 14) return [names.join(sep)];
+    return [names.slice(0, 12).join(sep), el("details", { class: "more" }, el("summary", {}, "and " + (names.length - 12) + " more"), names.slice(12).join(sep))];
+  }
+
+  /* export: the browser prints the report, and its dialog saves it as a PDF. Every trace is opened for the paper and closed again after. */
+  let closed = [];
+  window.addEventListener("beforeprint", () => { closed = [...document.querySelectorAll("details:not(.more):not([open])")]; for (const d of closed) d.open = true; });
+  window.addEventListener("afterprint", () => { for (const d of closed) d.open = false; closed = []; });
+  $("export").addEventListener("click", () => {
+    const title = document.title;
+    document.title = "observatory-" + DATA.domain + "-" + String(DATA.time).slice(0, 10);
+    window.print();
+    document.title = title;
+  });
+
   /* header and verdicts */
-  $("title").replaceChildren("Trace of ", el("span", {}, DATA.domain));
+  $("title").textContent = DATA.domain; document.title = DATA.domain + " · Nexo Observatory";
   $("when").textContent = "asked " + DATA.time + (me ? " from " + me.ip + " (AS" + me.asn + " " + me.holder + ")" : "");
   $("when").append(" · ", el("a", { href: "?domain=" + encodeURIComponent(DATA.domain) + "&fresh=1" }, "survey again"));
   function verdict(tone, q, a, why) {
@@ -242,6 +260,20 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   $("front").append(el("p", { style: "margin:0 0 8px" }, front.kind === "edge" ? "The request passed through " + front.name + " before reaching the server."
     : front.kind === "server" ? "The request was answered by the server itself" + (front.name ? ", which says it is " + front.name + "." : ".") : "Nothing answered: " + (site.note || "")));
   for (const e of front.evidence || []) $("front").append(el("div", { class: "mono" }, e));
+  if (site.hsts != null && site.up) $("front").append(el("div", { class: site.hsts ? "mono" : "mono changed" }, site.hsts ? "strict-transport-security: " + site.hsts : "no strict-transport-security header"));
+  (function () {
+    const x = DATA.exposure;
+    if (!x || !x.ip) { $("exposure").append(el("p", { class: "note", style: "margin-top:0" }, "Not looked up in this survey.")); return; }
+    if (!x.known) { $("exposure").append(el("p", { class: "note", style: "margin-top:0" }, x.note || "Nothing known.")); return; }
+    const row = (k, v, cls) => [el("dt", {}, k), el("dd", { class: cls || "" }, v)];
+    $("exposure").append(el("dl", {},
+      ...row("address", x.ip + (front.kind === "edge" ? " (the edge's, " + front.name + ")" : "")),
+      ...row("open ports", x.ports.join(", ") || "none seen"),
+      ...row("software", x.software.map(c => c.replace(/^cpe:\/[aoh]:/, "")).join(", ") || "none recognised"),
+      ...row("vulnerabilities", x.vulns.join(", ") || "none known", x.vulns.length ? "no" : "ok"),
+      ...(x.tags.length ? row("tags", x.tags.join(", ")) : [])),
+      el("p", { class: "note" }, "From Shodan InternetDB, which scans the whole internet every week: the observatory sends nothing to the address. Vulnerabilities go by version numbers, so each one needs checking."));
+  })();
   $("front").append(el("p", { class: "note" }, "This reads the headers of the answer. A firewall that only filters packets leaves no mark there, so it cannot be seen this way."));
 
   /* route */
@@ -254,6 +286,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   } else $("route").append(el("p", { class: "note" }, route.error || "No route data."));
 
   /* router traces: hops, time and loss per hop, and the sea crossings */
+  const FLAGS = { "!H": "the router has no way to the host", "!N": "the router has no way to the network", "!P": "the protocol is refused", "!X": "a firewall forbids it", "!F": "the packet is too big for the link", "!S": "the source route failed" };
   function latency(p) {
     const got = p.hops.filter(h => h.ms != null);
     if (got.length < 2) return null;
@@ -271,14 +304,34 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     return { svg, jump: jump && jump.d > 20 ? jump : null };
   }
   for (const p of routers.probes || []) {
-    const t = el("table", {}, el("tr", {}, el("th", {}, "hop"), el("th", {}, "router"), el("th", { class: "n" }, "ms"), el("th", { class: "n" }, "lost")));
+    const t = el("table", {}, el("tr", {}, el("th", {}, "hop"), el("th", {}, "router"), el("th", { class: "n" }, "ms"), el("th", { class: "n" }, "lost"), el("th", {}, "what happens here")));
+    let network = "", before = null;
+    const crossed = [];
     for (const h of p.hops) {
+      /* what this hop says: whose network the packet enters, a wait that grows, a router that refuses */
+      const says = [];
+      if (h.range) { says.push(h.range === "private network" ? "inside your own network" : h.range); if (!crossed.length) crossed.push("your network"); }
+      if (h.asn && h.asn !== network) { says.push((network ? "enters " : "") + "AS" + h.asn + " " + (h.holder || "").split(" - ")[0].split(" ")[0]); network = h.asn; crossed.push("AS" + h.asn + " " + (h.holder || "").split(" - ")[0].split(" ")[0]); }
+      if (h.ms != null && before != null && h.ms - before > 20) says.push("+" + (h.ms - before).toFixed(0) + " ms: a long link" + (h.city ? " to " + h.city : ""));
+      if (h.ms != null) before = h.ms;
+      if ((h.also || []).length) says.push("load shared with " + h.also.join(", "));
+      if (h.flag) says.push(h.flag + ": " + (FLAGS[h.flag] || "the router refused the packet"));
+      if (!h.ip) says.push("no answer: the router keeps quiet, or a firewall drops the packet");
       const where = h.by === "name" ? h.city + " (from its name)" : h.country ? h.country + " (register)" : "";
       t.append(el("tr", {}, el("td", {}, String(h.n)),
         el("td", {}, el("span", { class: "mono" }, h.host || h.ip || "no answer"), h.ip ? el("div", { class: "sub" }, [h.host ? h.ip : "", where, h.asn ? "AS" + h.asn + " " + h.holder : (h.lat == null && !h.host ? "private or unplaced" : "")].filter(Boolean).join(" · ")) : null),
-        el("td", { class: "n" }, h.ms == null ? "" : h.ms.toFixed(1)), el("td", { class: "n" + (h.lost && h.lost < h.sent ? " changed" : "") }, h.sent ? h.lost + "/" + h.sent : "")));
+        el("td", { class: "n" }, h.ms == null ? "" : h.ms.toFixed(1), h.avg != null && h.sent - h.lost > 1 ? el("div", { class: "sub" }, "avg " + h.avg.toFixed(1) + " · max " + h.worst.toFixed(1)) : null),
+        el("td", { class: "n" + (h.lost && h.lost < h.sent ? " changed" : "") }, h.sent ? h.lost + "/" + h.sent : ""),
+        el("td", { class: "sub" }, says.join("; "))));
     }
     const chart = latency(p), body = el("div", { class: "cols", style: "margin-top:8px" }), side = el("div", { style: "min-width:0" });
+    if (p.local) {
+      const last = p.hops.filter(h => h.ip).pop();
+      side.append(el("p", { style: "margin:0 0 8px" }, p.reached ? "Arrived in " + p.hops.length + " hops" + (last && last.ms != null ? ", " + last.ms.toFixed(1) + " ms away." : ".")
+        : "Did not arrive. The last router that answered is hop " + (last ? last.n + ", " + (last.host || last.ip) + (last.asn ? " (AS" + last.asn + " " + last.holder + ")" : "") : "none") + ": past it, routers keep quiet or a firewall drops the packets. The site can still be up."));
+      if (crossed.length) side.append(el("p", { class: "note", style: "margin-top:0" }, "Networks crossed: " + crossed.join(" → ")));
+      side.append(el("p", { class: "note" }, "Traced on " + (p.system || "this machine") + " with " + p.tool + ((p.tried || []).length > 1 ? " (tried: " + p.tried.join("; ") + ")" : "") + "."));
+    }
     if (chart) side.append(el("div", { class: "sub" }, "Time to each hop" + (chart.jump ? ". Biggest step: +" + chart.jump.d.toFixed(0) + " ms at hop " + chart.jump.hop.n + (chart.jump.hop.city ? " (" + chart.jump.hop.city + ")" : "") : "")), chart.svg);
     if (p.stops.length > 1) side.append(el("p", { class: "note" }, "Path: " + p.stops.map(s => s.label).join(" → ")));
     for (const sea of p.seas) side.append(el("p", { class: "note" }, sea.from + " → " + sea.to + ", about " + sea.km.toLocaleString("en") + " km. " + sea.cables.length +
@@ -287,6 +340,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     const d = el("details", {}, el("summary", {}, p.label + " ", el("small", { class: p.reached ? "ok" : "no" }, p.reached ? "arrived in " + p.hops.length + " hops" : "did not arrive"),
       p.seas.length ? el("small", {}, " · " + p.seas.length + (p.seas.length === 1 ? " sea crossing" : " sea crossings")) : null), body);
     d.addEventListener("toggle", () => { if (p.line) p.line.classList.toggle("on", d.open); for (const sea of p.seas) for (const c of sea.cables) c.node.classList.toggle("cand", d.open); });
+    if (p.local) d.open = true;
     $("routers").append(d);
   }
   $("routers").append(el("p", { class: "note" }, (routers.probes || []).length
@@ -297,8 +351,33 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     : routers.note || "No router traces."));
   if (routers.note && (routers.probes || []).length) $("routers").append(el("p", { class: "note" }, routers.note));
   $("routers").append(el("p", { class: "note" }, routers.local_note || (routers.probes || []).some(p => p.local)
-    ? routers.local_note || "The first trace is this machine's own, run with its " + routers.probes.find(p => p.local).tool + " command to the site's address: the real route from where the observatory runs."
+    ? routers.local_note || "The first trace is this machine's own, to the site's address: the real route from where the observatory runs, each hop asked three times. A hop that loses packets while the hops after it do not is a router that answers few questions, not a fault; loss that goes on to the end is real."
     : ""));
+
+  /* security of the path: what the route from this machine crosses, and what is open or listed on it */
+  (function () {
+    const x = DATA.path, names = route.names || {};
+    if (!x) { $("path").append(el("p", { class: "note", style: "margin-top:0" }, "This survey was kept before the observatory looked at the security of the path. Survey again for it.")); return; }
+    const row = (k, v, cls) => [el("dt", {}, k), el("dd", { class: cls || "" }, v)], was = x.before, own = x.own;
+    const holder = a => { const h = (routers.probes || []).filter(p => p.local).flatMap(p => p.hops).find(h => h.asn === a); return "AS" + a + " " + ((h && h.holder) || names[a] || "").split(" - ")[0].split(" ")[0]; };
+    const dl = el("dl", {});
+    if (x.traced) dl.append(
+      ...row("first router", x.gateway + (was && was.gateway && was.gateway !== x.gateway ? " — it was " + was.gateway + " on " + was.when : was ? " — the same as on " + was.when : ""), was && was.gateway && was.gateway !== x.gateway ? "changed" : ""),
+      ...row("networks", x.networks.map(holder).join(" → ") || "none placed", was && x.networks.some(n => !was.networks.includes(n)) ? "changed" : ""),
+      ...row("countries", x.countries.join(" → ") || "none placed", was && x.countries.some(c => !was.countries.includes(c)) ? "changed" : ""),
+      ...row("in blocklists", x.listed.length ? x.listed.map(l => "hop " + l.n + " " + l.ip + " in " + l.what).join("; ") : x.notes.length ? x.notes.join(" ") : "no router in the Spamhaus DROP lists", x.listed.length ? "no" : x.notes.length ? "" : "ok"),
+      ...row("routers open", x.routers.length ? x.routers.map(r => "hop " + r.n + " " + r.ip + ": " + [r.ports.length ? "ports " + r.ports.join(", ") : "", r.vulns.length ? r.vulns.length + " CVE" : ""].filter(Boolean).join(", ")).join("; ") : "none with management ports or known vulnerabilities seen by Shodan", x.routers.length ? "changed" : ""),
+      ...(x.unannounced.length ? row("not announced", x.unannounced.join(", ")) : []),
+      ...row("TCP 443", x.tcp ? "answered " + x.tcp + " hops away; the site is " + x.hops + " hops away" : "not compared: it needs a trace that arrives, a Python on this machine and an answer on port 443", x.tcp && x.hops - x.tcp >= 2 ? "no" : ""));
+    else dl.append(...row("route", "not traced from this machine, so only its address and its resolver are checked"));
+    if (x.km != null && x.ms != null) { const soon = x.km > 500 && x.ms * 100 < x.km * 0.7;
+      dl.append(...row("distance", x.ms.toFixed(1) + " ms for " + x.km.toLocaleString("en") + " km by the register: " + (soon ? "too soon for that distance, so the answer comes from nearer" : "possible; light needs " + (x.km / 100).toFixed(0) + " ms there and back"), soon ? "changed" : "")); }
+    if (was && was.own_asn && x.own_asn && was.own_asn !== x.own_asn) dl.append(...row("this machine", "in AS" + x.own_asn + " now, in AS" + was.own_asn + " on " + was.when + ": another network, so the route is not compared", "changed"));
+    if (own) dl.append(...row("your address", own.ip + ": " + (own.known ? (own.ports.length ? "ports " + own.ports.join(", ") : "no port") + " seen by Shodan" + (own.vulns.length ? ", " + own.vulns.length + " CVE" : "") : own.note.replace(/^Shodan has seen nothing open at .*$/, "nothing seen open by Shodan")), own.known && own.vulns.length ? "no" : ""));
+    dl.append(...row("your resolver", x.resolver.length ? x.resolver.join(", ") + (x.resolver_asn ? " in AS" + x.resolver_asn + ": not where the public resolvers send the name" : "") : "gave no address for the name", x.resolver_asn ? "changed" : ""));
+    if (x.exploited.length) dl.append(...row("used in attacks", x.exploited.join(", "), "no"));
+    $("path").append(dl, el("p", { class: "note" }, "The route is this machine's own trace, compared with the run before. Blocklists are Spamhaus DROP and ASN-DROP; open ports and vulnerabilities are what Shodan InternetDB has seen, checked against CISA's list of those used in attacks. The observatory sends nothing to the routers but the trace itself. A router that passes packets on without counting itself as a hop does not show in a trace."));
+  })();
 
   /* network path graph: the links the collectors' paths use most, origin on the right */
   (function () {
@@ -313,14 +392,23 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     const shown = new Set(cols.flat()), drawn = kept.filter(l => shown.has(l.near) && shown.has(l.far));
     const used = cols.filter(c => c.length), rows = Math.max(...used.map(c => c.length)), W = 1000, bw = 190, bh = 30, H = rows * 40 + 24, pos = {};
     used.forEach((c, i) => c.forEach((a, j) => { pos[a] = [W - bw - 4 - i * ((W - bw - 8) / Math.max(1, used.length - 1)), 12 + (H - 24 - bh) * (c.length > 1 ? j / (c.length - 1) : .5)]; }));
+    /* the risk each network carries: an outage signal, every path through it, an origin nobody authorised */
+    const risk = {};
+    for (const t of route.transits || []) if (route.paths >= 10 && t.paths === route.paths) risk[t.asn] = ["warn", "Every path seen goes through this network", "single point"];
+    if ((route.upstreams || []).length === 1) risk[route.upstreams[0].asn] = ["warn", "The only upstream of the origin", "only upstream"];
+    if (/invalid/.test(route.rpki || "")) risk[route.origin] = ["bad", "RPKI: " + route.rpki, "invalid"];
+    else if (route.rpki === "unknown") risk[route.origin] = ["warn", "No ROA covers the prefix", "no ROA"];
+    for (const o of DATA.path_outages || []) risk[String(o.code).replace(/^AS/i, "")] = ["bad", "Outage signal: " + o.signal + " fell " + o.fall + "%", "outage"];
     const svg = el("svg", { class: "graph", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Networks and the links between them on the paths to the origin" });
     const most = Math.max(...drawn.map(l => l.paths));
     for (const l of drawn) { const a = pos[l.near], b = pos[l.far], x1 = a[0] + bw, y1 = a[1] + bh / 2, x2 = b[0], y2 = b[1] + bh / 2, e = el("path", { class: "edge", "stroke-width": (1 + 9 * l.paths / most).toFixed(1), d: `M${x1} ${y1}C${(x1 + x2) / 2} ${y1} ${(x1 + x2) / 2} ${y2} ${x2} ${y2}` });
       e.append(el("title", {}, "AS" + l.near + " hands to AS" + l.far + " in " + l.paths + " of " + route.paths + " paths")); svg.append(e); }
     for (const a in pos) { const [x, y] = pos[a], t1 = el("text", { x: x + 8, y: y + 13 }), t2 = el("text", { class: "dim", x: x + 8, y: y + 25 });
       t1.textContent = ((names[a] || "").split(" - ")[0].split(" ")[0] || "AS" + a).slice(0, 24); t2.textContent = "AS" + a + (a === route.origin ? " · origin" : "");
-      svg.append(el("rect", { class: a === route.origin ? "origin" : "", x, y, width: bw, height: bh, rx: 3 }), t1, t2); }
-    $("graph").append(svg, el("p", { class: "note" }, "The " + drawn.length + " links most used by the " + route.paths + " paths the route collectors see. Traffic flows left to right, to the origin; a thicker link is on more paths."));
+      const r = el("rect", { class: (a === route.origin ? "origin " : "") + (risk[a] ? "risk-" + risk[a][0] : ""), x, y, width: bw, height: bh, rx: 3 });
+      if (risk[a]) { r.append(el("title", {}, risk[a][1])); t2.textContent += " · " + risk[a][2]; }
+      svg.append(r, t1, t2); }
+    $("graph").append(svg, el("p", { class: "note" }, "The " + drawn.length + " links most used by the " + route.paths + " paths the route collectors see. Traffic flows left to right, to the origin; a thicker link is on more paths. A network framed in red has an outage signal or an origin RPKI rejects; in amber, every path depends on it or its prefix has no ROA."));
   })();
 
   /* BGP: validity, upstreams, changes */
@@ -334,6 +422,11 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     dl.append(el("dt", {}, "announced by"), el("dd", { class: others.some(h => Date.parse(DATA.time) - Date.parse(h.last) < 365 * 864e5) ? "no" : "" },
       (route.history || []).map(h => "AS" + h.origin + " " + ((route.names || {})[h.origin] || "").split(" ")[0] + " " + h.first.slice(0, 10) + " to " + (h.origin === route.origin ? "now" : h.last.slice(0, 10))).join("; ") || "no history",
       el("div", { class: "sub" }, others.length ? "Another origin for the same prefix can be a hand-over, or a hijack." : "One origin for all of its history: no sign of a hijack.")));
+    const len = Number((route.prefix || "").split("/")[1] || 0), foreign = (route.specifics || []).filter(m => m.origin !== route.origin);
+    if ("roa_max" in route && route.rpki === "valid") dl.append(el("dt", {}, "ROA length"), el("dd", { class: route.roa_max > len ? "changed" : "ok" },
+      route.roa_max > len ? "up to /" + route.roa_max + " allowed, /" + len + " announced: room for a forged more specific route" : "exactly what is announced, /" + len));
+    if (foreign.length) dl.append(el("dt", {}, "from others"), el("dd", { class: "changed" }, foreign.slice(0, 6).map(m => m.prefix + " by AS" + m.origin).join("; ") + ": parts of this prefix announced by another network"));
+    if ("irr" in route) dl.append(el("dt", {}, "route object"), el("dd", { class: route.irr.length ? "" : "changed" }, route.irr.length ? "in " + route.irr.join(", ") : "none in the routing registries"));
     $("bgp").append(dl);
     const ups = route.updates || [];
     if (ups.length) {
@@ -359,16 +452,38 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     "% or more. That says where to look. It does not say the cable is cut. A fall in Google traffic alone tints the country and marks no cable."));
 
   const onPath = DATA.path_outages || [];
-  $("outages").append(el("h2", { style: "margin-top:18px" }, "On the networks of the route"), onPath.length
+  $("outages").append(el("h3", { class: "gap" }, "On the networks of the route"), onPath.length
     ? el("ul", { class: "plain" }, ...onPath.map(o => el("li", { class: "no" }, o.country + ": " + signal(o.signal) + " down " + o.fall + "%")))
     : el("p", { class: "note", style: "margin-top:0" }, "No outage signal on the origin or on any of the " + (route.transits || []).length + " transit networks."));
 
+  /* alerts: what the survey found to look at, the most serious first */
+  (function () {
+    const list = DATA.alerts, count = level => list.filter(a => a.level === level).length;
+    if (!list) { $("alerts").append(el("p", { class: "note", style: "margin-top:0" }, "This survey was kept before the observatory raised alerts. Survey again for them.")); return; }
+    const marks = DATA.scores || [];
+    $("scores").append(...marks.map(m => el("div", { class: "score " + (m.score >= 80 ? "good" : m.score >= 50 ? "warn" : "bad") },
+      el("div", { class: "gauge", style: "--v:" + m.score, role: "img", "aria-label": m.block + ": " + m.score + " of 100" }, el("b", {}, String(m.score))),
+      el("div", {}, el("span", {}, m.block), el("small", {}, m.alerts ? m.alerts + (m.alerts === 1 ? " alert" : " alerts") : "nothing found")))));
+    /* on each part of the report, how many alerts it has and the worst of them */
+    const PART = { DNS: "g-dns", Subdomains: "g-dns", Mail: "g-dns", Site: "g-site", Certificates: "g-site", Exposure: "g-site", Route: "g-routes", Outages: "g-routes", Changes: "g-history", Routers: "g-reach", IPv6: "g-reach", Path: "g-reach" };
+    for (const a of document.querySelectorAll("#parts a")) {
+      const id = a.getAttribute("href").slice(1), mine = (list || []).filter(x => id === "g-alerts" || PART[x.area] === id);
+      if (mine.length) a.append(el("b", { class: mine[0].level, title: mine.length + (mine.length === 1 ? " alert" : " alerts") }, String(mine.length)));
+    }
+    if (!list.length) { $("alerts").append(el("p", { class: "note", style: "margin-top:0" }, "Nothing to look at: no check of this survey raised an alert.")); return; }
+    $("alerts-title").textContent = "Alerts: " + ["critical", "warning", "notice"].filter(count).map(l => count(l) + " " + l).join(", ");
+    $("alerts").append(el("ul", { class: "alerts" }, ...list.map(a => el("li", { class: a.level },
+      el("span", { class: "level" }, a.level), el("span", { class: "area" }, a.area),
+      el("div", {}, a.text, el("div", { class: "sub" }, a.fix))))));
+  })();
+
   /* DNS health and mail */
   (function () {
-    const h = DATA.health || {}, rs = h.resolvers || [], same = rs.length > 1 && rs.every(r => r.addresses.slice().sort().join() === rs[0].addresses.slice().sort().join());
+    const h = DATA.health || {}, subs = DATA.subdomains, rs = h.resolvers || [], same = rs.length > 1 && rs.every(r => r.addresses.slice().sort().join() === rs[0].addresses.slice().sort().join());
     const row = (k, v, cls) => [el("dt", {}, k), el("dd", { class: cls || "" }, v)];
     $("health").append(el("dl", {},
       ...row("DNSSEC", h.dnssec ? "signed, and the resolver checked it" : "not signed: answers cannot be checked for forgery", h.dnssec ? "ok" : "changed"),
+      ...(h.dnssec && h.algorithm ? row("signature", "algorithm " + h.algorithm + (h.signed_until ? ", good until " + new Date(h.signed_until * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC" : ""), [1, 3, 5, 6, 7].includes(h.algorithm) ? "changed" : "") : []),
       ...row("kept for", h.ttl == null ? "unknown" : h.ttl + " s before a resolver asks again"),
       ...row("zone serial", h.serial || "not at this name"),
       ...row("resolvers", rs.map(r => r.name + ": " + (r.addresses.join(", ") || "none")).join(" · ")),
@@ -376,7 +491,9 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
       ...row("mail servers", (h.mx || []).join(", ") || "none: the domain takes no mail"),
       ...row("SPF", h.spf || "none: anyone can send mail as this domain", h.spf ? "" : "changed"),
       ...row("DMARC", h.dmarc || "none: receivers are not told what to do with forged mail", h.dmarc ? "" : "changed"),
-      ...row("CAA", (h.caa || []).join(", ") || "none: any authority may issue its certificates")),
+      ...row("CAA", (h.caa || []).join(", ") || "none: any authority may issue its certificates"),
+      ...((h.mx || []).length && "mta_sts" in h ? row("mail in transit", [h.mta_sts ? "MTA-STS" : "", h.tls_rpt ? "TLS reports" : "", h.dane ? "DANE" : ""].filter(Boolean).join(", ") || "no MTA-STS and no DANE: encryption can be stripped on the way", h.mta_sts || h.dane ? "" : "changed") : []),
+      ...(subs ? row("subdomains", subs.checked ? subs.checked + " names of the certificate logs checked; " + (subs.hanging.length ? subs.hanging.map(x => x.name + " → " + x.target).join(", ") + " left hanging" : "none left hanging") : "none in the certificate logs", subs.hanging.length ? "no" : "") : [])),
       el("p", { class: "note" }, "A resolver cannot be made to ask each name server on its own over HTTPS, so two resolvers are compared here."));
   })();
 
@@ -407,8 +524,8 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   (function () {
     if (!meet.name) { $("peering").append(el("p", { class: "note", style: "margin-top:0" }, meet.error || "The origin network has no PeeringDB record.")); return; }
     $("peering").append(el("dl", {}, el("dt", {}, "network"), el("dd", {}, meet.name + " (AS" + route.origin + ")"), el("dt", {}, "peering"), el("dd", {}, [meet.policy, meet.scope, meet.traffic].filter(Boolean).join(" · ")),
-      el("dt", {}, "exchanges"), el("dd", {}, (meet.exchanges || []).join(", ") || "none listed"),
-      el("dt", {}, "buildings"), el("dd", {}, (meet.facilities || []).map(f => f.name).join("; ") || "none listed")),
+      el("dt", {}, "exchanges"), el("dd", {}, ...some(meet.exchanges || [], ", ")),
+      el("dt", {}, "buildings"), el("dd", {}, ...some((meet.facilities || []).map(f => f.name), "; "))),
       el("p", { class: "note" }, "From PeeringDB, as the network declares it. The buildings are on the map."));
   })();
 
@@ -425,6 +542,12 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
       if (prev.ms > 0 && (now.ms > prev.ms * 1.5 || now.ms < prev.ms / 1.5)) diff.push("answer time: " + prev.ms + " ms → " + now.ms + " ms");
       $("since").append(diff.length ? el("ul", { class: "plain" }, ...diff.map(d => el("li", { class: "changed" }, d))) : el("p", { class: "note", style: "margin-top:0" }, "Nothing changed since " + prev.at.slice(0, 16).replace("T", " ") + " UTC."));
     }
+    const seq = [Object.assign({ at: DATA.time }, now), ...runs], steps = [];
+    for (let i = 0; i + 1 < seq.length; i++) for (const [k, label] of [["address", "address"], ["origin", "origin network"], ["route", "route"], ["rpki", "RPKI"], ["front", "in front of the site"], ["status", "HTTP status"]])
+      if (String(seq[i][k]) !== String(seq[i + 1][k])) steps.push([seq[i].at, label + ": " + (seq[i + 1][k] === "" ? "none" : seq[i + 1][k]) + " → " + (seq[i][k] === "" ? "none" : seq[i][k]), k === "origin" || k === "rpki" || k === "route"]);
+    if (runs.length) $("timeline").append(steps.length ? el("ol", { class: "timeline" }, ...steps.map(c => el("li", { class: c[2] ? "hot" : "" }, el("time", {}, String(c[0]).slice(0, 16).replace("T", " ")), el("span", {}, c[1]))))
+      : el("p", { class: "note", style: "margin-top:0" }, "Nothing changed in the " + seq.length + " runs kept."));
+    else $("timeline").append(el("p", { class: "note", style: "margin-top:0" }, "One run so far: a timeline needs two."));
     if (!runs.length) { $("history").append(el("p", { class: "note", style: "margin-top:0" }, "None yet. Runs are kept in observatory.db.")); return; }
     const t = el("table", {}, el("tr", {}, el("th", {}, "when (UTC)"), el("th", {}, "route"), el("th", { class: "n" }, "probes"), el("th", { class: "n" }, "HTTP"), el("th", { class: "n" }, "ms")));
     for (const r of runs) t.append(el("tr", {}, el("td", {}, r.at.slice(0, 16).replace("T", " ")), el("td", {}, r.route + " " + r.seeing + "/" + r.total), el("td", { class: "n" }, r.arrived + "/" + r.probes), el("td", { class: "n" }, String(r.status || "")), el("td", { class: "n" }, String(r.ms))));
@@ -439,7 +562,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
 
 (async function () {
   const $ = id => document.getElementById(id);
-  const say = text => { $("status").textContent = text; $("status").hidden = !text; };
+  const say = (text, busy) => { $("status").textContent = text; $("status").hidden = !text; $("status").classList.toggle("busy", !!busy); };
   $("report").hidden = true;
   const get = async url => {
     const r = await fetch(url);
@@ -460,6 +583,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   });
   const query = new URLSearchParams(location.search), domain = clean(query.get("domain") || "");
   if (!domain) {
+    $("welcome").hidden = false;
     /* nothing asked: the domains surveyed here before */
     const runs = await get("api/runs").catch(() => []);
     if (runs && runs.length) {
@@ -467,7 +591,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
       for (const r of runs) {
         const li = document.createElement("li"), a = document.createElement("a");
         a.href = "?domain=" + encodeURIComponent(r.domain); a.textContent = r.domain;
-        li.append(a, " · route " + r.route + " · " + r.arrived + "/" + r.probes + " probes arrived · " + r.at.slice(0, 16).replace("T", " ") + " UTC");
+        li.append(a, "route " + r.route + " · " + r.arrived + "/" + r.probes + " probes arrived · " + r.at.slice(0, 16).replace("T", " ") + " UTC");
         list.append(li);
       }
       $("recent").append("Surveyed here before:", list);
@@ -476,7 +600,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   }
   $("field").value = domain;
   if (!isDomain(domain)) { say("\"" + domain + "\" is not a domain name. Type one like example.com."); return; }
-  say("Surveying " + domain + ": DNS, routes, routers, certificates, outages. A new survey takes one to two minutes; one made in the last quarter of an hour comes at once.");
+  say("Surveying " + domain + ": DNS, routes, routers, certificates, outages. A new survey takes one to two minutes; one made in the last quarter of an hour comes at once.", true);
   try {
     const world = await get("world.json"), cables = await get("api/cables"), landings = await get("api/landings");
     const data = await get("api/trace/" + encodeURIComponent(domain) + (query.get("fresh") ? "?fresh=true" : ""));
