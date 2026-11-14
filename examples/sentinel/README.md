@@ -14,9 +14,15 @@ cd examples/sentinel
 python3 compare/sentinel.py                 # the Python comparison
 ```
 
-It prints a report in four parts: the files it skipped and why, the
-findings, the addresses with their score and what Sentinel proposes for
-each (`block`, `watch`, or `protected` for an address in `never_block`),
+How it is built, what each part may touch and why is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
+It prints a report in five parts: the files it skipped and why; the
+findings, each with whether it is sure or a suspicion; the addresses, the
+most urgent first, with their priority (P1 to P4), score, the times of
+their first and last finding, their ATT&CK tactics and what Sentinel
+proposes for each (`block`, `review`, `watch`, or `protected` for an
+address in `never_block`); the findings that `sentinel.json` suppresses;
 and what to do about each rule that fired, with its CWE or MITRE ATT&CK
 reference. The same report is written to `report.json` for other tools.
 Then it asks two questions. Anything but `yes` (an empty answer too) is a no.
@@ -27,7 +33,7 @@ Then it asks two questions. Anything but `yes` (an empty answer too) is a no.
    by the program: it cannot block an address or answer the next question.
 2. `Block them?` sends `{"address": ..., "by": "sentinel"}` to
    `firewall + "/block"` for each address proposed for blocking: the ones
-   with a high finding that are not in `never_block`.
+   with a high finding that is sure and that are not in `never_block`.
 
 ## What it detects
 
@@ -58,16 +64,21 @@ takes part.
 | SEN-303 | `malformed_line` | low | the line is not a log entry, or its address is not an IPv4 address |
 
 SEN-204 and SEN-205 are the signs of IDOR (insecure direct object
-reference, CWE-639) that a log can show. They are suspicions: a log does
+reference, CWE-639) that a log can show. They are suspicions, so their
+address is proposed for `review` and never for a block: a log does
 not say who owns an object, so an administrator who reads the object of a
 user, or a client that lists many orders of its own, is reported too.
 SEN-205 needs the user in the log, as `user=N` after the status.
 
 The score of an address is 10 for each high finding, 4 for each medium one
-and 1 for each low one; the highest score comes first.
+and 1 for each low one. Its priority is P1 when it is to block and its
+findings are in more than one tactic or a login was accepted after
+failures, P2 for the other addresses to block or protected, P3 for the
+ones to review and P4 for the ones to watch; the most urgent comes first
+and, among equals, the highest score.
 
 The value of a secret is replaced by `<redacted>` wherever a line is
-shown, on screen and in `report.json`. Evidence is cut at 80 characters
+shown, on screen and in `report.json`. Evidence is cut at 100 characters
 and hidden or control characters are printed as `<hidden>` and `<control>`, so a log cannot rewrite the terminal
 of whoever reads the report.
 
@@ -84,6 +95,11 @@ read; a missing or wrong field stops the program.
 | `max_failed_logins` | failed logins of one address before SEN-201 |
 | `max_not_found` | 404 answers to one address before SEN-203 |
 | `max_object_ids` | different ids of one route asked by one address before SEN-204 |
+| `suppress` | findings to silence: each `{"rule", "source", "reason"}`, where `"*"` is any rule or any address (not both) |
+
+A suppressed finding is not scored and proposes nothing; it is listed
+under `SUPPRESSED`, written to `report.json` and recorded in `audit.json`
+with its reason.
 
 ## What it may touch
 
@@ -96,7 +112,7 @@ elsewhere cannot be read. The policy is checked by the standard library;
 it is not isolation by the operating system.
 
 Each run adds its records to `audit.json`: the scan, every file skipped
-and why, the report written, whether advice was given, the answer to the approval question and
+and why, every finding suppressed and its reason, the report written, whether advice was given, the answer to the approval question and
 every address blocked or not.
 
 ## Files
@@ -106,6 +122,8 @@ every address blocked or not.
   `nginx.log` (the combined format), `oversized.log` and `binary.log` (not UTF-8, skipped).
 - `findings.json`: the findings the corpus must give, each `[file, line, rule]`.
 - `sentinel.expected`: the output when both questions are answered `no`.
+- `safe.nexo`: the module that decides what may be shown, used by the
+  three programs.
 - `compare/sentinel.py`: the same program in Python, with the same output
   and audit records.
 
@@ -242,8 +260,7 @@ in `resources.json`: `prometheus`, `loki`, `window`, `namespace`, `tenant`
 and `auth` as for restarts, the three percentages above, and `lines`, the
 most lines read for each container.
 
-`monitoring.nexo` is the module it uses for the queries and for text that
-is safe to show. Like the restarts report, it has run against stand-ins
+`monitoring.nexo` is the module it and `restarts.nexo` use for the queries. Like the restarts report, it has run against stand-ins
 for the two services (`tests/test_sentinel_resources.py`), not against a
 real Prometheus or Loki.
 
