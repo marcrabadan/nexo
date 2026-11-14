@@ -14,4 +14,17 @@
 ✓ the hops traceroute and tracert print
 ✓ the state of a route
 ✓ the outages still open
-16 tests: 16 passed, 0 failed
+critical  Mail: SPF ends in +all: every server in the world is allowed to send mail as this domain.
+critical  Route: RPKI says invalid_asn: AS64501 is not authorised to announce 198.51.100.0/24. Networks that check drop this route; it can be a hijack.
+critical  Route: AS64666 also announced 198.51.100.0/24, until 2026-11-12: a hand-over, or a hijack.
+critical  Changes: The origin of the route changed from AS64999 to AS64501 since the last run.
+warning  DNS: The zone is not signed: a forged answer cannot be told from a true one.
+warning  DNS: The 2 name servers placed are all in one network, AS64500: when it fails, the name stops resolving.
+warning  Certificates: The newest certificate in the public logs ends on 2026-11-20.
+warning  Route: Every one of the 12 paths seen goes through AS64510: a single point of failure.
+warning  Routers: 1 of 2 probes did not reach the site.
+warning  Changes: RPKI was valid in the last run and is invalid_asn now.
+notice  Mail: DMARC is p=none: forged mail is reported, and still delivered.
+notice  IPv6: The name has no IPv6 address.
+✓ the alerts of a survey
+17 tests: 17 passed, 0 failed

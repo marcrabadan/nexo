@@ -363,6 +363,17 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     ? el("ul", { class: "plain" }, ...onPath.map(o => el("li", { class: "no" }, o.country + ": " + signal(o.signal) + " down " + o.fall + "%")))
     : el("p", { class: "note", style: "margin-top:0" }, "No outage signal on the origin or on any of the " + (route.transits || []).length + " transit networks."));
 
+  /* alerts: what the survey found to look at, the most serious first */
+  (function () {
+    const list = DATA.alerts, count = level => list.filter(a => a.level === level).length;
+    if (!list) { $("alerts").append(el("p", { class: "note", style: "margin-top:0" }, "This survey was kept before the observatory raised alerts. Survey again for them.")); return; }
+    if (!list.length) { $("alerts").append(el("p", { class: "note", style: "margin-top:0" }, "Nothing to look at: no check of this survey raised an alert.")); return; }
+    $("alerts-title").textContent = "Alerts: " + ["critical", "warning", "notice"].filter(count).map(l => count(l) + " " + l).join(", ");
+    $("alerts").append(el("ul", { class: "alerts" }, ...list.map(a => el("li", { class: a.level },
+      el("span", { class: "level" }, a.level), el("span", { class: "area" }, a.area),
+      el("div", {}, a.text, el("div", { class: "sub" }, a.fix))))));
+  })();
+
   /* DNS health and mail */
   (function () {
     const h = DATA.health || {}, rs = h.resolvers || [], same = rs.length > 1 && rs.every(r => r.addresses.slice().sort().join() === rs[0].addresses.slice().sort().join());

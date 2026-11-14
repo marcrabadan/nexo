@@ -9,6 +9,10 @@
 ## exchange points to PeeringDB, certificates to crt.sh, outages to IODA
 ## and the cables to the Submarine Cable Map. Each run is kept in
 ## observatory.db, so the page says what changed since the last one.
+## A survey ends with its alerts: what an operator should look at (a
+## zone not signed, mail anyone can forge, a route with no ROA or a
+## second origin, a single upstream, a certificate about to end), each
+## with what to do, the most serious first.
 ## What nobody publishes is not shown: there is no public feed of cable
 ## faults, so a cable is only marked when it lands in a country with an
 ## outage signal, or named as a candidate where a trace crosses a sea.
@@ -876,6 +880,144 @@ fn remember(data: map) -> list:
         print("  history not kept: {e.message}")
         return []
 
+## One thing to look at: how serious it is ("critical", "warning" or
+## "notice"), the part of the survey it is about, what was seen and what
+## to do about it.
+fn alert(level: str, area: str, text: str, fix: str) -> map:
+    return {"level": level, "area": area, "text": text, "fix": fix}
+
+## The day of a moment written as "2026-11-20T00:00:00".
+fn day(moment: str) -> str:
+    return moment.split("T")[0]
+
+## What the zone and its mail records leave open.
+fn dns_alerts(health: map, places: list) -> list:
+    var out = []
+    if (health["error"] ?? "") != "":
+        return out
+    if not health["dnssec"]:
+        out.add(alert("warning", "DNS", "The zone is not signed: a forged answer cannot be told from a true one.", "Sign the zone and publish its DS record at the registrar."))
+    var networks = []
+    var servers = 0
+    for p in places:
+        if p["kind"] == "name server" and str(p["asn"]) != "":
+            servers += 1
+            if not (str(p["asn"]) in networks):
+                networks.add(str(p["asn"]))
+    if servers > 1 and len(networks) == 1:
+        out.add(alert("warning", "DNS", "The {servers} name servers placed are all in one network, AS{networks[0]}: when it fails, the name stops resolving.", "Add a name server in another network."))
+    spf = health["spf"].lower()
+    if spf == "":
+        out.add(alert("warning", "Mail", "No SPF record: any server can send mail as this domain.", "Publish the TXT record v=spf1 -all if the domain sends no mail, or one that lists its senders."))
+    elif "+all" in spf:
+        out.add(alert("critical", "Mail", "SPF ends in +all: every server in the world is allowed to send mail as this domain.", "End the record with -all."))
+    elif "?all" in spf:
+        out.add(alert("warning", "Mail", "SPF ends in ?all: it says nothing about servers it does not list.", "End the record with -all, or ~all while the senders are counted."))
+    dmarc = health["dmarc"].lower().replace(" ", "")
+    if dmarc == "":
+        out.add(alert("warning", "Mail", "No DMARC record: receivers are not told what to do with forged mail.", "Publish a TXT record at _dmarc with p=quarantine or p=reject."))
+    elif "p=none" in dmarc:
+        out.add(alert("notice", "Mail", "DMARC is p=none: forged mail is reported, and still delivered.", "Move to p=quarantine once the reports show only your own senders."))
+    if len(health["caa"]) == 0:
+        out.add(alert("notice", "DNS", "No CAA record: any authority may issue a certificate for this name.", "Publish a CAA record that names the authorities you use."))
+    return out
+
+## What the site and its certificates show. soon: the day before which a
+## certificate that ends is an alert.
+fn site_alerts(site: map, certs: list, soon: str) -> list:
+    var out = []
+    if not site["up"]:
+        out.add(alert("critical", "Site", "The site did not answer: {site["note"]}", "Check the server, and what stands in front of it."))
+    elif site["status"] >= 500:
+        out.add(alert("warning", "Site", "The site answered {site["status"]}, an error of the server.", "Read the server's log."))
+    var latest = ""
+    for c in certs:
+        if c["ends"] > latest:
+            latest = c["ends"]
+    if latest != "" and latest < soon:
+        out.add(alert("warning", "Certificates", "The newest certificate in the public logs ends on {day(latest)}.", "Renew it, and check that the renewal still runs by itself."))
+    return out
+
+## What the route shows: a cut, an origin nobody authorised, a second
+## origin since the day `lately`, one network every path depends on.
+fn route_alerts(route: map, lately: str) -> list:
+    var out = []
+    origin = route["origin"] ?? ""
+    prefix = route["prefix"] ?? ""
+    if route["state"] == "cut":
+        out.add(alert("critical", "Route", "No peer of the route collectors has the route to {prefix}.", "Check that AS{origin} announces the prefix and that its upstreams accept it."))
+    elif route["state"] == "partly cut":
+        out.add(alert("warning", "Route", "Only {route["seeing"]} of {route["total"]} peers have the route to {prefix}.", "Look for the upstream that stopped passing it on."))
+    rpki = route["rpki"] ?? "unknown"
+    if "invalid" in rpki:
+        out.add(alert("critical", "Route", "RPKI says {rpki}: AS{origin} is not authorised to announce {prefix}. Networks that check drop this route; it can be a hijack.", "Publish a ROA for this prefix and origin, or stop the announcement if it is not yours."))
+    elif rpki == "unknown" and origin != "":
+        out.add(alert("warning", "Route", "No ROA covers {prefix}: nobody can check that AS{origin} may announce it.", "Publish a ROA at your regional registry."))
+    for h in route["history"] ?? []:
+        if h["origin"] != origin and h["last"] >= lately:
+            out.add(alert("critical", "Route", "AS{h["origin"]} also announced {prefix}, until {day(h["last"])}: a hand-over, or a hijack.", "Ask the holder of the prefix whether AS{h["origin"]} is theirs."))
+    upstreams = route["upstreams"] ?? []
+    paths = route["paths"] ?? 0
+    if len(upstreams) == 1:
+        out.add(alert("warning", "Route", "AS{origin} has one upstream, AS{upstreams[0]["asn"]}: when it fails, the route is cut.", "Buy transit from a second network."))
+    elif paths >= 10:
+        for t in route["transits"] ?? []:
+            if t["paths"] == paths:
+                out.add(alert("warning", "Route", "Every one of the {paths} paths seen goes through AS{t["asn"]}: a single point of failure.", "Announce the prefix through a second network."))
+    return out
+
+## What the routers, the networks on the way and IPv6 show.
+fn reach_alerts(routers: map, path_outages: list, v6: map) -> list:
+    var out = []
+    sent = len(routers["probes"])
+    arrived = routers["probes"] |> where it["reached"] |> count
+    if sent > 0 and arrived == 0:
+        out.add(alert("critical", "Routers", "None of the {sent} probes reached the site.", "Read the traces: the last router that answers is where to look."))
+    elif arrived < sent:
+        out.add(alert("warning", "Routers", "{sent - arrived} of {sent} probes did not reach the site.", "Compare the traces that arrive with those that do not."))
+    for o in path_outages:
+        out.add(alert("warning", "Outages", "An outage signal is open on {o["country"]}, a network of the route: {o["signal"]} fell {o["fall"]}%.", "Watch the route; move traffic to another upstream if it worsens."))
+    if len(v6["addresses"]) == 0 and "no IPv6" in v6["note"]:
+        out.add(alert("notice", "IPv6", "The name has no IPv6 address.", "Publish an AAAA record."))
+    return out
+
+## What is not as it was in the run before.
+fn change_alerts(data: map, before: map?) -> list:
+    var out = []
+    if before == none:
+        return out
+    route = data["route"]
+    origin = route["origin"] ?? ""
+    if before["origin"] != "" and origin != "" and before["origin"] != origin:
+        out.add(alert("critical", "Changes", "The origin of the route changed from AS{before["origin"]} to AS{origin} since the last run.", "If you did not move the prefix, treat it as a hijack: call your upstreams."))
+    if before["rpki"] == "valid" and (route["rpki"] ?? "unknown") != "valid":
+        out.add(alert("warning", "Changes", "RPKI was valid in the last run and is {route["rpki"] ?? "unknown"} now.", "Check that the ROA has not expired or been removed."))
+    var address = ""
+    for p in data["places"]:
+        if p["kind"] == "site" and address == "":
+            address = p["ip"]
+    if before["address"] != "" and address != "" and before["address"] != address:
+        out.add(alert("notice", "Changes", "The address changed from {before["address"]} to {address} since the last run.", "Usual behind a CDN; otherwise check who changed the record."))
+    front = data["site"]["front"]["name"]
+    if before["front"] != front and data["site"]["up"]:
+        out.add(alert("notice", "Changes", "What answers changed from \"{before["front"]}\" to \"{front}\" since the last run.", "Check that the change of edge or server was planned."))
+    return out
+
+## The alerts of a survey, the most serious first. soon and lately are
+## days as text: a certificate that ends before `soon`, and a second
+## origin seen since `lately`, are alerts.
+fn alerts_of(data: map, soon: str, lately: str) -> list:
+    var before = none
+    if len(data["history"]) > 0:
+        before = data["history"][0]
+    found = dns_alerts(data["health"], data["places"]) + site_alerts(data["site"], data["certificates"], soon) + route_alerts(data["route"], lately) + reach_alerts(data["routers"], data["path_outages"], data["v6"]) + change_alerts(data, before)
+    var out = []
+    for level in ["critical", "warning", "notice"]:
+        for a in found:
+            if a["level"] == level:
+                out.add(a)
+    return out
+
 ## The latest text kept under a name, when it is younger than an age;
 ## otherwise "".
 fn kept(name: str, age) -> str:
@@ -1009,6 +1151,8 @@ pub fn trace(domain: str) -> map:
     var data = {"domain": domain, "time": str(now.to_zone("UTC")), "observer": observer, "steps": steps, "aliases": aliases, "health": health, "places": server_places + site_places, "site": site, "certificates": certs, "route": route, "peering": meets, "routers": routers, "v6": v6, "outages": open, "path_outages": path_open}
     data["history"] = remember(data)
     print("  {len(data["history"])} earlier runs of {domain} kept")
+    data["alerts"] = alerts_of(data, str(date(now + 336h)), str(date(now - 720h)))
+    print("Alerts: {len(data["alerts"])}")
     return data
 
 ## The survey of a domain as JSON text: the one kept when it is younger
@@ -1149,3 +1293,25 @@ test "the outages still open":
         {"entity": {"code": "TV", "name": "Tuvalu"}, "datasource": "gtr", "level": "critical", "time": 15, "value": 80, "historyValue": 320}
     ]
     assert open_outages(alerts) == [{"code": "TV", "country": "Tuvalu", "signal": "gtr", "fall": 75, "since": 15}]
+
+test "the alerts of a survey":
+    health = {"dnssec": false, "spf": "v=spf1 +all", "dmarc": "v=DMARC1; p=none", "caa": ["0 issue \"letsencrypt.org\""]}
+    places = [{"kind": "name server", "asn": "64500", "ip": "192.0.2.1"}, {"kind": "name server", "asn": "64500", "ip": "192.0.2.2"}, {"kind": "site", "asn": "64501", "ip": "198.51.100.7"}]
+    route = {"state": "whole", "seeing": 318, "total": 318, "prefix": "198.51.100.0/24", "origin": "64501", "rpki": "invalid_asn", "paths": 12, "history": [{"origin": "64501", "first": "2019-01-01T00:00:00", "last": "2026-11-13T00:00:00"}, {"origin": "64666", "first": "2026-11-10T00:00:00", "last": "2026-11-12T00:00:00"}, {"origin": "64777", "first": "2007-01-01T00:00:00", "last": "2007-02-01T00:00:00"}], "upstreams": [{"asn": "64510", "holder": "ONE"}, {"asn": "64511", "holder": "TWO"}], "transits": [{"asn": "64510", "paths": 12}, {"asn": "64511", "paths": 5}]}
+    site = {"up": true, "status": 200, "note": "", "front": {"name": "nginx"}}
+    certs = [{"ends": "2026-11-20T00:00:00"}, {"ends": "2026-09-01T00:00:00"}]
+    routers = {"probes": [{"reached": true}, {"reached": false}]}
+    earlier = [{"origin": "64999", "rpki": "valid", "address": "198.51.100.7", "front": "nginx"}]
+    data = {"health": health, "places": places, "route": route, "site": site, "certificates": certs, "routers": routers, "path_outages": [], "v6": {"addresses": [], "note": "example.org has no IPv6 address."}, "history": earlier}
+    found = alerts_of(data, "2026-11-28", "2026-10-15")
+    for a in found:
+        print("{a["level"]}  {a["area"]}: {a["text"]}")
+    assert found[0]["fix"] == "End the record with -all."
+    data["history"] = []
+    data["places"] = [{"kind": "name server", "asn": "64500", "ip": "192.0.2.1"}, {"kind": "name server", "asn": "64502", "ip": "203.0.113.2"}]
+    data["health"] = {"dnssec": true, "spf": "v=spf1 -all", "dmarc": "v=DMARC1; p=reject", "caa": ["0 issue \";\""]}
+    data["route"] = {"state": "whole", "prefix": "198.51.100.0/24", "origin": "64501", "rpki": "valid", "paths": 12, "history": [], "upstreams": [], "transits": []}
+    data["certificates"] = [{"ends": "2027-02-01T00:00:00"}]
+    data["routers"] = {"probes": [{"reached": true}]}
+    data["v6"] = {"addresses": [{"ip": "2001:db8::7"}], "note": ""}
+    assert alerts_of(data, "2026-11-28", "2026-10-15") == []

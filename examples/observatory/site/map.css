@@ -97,3 +97,9 @@ form.ask input:focus-visible { outline: 2px solid var(--trace); outline-offset: 
 .recent { margin-top: 14px; font-size: 14px; color: var(--dim) } .recent ul { margin: 6px 0 0; padding-left: 18px } .recent li { margin: 3px 0 } .recent a { color: var(--fg) }
 #report { display: flex; flex-direction: column; gap: 18px }
 h2.gap { margin-top: 18px }
+.alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px }
+.alerts li { display: grid; grid-template-columns: 74px 96px 1fr; gap: 10px; align-items: baseline; border-left: 3px solid var(--dim); padding: 2px 0 2px 10px; min-width: 0 }
+.alerts .level { font: 600 12px var(--mono); text-transform: uppercase; color: var(--dim) } .alerts .area { font-size: 13px; color: var(--dim) }
+.alerts li.critical { border-color: var(--bad) } .alerts li.critical .level { color: var(--bad) }
+.alerts li.warning { border-color: var(--warn) } .alerts li.warning .level { color: var(--warn) }
+@media (max-width: 560px) { .alerts li { grid-template-columns: 74px 1fr } .alerts li > div { grid-column: 1 / -1 } }
