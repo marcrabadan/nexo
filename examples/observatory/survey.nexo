@@ -91,6 +91,7 @@ LETTERS = regex("[^a-z]+")
 HOP_LINE = regex("^\\s*(\\d+)[:?]*\\s+(.*)$")
 HOP_FLAG = regex("![A-Z]")
 DROP_LINE = regex("\"asn\":(\\d+).*\"asname\":\"([^\"]*)\"")
+ANSWERED = regex("answered (\\d+)")
 PING_TIME = regex("time[=<]([0-9.]+)")
 ADDRESS = regex("\\d+\\.\\d+\\.\\d+\\.\\d+")
 HOP_TIME = regex("<?([0-9.]+)\\s*ms")
@@ -469,14 +470,24 @@ fn front_of(headers: map) -> map:
         return {"kind": "server", "name": headers["server"] ?? "", "evidence": []}
     return {"kind": "edge", "name": names[0], "evidence": evidence}
 
-## One GET of https://domain/ and what answered it.
+## The status in the message of an answer that was an error ("GET ...
+## answered 503 Service Unavailable"); 0 when there was no answer.
+fn error_status(message: str) -> int:
+    found = ANSWERED.groups(message)
+    if found == none:
+        return 0
+    return number(found[0])
+
+## One GET of https://domain/ and what answered it. An answer that is an
+## error (400 or more) comes as a failure: its status is kept, and its
+## headers are not there to read, so hsts is none, not "".
 fn visit(domain: str) -> map:
     start = now
     try:
         r = http.get("https://{domain}/", timeout: 15s, retries: 0)
         return {"up": true, "status": r.status, "ms": int((now - start) / 1ms), "front": front_of(r.headers), "hsts": r.headers["strict-transport-security"] ?? "", "note": ""}
     else e:
-        return {"up": e is HTTPError, "status": 0, "ms": int((now - start) / 1ms), "front": {"kind": "unknown", "name": "", "evidence": []}, "hsts": "", "note": e.message}
+        return {"up": e is HTTPError, "status": error_status(e.message), "ms": int((now - start) / 1ms), "front": {"kind": "unknown", "name": "", "evidence": []}, "hsts": none, "note": e.message}
 
 ## The networks between the collectors and the origin: for each one, in
 ## how many of the paths it is. A path is "peer ... origin"; a network
@@ -1262,6 +1273,9 @@ fn path_security(domain: str, probe: map?, observer: map, route: map, addresses:
     if own != "":
         out["own"] = exposure(own)
     if probe == none:
+        if out["own"] != none and len(out["own"]["vulns"]) > 0:
+            catalog = kev_list()
+            out["exploited"] = [v for v in out["own"]["vulns"] if v in catalog]
         return out
     hops = probe["hops"]
     seen = crossed(hops)
@@ -1503,10 +1517,25 @@ fn authority_names(issuer: str) -> str:
             return rule[1]
     return ""
 
-## An issuer the CAA records name, or one this table does not know.
-fn allowed_by(caa: list, issuer: str) -> bool:
+## The authorities the CAA records with one tag ("issue", "issuewild")
+## name.
+fn caa_rules(caa: list, tag: str) -> list:
+    var rules = []
+    for record in caa:
+        parts = record.lower().split(" ")
+        if len(parts) > 2 and parts[1] == tag:
+            rules.add(record.lower())
+    return rules
+
+## An issuer the CAA records name, or one this table does not know. A
+## certificate for a wildcard name goes by the issuewild records when
+## there are any and by the issue records otherwise; any other
+## certificate goes by the issue records alone.
+fn allowed_by(caa: list, issuer: str, wildcard: bool) -> bool:
     names = authority_names(issuer)
-    rules = [c.lower() for c in caa if " issue" in c.lower()]
+    var rules = caa_rules(caa, "issue")
+    if wildcard and len(caa_rules(caa, "issuewild")) > 0:
+        rules = caa_rules(caa, "issuewild")
     if names == "" or len(rules) == 0:
         return true
     for name in names.split(" "):
@@ -1619,7 +1648,7 @@ fn site_alerts(site: map, certs: list, soon: str, caa: list) -> list:
         out.add(alert("critical", "Site", "The site did not answer: {site["note"]}", "Check the server, and what stands in front of it."))
     elif site["status"] >= 500:
         out.add(alert("warning", "Site", "The site answered {site["status"]}, an error of the server.", "Read the server's log."))
-    elif site["status"] < 400 and (site["hsts"] ?? "x") == "":
+    elif site["status"] > 0 and site["status"] < 400 and (site["hsts"] ?? "x") == "":
         out.add(alert("warning", "Site", "No HSTS header: a browser's first visit can be sent to plain http and read on the way.", "Send Strict-Transport-Security: max-age=31536000."))
     var latest = ""
     var strangers = []
@@ -1627,7 +1656,7 @@ fn site_alerts(site: map, certs: list, soon: str, caa: list) -> list:
         if c["ends"] > latest:
             latest = c["ends"]
         issuer = c["issuer"] ?? ""
-        if not allowed_by(caa, issuer) and not (issuer in strangers):
+        if not allowed_by(caa, issuer, (c["name"] ?? "").starts_with("*.")) and not (issuer in strangers):
             strangers.add(issuer)
     for issuer in strangers:
         out.add(alert("warning", "Certificates", "A certificate in force was issued by {issuer}, which the CAA records do not name.", "If you did not ask for it, have it revoked; if you did, add the authority to the CAA records."))
@@ -2161,7 +2190,17 @@ test "what the logs, a signature and Shodan say":
     assert spf_lookups("v=spf1 ip4:192.0.2.0/24 include:_spf.example.org ~all") == 1
     assert spf_lookups("v=spf1 a mx/24 +include:x.example redirect=y.example") == 4
     assert roa_max([{"validity": "valid", "max_length": 23}, {"validity": "invalid_length", "max_length": 24}]) == 23
-    assert allowed_by(["0 issue \"letsencrypt.org\""], "Let's Encrypt")
-    assert not allowed_by(["0 issue \"letsencrypt.org\""], "DigiCert")
-    assert allowed_by([], "DigiCert")
-    assert allowed_by(["0 issue \"letsencrypt.org\""], "A Small Authority")
+    assert allowed_by(["0 issue \"letsencrypt.org\""], "Let's Encrypt", false)
+    assert not allowed_by(["0 issue \"letsencrypt.org\""], "DigiCert", false)
+    assert allowed_by([], "DigiCert", false)
+    assert allowed_by(["0 issue \"letsencrypt.org\""], "A Small Authority", false)
+    both = ["0 issue \"letsencrypt.org\"", "0 issuewild \"digicert.com\""]
+    assert not allowed_by(both, "DigiCert", false)
+    assert allowed_by(both, "DigiCert", true)
+    assert not allowed_by(both, "Let's Encrypt", true)
+    assert allowed_by(["0 issue \"letsencrypt.org\""], "Let's Encrypt", true)
+    assert allowed_by(["0 issuewild \"digicert.com\""], "Let's Encrypt", false)
+    assert error_status("GET https://example.org/ answered 503 Service Unavailable") == 503
+    assert error_status("Cannot reach https://example.org/: there is no connection") == 0
+    down = {"up": true, "status": 503, "hsts": none, "note": "", "front": {"kind": "unknown", "name": ""}}
+    assert [a["text"] for a in site_alerts(down, [], "2026-11-28", [])] == ["The site answered 503, an error of the server."]

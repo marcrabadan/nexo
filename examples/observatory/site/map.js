@@ -260,7 +260,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   $("front").append(el("p", { style: "margin:0 0 8px" }, front.kind === "edge" ? "The request passed through " + front.name + " before reaching the server."
     : front.kind === "server" ? "The request was answered by the server itself" + (front.name ? ", which says it is " + front.name + "." : ".") : "Nothing answered: " + (site.note || "")));
   for (const e of front.evidence || []) $("front").append(el("div", { class: "mono" }, e));
-  if ("hsts" in site && site.up) $("front").append(el("div", { class: site.hsts ? "mono" : "mono changed" }, site.hsts ? "strict-transport-security: " + site.hsts : "no strict-transport-security header"));
+  if (site.hsts != null && site.up) $("front").append(el("div", { class: site.hsts ? "mono" : "mono changed" }, site.hsts ? "strict-transport-security: " + site.hsts : "no strict-transport-security header"));
   (function () {
     const x = DATA.exposure;
     if (!x || !x.ip) { $("exposure").append(el("p", { class: "note", style: "margin-top:0" }, "Not looked up in this survey.")); return; }
