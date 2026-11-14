@@ -20,5 +20,8 @@
       "source": "192.0.2.51",
       "reason": "password reset links carry a one-time token (SEC-142)"
     }
-  ]
+  ],
+  "max_login_sources": 4,
+  "incremental": false,
+  "alert_webhook": ""
 }

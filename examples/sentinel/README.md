@@ -57,8 +57,9 @@ takes part.
 | SEN-201 | `brute_force` | high | an address reaches `max_failed_logins` failed logins in a file |
 | SEN-202 | `login_after_failures` | high | a login is accepted from an address that reached that limit |
 | SEN-203 | `enumeration` | medium | an address reaches `max_not_found` requests answered 404 in a file |
-| SEN-204 | `object_enumeration` | high | an address asks for `max_object_ids` different numbers on one route (`/api/orders/{id}`, `?doc_id={id}`) in a file |
+| SEN-204 | `object_enumeration` | high | an address asks for `max_object_ids` different numbers or UUIDs on one route (`/api/orders/{id}`, `?doc_id={id}`) in a file |
 | SEN-205 | `foreign_object` | high | a request with `user=N` is answered 2xx for `/users/M/...` (also accounts, customers, profiles, members) and M is not N |
+| SEN-206 | `login_from_many` | high | logins of one user fail from `max_login_sources` different addresses in a file; no single address is to blame, so none is proposed for blocking |
 | SEN-301 | `hidden_text` | medium | the line has invisible or direction-changing Unicode characters, or control characters such as terminal escapes |
 | SEN-302 | `oversized_line` | low | the line is longer than 4096 characters; it is not examined further |
 | SEN-303 | `malformed_line` | low | the line is not a log entry, or its address is not an IPv4 address |
@@ -95,16 +96,38 @@ read; a missing or wrong field stops the program.
 | `max_failed_logins` | failed logins of one address before SEN-201 |
 | `max_not_found` | 404 answers to one address before SEN-203 |
 | `max_object_ids` | different ids of one route asked by one address before SEN-204 |
+| `max_login_sources` | addresses from which the logins of one user fail before SEN-206 |
+| `incremental` | `true` to report only the lines added since the run before |
+| `alert_webhook` | an address to send the urgent addresses to, or `""` for none |
 | `suppress` | findings to silence: each `{"rule", "source", "reason"}`, where `"*"` is any rule or any address (not both) |
 
 A suppressed finding is not scored and proposes nothing; it is listed
 under `SUPPRESSED`, written to `report.json` and recorded in `audit.json`
 with its reason.
 
+### Running it again and again
+
+With `incremental`, each run writes to `state.json` how many lines of each
+file it read and the first line of each. The next run reads a file from
+where it was left when it begins the same, and whole when it does not or
+is shorter (it was rotated). Counts such as failed logins start again in
+each run, so an attack split between two runs can stay under a limit.
+
+### Alerts
+
+With `alert_webhook`, a run that has addresses of priority P1 or P2 sends
+`{"text": ...}` to that address, the form Slack and alike accept: one line
+for each address with its priority, proposal, tactics and rules. No line
+of a log is in it, so nothing an attacker wrote leaves the machine. An
+alert is not an approval: nothing is blocked by it. Add the host of the
+webhook to the `policy` block. A failed alert is said and recorded, and
+the run goes on.
+
 ## What it may touch
 
 The `policy` block allows reading `sentinel.json`, `logs/` and
-`audit.json`, writing `audit.json` and `report.json`, and the network of this machine only;
+`audit.json` and `state.json`, writing `audit.json`, `report.json` and
+`state.json`, and the network of this machine only;
 shell commands are denied. The program also refuses any log whose name is
 not under `logs/`. In development mode the policy warns; a release build
 (`nexo build --release`) stops, so a link inside `logs/` that points
@@ -112,7 +135,8 @@ elsewhere cannot be read. The policy is checked by the standard library;
 it is not isolation by the operating system.
 
 Each run adds its records to `audit.json`: the scan, every file skipped
-and why, every finding suppressed and its reason, the report written, whether advice was given, the answer to the approval question and
+and why, every finding suppressed and its reason, the report written, whether an
+alert was sent, whether advice was given, the answer to the approval question and
 every address blocked or not.
 
 ## Files

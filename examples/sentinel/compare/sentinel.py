@@ -27,6 +27,7 @@ RULES = [
     ("SEN-203", "enumeration", "medium", "high", "Reconnaissance", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
     ("SEN-204", "object_enumeration", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed."),
     ("SEN-205", "foreign_object", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Confirm the user may read that object; if not, the endpoint does not check the owner."),
+    ("SEN-206", "login_from_many", "high", "high", "Credential Access", "ATT&CK T1110", "", "Lock the account and require a second factor; blocking one address does not stop it."),
     ("SEN-301", "hidden_text", "medium", "high", "Defense Evasion", "CWE-117, ATT&CK T1036.002", "", "Open the line with a tool that shows every character before trusting it."),
     ("SEN-302", "oversized_line", "low", "high", "Impact", "CWE-400", "", "Limit the length of a request at the proxy."),
     ("SEN-303", "malformed_line", "low", "high", "Defense Evasion", "CWE-117", "", "Check what writes this log; a broken line can hide an entry."),
@@ -43,8 +44,10 @@ STAMP = re.compile(r"[0-9][0-9A-Za-z:+/. -]{0,30}")
 COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*"))?''')
 NAMED_SECRET = re.compile(r'''(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+''')
 BARE_SECRET = re.compile(r"AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+")
-OBJECT_IN_PATH = re.compile(r"^[A-Z]+ ((/[^/ ?]+)*?)/([0-9]+)(/[^ ?]*)?(\?[^ ]*)? [0-9]{3}( |$)")
-OBJECT_IN_QUERY = re.compile(r"^[A-Z]+ ([^ ?]+)\?([^ ]*&)?([a-z_]*id)=([0-9]+)(&[^ ]*)? [0-9]{3}( |$)")
+ID = "[0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+LOGIN_USER = re.compile(r" user=([^ ]+)")
+OBJECT_IN_PATH = re.compile(r"^[A-Z]+ ((/[^/ ?]+)*?)/(" + ID + r")(/[^ ?]*)?(\?[^ ]*)? [0-9]{3}( |$)")
+OBJECT_IN_QUERY = re.compile(r"^[A-Z]+ ([^ ?]+)\?([^ ]*&)?([a-z_]*id)=(" + ID + r")(&[^ ]*)? [0-9]{3}( |$)")
 OWNED_OBJECT = re.compile(r"^[A-Z]+ [^ ?]*/(users|accounts|customers|profiles|members)/([0-9]+)[^ ]* 2[0-9]{2}( .*)? user=([0-9]+)( |$)")
 HIDDEN = re.compile("[​-‏‪-‮⁦-⁩﻿]")
 CONTROL = re.compile("[\u0000-\u0008\u000b-\u001f\u007f]")
@@ -133,13 +136,17 @@ def foreign_object(message):
     return found.group(4), found.group(2)
 
 
-def scan_file(file, settings):
+def scan_file(file, settings, skip):
     found, failed, missing, number = [], {}, {}, 0
-    objects, foreign = {}, []
+    objects, foreign, targets, first = {}, [], {}, ""
     with open(file, encoding="utf-8") as lines:
         for line in lines:
             line = line.rstrip("\r\n")
             number += 1
+            if number == 1:
+                first = shown(line)
+            if number <= skip:
+                continue
             found += check_line(file, number, line)
             fields = fields_of(line)
             if fields is None:
@@ -149,6 +156,14 @@ def scan_file(file, settings):
                 failed[source] = failed.get(source, 0) + 1
                 if failed[source] == settings["max_failed_logins"]:
                     found.append(finding("SEN-201", time, file, number, source, f"{failed[source]} failed logins"))
+                user = LOGIN_USER.search(message)
+                if user:
+                    origins = targets.setdefault(user.group(1), [])
+                    if source not in origins:
+                        origins.append(source)
+                        if len(origins) == settings["max_login_sources"]:
+                            found.append(finding("SEN-206", time, file, number, "-",
+                                                 f"user {shown(user.group(1))} failed to log in from {len(origins)} addresses"))
             elif ACCEPTED_LOGIN.search(message) and failed.get(source, 0) >= settings["max_failed_logins"]:
                 found.append(finding("SEN-202", time, file, number, source,
                                      f"accepted after {failed[source]} failed logins: {shown(message)}"))
@@ -169,17 +184,31 @@ def scan_file(file, settings):
                 foreign.append(other)
                 found.append(finding("SEN-205", time, file, number, source,
                                      f"user {other[0]} was answered an object of user {other[1]}: {shown(message)}"))
-    return number, found
+    return number, found, first
 
 
-def scan(settings):
-    read_files, lines, skipped, findings = 0, 0, [], []
+def first_line(file):
+    with open(file, encoding="utf-8") as lines:
+        for line in lines:
+            return shown(line.rstrip("\r\n"))
+    return ""
+
+
+def scan(settings, state):
+    read_files, lines, new_lines, skipped, findings, following = 0, 0, 0, [], [], {}
     for file in settings["logs"]:
         if not inside_logs(file):
             skipped.append((shown(file), "outside logs/"))
             continue
         try:
-            number, found = scan_file(file, settings)
+            skip = 0
+            before = state.get(file)
+            if settings["incremental"] and before is not None and first_line(file) == before["first"]:
+                skip = before["lines"]
+            number, found, first = scan_file(file, settings, skip)
+            if number < skip:
+                skip = 0
+                number, found, first = scan_file(file, settings, 0)
         except UnicodeDecodeError:
             skipped.append((file, f'Invalid data: the file "{file}" is not UTF-8'))
         except FileNotFoundError:
@@ -187,8 +216,10 @@ def scan(settings):
         else:
             read_files += 1
             lines += number
+            new_lines += number - skip
+            following[file] = {"lines": number, "first": first}
             findings += found
-    return read_files, lines, skipped, findings
+    return read_files, lines, new_lines, skipped, findings, following
 
 
 def count_of(findings, severity):
@@ -270,6 +301,20 @@ def write_json(path, value):
         f.write(json.dumps(value, indent=2, ensure_ascii=False))
 
 
+def alert_text(rows):
+    urgent = [row for row in rows if row["priority"] in ("P1", "P2")]
+    if not urgent:
+        return ""
+    return "\n".join([f"Nexo Sentinel: {len(urgent)} addresses need attention"] + [
+        f'{row["priority"]} {row["address"]} {row["proposal"]} ({", ".join(row["tactics"])}) {", ".join(row["rules"])}'
+        for row in urgent])
+
+
+def alert(webhook, text):
+    request = urllib.request.Request(webhook, json.dumps({"text": text}).encode(), {"Content-Type": "application/json"})
+    urllib.request.urlopen(request, timeout=5).close()
+
+
 def record(events):
     try:
         with open("audit.json", encoding="utf-8") as f:
@@ -287,10 +332,10 @@ def yes(question):
     return sys.stdin.readline().strip().lower() == "yes"
 
 
-def print_report(files, lines, skipped, findings, silenced, rows):
+def print_report(files, lines, new_lines, skipped, findings, silenced, rows):
     print("NEXO SENTINEL - security report of the logs")
     print()
-    print(f"Scanned {files} files and {lines} lines; skipped {len(skipped)} files.")
+    print(f"Scanned {files} files and {lines} lines ({new_lines} new); skipped {len(skipped)} files.")
     print(f'Findings: {len(findings)} (high {count_of(findings, "high")}, medium {count_of(findings, "medium")}, '
           f'low {count_of(findings, "low")}); suppressed {len(silenced)}')
     print(f'Sources: {len(rows)}; to look at now (P1): {sum(1 for row in rows if row["priority"] == "P1")}')
@@ -328,7 +373,14 @@ def main():
     with open("sentinel.json", encoding="utf-8") as f:
         settings = json.load(f)
     check_suppress(settings["suppress"])
-    files, lines, skipped, found = scan(settings)
+    state = {}
+    if settings["incremental"]:
+        try:
+            with open("state.json", encoding="utf-8") as f:
+                state = json.load(f)
+        except FileNotFoundError:
+            pass
+    files, lines, new_lines, skipped, found, following = scan(settings, state)
     findings, silenced = [], []
     for f in found:
         rule = suppression_of(f, settings["suppress"])
@@ -338,16 +390,27 @@ def main():
             silenced.append({"rule": f["rule"], "file": f["file"], "line": f["line"], "source": f["source"],
                              "reason": rule["reason"]})
     rows = sources(findings, settings["never_block"])
-    print_report(files, lines, skipped, findings, silenced, rows)
-    events = [("scan", f"{files} files, {lines} lines, {len(findings)} findings, {len(silenced)} suppressed")]
+    print_report(files, lines, new_lines, skipped, findings, silenced, rows)
+    events = [("scan", f"{files} files, {lines} lines, {new_lines} new, {len(findings)} findings, {len(silenced)} suppressed")]
     events += [("skipped", f"{file}: {reason}") for file, reason in skipped]
     events += [("suppressed", f'{e["rule"]} of {e["source"]} at {e["file"]}:{e["line"]}: {shown(e["reason"])}')
                for e in silenced]
-    write_json("report.json", {"tool": "sentinel", "schema": 2, "files": files, "lines": lines,
+    write_json("report.json", {"tool": "sentinel", "schema": 2, "files": files, "lines": lines, "new_lines": new_lines,
                                "skipped": [{"file": file, "reason": reason} for file, reason in skipped],
                                "findings": findings, "suppressed": silenced, "sources": rows})
     print("The report is in report.json.")
     events.append(("report", "report.json"))
+    if settings["incremental"]:
+        write_json("state.json", following)
+    text = alert_text(rows)
+    if settings["alert_webhook"] and text:
+        try:
+            alert(settings["alert_webhook"], text)
+            print("Alert sent.")
+            events.append(("alert", "sent"))
+        except Exception as e:
+            print(f"Alert not sent: {e}")
+            events.append(("alert", "failed"))
     addresses = to_block(rows)
     if findings and yes("Ask the local model for a summary?"):
         try:

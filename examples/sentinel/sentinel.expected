@@ -1,8 +1,8 @@
 NEXO SENTINEL - security report of the logs
 
-Scanned 5 files and 84 lines; skipped 3 files.
-Findings: 29 (high 12, medium 14, low 3); suppressed 1
-Sources: 15; to look at now (P1): 3
+Scanned 5 files and 96 lines (96 new); skipped 3 files.
+Findings: 31 (high 14, medium 14, low 3); suppressed 1
+Sources: 16; to look at now (P1): 3
 
 SKIPPED
   logs/binary.log         Invalid data: the file "logs/binary.log" is not UTF-8
@@ -31,6 +31,8 @@ FINDINGS
   medium    SEN-203  enumeration           yes   logs/attack.log:31     198.51.100.170   10 requests answered 404
   high      SEN-204  object_enumeration    no    logs/attack.log:40     198.51.100.180   8 different ids of /api/v1/orders/{id}
   high      SEN-205  foreign_object        no    logs/attack.log:43     198.51.100.190   user 42 was answered an object of user 57: GET /api/users/57/profile 200 user=42
+  high      SEN-206  login_from_many       yes   logs/attack.log:50     -                user alice failed to log in from 4 addresses
+  high      SEN-204  object_enumeration    no    logs/attack.log:58     198.51.100.250   8 different ids of /api/docs/{id}/pdf
   medium    SEN-301  hidden_text           yes   logs/unicode.log:3     198.51.100.90    GET /files/invoice<hidden>gpj.exe 200
   medium    SEN-301  hidden_text           yes   logs/unicode.log:4     198.51.100.90    login accepted user=ad<hidden>min
   medium    SEN-301  hidden_text           yes   logs/unicode.log:5     198.51.100.90    GET /<control>[2Jcleared 400
@@ -50,6 +52,7 @@ SOURCES
   P2   192.0.2.10       10     protected  2026-11-02T09:17:30Z        2026-11-02T09:17:30Z        Initial Access
   P3   198.51.100.180   10     review     2026-11-02T09:30:07Z        2026-11-02T09:30:07Z        Collection
   P3   198.51.100.190   10     review     2026-11-02T09:31:05Z        2026-11-02T09:31:05Z        Collection
+  P3   198.51.100.250   10     review     2026-11-02T09:41:07Z        2026-11-02T09:41:07Z        Collection
   P3   198.51.100.220   10     review     02/Nov/2026:10:32:00 +0000  02/Nov/2026:10:32:00 +0000  Collection
   P4   198.51.100.77    16     watch      2026-11-02T09:16:40Z        2026-11-02T09:17:02Z        Initial Access, Reconnaissance
   P4   198.51.100.90    12     watch      2026-11-02T10:00:03Z        2026-11-02T10:00:05Z        Defense Evasion
@@ -76,6 +79,7 @@ RECOMMENDED
   SEN-203  enumeration           Rate-limit requests that are answered 404. (ATT&CK T1595.003)
   SEN-204  object_enumeration    Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed. (CWE-639 (IDOR))
   SEN-205  foreign_object        Confirm the user may read that object; if not, the endpoint does not check the owner. (CWE-639 (IDOR))
+  SEN-206  login_from_many       Lock the account and require a second factor; blocking one address does not stop it. (ATT&CK T1110)
   SEN-301  hidden_text           Open the line with a tool that shows every character before trusting it. (CWE-117, ATT&CK T1036.002)
   SEN-302  oversized_line        Limit the length of a request at the proxy. (CWE-400)
   SEN-303  malformed_line        Check what writes this log; a broken line can hide an entry. (CWE-117)

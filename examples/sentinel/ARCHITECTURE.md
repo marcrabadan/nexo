@@ -16,6 +16,8 @@ flowchart LR
     sentinel --> audit[audit.json]
     sentinel -. only after yes .-> firewall[(Firewall API)]
     sentinel -. advice, optional .-> model[(Local model)]
+    sentinel -. alert, if configured .-> hook[(Webhook)]
+    sentinel <--> state[state.json]
     restarts[restarts.nexo<br>why containers restart] --> rr[restarts-report.json / .md]
     resources[resources.nexo<br>CPU and memory] --> res[resources-report.json]
     person((Engineer on call)) --> sentinel
@@ -23,7 +25,7 @@ flowchart LR
 
 | Program | Question it answers | Reads | Writes | Changes outside |
 |---|---|---|---|---|
-| `sentinel.nexo` | Who is attacking, how sure are we, who first? | `logs/`, `sentinel.json` | `report.json`, `audit.json` | the firewall, after a typed `yes` |
+| `sentinel.nexo` | Who is attacking, how sure are we, who first? | `logs/`, `sentinel.json`, `state.json` | `report.json`, `audit.json`, `state.json` | the firewall, after a typed `yes`; a webhook is told, if one is set |
 | `restarts.nexo` | Which containers restarted and why? | Prometheus, Loki | `restarts-report.json`, `.md` | nothing |
 | `resources.nexo` | Which containers grew or are near a limit? | Prometheus, Loki | `resources-report.json` | nothing |
 
@@ -120,15 +122,22 @@ a user that can read the logs and nothing more.
    characters live in `safe.nexo`; a report cannot leak a token or
    rewrite a terminal because a program forgot to clean a line. The
    sources themselves are ASCII, which the tests check.
-5. **Read-only by default.** The two monitoring programs have no write to
+5. **An alert tells, it does not act.** The webhook gets addresses and
+   rule names, the same that the model gets, and is opt-in. It is sent
+   without a question because it changes nothing; the block still needs
+   its `yes`.
+6. **State is small and can be thrown away.** `state.json` holds a count
+   and the first line of each file. Deleting it makes the next run read
+   everything again; a rotated file is noticed by its first line.
+7. **Read-only by default.** The two monitoring programs have no write to
    any system. Only `sentinel.nexo` has one, and its policy names the host.
-6. **Fail closed, degrade open.** Wrong settings stop a program before
+8. **Fail closed, degrade open.** Wrong settings stop a program before
    any request. A missing optional metric, or Loki being down, is said
    and the rest of the report stands.
-7. **Reports are an interface.** Each JSON report is the full data of
+9. **Reports are an interface.** Each JSON report is the full data of
    what was printed; `report.json` carries `tool` and `schema` so that a
    reader can tell a change of shape.
-8. **A second implementation as an oracle.** `compare/sentinel.py` is the
+10. **A second implementation as an oracle.** `compare/sentinel.py` is the
    same program in Python; the tests require the same output and report,
    which catches a rule that means something else than intended.
 
@@ -146,14 +155,15 @@ a user that can read the logs and nothing more.
 
 ## Limits
 
-- A run reads whole files; there is no position kept between runs, so a
-  schedule re-reads and re-reports what it saw before.
-- Counts (failed logins, 404s, ids) are for each file, not for a window
-  of time, and an attacker who spreads requests over addresses is not
-  joined up.
-- IDs that are not numbers (UUIDs) are not followed for IDOR.
+- With `incremental` a run reports only new lines, but counts (failed
+  logins, 404s, ids) start again in each run and are for each file, not
+  for a window of time: an attack split between runs or files can stay
+  under a limit.
+- Addresses are joined up only for failed logins of one user (SEN-206);
+  other attacks spread over many addresses are not.
 - `restarts.nexo` and `resources.nexo` have run against stand-ins that
   answer the HTTP APIs of Prometheus and Loki, not against real ones.
-- There is no alert sent anywhere: a person runs a program and reads it.
+- An alert goes to one webhook and only from `sentinel.nexo`; the two
+  monitoring programs send none, and nothing schedules a run.
 - `audit.json` is a plain file; it is not signed or protected from
   whoever can write to the folder.

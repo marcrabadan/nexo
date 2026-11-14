@@ -13,6 +13,8 @@ policy:
     allow read "audit.json"
     allow write "audit.json"
     allow write "report.json"
+    allow read "state.json"
+    allow write "state.json"
     allow net "127.0.0.1"
     allow net "localhost"
     deny shell
@@ -29,6 +31,9 @@ type Settings:
     max_not_found: int
     max_object_ids: int
     suppress: list
+    max_login_sources: int
+    incremental: bool
+    alert_webhook: str
 
 ## A detection: `pattern` is looked for in the message of a log entry;
 ## the rules without one are counted or checked by scan_file.
@@ -60,8 +65,10 @@ type Finding:
 type Report:
     files: int
     lines: int
+    new_lines: int
     skipped: list
     findings: list
+    state: map
 
 MAX_LINE = 4096
 SPACE = "(\\s|\\+|%20)"
@@ -81,6 +88,7 @@ RULES = [
     Rule("SEN-203", "enumeration", "medium", "high", "Reconnaissance", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
     Rule("SEN-204", "object_enumeration", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed."),
     Rule("SEN-205", "foreign_object", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Confirm the user may read that object; if not, the endpoint does not check the owner."),
+    Rule("SEN-206", "login_from_many", "high", "high", "Credential Access", "ATT&CK T1110", "", "Lock the account and require a second factor; blocking one address does not stop it."),
     Rule("SEN-301", "hidden_text", "medium", "high", "Defense Evasion", "CWE-117, ATT&CK T1036.002", "", "Open the line with a tool that shows every character before trusting it."),
     Rule("SEN-302", "oversized_line", "low", "high", "Impact", "CWE-400", "", "Limit the length of a request at the proxy."),
     Rule("SEN-303", "malformed_line", "low", "high", "Defense Evasion", "CWE-117", "", "Check what writes this log; a broken line can hide an entry.")
@@ -95,8 +103,10 @@ accepted_login = regex("(?i)login accepted|session opened")
 not_found = regex(" 404( |$)")
 combined = regex("^(\\S+) \\S+ (\\S+) \\[([^\\]]+)\\] \"([A-Z]+) (\\S+)[^\"]*\" ([0-9]{{3}) \\S+( \"[^\"]*\" (\"[^\"]*\"))?")
 stamp = regex("[0-9][0-9A-Za-z:+/. -]{{0,30}")
-object_in_path = regex("^[A-Z]+ ((/[^/ ?]+)*?)/([0-9]+)(/[^ ?]*)?(\\?[^ ]*)? [0-9]{{3}( |$)")
-object_in_query = regex("^[A-Z]+ ([^ ?]+)\\?([^ ]*&)?([a-z_]*id)=([0-9]+)(&[^ ]*)? [0-9]{{3}( |$)")
+ID = "[0-9]+|[0-9a-fA-F]{{8}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{12}"
+login_user = regex(" user=([^ ]+)")
+object_in_path = regex("^[A-Z]+ ((/[^/ ?]+)*?)/({ID})(/[^ ?]*)?(\\?[^ ]*)? [0-9]{{3}( |$)")
+object_in_query = regex("^[A-Z]+ ([^ ?]+)\\?([^ ]*&)?([a-z_]*id)=({ID})(&[^ ]*)? [0-9]{{3}( |$)")
 owned_object = regex("^[A-Z]+ [^ ?]*/(users|accounts|customers|profiles|members)/([0-9]+)[^ ]* 2[0-9]{{2}( .*)? user=([0-9]+)( |$)")
 
 fn shown(text: str) -> str:
@@ -170,7 +180,7 @@ fn check_line(file: str, number: int, line: str) -> list:
             index += 1
     return found
 
-## The object a request asks for by its number: [route, id], where the
+## The object a request asks for by its number or UUID: [route, id], where the
 ## route has {{id} in the place of the number; none for other messages.
 fn object_of(message: str) -> list?:
     path = object_in_path.groups(message)
@@ -189,67 +199,104 @@ fn foreign_object(message: str) -> list?:
         return none
     return [found[3], found[1]]
 
-## The number of lines of a file and its findings; fails when the file
-## cannot be read, and then nothing of it is reported.
-fn scan_file(file: str, settings: Settings) -> list!:
+## The number of lines of a file, the findings of the lines after `skip`
+## and its first line; fails when the file cannot be read, and then
+## nothing of it is reported.
+fn scan_file(file: str, settings: Settings, skip: int) -> list!:
     var found = []
     var failed = {}
     var missing = {}
     var objects = {}
     var foreign = []
+    var targets = {}
+    var first = ""
     var number = 0
     for line in read_lines(file)?:
         number += 1
-        for f in check_line(file, number, line):
-            found.add(f)
-        fields = fields_of(line)
-        if fields != none:
-            source = fields[0]
-            if failed_login.find(fields[1]) != none:
-                failed[source] = (failed[source] ?? 0) + 1
-                if failed[source] == settings.max_failed_logins:
-                    found.add(finding("SEN-201", fields[2], file, number, source, "{failed[source]} failed logins"))
-            elif accepted_login.find(fields[1]) != none and (failed[source] ?? 0) >= settings.max_failed_logins:
-                found.add(finding("SEN-202", fields[2], file, number, source, "accepted after {failed[source]} failed logins: {shown(fields[1])}"))
-            if not_found.find(fields[1]) != none:
-                missing[source] = (missing[source] ?? 0) + 1
-                if missing[source] == settings.max_not_found:
-                    found.add(finding("SEN-203", fields[2], file, number, source, "{missing[source]} requests answered 404"))
-            object = object_of(fields[1])
-            if object != none:
-                key = "{source} {object[0]}"
-                var ids = objects[key] ?? []
-                if not (object[1] in ids):
-                    ids.add(object[1])
-                    objects[key] = ids
-                    if len(ids) == settings.max_object_ids:
-                        found.add(finding("SEN-204", fields[2], file, number, source, "{len(ids)} different ids of {shown(object[0])}"))
-            other = foreign_object(fields[1])
-            if other != none:
-                pair = "{other[0]} {other[1]}"
-                if not (pair in foreign):
-                    foreign.add(pair)
-                    found.add(finding("SEN-205", fields[2], file, number, source, "user {other[0]} was answered an object of user {other[1]}: {shown(fields[1])}"))
-    return [number, found]
+        if number == 1:
+            first = shown(line)
+        if number > skip:
+            for f in check_line(file, number, line):
+                found.add(f)
+            fields = fields_of(line)
+            if fields != none:
+                source = fields[0]
+                if failed_login.find(fields[1]) != none:
+                    failed[source] = (failed[source] ?? 0) + 1
+                    if failed[source] == settings.max_failed_logins:
+                        found.add(finding("SEN-201", fields[2], file, number, source, "{failed[source]} failed logins"))
+                    user = login_user.groups(fields[1])
+                    if user != none:
+                        var origins = targets[user[0]] ?? []
+                        if not (source in origins):
+                            origins.add(source)
+                            targets[user[0]] = origins
+                            if len(origins) == settings.max_login_sources:
+                                found.add(finding("SEN-206", fields[2], file, number, "-", "user {shown(user[0])} failed to log in from {len(origins)} addresses"))
+                elif accepted_login.find(fields[1]) != none and (failed[source] ?? 0) >= settings.max_failed_logins:
+                    found.add(finding("SEN-202", fields[2], file, number, source, "accepted after {failed[source]} failed logins: {shown(fields[1])}"))
+                if not_found.find(fields[1]) != none:
+                    missing[source] = (missing[source] ?? 0) + 1
+                    if missing[source] == settings.max_not_found:
+                        found.add(finding("SEN-203", fields[2], file, number, source, "{missing[source]} requests answered 404"))
+                object = object_of(fields[1])
+                if object != none:
+                    key = "{source} {object[0]}"
+                    var ids = objects[key] ?? []
+                    if not (object[1] in ids):
+                        ids.add(object[1])
+                        objects[key] = ids
+                        if len(ids) == settings.max_object_ids:
+                            found.add(finding("SEN-204", fields[2], file, number, source, "{len(ids)} different ids of {shown(object[0])}"))
+                other = foreign_object(fields[1])
+                if other != none:
+                    pair = "{other[0]} {other[1]}"
+                    if not (pair in foreign):
+                        foreign.add(pair)
+                        found.add(finding("SEN-205", fields[2], file, number, source, "user {other[0]} was answered an object of user {other[1]}: {shown(fields[1])}"))
+    return [number, found, first]
 
-fn scan(settings: Settings) -> Report:
+## The first line of a file as state.json keeps it, to know the file
+## again in the next run.
+fn first_line(file: str) -> str!:
+    for line in read_lines(file)?:
+        return shown(line)
+    return ""
+
+## `state` is what the run before left: for each file, how many lines
+## were read and its first line. With `incremental`, a file that begins
+## the same is read from where it was left; one that changed or shrank
+## (rotated) is read whole.
+fn scan(settings: Settings, state: map) -> Report:
     var read_files = 0
     var lines = 0
+    var new_lines = 0
     var skipped = []
     var findings = []
+    var next = {}
     for file in settings.logs:
         if not inside_logs(file):
             skipped.add([shown(file), "outside logs/"])
         else:
             try:
-                result = scan_file(file, settings)
+                var skip = 0
+                before = state[file]
+                if settings.incremental and before != none:
+                    if first_line(file) == before["first"]:
+                        skip = before["lines"]
+                var result = scan_file(file, settings, skip)
+                if result[0] < skip:
+                    skip = 0
+                    result = scan_file(file, settings, 0)
                 read_files += 1
                 lines += result[0]
+                new_lines += result[0] - skip
+                next[file] = {"lines": result[0], "first": result[2]}
                 for f in result[1]:
                     findings.add(f)
             else e:
                 skipped.add([file, e.message])
-    return Report(read_files, lines, skipped, findings)
+    return Report(read_files, lines, new_lines, skipped, findings, next)
 
 fn count_of(findings: list, severity: str) -> int:
     return [f for f in findings if f.severity == severity] |> count
@@ -352,6 +399,20 @@ fn advice(findings: list) -> str!:
 fn block(firewall: str, source: str):
     http.post("{firewall}/block", {"address": source, "by": "sentinel"}, timeout: 5s)?
 
+## What is sent to the webhook: the addresses to look at now or to
+## block, with their rules. No line of a log is in it.
+fn alert_text(rows: list) -> str:
+    urgent = [row for row in rows if row["priority"] == "P1" or row["priority"] == "P2"]
+    if len(urgent) == 0:
+        return ""
+    var text = "Nexo Sentinel: {len(urgent)} addresses need attention"
+    for row in urgent:
+        text = "{text}\n{row["priority"]} {row["address"]} {row["proposal"]} ({joined(row["tactics"])}) {joined(row["rules"])}"
+    return text
+
+fn alert(webhook: str, text: str):
+    http.post(webhook, {"text": text}, timeout: 5s)?
+
 ## The records of this run are added to the ones audit.json has.
 fn record(events: list):
     var all = []
@@ -370,7 +431,7 @@ fn yes(question: str) -> bool:
 fn print_report(report: Report, findings: list, silenced: list, rows: list):
     print("NEXO SENTINEL - security report of the logs")
     print("")
-    print("Scanned {report.files} files and {report.lines} lines; skipped {len(report.skipped)} files.")
+    print("Scanned {report.files} files and {report.lines} lines ({report.new_lines} new); skipped {len(report.skipped)} files.")
     print("Findings: {len(findings)} (high {count_of(findings, "high")}, medium {count_of(findings, "medium")}, low {count_of(findings, "low")}); suppressed {len(silenced)}")
     urgent = [row for row in rows if row["priority"] == "P1"] |> count
     print("Sources: {len(rows)}; to look at now (P1): {urgent}")
@@ -410,7 +471,13 @@ fn print_report(report: Report, findings: list, silenced: list, rows: list):
 fn main():
     settings: Settings = json.parse(read("sentinel.json")?, as: Settings)?
     check_suppress(settings.suppress)?
-    report = scan(settings)
+    var state = {}
+    if settings.incremental:
+        try:
+            state = json.parse(read("state.json")?)?
+        else e is NotFound:
+            state = {}
+    report = scan(settings, state)
     var findings = []
     var silenced = []
     for f in report.findings:
@@ -421,14 +488,25 @@ fn main():
             silenced.add({"rule": f.rule, "file": f.file, "line": f.line, "source": f.source, "reason": rule["reason"]})
     rows = sources(findings, settings.never_block)
     print_report(report, findings, silenced, rows)
-    var events = [["scan", "{report.files} files, {report.lines} lines, {len(findings)} findings, {len(silenced)} suppressed"]]
+    var events = [["scan", "{report.files} files, {report.lines} lines, {report.new_lines} new, {len(findings)} findings, {len(silenced)} suppressed"]]
     for reason in report.skipped:
         events.add(["skipped", "{reason[0]}: {reason[1]}"])
     for entry in silenced:
         events.add(["suppressed", "{entry["rule"]} of {entry["source"]} at {entry["file"]}:{entry["line"]}: {shown(entry["reason"])}"])
-    write("report.json", convert({"tool": "sentinel", "schema": 2, "files": report.files, "lines": report.lines, "skipped": [{"file": reason[0], "reason": reason[1]} for reason in report.skipped], "findings": findings, "suppressed": silenced, "sources": rows}, to: json))?
+    write("report.json", convert({"tool": "sentinel", "schema": 2, "files": report.files, "lines": report.lines, "new_lines": report.new_lines, "skipped": [{"file": reason[0], "reason": reason[1]} for reason in report.skipped], "findings": findings, "suppressed": silenced, "sources": rows}, to: json))?
     print("The report is in report.json.")
     events.add(["report", "report.json"])
+    if settings.incremental:
+        write("state.json", convert(report.state, to: json))?
+    text = alert_text(rows)
+    if settings.alert_webhook != "" and text != "":
+        try:
+            alert(settings.alert_webhook, text)
+            print("Alert sent.")
+            events.add(["alert", "sent"])
+        else e:
+            print("Alert not sent: {e.message}")
+            events.add(["alert", "failed"])
     addresses = to_block(rows)
     if len(findings) > 0 and yes("Ask the local model for a summary?"):
         try:
@@ -494,6 +572,14 @@ test "a secret is reported and never shown":
     assert [f.rule for f in found] == ["SEN-109"]
     assert found[0].evidence == "GET /login?user=ana&password=<redacted>&next=/home 200"
     assert shown("key AKIAIOSFODNN7EXAMPLE end") == "key <redacted> end"
+
+test "a UUID is an id too":
+    assert object_of("GET /api/docs/3f2b8c1e-9a4d-4e6f-8b2a-1c5d7e9f0a3b/pdf 200") == ["/api/docs/{{id}/pdf", "3f2b8c1e-9a4d-4e6f-8b2a-1c5d7e9f0a3b"]
+
+test "an alert names addresses and rules, not lines":
+    found = [finding("SEN-101", "-", "logs/a.log", 1, "203.0.113.9", "GET /p?id=1+UNION+SELECT+1 200"), finding("SEN-104", "-", "logs/a.log", 2, "192.0.2.1", "")]
+    assert alert_text(sources(found, [])) == "Nexo Sentinel: 1 addresses need attention\nP2 203.0.113.9 block (Initial Access) SEN-101"
+    assert alert_text([]) == ""
 
 test "only logs/ is scanned":
     assert inside_logs("logs/app.log")

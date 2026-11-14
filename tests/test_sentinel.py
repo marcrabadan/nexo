@@ -19,7 +19,7 @@ from phases import ROOT, commands, compiler, run
 SENTINEL = ROOT / "examples" / "sentinel"
 EXPECTED = (SENTINEL / "sentinel.expected").read_text(encoding="utf-8")
 BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.210", "198.51.100.23"]
-REVIEW = ["198.51.100.180", "198.51.100.190", "198.51.100.220"]
+REVIEW = ["198.51.100.180", "198.51.100.190", "198.51.100.250", "198.51.100.220"]
 ADVICE = "Block 192.0.2.10 at once. Block them? yes"
 
 
@@ -120,7 +120,7 @@ def test_findings_need_no_model(phase, work):
     assert [(e["rule"], e["source"]) for e in report["suppressed"]] == [("SEN-109", "192.0.2.51")]
     assert not any(f["rule"] == "SEN-109" for f in report["findings"])
     assert any(event == "suppressed" and "SEC-142" in detail for event, detail in audit(work))
-    assert audit(work)[0] == ("scan", "5 files, 84 lines, 29 findings, 1 suppressed")
+    assert audit(work)[0] == ("scan", "5 files, 96 lines, 96 new, 31 findings, 1 suppressed")
     assert audit(work)[-1] == ("approval", "no")
 
 
@@ -169,9 +169,12 @@ def test_a_firewall_that_fails_is_recorded(phase, work):
 
 @pytest.mark.parametrize("answers", ["no\nno\n", "no\nyes\n", "yes\nyes\n"])
 def test_the_python_comparison_is_the_same(work, server, answers):
+    settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
+    settings["alert_webhook"] = f"{server}/alert"
+    (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     nexo = sentinel(commands()[0][1], work, answers)
     # the same calls outside; each asks the model in its own words
-    seen, records = [(path, body) for path, body in Outside.seen if path == "/block"], audit(work)
+    seen, records = [(path, body) for path, body in Outside.seen if path != "/api/chat"], audit(work)
     asked = len(Outside.seen)
     Outside.seen.clear()
     report = (work / "report.json").read_bytes()
@@ -180,14 +183,14 @@ def test_the_python_comparison_is_the_same(work, server, answers):
     assert python(work, answers, server) == nexo
     assert (work / "report.json").read_bytes() == report
     assert len(Outside.seen) == asked and audit(work) == records
-    assert [(path, body) for path, body in Outside.seen if path == "/block"] == seen
+    assert [(path, body) for path, body in Outside.seen if path != "/api/chat"] == seen
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "12 tests: 12 passed, 0 failed" in out, out
+    assert proc.returncode == 0 and "14 tests: 14 passed, 0 failed" in out, out
     for name in ("sentinel.nexo", "safe.nexo"):
         before = (work / name).read_bytes()
         # no character a reader cannot see in the source of a tool that looks for them
@@ -278,3 +281,84 @@ def test_a_suppressed_source_is_not_blocked(phase, work):
     code, out = sentinel(phase[1], work, "no\nyes\n")
     assert code == 0 and blocks() == [address for address in BLOCKED if address != "203.0.113.9"]
     assert sum(1 for event, detail in audit(work) if event == "suppressed" and "the red team" in detail) == 2
+
+
+def settings_of(work, **changes):
+    settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
+    settings.update(changes)
+    (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_incremental_runs_report_only_what_is_new(phase, work):
+    settings_of(work, incremental=True)
+    log = work / "logs" / "attack.log"
+
+    def run_once():
+        code, out = sentinel(phase[1], work, "no\nno\n")
+        assert code == 0
+        return json.loads((work / "report.json").read_text(encoding="utf-8"))
+
+    first = run_once()
+    assert (first["new_lines"], len(first["findings"])) == (96, 31)
+    again = run_once()
+    assert (again["lines"], again["new_lines"], again["findings"]) == (96, 0, [])
+    with log.open("a", encoding="utf-8") as f:
+        f.write("2026-11-02T09:50:00Z 198.51.100.99 web GET /x?id=1+union+select+1 200\n")
+    added = run_once()
+    assert added["new_lines"] == 1
+    assert [(f["rule"], f["line"], f["source"]) for f in added["findings"]] == [("SEN-101", 59, "198.51.100.99")]
+    # a file that begins otherwise was rotated: it is read from its first line
+    log.write_text("2026-11-03T00:00:00Z 198.51.100.98 web GET /.env 404\n", encoding="utf-8")
+    rotated = run_once()
+    assert [(f["rule"], f["line"]) for f in rotated["findings"]] == [("SEN-105", 1)]
+    state = json.loads((work / "state.json").read_text(encoding="utf-8"))
+    assert state["logs/attack.log"]["lines"] == 1 and set(state) == {
+        "logs/benign.log", "logs/attack.log", "logs/unicode.log", "logs/oversized.log", "logs/nginx.log"}
+    assert [detail.split(", ")[2] for event, detail in audit(work) if event == "scan"] == [
+        "96 new", "0 new", "1 new", "1 new"]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_without_incremental_no_state_is_kept(phase, work):
+    sentinel(phase[1], work, "no\nno\n")
+    assert not (work / "state.json").exists()
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_an_alert_names_the_urgent_addresses(phase, work, server):
+    settings_of(work, alert_webhook=f"{server}/alert")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and "Alert sent.\n" in out
+    (path, body), = Outside.seen
+    lines = body["text"].split("\n")
+    assert path == "/alert" and lines[0] == "Nexo Sentinel: 5 addresses need attention"
+    assert lines[1] == "P1 198.51.100.140 block (Initial Access, Reconnaissance) SEN-102, SEN-105"
+    assert [line.split(" ")[0] for line in lines[1:]] == ["P1", "P1", "P1", "P2", "P2"]
+    # addresses and rules only: no line of a log, and no address that is only to review
+    assert "GET" not in body["text"] and not any(address in body["text"] for address in REVIEW)
+    assert ("alert", "sent") in audit(work)
+    # an alert is not an approval
+    assert blocks() == [] and audit(work)[-1] == ("approval", "no")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_an_alert_that_fails_does_not_stop_the_run(phase, work):
+    settings_of(work, alert_webhook="http://127.0.0.1:1/alert")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and "Alert not sent: " in out and out.endswith("Nothing was changed.\n")
+    assert ("alert", "failed") in audit(work)
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_one_account_tried_from_many_addresses(phase, work):
+    (work / "logs" / "spray.log").write_text("".join(
+        f"2026-11-03T11:00:{i:02d}Z 198.51.100.{i + 1} sshd login failed user={user}\n"
+        for i, user in enumerate(["bob", "carol", "bob", "bob", "bob", "carol"])), encoding="utf-8")
+    settings_of(work, logs=["logs/spray.log"], max_login_sources=3, suppress=[])
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert [(f["rule"], f["line"], f["source"], f["evidence"]) for f in report["findings"]] == [
+        ("SEN-206", 4, "-", "user bob failed to log in from 3 addresses")]
+    # no single address did enough to be blocked
+    assert report["sources"] == [] and "Nothing to block." in out
