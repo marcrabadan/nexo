@@ -103,3 +103,10 @@ h2.gap { margin-top: 18px }
 .alerts li.critical { border-color: var(--bad) } .alerts li.critical .level { color: var(--bad) }
 .alerts li.warning { border-color: var(--warn) } .alerts li.warning .level { color: var(--warn) }
 @media (max-width: 560px) { .alerts li { grid-template-columns: 74px 1fr } .alerts li > div { grid-column: 1 / -1 } }
+.scores { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px }
+.score { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: baseline }
+.score b { font: 600 26px/1.1 var(--mono); grid-row: span 2 } .score span { font-weight: 600 } .score small { color: var(--dim); font-size: 12px }
+.score.good b { color: var(--good) } .score.warn b { color: var(--warn) } .score.bad b { color: var(--bad) }
+.graph rect.risk-warn { stroke: var(--warn); stroke-width: 2 } .graph rect.risk-bad { stroke: var(--bad); stroke-width: 2 }
+.timeline { list-style: none; margin: 0; padding: 0 0 0 12px; border-left: 2px solid var(--line); display: grid; gap: 8px; font-size: 14px }
+.timeline li { display: grid; gap: 0 } .timeline time { font: 12px var(--mono); color: var(--dim) } .timeline li.hot span { color: var(--warn) } .timeline span { overflow-wrap: anywhere }

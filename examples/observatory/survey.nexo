@@ -6,13 +6,16 @@
 ## Every figure is asked when a survey runs: DNS to two resolvers over
 ## HTTPS, places, networks and routes to RIPEstat, the routers on the way
 ## to RIPE Atlas (the traceroutes its probes already run to the domain),
-## exchange points to PeeringDB, certificates to crt.sh, outages to IODA
-## and the cables to the Submarine Cable Map. Each run is kept in
+## exchange points to PeeringDB, certificates to crt.sh, outages to IODA,
+## the cables to the Submarine Cable Map, and what is open at the site's
+## address to Shodan InternetDB (the observatory scans nothing itself). Each run is kept in
 ## observatory.db, so the page says what changed since the last one.
 ## A survey ends with its alerts: what an operator should look at (a
-## zone not signed, mail anyone can forge, a route with no ROA or a
-## second origin, a single upstream, a certificate about to end), each
-## with what to do, the most serious first.
+## zone not signed, a subdomain left hanging, mail anyone can forge, a
+## route with no ROA, a second origin or a more specific prefix from
+## another network, a single upstream, a port that should be closed, a
+## certificate about to end), each with what to do, the most serious
+## first, and a mark from 0 to 100 for DNS, mail, routes and the site.
 ## What nobody publishes is not shown: there is no public feed of cable
 ## faults, so a cable is only marked when it lands in a country with an
 ## outage signal, or named as a candidate where a trace crosses a sea.
@@ -252,14 +255,14 @@ fn number(text: str) -> int:
         return 0
 
 ## The signature of an answer asked with its signatures (type 46 is
-## RRSIG): its algorithm, and the second it stops being good at.
+## RRSIG): its algorithm, and the seconds it is good from and until.
 fn signature_of(answers: list) -> map:
     for a in answers:
         if a["type"] == 46:
             parts = a["data"].split(" ")
             if len(parts) > 5:
-                return {"algorithm": number(parts[1]), "until": number(parts[4])}
-    return {"algorithm": 0, "until": 0}
+                return {"algorithm": number(parts[1]), "until": number(parts[4]), "since": number(parts[5])}
+    return {"algorithm": 0, "until": 0, "since": 0}
 
 ## How many more questions a receiver must ask to read an SPF record;
 ## past ten it gives up, and the record counts for nothing.
@@ -275,13 +278,14 @@ fn spf_lookups(spf: str) -> int:
 ## (DNSSEC), how long it may be kept, what two resolvers answer, and the
 ## records mail and certificates depend on.
 fn dns_health(domain: str) -> map:
-    var out = {"dnssec": false, "ttl": none, "serial": "", "resolvers": [], "mx": [], "spf": "", "dmarc": "", "caa": [], "algorithm": 0, "signed_until": 0, "mta_sts": "", "tls_rpt": "", "dane": false}
+    var out = {"dnssec": false, "ttl": none, "serial": "", "resolvers": [], "mx": [], "spf": "", "dmarc": "", "caa": [], "algorithm": 0, "signed_until": 0, "signed_since": 0, "mta_sts": "", "tls_rpt": "", "dane": false}
     try:
         full = answer(RESOLVER, domain, "A", more: "&do=1")
         out["dnssec"] = full["AD"] ?? false
         signed = signature_of(full["Answer"] ?? [])
         out["algorithm"] = signed["algorithm"]
         out["signed_until"] = signed["until"]
+        out["signed_since"] = signed["since"]
         direct = [a for a in full["Answer"] ?? [] if a["type"] == 1]
         if len(direct) > 0:
             out["ttl"] = direct[0]["TTL"]
@@ -1059,16 +1063,19 @@ fn alert(level: str, area: str, text: str, fix: str) -> map:
 fn day(moment: str) -> str:
     return moment.split("T")[0]
 
-## What the zone and its mail records leave open. second: the one the
+## What the zone and its mail records leave open. A signature made to
+## last under a week comes from a signer that signs each answer as it is
+## asked, so its end is no alert. second: the one the
 ## survey runs at, to tell a signature about to end.
 fn dns_alerts(health: map, places: list, second: int) -> list:
     var out = []
     if (health["error"] ?? "") != "":
         return out
     until = health["signed_until"] ?? 0
+    life = until - (health["signed_since"] ?? 0)
     if not health["dnssec"]:
         out.add(alert("warning", "DNS", "The zone is not signed: a forged answer cannot be told from a true one.", "Sign the zone and publish its DS record at the registrar."))
-    elif until > 0 and until < second + 259200:
+    elif until > 0 and until < second + 259200 and life > 604800:
         out.add(alert("critical", "DNS", "The signatures of the zone end in less than three days: after that, resolvers that check them stop answering for the name.", "Sign the zone again now, and find why the signer stopped."))
     if (health["algorithm"] ?? 0) in [1, 3, 5, 6, 7]:
         out.add(alert("warning", "DNS", "The zone is signed with algorithm {health["algorithm"]}, which rests on SHA-1; resolvers are dropping it.", "Sign with algorithm 13 (ECDSA P-256) or 15 (Ed25519)."))
@@ -1607,7 +1614,7 @@ test "the alerts of a survey":
     assert scores([]) == [{"block": "DNS", "score": 100, "alerts": 0}, {"block": "Mail", "score": 100, "alerts": 0}, {"block": "Routes", "score": 100, "alerts": 0}, {"block": "Site", "score": 100, "alerts": 0}]
 
 test "what is weak in DNS, the route and the site":
-    health = {"dnssec": true, "algorithm": 5, "signed_until": 1794100000, "spf": "v=spf1 include:a.example include:b.example include:c.example include:d.example include:e.example include:f.example include:g.example a mx a:h.example mx:i.example exists:j.example -all", "dmarc": "v=DMARC1; p=reject", "caa": ["0 issue \"letsencrypt.org\""], "mx": ["10 mail.example.org"], "mta_sts": "", "dane": false}
+    health = {"dnssec": true, "algorithm": 5, "signed_until": 1794100000, "signed_since": 1791500000, "spf": "v=spf1 include:a.example include:b.example include:c.example include:d.example include:e.example include:f.example include:g.example a mx a:h.example mx:i.example exists:j.example -all", "dmarc": "v=DMARC1; p=reject", "caa": ["0 issue \"letsencrypt.org\""], "mx": ["10 mail.example.org"], "mta_sts": "", "dane": false}
     places = [{"kind": "name server", "name": "ns1.example.org", "asn": "64500", "ip": "192.0.2.1"}, {"kind": "name server", "name": "ns2.gone.example", "asn": "", "ip": ""}]
     route = {"state": "whole", "prefix": "198.51.100.0/23", "origin": "64501", "rpki": "valid", "roa_max": 24, "specifics": [{"prefix": "198.51.100.0/24", "origin": "64666"}, {"prefix": "198.51.101.0/24", "origin": "64501"}], "irr": [], "paths": 12, "history": [], "upstreams": [], "transits": []}
     site = {"up": true, "status": 200, "hsts": "", "note": "", "front": {"kind": "edge", "name": "Cloudflare"}}
@@ -1629,8 +1636,10 @@ test "what the logs, a signature and Shodan say":
     assert hanging_of("www.example.org", {"Status": 0, "Answer": [{"type": 5, "data": "example.org."}, {"type": 1, "data": "192.0.2.1"}]}) == none
     assert hanging_of("none.example.org", {"Status": 3}) == none
     signed = [{"type": 1, "data": "104.16.132.229"}, {"type": 46, "data": "A 13 2 300 1794766414 1794586414 34505 cloudflare.com. wdFX=="}]
-    assert signature_of(signed) == {"algorithm": 13, "until": 1794766414}
-    assert signature_of([]) == {"algorithm": 0, "until": 0}
+    assert signature_of(signed) == {"algorithm": 13, "until": 1794766414, "since": 1794586414}
+    assert signature_of([]) == {"algorithm": 0, "until": 0, "since": 0}
+    brief = {"dnssec": true, "signed_until": 1794100000, "signed_since": 1793920000, "spf": "v=spf1 -all", "dmarc": "v=DMARC1; p=reject", "caa": ["0 issue \";\""]}
+    assert dns_alerts(brief, [], 1794000000) == []
     assert spf_lookups("v=spf1 ip4:192.0.2.0/24 include:_spf.example.org ~all") == 1
     assert spf_lookups("v=spf1 a mx/24 +include:x.example redirect=y.example") == 4
     assert roa_max([{"validity": "valid", "max_length": 23}, {"validity": "invalid_length", "max_length": 24}]) == 23
