@@ -11,35 +11,36 @@ from datetime import datetime, timezone
 MAX_LINE = 4096
 SPACE = r"(\s|\+|%20)"
 
-# id, name, severity, reference, pattern of the message (or ""), action
+# id, name, severity, confidence, tactic, reference, pattern of the message (or ""), action
 RULES = [
-    ("SEN-101", "sql_injection", "high", "CWE-89, ATT&CK T1190", rf"(?i)union{SPACE}+select|{SPACE}or{SPACE}+1=1|(%27|'){SPACE}*(--|;|%3b)", "Review the queries of the endpoint; use parameters, never text put together."),
-    ("SEN-102", "command_injection", "high", "CWE-78, ATT&CK T1190", rf"(?i)(;|\||%3b|%7c|&&|%26%26|\$\(|`){SPACE}*(cat|wget|curl|nc|bash|sh|id|whoami|uname)({SPACE}|$|&|;)", "Check the host for commands run by the web service; never pass input to a shell."),
-    ("SEN-103", "cross_site_scripting", "medium", "CWE-79", rf"(?i)(<|%3c)script|javascript:|on(error|load){SPACE}*(=|%3d)", "Encode output in the page named; add a Content-Security-Policy."),
-    ("SEN-104", "path_traversal", "medium", "CWE-22", r"(?i)\.\./|\.\.\\|%2e%2e(/|%2f)|\.\.%2f", "Resolve file names inside one folder and refuse the rest."),
-    ("SEN-105", "sensitive_file", "medium", "CWE-538", r"(?i)/etc/(passwd|shadow)|/\.env|/\.git/|/\.ssh/|/wp-config\.php", "Make sure the file is not served; rotate any secret that was answered with 200."),
-    ("SEN-106", "scanner", "medium", "ATT&CK T1595.002", r"(?i)sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wpscan|acunetix|nuclei", "Expect more requests from this address; rate-limit it."),
-    ("SEN-107", "server_side_request", "high", "CWE-918 (SSRF)", r"(?i)(url|uri|dest|destination|redirect|next|target|callback|webhook)=(https?(:|%3a)(/|%2f)(/|%2f))?(169\.254\.169\.254|localhost|127\.0\.0\.1|0\.0\.0\.0|metadata\.google\.internal)", "Allow only the hosts the feature needs; never fetch an address a request gives."),
-    ("SEN-108", "jndi_injection", "high", "CWE-917, CVE-2021-44228", r"(?i)(\$|%24)(\{|%7b)jndi(:|%3a)", "Update Log4j and check the host for connections to the address named."),
-    ("SEN-109", "secret_in_request", "medium", "CWE-598", r"""(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+""", "Rotate the secret: it is now in every log and proxy on the way; send secrets in a header or the body."),
-    ("SEN-201", "brute_force", "high", "CWE-307, ATT&CK T1110", "", "Lock the accounts tried and require a second factor."),
-    ("SEN-202", "login_after_failures", "high", "ATT&CK T1078", "", "Treat the account as compromised: end its sessions and reset its password."),
-    ("SEN-203", "enumeration", "medium", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
-    ("SEN-204", "object_enumeration", "high", "CWE-639 (IDOR)", "", "Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed."),
-    ("SEN-205", "foreign_object", "high", "CWE-639 (IDOR)", "", "Confirm the user may read that object; if not, the endpoint does not check the owner."),
-    ("SEN-301", "hidden_text", "medium", "CWE-117, ATT&CK T1036.002", "", "Open the line with a tool that shows every character before trusting it."),
-    ("SEN-302", "oversized_line", "low", "CWE-400", "", "Limit the length of a request at the proxy."),
-    ("SEN-303", "malformed_line", "low", "CWE-117", "", "Check what writes this log; a broken line can hide an entry."),
+    ("SEN-101", "sql_injection", "high", "high", "Initial Access", "CWE-89, ATT&CK T1190", rf"(?i)union{SPACE}+select|{SPACE}or{SPACE}+1=1|(%27|'){SPACE}*(--|;|%3b)", "Review the queries of the endpoint; use parameters, never text put together."),
+    ("SEN-102", "command_injection", "high", "high", "Initial Access", "CWE-78, ATT&CK T1190", rf"(?i)(;|\||%3b|%7c|&&|%26%26|\$\(|`){SPACE}*(cat|wget|curl|nc|bash|sh|id|whoami|uname)({SPACE}|$|&|;)", "Check the host for commands run by the web service; never pass input to a shell."),
+    ("SEN-103", "cross_site_scripting", "medium", "high", "Initial Access", "CWE-79", rf"(?i)(<|%3c)script|javascript:|on(error|load){SPACE}*(=|%3d)", "Encode output in the page named; add a Content-Security-Policy."),
+    ("SEN-104", "path_traversal", "medium", "high", "Initial Access", "CWE-22", r"(?i)\.\./|\.\.\\|%2e%2e(/|%2f)|\.\.%2f", "Resolve file names inside one folder and refuse the rest."),
+    ("SEN-105", "sensitive_file", "medium", "high", "Reconnaissance", "CWE-538", r"(?i)/etc/(passwd|shadow)|/\.env|/\.git/|/\.ssh/|/wp-config\.php", "Make sure the file is not served; rotate any secret that was answered with 200."),
+    ("SEN-106", "scanner", "medium", "high", "Reconnaissance", "ATT&CK T1595.002", r"(?i)sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wpscan|acunetix|nuclei", "Expect more requests from this address; rate-limit it."),
+    ("SEN-107", "server_side_request", "high", "high", "Credential Access", "CWE-918 (SSRF)", r"(?i)(url|uri|dest|destination|redirect|next|target|callback|webhook)=(https?(:|%3a)(/|%2f)(/|%2f))?(169\.254\.169\.254|localhost|127\.0\.0\.1|0\.0\.0\.0|metadata\.google\.internal)", "Allow only the hosts the feature needs; never fetch an address a request gives."),
+    ("SEN-108", "jndi_injection", "high", "high", "Initial Access", "CWE-917, CVE-2021-44228", r"(?i)(\$|%24)(\{|%7b)jndi(:|%3a)", "Update Log4j and check the host for connections to the address named."),
+    ("SEN-109", "secret_in_request", "medium", "high", "Credential Access", "CWE-598", r"""(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+""", "Rotate the secret: it is now in every log and proxy on the way; send secrets in a header or the body."),
+    ("SEN-201", "brute_force", "high", "high", "Credential Access", "CWE-307, ATT&CK T1110", "", "Lock the accounts tried and require a second factor."),
+    ("SEN-202", "login_after_failures", "high", "high", "Initial Access", "ATT&CK T1078", "", "Treat the account as compromised: end its sessions and reset its password."),
+    ("SEN-203", "enumeration", "medium", "high", "Reconnaissance", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
+    ("SEN-204", "object_enumeration", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed."),
+    ("SEN-205", "foreign_object", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Confirm the user may read that object; if not, the endpoint does not check the owner."),
+    ("SEN-301", "hidden_text", "medium", "high", "Defense Evasion", "CWE-117, ATT&CK T1036.002", "", "Open the line with a tool that shows every character before trusting it."),
+    ("SEN-302", "oversized_line", "low", "high", "Impact", "CWE-400", "", "Limit the length of a request at the proxy."),
+    ("SEN-303", "malformed_line", "low", "high", "Defense Evasion", "CWE-117", "", "Check what writes this log; a broken line can hide an entry."),
 ]
 BY_ID = {rule[0]: rule for rule in RULES}
-PATTERNS = [(rule[0], re.compile(rule[4])) for rule in RULES if rule[4]]
+PATTERNS = [(rule[0], re.compile(rule[6])) for rule in RULES if rule[6]]
 
 ENTRY = re.compile(r"^(\S+) (\S+) (\S+) (.*)$")
 ADDRESS = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
 FAILED_LOGIN = re.compile(r"(?i)login failed|authentication failure|invalid password")
 ACCEPTED_LOGIN = re.compile(r"(?i)login accepted|session opened")
 NOT_FOUND = re.compile(r" 404( |$)")
-COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[[^\]]+\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*"))?''')
+STAMP = re.compile(r"[0-9][0-9A-Za-z:+/. -]{0,30}")
+COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*"))?''')
 NAMED_SECRET = re.compile(r'''(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+''')
 BARE_SECRET = re.compile(r"AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+")
 OBJECT_IN_PATH = re.compile(r"^[A-Z]+ ((/[^/ ?]+)*?)/([0-9]+)(/[^ ?]*)?(\?[^ ]*)? [0-9]{3}( |$)")
@@ -58,16 +59,22 @@ def redacted(text):
 
 def shown(text):
     clean = CONTROL.sub("<control>", HIDDEN.sub("<hidden>", redacted(text)))
-    return clean[:80] + "..." if len(clean) > 80 else clean
+    return clean[:100] + "..." if len(clean) > 100 else clean
 
 
 def inside_logs(path):
     return path.startswith("logs/") and ".." not in path and "\\" not in path
 
 
-def finding(rule, file, line, source, evidence):
-    return {"rule": rule, "name": BY_ID[rule][1], "severity": BY_ID[rule][2], "file": file, "line": line,
-            "source": source, "evidence": evidence}
+def finding(rule, time, file, line, source, evidence):
+    return {"rule": rule, "name": BY_ID[rule][1], "severity": BY_ID[rule][2], "confidence": BY_ID[rule][3],
+            "tactic": BY_ID[rule][4], "time": time, "file": file, "line": line, "source": source,
+            "evidence": evidence}
+
+
+def stamp(text):
+    found = STAMP.search(text)
+    return found.group(0) if found else "-"
 
 
 def fields_of(line):
@@ -75,37 +82,37 @@ def fields_of(line):
         return None
     web = COMBINED.search(line)
     if web and ADDRESS.search(web.group(1)):
-        message = f"{web.group(3)} {web.group(4)} {web.group(5)}"
-        if web.group(7) is not None:
-            message += f" {web.group(7)}"
+        message = f"{web.group(4)} {web.group(5)} {web.group(6)}"
+        if web.group(8) is not None:
+            message += f" {web.group(8)}"
         if web.group(2) != "-":
             message += f" user={web.group(2)}"
-        return web.group(1), message
+        return web.group(1), message, stamp(web.group(3))
     fields = ENTRY.search(line)
     if fields is None or ADDRESS.search(fields.group(2)) is None:
         return None
-    return fields.group(2), fields.group(4)
+    return fields.group(2), fields.group(4), stamp(fields.group(1))
 
 
 def check_line(file, number, line):
     if len(line) > MAX_LINE:
-        return [finding("SEN-302", file, number, "-", f"{len(line)} characters")]
+        return [finding("SEN-302", "-", file, number, "-", f"{len(line)} characters")]
     if line.strip() == "":
         return []
     found = []
     fields = fields_of(line)
-    source, message = "-", line
+    source, message, time = "-", line, "-"
     if fields is None:
-        found.append(finding("SEN-303", file, number, source, shown(line)))
+        found.append(finding("SEN-303", time, file, number, source, shown(line)))
     else:
-        source, message = fields
+        source, message, time = fields
     if HIDDEN.search(line) or CONTROL.search(line):
-        found.append(finding("SEN-301", file, number, source, shown(message)))
+        found.append(finding("SEN-301", time, file, number, source, shown(message)))
     if fields is None:
         return found
     for rule, pattern in PATTERNS:
         if pattern.search(message):
-            found.append(finding(rule, file, number, source, shown(message)))
+            found.append(finding(rule, time, file, number, source, shown(message)))
     return found
 
 
@@ -137,30 +144,30 @@ def scan_file(file, settings):
             fields = fields_of(line)
             if fields is None:
                 continue
-            source, message = fields
+            source, message, time = fields
             if FAILED_LOGIN.search(message):
                 failed[source] = failed.get(source, 0) + 1
                 if failed[source] == settings["max_failed_logins"]:
-                    found.append(finding("SEN-201", file, number, source, f"{failed[source]} failed logins"))
+                    found.append(finding("SEN-201", time, file, number, source, f"{failed[source]} failed logins"))
             elif ACCEPTED_LOGIN.search(message) and failed.get(source, 0) >= settings["max_failed_logins"]:
-                found.append(finding("SEN-202", file, number, source,
+                found.append(finding("SEN-202", time, file, number, source,
                                      f"accepted after {failed[source]} failed logins: {shown(message)}"))
             if NOT_FOUND.search(message):
                 missing[source] = missing.get(source, 0) + 1
                 if missing[source] == settings["max_not_found"]:
-                    found.append(finding("SEN-203", file, number, source, f"{missing[source]} requests answered 404"))
+                    found.append(finding("SEN-203", time, file, number, source, f"{missing[source]} requests answered 404"))
             asked = object_of(message)
             if asked:
                 ids = objects.setdefault(f"{source} {asked[0]}", [])
                 if asked[1] not in ids:
                     ids.append(asked[1])
                     if len(ids) == settings["max_object_ids"]:
-                        found.append(finding("SEN-204", file, number, source,
+                        found.append(finding("SEN-204", time, file, number, source,
                                              f"{len(ids)} different ids of {shown(asked[0])}"))
             other = foreign_object(message)
             if other and other not in foreign:
                 foreign.append(other)
-                found.append(finding("SEN-205", file, number, source,
+                found.append(finding("SEN-205", time, file, number, source,
                                      f"user {other[0]} was answered an object of user {other[1]}: {shown(message)}"))
     return number, found
 
@@ -192,17 +199,45 @@ def score_of(findings):
     return 10 * count_of(findings, "high") + 4 * count_of(findings, "medium") + count_of(findings, "low")
 
 
+def proposal_of(own, protected):
+    if any(f["severity"] == "high" and f["confidence"] == "high" for f in own):
+        return "protected" if protected else "block"
+    return "review" if count_of(own, "high") > 0 else "watch"
+
+
+def priority_of(proposal, tactics, rules):
+    if proposal in ("block", "protected"):
+        return "P1" if len(tactics) > 1 or "SEN-202" in rules else "P2"
+    return "P3" if proposal == "review" else "P4"
+
+
 def sources(findings, never):
     rows = []
     for source in dict.fromkeys(f["source"] for f in findings if f["source"] != "-"):
         own = [f for f in findings if f["source"] == source]
-        proposal = "watch"
-        if count_of(own, "high") > 0:
-            proposal = "protected" if source in never else "block"
-        rows.append({"address": source, "score": score_of(own), "high": count_of(own, "high"),
-                     "medium": count_of(own, "medium"), "low": count_of(own, "low"),
-                     "rules": list(dict.fromkeys(f["rule"] for f in own)), "proposal": proposal})
-    return sorted(rows, key=lambda row: -row["score"])  # stable: the first found comes first
+        rules = list(dict.fromkeys(f["rule"] for f in own))
+        tactics = list(dict.fromkeys(f["tactic"] for f in own))
+        proposal = proposal_of(own, source in never)
+        rows.append({"priority": priority_of(proposal, tactics, rules), "address": source, "score": score_of(own),
+                     "high": count_of(own, "high"), "medium": count_of(own, "medium"), "low": count_of(own, "low"),
+                     "proposal": proposal, "tactics": tactics, "rules": rules, "first": own[0]["time"],
+                     "last": own[-1]["time"]})
+    return sorted(rows, key=lambda row: (row["priority"], -row["score"]))  # stable: the first found comes first
+
+
+def suppression_of(f, suppress):
+    for rule in suppress:
+        if rule["rule"] in ("*", f["rule"]) and rule["source"] in ("*", f["source"]):
+            return rule
+    return None
+
+
+def check_suppress(suppress):
+    for rule in suppress:
+        if not rule.get("rule") or not rule.get("source") or not rule.get("reason", "").strip():
+            raise ValueError("every suppress entry needs a rule, a source and a reason")
+        if rule["rule"] == "*" and rule["source"] == "*":
+            raise ValueError("a suppress entry cannot silence every rule of every source")
 
 
 def to_block(rows):
@@ -252,47 +287,65 @@ def yes(question):
     return sys.stdin.readline().strip().lower() == "yes"
 
 
-def print_report(files, lines, skipped, findings, rows):
+def print_report(files, lines, skipped, findings, silenced, rows):
     print("NEXO SENTINEL - security report of the logs")
     print()
     print(f"Scanned {files} files and {lines} lines; skipped {len(skipped)} files.")
     print(f'Findings: {len(findings)} (high {count_of(findings, "high")}, medium {count_of(findings, "medium")}, '
-          f'low {count_of(findings, "low")})')
+          f'low {count_of(findings, "low")}); suppressed {len(silenced)}')
+    print(f'Sources: {len(rows)}; to look at now (P1): {sum(1 for row in rows if row["priority"] == "P1")}')
     if skipped:
         print("\nSKIPPED")
         for file, reason in skipped:
             print(f"  {file:<24}{reason}")
     if findings:
         print("\nFINDINGS")
-        print(f'  {"SEVERITY":<10}{"RULE":<9}{"NAME":<22}{"WHERE":<23}{"SOURCE":<17}EVIDENCE')
+        print(f'  {"SEVERITY":<10}{"RULE":<9}{"NAME":<22}{"SURE":<6}{"WHERE":<23}{"SOURCE":<17}EVIDENCE')
         for f in findings:
             where = f'{f["file"]}:{f["line"]}'
-            print(f'  {f["severity"]:<10}{f["rule"]:<9}{f["name"]:<22}{where:<23}{f["source"]:<17}{f["evidence"]}')
+            sure = "no" if f["confidence"] == "low" else "yes"
+            print(f'  {f["severity"]:<10}{f["rule"]:<9}{f["name"]:<22}{sure:<6}{where:<23}{f["source"]:<17}{f["evidence"]}')
     if rows:
         print("\nSOURCES")
-        print(f'  {"ADDRESS":<17}{"SCORE":<7}{"HIGH":<6}{"MEDIUM":<8}{"LOW":<5}{"PROPOSAL":<11}RULES')
+        print(f'  {"PRI":<5}{"ADDRESS":<17}{"SCORE":<7}{"PROPOSAL":<11}{"FIRST":<28}{"LAST":<28}TACTICS')
         for row in rows:
-            print(f'  {row["address"]:<17}{row["score"]:<7}{row["high"]:<6}{row["medium"]:<8}{row["low"]:<5}'
-                  f'{row["proposal"]:<11}{", ".join(row["rules"])}')
+            print(f'  {row["priority"]:<5}{row["address"]:<17}{row["score"]:<7}{row["proposal"]:<11}{row["first"]:<28}'
+                  f'{row["last"]:<28}{", ".join(row["tactics"])}')
+    if silenced:
+        print("\nSUPPRESSED")
+        for entry in silenced:
+            where = f'{entry["file"]}:{entry["line"]}'
+            print(f'  {entry["rule"]:<9}{where:<23}{entry["source"]:<17}{shown(entry["reason"])}')
     if findings:
         print("\nRECOMMENDED")
         for rule in RULES:
             if any(f["rule"] == rule[0] for f in findings):
-                print(f"  {rule[0]:<9}{rule[1]:<22}{rule[5]} ({rule[3]})")
+                print(f"  {rule[0]:<9}{rule[1]:<22}{rule[7]} ({rule[5]})")
     print()
 
 
 def main():
     with open("sentinel.json", encoding="utf-8") as f:
         settings = json.load(f)
-    files, lines, skipped, findings = scan(settings)
+    check_suppress(settings["suppress"])
+    files, lines, skipped, found = scan(settings)
+    findings, silenced = [], []
+    for f in found:
+        rule = suppression_of(f, settings["suppress"])
+        if rule is None:
+            findings.append(f)
+        else:
+            silenced.append({"rule": f["rule"], "file": f["file"], "line": f["line"], "source": f["source"],
+                             "reason": rule["reason"]})
     rows = sources(findings, settings["never_block"])
-    print_report(files, lines, skipped, findings, rows)
-    events = [("scan", f"{files} files, {lines} lines, {len(findings)} findings")]
+    print_report(files, lines, skipped, findings, silenced, rows)
+    events = [("scan", f"{files} files, {lines} lines, {len(findings)} findings, {len(silenced)} suppressed")]
     events += [("skipped", f"{file}: {reason}") for file, reason in skipped]
-    write_json("report.json", {"files": files, "lines": lines,
+    events += [("suppressed", f'{e["rule"]} of {e["source"]} at {e["file"]}:{e["line"]}: {shown(e["reason"])}')
+               for e in silenced]
+    write_json("report.json", {"tool": "sentinel", "schema": 2, "files": files, "lines": lines,
                                "skipped": [{"file": file, "reason": reason} for file, reason in skipped],
-                               "findings": findings, "sources": rows})
+                               "findings": findings, "suppressed": silenced, "sources": rows})
     print("The report is in report.json.")
     events.append(("report", "report.json"))
     addresses = to_block(rows)

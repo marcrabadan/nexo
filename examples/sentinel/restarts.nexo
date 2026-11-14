@@ -3,6 +3,7 @@
 ## one from Loki and says why it restarted and how serious it is. It only
 ## reads from both; the report is written to restarts-report.json and,
 ## to share, restarts-report.md.
+use monitoring
 
 policy:
     allow read "restarts.json"
@@ -65,49 +66,8 @@ SEVERITIES = ["critical", "high", "medium", "low"]
 SERIOUS = ["RST-101", "RST-102", "RST-103", "RST-104"]
 START_FAILURES = ["ImagePullBackOff", "ErrImagePull", "InvalidImageName", "CreateContainerConfigError", "CreateContainerError", "RunContainerError"]
 
-## The names Kubernetes accepts; anything else is not put in a query.
-kube_name = regex("^[a-z0-9]([-a-z0-9.]{{0,251}[a-z0-9])?$")
-window_text = regex("^[0-9]{{1,4}[smhd]$")
-hidden = regex("[​-‏‪-‮⁦-⁩﻿]")
-control = regex("[\u0000-\u0008\u000b-\u001f\u007f]")
-start = regex("^.{{0,100}")
-
-## What a person can read safely: hidden and control characters are named
-## instead of printed, and the text is cut at 100 characters.
-fn shown(text: str) -> str:
-    clean = control.replace(hidden.replace(text, "<hidden>"), "<control>")
-    short = start.find(clean) ?? ""
-    if len(short) < len(clean):
-        return "{short}..."
-    return short
-
-## A query as it goes in an address.
-fn encoded(query: str) -> str:
-    var out = query.replace("%", "%25")
-    for pair in [[" ", "%20"], ["\"", "%22"], ["{{", "%7B"], ["}", "%7D"], ["=", "%3D"], [",", "%2C"], ["[", "%5B"], ["]", "%5D"], [">", "%3E"], ["(", "%28"], [")", "%29"], ["+", "%2B"], ["&", "%26"], ["#", "%23"], ["!", "%21"], ["*", "%2A"], ["/", "%2F"]]:
-        out = out.replace(pair[0], pair[1])
-    return out
-
 fn cause_of(id: str) -> Cause:
     return [cause for cause in CAUSES if cause.id == id][0]
-
-## The headers of every request: the tenant of Loki and, with `auth`,
-## the Authorization header kept in the variable SENTINEL_AUTH.
-fn headers_of(settings: Settings) -> map:
-    var headers = {}
-    if settings.tenant != "":
-        headers["X-Scope-OrgID"] = settings.tenant
-    if settings.auth:
-        headers["Authorization"] = secret("SENTINEL_AUTH")
-    return headers
-
-## What Prometheus answers to a query: a list of {{metric, value}.
-fn metrics(settings: Settings, query: str) -> list!:
-    answer = http.get("{settings.prometheus}/api/v1/query?query={encoded(query)}", headers: headers_of(settings), timeout: 15s)?
-    body = answer.json()
-    if body["status"] != "success":
-        fail("Prometheus did not answer the query {query}")
-    return body["data"]["result"]
 
 ## The same, for what a report can do without: a failure is said once
 ## and the answer is empty.
@@ -117,19 +77,6 @@ fn extra_metrics(settings: Settings, what: str, query: str) -> list:
     else e:
         print("Without {what}: {e.message}")
         return []
-
-## The last lines of a container, the newest first.
-fn lines_of(settings: Settings, namespace: str, pod: str, container: str) -> list!:
-    query = "{{namespace=\"{namespace}\", pod=\"{pod}\", container=\"{container}\"}"
-    answer = http.get("{settings.loki}/loki/api/v1/query_range?query={encoded(query)}&since={settings.window}&limit={settings.lines}&direction=backward", headers: headers_of(settings), timeout: 15s)?
-    body = answer.json()
-    if body["status"] != "success":
-        fail("Loki did not answer for {namespace}/{pod}")
-    var lines = []
-    for stream in body["data"]["result"]:
-        for value in stream["values"]:
-            lines.add(value[1])
-    return lines
 
 ## The cause the lines show, the line that shows it and the lines around
 ## it, the oldest first: [id, evidence, context].
@@ -144,9 +91,9 @@ fn cause_in(lines: list) -> list:
                     var other = 0
                     for near in lines:
                         if other >= position - 1 and other <= position + 2:
-                            around = [shown(near)] + around
+                            around = [monitoring.shown(near)] + around
                         other += 1
-                    return [cause.id, shown(line), around]
+                    return [cause.id, monitoring.shown(line), around]
                 position += 1
             index += 1
     return ["RST-900", "", []]
@@ -200,13 +147,14 @@ fn labels(settings: Settings, more: str) -> str:
         return "{{namespace=\"{settings.namespace}\"}"
     return "{{namespace=\"{settings.namespace}\", {more}}"
 
-## The sample of a container in an answer of Prometheus, or none.
-fn sample_of(samples: list, namespace: str, pod: str, container: str) -> map?:
-    for sample in samples:
-        their = sample["metric"]
-        if their["namespace"] == namespace and their["pod"] == pod and their["container"] == container:
-            return sample
-    return none
+## What Prometheus answers to a query, with the headers of the settings.
+fn metrics(settings: Settings, query: str) -> list!:
+    return monitoring.metrics(settings.prometheus, query, monitoring.headers_of(settings.tenant, settings.auth))?
+
+## The last lines of a container, the newest first.
+fn lines_of(settings: Settings, namespace: str, pod: str, container: str) -> list!:
+    query = "{{namespace=\"{namespace}\", pod=\"{pod}\", container=\"{container}\"}"
+    return monitoring.log_lines(settings.loki, query, settings.window, settings.lines, monitoring.headers_of(settings.tenant, settings.auth))?
 
 fn whole(text: str) -> int!:
     number: float = validate(text, as: float)?
@@ -225,23 +173,23 @@ fn collect(settings: Settings) -> list!:
         namespace = their["namespace"] ?? ""
         pod = their["pod"] ?? ""
         container = their["container"] ?? ""
-        if kube_name.find(namespace) == none or kube_name.find(pod) == none or kube_name.find(container) == none:
-            print("Left out a container whose name is not a Kubernetes name: {shown("{namespace}/{pod}/{container}")}")
+        if not monitoring.is_name(namespace) or not monitoring.is_name(pod) or not monitoring.is_name(container):
+            print("Left out a container whose name is not a Kubernetes name: {monitoring.shown("{namespace}/{pod}/{container}")}")
         else:
             var reason = "-"
-            found = sample_of(reasons, namespace, pod, container)
+            found = monitoring.sample_of(reasons, namespace, pod, container)
             if found != none:
-                reason = shown(found["metric"]["reason"] ?? "-")
+                reason = monitoring.shown(found["metric"]["reason"] ?? "-")
             var state = "running"
-            found_state = sample_of(waiting, namespace, pod, container)
+            found_state = monitoring.sample_of(waiting, namespace, pod, container)
             if found_state != none:
-                state = shown(found_state["metric"]["reason"] ?? "waiting")
+                state = monitoring.shown(found_state["metric"]["reason"] ?? "waiting")
             var exit_code = "-"
-            found_code = sample_of(codes, namespace, pod, container)
+            found_code = monitoring.sample_of(codes, namespace, pod, container)
             if found_code != none:
                 exit_code = str(whole(found_code["value"][1])?)
             var used: int? = none
-            found_memory = sample_of(memory, namespace, pod, container)
+            found_memory = monitoring.sample_of(memory, namespace, pod, container)
             if found_memory != none:
                 used = whole(found_memory["value"][1])?
             var lines = []
@@ -273,12 +221,6 @@ fn sorted(restarts: list) -> list:
             out.add(r)
     return out
 
-fn pad(text: str, width: int) -> str:
-    var out = text
-    while len(out) < width:
-        out = "{out} "
-    return "{out} "
-
 fn count_of(restarts: list, severity: str) -> int:
     return [r for r in restarts if r.severity == severity] |> count
 
@@ -304,24 +246,24 @@ fn print_report(settings: Settings, restarts: list):
     print(summary(restarts))
     print("")
     print("RESTARTS")
-    print("  {pad("SEVERITY", 8)}{pad("CONTAINER", 38)}{pad("TIMES", 5)}{pad("STATE", 16)}{pad("REASON", 9)}{pad("EXIT", 4)}{pad("MEMORY", 6)}{pad("CAUSE", 19)}PROOF")
+    print("  {monitoring.pad("SEVERITY", 8)}{monitoring.pad("CONTAINER", 38)}{monitoring.pad("TIMES", 5)}{monitoring.pad("STATE", 16)}{monitoring.pad("REASON", 9)}{monitoring.pad("EXIT", 4)}{monitoring.pad("MEMORY", 6)}{monitoring.pad("CAUSE", 19)}PROOF")
     for r in restarts:
-        print("  {pad(r.severity, 8)}{pad("{r.namespace}/{r.pod}/{r.container}", 38)}{pad(str(r.restarts), 5)}{pad(r.state, 16)}{pad(r.reason, 9)}{pad(r.exit_code, 4)}{pad(r.memory, 6)}{pad(r.name, 19)}{r.proof}")
+        print("  {monitoring.pad(r.severity, 8)}{monitoring.pad("{r.namespace}/{r.pod}/{r.container}", 38)}{monitoring.pad(str(r.restarts), 5)}{monitoring.pad(r.state, 16)}{monitoring.pad(r.reason, 9)}{monitoring.pad(r.exit_code, 4)}{monitoring.pad(r.memory, 6)}{monitoring.pad(r.name, 19)}{r.proof}")
     print("")
     print("EVIDENCE")
     for r in restarts:
-        print("  {pad("{r.namespace}/{r.pod}/{r.container}", 38)}{r.evidence}")
+        print("  {monitoring.pad("{r.namespace}/{r.pod}/{r.container}", 38)}{r.evidence}")
     print("")
     print("BY NAMESPACE")
     for namespace in namespaces(restarts):
         own = [r for r in restarts if r.namespace == namespace]
-        print("  {pad(namespace, 12)}{len(own)} containers, {total(own)} restarts")
+        print("  {monitoring.pad(namespace, 12)}{len(own)} containers, {total(own)} restarts")
     print("")
     print("RECOMMENDED")
     for cause in CAUSES:
         own = [r for r in restarts if r.cause == cause.id]
         if len(own) > 0:
-            print("  {pad(cause.id, 7)}{pad(cause.name, 19)}{pad("x{len(own)}", 3)}{cause.action}")
+            print("  {monitoring.pad(cause.id, 7)}{monitoring.pad(cause.name, 19)}{monitoring.pad("x{len(own)}", 3)}{cause.action}")
     print("")
 
 ## The report as Markdown, to paste where an incident is discussed.
@@ -343,9 +285,9 @@ fn markdown(settings: Settings, restarts: list) -> str:
 
 fn main():
     settings: Settings = json.parse(read("restarts.json")?, as: Settings)?
-    if window_text.find(settings.window) == none:
+    if not monitoring.is_window(settings.window):
         fail("window must be a number and s, m, h or d, such as 1h")
-    if settings.namespace != "" and kube_name.find(settings.namespace) == none:
+    if settings.namespace != "" and not monitoring.is_name(settings.namespace):
         fail("namespace is not a Kubernetes name")
     if settings.lines < 1 or settings.lines > 5000:
         fail("lines must be from 1 to 5000")
@@ -390,6 +332,6 @@ test "the most serious comes first":
     assert [r.pod for r in sorted([a, b, c])] == ["c", "b", "a"]
 
 test "a query is encoded and names are checked":
-    assert encoded("{{pod=\"a b\"}") == "%7Bpod%3D%22a%20b%22%7D"
-    assert kube_name.find("api-7d9f.shop") != none
-    assert kube_name.find("api\"} or {{x=\"") == none
+    assert monitoring.encoded("{{pod=\"a b\"}") == "%7Bpod%3D%22a%20b%22%7D"
+    assert monitoring.is_name("api-7d9f.shop")
+    assert not monitoring.is_name("api\"} or {{x=\"")

@@ -18,8 +18,8 @@ from phases import ROOT, commands, compiler, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
 EXPECTED = (SENTINEL / "sentinel.expected").read_text(encoding="utf-8")
-BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.23", "198.51.100.210", "198.51.100.180", "198.51.100.190",
-           "198.51.100.220"]
+BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.210", "198.51.100.23"]
+REVIEW = ["198.51.100.180", "198.51.100.190", "198.51.100.220"]
 ADVICE = "Block 192.0.2.10 at once. Block them? yes"
 
 
@@ -94,22 +94,33 @@ def test_findings_need_no_model(phase, work):
     assert Outside.seen == []
     # every labelled finding and no other: precision and recall are 1
     found = [[file, int(line), rule] for rule, file, line in
-             re.findall(r"^  (?:high|medium|low) +(SEN-\d+) +\w+ +(\S+):(\d+) ", out, re.M)]
+             re.findall(r"^  (?:high|medium|low) +(SEN-\d+) +\w+ +(?:yes|no) +(\S+):(\d+) ", out, re.M)]
     labels = json.loads((work / "findings.json").read_text(encoding="utf-8"))
     assert sorted(found) == sorted(labels)
     assert not any(file == "logs/benign.log" for file, _, _ in found)
     # a secret in a request is reported without its value, on screen and in the report
-    assert "9f8e7d6c5b4a3f2e" not in out and "token=<redacted>" in out
+    assert "9f8e7d6c5b4a3f2e" not in out
     assert "9f8e7d6c5b4a3f2e" not in (work / "report.json").read_text(encoding="utf-8")
     # what the log hides is named, never printed
     assert not re.search("[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff\x1b]", out)
     # report.json holds the same findings, and the proposal for each address
     report = json.loads((work / "report.json").read_text(encoding="utf-8"))
     assert [[f["file"], f["line"], f["rule"]] for f in report["findings"]] == found
+    assert (report["tool"], report["schema"]) == ("sentinel", 2)
     assert {r["address"]: r["proposal"] for r in report["sources"] if r["proposal"] != "watch"} == {
-        **{address: "block" for address in BLOCKED}, "192.0.2.10": "protected"}
-    assert [r["score"] for r in report["sources"]] == sorted((r["score"] for r in report["sources"]), reverse=True)
-    assert audit(work)[0] == ("scan", "5 files, 84 lines, 30 findings")
+        **{address: "block" for address in BLOCKED}, **{address: "review" for address in REVIEW},
+        "192.0.2.10": "protected"}
+    # the most urgent first and, among equals, the highest score
+    order = [(r["priority"], -r["score"]) for r in report["sources"]]
+    assert order == sorted(order) and [r["priority"] for r in report["sources"]][:4] == ["P1", "P1", "P1", "P2"]
+    brute = [r for r in report["sources"] if r["address"] == "203.0.113.9"][0]
+    assert (brute["first"], brute["last"]) == ("2026-11-02T09:14:06Z", "2026-11-02T09:20:01Z")
+    assert brute["tactics"] == ["Credential Access", "Initial Access"]
+    # the finding sentinel.json silences is kept apart, with its reason, and is not scored
+    assert [(e["rule"], e["source"]) for e in report["suppressed"]] == [("SEN-109", "192.0.2.51")]
+    assert not any(f["rule"] == "SEN-109" for f in report["findings"])
+    assert any(event == "suppressed" and "SEC-142" in detail for event, detail in audit(work))
+    assert audit(work)[0] == ("scan", "5 files, 84 lines, 29 findings, 1 suppressed")
     assert audit(work)[-1] == ("approval", "no")
 
 
@@ -176,11 +187,14 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "10 tests: 10 passed, 0 failed" in out, out
-    before = (work / "sentinel.nexo").read_bytes()
-    assert run(phase[1], ["fmt", "sentinel.nexo"], work).returncode == 0
-    assert (work / "sentinel.nexo").read_bytes() == before
-    assert run(phase[1], ["lint", "sentinel.nexo"], work).stdout.decode() == "No warnings in sentinel.nexo.\n"
+    assert proc.returncode == 0 and "12 tests: 12 passed, 0 failed" in out, out
+    for name in ("sentinel.nexo", "safe.nexo"):
+        before = (work / name).read_bytes()
+        # no character a reader cannot see in the source of a tool that looks for them
+        assert before.isascii()
+        assert run(phase[1], ["fmt", name], work).returncode == 0
+        assert (work / name).read_bytes() == before
+        assert run(phase[1], ["lint", name], work).stdout.decode() == f"No warnings in {name}.\n"
 
 
 def test_a_release_build_cannot_read_outside_logs(work):
@@ -230,13 +244,37 @@ def test_idor_is_found_from_ids_and_owners(phase, work):
            "2026-11-03T10:02:02Z 198.51.100.7 web GET /accounts/13/statement 200 user=12\n",
            "2026-11-03T10:02:03Z 198.51.100.7 web GET /accounts/14/statement 403 user=12\n"]), encoding="utf-8")
     settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
-    settings.update(logs=["logs/idor.log"], max_object_ids=3)
+    settings.update(logs=["logs/idor.log"], max_object_ids=3, suppress=[])
     (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     code, out = sentinel(phase[1], work, "no\nno\n")
     report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    # a suspicion asks for a review: nothing is proposed for blocking
+    assert "Nothing to block." in out and {r["proposal"] for r in report["sources"]} == {"review"}
     assert [(f["rule"], f["line"], f["source"], f["evidence"].split(":")[0]) for f in report["findings"]] == [
         ("SEN-204", 3, "198.51.100.5", "3 different ids of /api/docs/{id}/download"),
         ("SEN-204", 6, "198.51.100.6", "3 different ids of /export?doc_id={id}"),
         ("SEN-205", 8, "198.51.100.7", "user 12 was answered an object of user 13"),
         # accounts 12, 13 and 14: the refused one counts as an id asked for
         ("SEN-204", 10, "198.51.100.7", "3 different ids of /accounts/{id}/statement")]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+@pytest.mark.parametrize("entry", [{"rule": "*", "source": "*", "reason": "quiet"},
+                                   {"rule": "SEN-101", "source": "*", "reason": " "}, {"rule": "SEN-101"}])
+def test_a_suppression_needs_a_reason_and_a_scope(phase, work, entry):
+    settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
+    settings["suppress"] = [entry]
+    (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert out.startswith("Sentinel stopped: ") and "suppress" in out
+    assert Outside.seen == [] and not (work / "report.json").exists()
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_suppressed_source_is_not_blocked(phase, work):
+    settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
+    settings["suppress"].append({"rule": "*", "source": "203.0.113.9", "reason": "the red team, until Friday"})
+    (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert code == 0 and blocks() == [address for address in BLOCKED if address != "203.0.113.9"]
+    assert sum(1 for event, detail in audit(work) if event == "suppressed" and "the red team" in detail) == 2

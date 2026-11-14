@@ -13,5 +13,12 @@
   "firewall": "http://127.0.0.1:8787",
   "max_failed_logins": 5,
   "max_not_found": 10,
-  "max_object_ids": 8
+  "max_object_ids": 8,
+  "suppress": [
+    {
+      "rule": "SEN-109",
+      "source": "192.0.2.51",
+      "reason": "password reset links carry a one-time token (SEC-142)"
+    }
+  ]
 }

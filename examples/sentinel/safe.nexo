@@ -1,0 +1,45 @@
+## Text that is safe to show, for every Sentinel program: secrets are
+## left out, hidden and control characters are named instead of printed.
+
+named_secret = regex("(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& \"]+")
+bare_secret = regex("AKIA[0-9A-Z]{{16}|eyJ[A-Za-z0-9_-]{{8,}\\.eyJ[A-Za-z0-9_-]{{8,}\\.[A-Za-z0-9_-]+")
+hidden = regex("[\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069\\ufeff]")
+control = regex("[\\u0000-\\u0008\\u000b-\\u001f\\u007f]")
+start = regex("^.{{0,100}")
+
+## A text without the secrets it carries: the value after password=,
+## token= and alike, access keys and signed tokens.
+pub fn redacted(text: str) -> str:
+    var out = bare_secret.replace(text, "<redacted>")
+    for found in named_secret.find_all(out):
+        out = out.replace(found, "{found.split("=")[0]}=<redacted>")
+    return out
+
+## True when a text has characters a person would not see.
+pub fn has_hidden(text: str) -> bool:
+    return hidden.find(text) != none or control.find(text) != none
+
+## What a person can read safely: no secrets, hidden and control
+## characters named, and at most 100 characters.
+pub fn shown(text: str) -> str:
+    clean = control.replace(hidden.replace(redacted(text), "<hidden>"), "<control>")
+    short = start.find(clean) ?? ""
+    if len(short) < len(clean):
+        return "{short}..."
+    return short
+
+## A text made as wide as a column.
+pub fn pad(text: str, width: int) -> str:
+    var out = text
+    while len(out) < width:
+        out = "{out} "
+    return out
+
+pub fn joined(items: list) -> str:
+    var out = ""
+    for item in items:
+        if out == "":
+            out = item
+        else:
+            out = "{out}, {item}"
+    return out
