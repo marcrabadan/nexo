@@ -1,0 +1,84 @@
+## Where sentinel.nexo reads logs besides files: Loki, Elasticsearch or
+## OpenSearch, Splunk and Datadog. Each gives the lines of a query in the
+## last window, the oldest first, and at most `limit` of them. They only
+## read. A source with `auth` sends the Authorization header kept in a
+## variable of the environment; Datadog always sends its two keys.
+use monitoring
+
+index_name = regex("^[A-Za-z0-9_.*,-]{{1,200}$")
+
+fn authorization(entry: map, variable: str) -> map:
+    if entry["auth"] ?? false:
+        return {"Authorization": secret(variable)}
+    return {}
+
+fn reversed(lines: list) -> list:
+    var out = []
+    for line in lines:
+        out = [line] + out
+    return out
+
+## Loki: `query` is LogQL, such as {{job="nginx"}.
+fn loki(entry: map, window: str, limit: int) -> list!:
+    return reversed(monitoring.log_lines(entry["url"], entry["query"], window, limit, authorization(entry, "SENTINEL_LOKI_AUTH"))?)
+
+## Elasticsearch and OpenSearch: `query` is a query string, `index` the
+## index or pattern, `field` the field with the line (message).
+fn elastic(entry: map, window: str, limit: int) -> list!:
+    index = entry["index"] ?? ""
+    if index_name.find(index) == none:
+        fail("the index of an elastic source is letters, digits and . _ - * ,")
+    field = entry["field"] ?? "message"
+    body = {"size": limit, "sort": [{"@timestamp": {"order": "desc"}}], "query": {"bool": {"filter": [{"query_string": {"query": entry["query"]}}, {"range": {"@timestamp": {"gte": "now-{window}"}}}]}}}
+    answer = http.post("{entry["url"]}/{index}/_search", body, headers: authorization(entry, "SENTINEL_ELASTIC_AUTH"), timeout: 15s)?
+    var lines = []
+    for hit in answer.json()["hits"]["hits"]:
+        line = hit["_source"][field]
+        if line != none:
+            lines.add(str(line))
+    return reversed(lines)
+
+## Splunk: `query` is what follows `search`, such as index=web.
+fn splunk(entry: map, window: str, limit: int) -> list!:
+    search = monitoring.encoded("search {entry["query"]} | head {limit}")
+    var headers = authorization(entry, "SENTINEL_SPLUNK_AUTH")
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+    answer = http.post("{entry["url"]}/services/search/jobs/export", "search={search}&earliest_time=-{window}&latest_time=now&output_mode=json", headers: headers, timeout: 30s)?
+    var lines = []
+    for row in answer.text.split("\n"):
+        if row.trim() != "":
+            result = json.parse(row)?["result"]
+            if result != none:
+                lines.add(str(result["_raw"]))
+    return reversed(lines)
+
+## Datadog: `query` is a log search, such as service:web.
+fn datadog(entry: map, window: str, limit: int) -> list!:
+    headers = {"DD-API-KEY": secret("SENTINEL_DATADOG_API_KEY"), "DD-APPLICATION-KEY": secret("SENTINEL_DATADOG_APP_KEY")}
+    body = {"filter": {"query": entry["query"], "from": "now-{window}", "to": "now"}, "sort": "-timestamp", "page": {"limit": limit}}
+    answer = http.post("{entry["url"]}/api/v2/logs/events/search", body, headers: headers, timeout: 15s)?
+    var lines = []
+    for event in answer.json()["data"]:
+        line = event["attributes"]["message"]
+        if line != none:
+            lines.add(str(line))
+    return reversed(lines)
+
+## The kinds of source there are.
+pub fn kinds() -> list:
+    return ["loki", "elastic", "splunk", "datadog"]
+
+## The lines of a source of sentinel.json, the oldest first.
+pub fn lines_of(entry: map, window: str, limit: int) -> list!:
+    kind = entry["kind"] ?? ""
+    if (entry["url"] ?? "") == "" or (entry["query"] ?? "") == "":
+        fail("a source needs a url and a query")
+    if kind == "loki":
+        return loki(entry, window, limit)?
+    if kind == "elastic":
+        return elastic(entry, window, limit)?
+    if kind == "splunk":
+        return splunk(entry, window, limit)?
+    if kind == "datadog":
+        return datadog(entry, window, limit)?
+    fail("the kind of a source is loki, elastic, splunk or datadog")

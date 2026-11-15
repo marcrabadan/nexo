@@ -43,7 +43,10 @@ ACCEPTED_LOGIN = re.compile(r"(?i)login accepted|session opened")
 NOT_FOUND = re.compile(r" 404( |$)")
 STREAM_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}$")
 WINDOW = re.compile(r"^[0-9]{1,4}[smhd]$")
-STAMP = re.compile(r"[0-9][0-9A-Za-z:+/. -]{0,30}")
+STAMP = re.compile(r"[0-9A-Za-z][0-9A-Za-z:+/. -]{0,30}")
+SYSLOG_SSHD = re.compile(r"^(\S+ +[0-9]{1,2} [0-9:]{8}|[0-9]{4}-\S+) \S+ sshd(\[[0-9]+\])?: (Failed|Accepted) \S+ for (invalid user )?(\S+) from (\S+) port ")
+SYSLOG_LINE = re.compile(r"^(\S+ +[0-9]{1,2} [0-9:]{8}|[0-9]{4}-\S+) \S+ [^ :]+: ")
+INDEX_NAME = re.compile(r"^[A-Za-z0-9_.*,-]{1,200}$")
 COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*"))?''')
 NAMED_SECRET = re.compile(r'''(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+''')
 BARE_SECRET = re.compile(r"AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+")
@@ -94,6 +97,10 @@ def fields_of(line):
         if web.group(2) != "-":
             message += f" user={web.group(2)}"
         return web.group(1), message, stamp(web.group(3))
+    ssh = SYSLOG_SSHD.search(line)
+    if ssh and ADDRESS.search(ssh.group(6)):
+        did = "failed" if ssh.group(3) == "Failed" else "accepted"
+        return ssh.group(6), f"sshd login {did} user={ssh.group(5)}", stamp(ssh.group(1))
     fields = ENTRY.search(line)
     if fields is None or ADDRESS.search(fields.group(2)) is None:
         return None
@@ -109,7 +116,8 @@ def check_line(file, number, line):
     fields = fields_of(line)
     source, message, time = "-", line, "-"
     if fields is None:
-        found.append(finding("SEN-303", time, file, number, source, shown(line)))
+        if SYSLOG_LINE.search(line) is None:
+            found.append(finding("SEN-303", time, file, number, source, shown(line)))
     else:
         source, message, time = fields
     if HIDDEN.search(line) or CONTROL.search(line):
@@ -194,25 +202,65 @@ def file_lines(file):
             yield line.rstrip("\r\n")
 
 
-def loki_streams(settings):
+def remote_sources(settings):
     out = []
-    if settings["loki"] == "":
-        return out
-    for entry in settings["loki_queries"]:
+    for entry in settings["sources"]:
         if STREAM_NAME.search(entry.get("name", "")) is None:
-            print(f'Left out a Loki query without a plain name: {shown(entry.get("name", ""))}')
+            print(f'Left out a source without a plain name: {shown(entry.get("name", ""))}')
         else:
-            out.append((f'loki:{entry["name"]}', entry.get("query", "")))
+            out.append((f'{entry.get("kind", "source")}:{entry["name"]}', entry))
     return out
 
 
-def stream_lines(settings, query):
-    """The lines Loki has for a query in the window, the oldest first."""
-    asked = urllib.parse.urlencode({"query": query, "since": settings["loki_window"],
-                                    "limit": settings["loki_lines"], "direction": "backward"})
-    with urllib.request.urlopen(f'{settings["loki"]}/loki/api/v1/query_range?{asked}', timeout=15) as answer:
-        body = json.load(answer)
-    lines = [value[1] for stream in body["data"]["result"] for value in stream["values"]]
+def fetch(url, body=None, headers=None, timeout=15):
+    if isinstance(body, (dict, list)):
+        body, headers = json.dumps(body).encode(), {**(headers or {}), "Content-Type": "application/json"}
+    request = urllib.request.Request(url, body, headers or {})
+    with urllib.request.urlopen(request, timeout=timeout) as answer:
+        return answer.read().decode("utf-8")
+
+
+def authorization(entry, variable):
+    return {"Authorization": os.environ[variable]} if entry.get("auth") else {}
+
+
+def lines_of(entry, window, limit):
+    """The lines of a source of sentinel.json, the oldest first."""
+    kind, url, query = entry.get("kind", ""), entry.get("url", ""), entry.get("query", "")
+    if not url or not query:
+        raise ValueError("a source needs a url and a query")
+    if kind == "loki":
+        asked = urllib.parse.urlencode({"query": query, "since": window, "limit": limit, "direction": "backward"})
+        body = json.loads(fetch(f"{url}/loki/api/v1/query_range?{asked}",
+                                headers=authorization(entry, "SENTINEL_LOKI_AUTH")))
+        lines = [value[1] for stream in body["data"]["result"] for value in stream["values"]]
+    elif kind == "elastic":
+        index = entry.get("index", "")
+        if INDEX_NAME.search(index) is None:
+            raise ValueError("the index of an elastic source is letters, digits and . _ - * ,")
+        search = {"size": limit, "sort": [{"@timestamp": {"order": "desc"}}], "query": {"bool": {"filter": [
+            {"query_string": {"query": query}}, {"range": {"@timestamp": {"gte": f"now-{window}"}}}]}}}
+        body = json.loads(fetch(f"{url}/{index}/_search", search, authorization(entry, "SENTINEL_ELASTIC_AUTH")))
+        field = entry.get("field", "message")
+        lines = [str(hit["_source"][field]) for hit in body["hits"]["hits"] if hit["_source"].get(field) is not None]
+    elif kind == "splunk":
+        form = urllib.parse.urlencode({"search": f"search {query} | head {limit}", "earliest_time": f"-{window}",
+                                       "latest_time": "now", "output_mode": "json"}).encode()
+        text = fetch(f"{url}/services/search/jobs/export", form,
+                     {**authorization(entry, "SENTINEL_SPLUNK_AUTH"),
+                      "Content-Type": "application/x-www-form-urlencoded"}, 30)
+        rows = [json.loads(row) for row in text.split("\n") if row.strip()]
+        lines = [str(row["result"]["_raw"]) for row in rows if row.get("result") is not None]
+    elif kind == "datadog":
+        search = {"filter": {"query": query, "from": f"now-{window}", "to": "now"}, "sort": "-timestamp",
+                  "page": {"limit": limit}}
+        body = json.loads(fetch(f"{url}/api/v2/logs/events/search", search, {
+            "DD-API-KEY": os.environ["SENTINEL_DATADOG_API_KEY"],
+            "DD-APPLICATION-KEY": os.environ["SENTINEL_DATADOG_APP_KEY"]}))
+        lines = [str(event["attributes"]["message"]) for event in body["data"]
+                 if event["attributes"].get("message") is not None]
+    else:
+        raise ValueError("the kind of a source is loki, elastic, splunk or datadog")
     return lines[::-1]
 
 
@@ -248,9 +296,10 @@ def scan(settings, state):
             new_lines += number - skip
             following[file] = {"lines": number, "first": first}
             findings += found
-    for name, query in loki_streams(settings):
+    for name, entry in remote_sources(settings):
         try:
-            number, found, first = scan_file(name, settings, 0, stream_lines(settings, query))
+            number, found, first = scan_file(name, settings, 0, lines_of(entry, settings["source_window"],
+                                                                         settings["source_lines"]))
         except Exception as e:
             skipped.append((name, str(e)))
         else:
@@ -425,8 +474,10 @@ def main():
     with open("sentinel.json", encoding="utf-8") as f:
         settings = json.load(f)
     check_suppress(settings["suppress"])
-    if settings["loki"] and WINDOW.search(settings["loki_window"]) is None:
-        raise ValueError("loki_window must be a number and s, m, h or d, such as 15m")
+    if settings["sources"] and WINDOW.search(settings["source_window"]) is None:
+        raise ValueError("source_window must be a number and s, m, h or d, such as 15m")
+    if not 1 <= settings["source_lines"] <= 1000:
+        raise ValueError("source_lines must be from 1 to 1000")
     state = {}
     if settings["incremental"]:
         try:

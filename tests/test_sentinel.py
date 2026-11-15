@@ -19,8 +19,9 @@ from phases import ROOT, commands, compiler, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
 EXPECTED = (SENTINEL / "sentinel.expected").read_text(encoding="utf-8")
-BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.210", "198.51.100.23"]
+BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.210", "203.0.113.77", "198.51.100.23"]
 REVIEW = ["198.51.100.180", "198.51.100.190", "198.51.100.250", "198.51.100.220"]
+NGINX = (SENTINEL / "logs" / "nginx.log").read_text(encoding="utf-8").splitlines()
 ADVICE = "Block 192.0.2.10 at once. Block them? yes"
 
 
@@ -32,30 +33,43 @@ class Outside(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def do_GET(self):
-        """Loki: the lines of logs/nginx.log, the newest first."""
-        url = urlparse(self.path)
-        query = {k: v[0] for k, v in parse_qs(url.query).items()}
-        Outside.asked.append((url.path, query))
-        lines = (SENTINEL / "logs" / "nginx.log").read_text(encoding="utf-8").splitlines()[::-1]
-        values = [[str(1762768800000000000 - i), line] for i, line in enumerate(lines)]
-        data = json.dumps({"status": "success", "data": {"resultType": "streams", "result": [
-            {"stream": {"job": "nginx"}, "values": values}]}}).encode()
-        self.send_response(200 if url.path == "/loki/api/v1/query_range" else 404)
+    def answer(self, body, code=200):
+        data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
+    def do_GET(self):
+        """Loki: the lines of logs/nginx.log, the newest first."""
+        url = urlparse(self.path)
+        query = {k: v[0] for k, v in parse_qs(url.query).items()}
+        Outside.asked.append((url.path, query, self.headers.get("Authorization")))
+        values = [[str(1762768800000000000 - i), line] for i, line in enumerate(NGINX[::-1])]
+        self.answer({"status": "success", "data": {"resultType": "streams", "result": [
+            {"stream": {"job": "nginx"}, "values": values}]}}, 200 if url.path == "/loki/api/v1/query_range" else 404)
+
     def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        raw = self.rfile.read(int(self.headers["Content-Length"])).decode("utf-8")
+        keys = {name: self.headers.get(name) for name in ("Authorization", "DD-API-KEY", "DD-APPLICATION-KEY")
+                if self.headers.get(name)}
+        if self.path == "/services/search/jobs/export":
+            # Splunk: a form, answered with one JSON document on each line, the newest first
+            form = {k: v[0] for k, v in parse_qs(raw).items()}
+            Outside.asked.append((self.path, form, keys))
+            rows = [json.dumps({"preview": False, "result": {"_raw": line}}) for line in NGINX[::-1]]
+            return self.answer(("\n".join(rows) + "\n" + json.dumps({"preview": False, "lastrow": True}) + "\n").encode())
+        body = json.loads(raw)
+        if self.path.endswith("/_search"):
+            Outside.asked.append((self.path, body, keys))
+            return self.answer({"hits": {"hits": [{"_source": {"message": line, "@timestamp": "t"}}
+                                                  for line in NGINX[::-1]] + [{"_source": {"other": 1}}]}})
+        if self.path == "/api/v2/logs/events/search":
+            Outside.asked.append((self.path, body, keys))
+            return self.answer({"data": [{"attributes": {"message": line}} for line in NGINX[::-1]]})
         Outside.seen.append((self.path, body))
-        data = json.dumps({"message": {"content": ADVICE}, "prompt_eval_count": 4, "eval_count": 3}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        self.answer({"message": {"content": ADVICE}, "prompt_eval_count": 4, "eval_count": 3})
 
 
 @pytest.fixture(scope="module")
@@ -130,7 +144,7 @@ def test_findings_need_no_model(phase, work):
         "192.0.2.10": "protected"}
     # the most urgent first and, among equals, the highest score
     order = [(r["priority"], -r["score"]) for r in report["sources"]]
-    assert order == sorted(order) and [r["priority"] for r in report["sources"]][:4] == ["P1", "P1", "P1", "P2"]
+    assert order == sorted(order) and [r["priority"] for r in report["sources"]][:5] == ["P1", "P1", "P1", "P1", "P2"]
     brute = [r for r in report["sources"] if r["address"] == "203.0.113.9"][0]
     assert (brute["first"], brute["last"]) == ("2026-11-02T09:14:06Z", "2026-11-02T09:20:01Z")
     assert brute["tactics"] == ["Credential Access", "Initial Access"]
@@ -138,7 +152,7 @@ def test_findings_need_no_model(phase, work):
     assert [(e["rule"], e["source"]) for e in report["suppressed"]] == [("SEN-109", "192.0.2.51")]
     assert not any(f["rule"] == "SEN-109" for f in report["findings"])
     assert any(event == "suppressed" and "SEC-142" in detail for event, detail in audit(work))
-    assert audit(work)[0] == ("scan", "5 logs, 96 lines, 96 new, 31 findings, 1 suppressed")
+    assert audit(work)[0] == ("scan", "6 logs, 107 lines, 107 new, 33 findings, 1 suppressed")
     assert audit(work)[-1] == ("approval", "no")
 
 
@@ -188,7 +202,10 @@ def test_a_firewall_that_fails_is_recorded(phase, work):
 @pytest.mark.parametrize("answers", ["no\nno\n", "no\nyes\n", "yes\nyes\n"])
 def test_the_python_comparison_is_the_same(work, server, answers):
     settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
-    settings.update(alert_webhook=f"{server}/alert", alertmanager=server, loki=server)
+    settings.update(alert_webhook=f"{server}/alert", alertmanager=server, sources=[
+        {"name": "edge", "kind": "loki", "url": server, "query": '{job="nginx"}'},
+        {"name": "web", "kind": "elastic", "url": server, "index": "logs-*", "query": "service:web"},
+        {"name": "old", "kind": "splunk", "url": server, "query": "index=web"}])
     (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     nexo = sentinel(commands()[0][1], work, answers)
     # the same calls outside; each asks the model in its own words
@@ -208,8 +225,8 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "14 tests: 14 passed, 0 failed" in out, out
-    for name in ("sentinel.nexo", "safe.nexo"):
+    assert proc.returncode == 0 and "15 tests: 15 passed, 0 failed" in out, out
+    for name in ("sentinel.nexo", "safe.nexo", "logsources.nexo"):
         before = (work / name).read_bytes()
         # no character a reader cannot see in the source of a tool that looks for them
         assert before.isascii()
@@ -318,9 +335,9 @@ def test_incremental_runs_report_only_what_is_new(phase, work):
         return json.loads((work / "report.json").read_text(encoding="utf-8"))
 
     first = run_once()
-    assert (first["new_lines"], len(first["findings"])) == (96, 31)
+    assert (first["new_lines"], len(first["findings"])) == (107, 33)
     again = run_once()
-    assert (again["lines"], again["new_lines"], again["findings"]) == (96, 0, [])
+    assert (again["lines"], again["new_lines"], again["findings"]) == (107, 0, [])
     with log.open("a", encoding="utf-8") as f:
         f.write("2026-11-02T09:50:00Z 198.51.100.99 web GET /x?id=1+union+select+1 200\n")
     added = run_once()
@@ -332,9 +349,10 @@ def test_incremental_runs_report_only_what_is_new(phase, work):
     assert [(f["rule"], f["line"]) for f in rotated["findings"]] == [("SEN-105", 1)]
     state = json.loads((work / "state.json").read_text(encoding="utf-8"))
     assert state["logs/attack.log"]["lines"] == 1 and set(state) == {
-        "logs/benign.log", "logs/attack.log", "logs/unicode.log", "logs/oversized.log", "logs/nginx.log"}
+        "logs/benign.log", "logs/attack.log", "logs/unicode.log", "logs/oversized.log", "logs/nginx.log",
+        "logs/auth.log"}
     assert [detail.split(", ")[2] for event, detail in audit(work) if event == "scan"] == [
-        "96 new", "0 new", "1 new", "1 new"]
+        "107 new", "0 new", "1 new", "1 new"]
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -350,9 +368,9 @@ def test_an_alert_names_the_urgent_addresses(phase, work, server):
     assert code == 0 and "Alert sent.\n" in out
     (path, body), = Outside.seen
     lines = body["text"].split("\n")
-    assert path == "/alert" and lines[0] == "Nexo Sentinel: 5 addresses need attention"
+    assert path == "/alert" and lines[0] == "Nexo Sentinel: 6 addresses need attention"
     assert lines[1] == "P1 198.51.100.140 block (Initial Access, Reconnaissance) SEN-102, SEN-105"
-    assert [line.split(" ")[0] for line in lines[1:]] == ["P1", "P1", "P1", "P2", "P2"]
+    assert [line.split(" ")[0] for line in lines[1:]] == ["P1", "P1", "P1", "P1", "P2", "P2"]
     # addresses and rules only: no line of a log, and no address that is only to review
     assert "GET" not in body["text"] and not any(address in body["text"] for address in REVIEW)
     assert ("alert", "sent") in audit(work)
@@ -382,33 +400,82 @@ def test_one_account_tried_from_many_addresses(phase, work):
     assert report["sources"] == [] and "Nothing to block." in out
 
 
+SOURCES = {
+    "loki": {"query": '{job="nginx"}'},
+    "elastic": {"query": "service:web AND status:[200 TO 599]", "index": "logs-web-*"},
+    "splunk": {"query": 'index=web sourcetype="nginx:access"'},
+    "datadog": {"query": "service:web"},
+}
+KEYS = {"SENTINEL_LOKI_AUTH": "Bearer l0ki", "SENTINEL_ELASTIC_AUTH": "ApiKey 3lastic",
+        "SENTINEL_SPLUNK_AUTH": "Bearer splnk", "SENTINEL_DATADOG_API_KEY": "dd-api", "SENTINEL_DATADOG_APP_KEY": "dd-app"}
+
+
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
-def test_logs_are_read_from_loki_too(phase, work, server):
-    """The lines of nginx.log, given by Loki, have the findings the file has."""
-    settings_of(work, logs=["logs/benign.log"], loki=server, loki_window="30m", loki_lines=500, suppress=[],
-                loki_queries=[{"name": "nginx", "query": '{job="nginx"}'}, {"name": "Bad Name!", "query": "{}"}])
-    code, out = sentinel(phase[1], work, "no\nno\n")
-    assert code == 0 and out.startswith("Left out a Loki query without a plain name: Bad Name!\n")
+@pytest.mark.parametrize("kind", list(SOURCES))
+def test_logs_are_read_from_other_systems(phase, work, server, kind):
+    """The lines of nginx.log, given by each system, have the findings the file has."""
+    settings_of(work, logs=["logs/benign.log"], source_window="30m", source_lines=500, suppress=[], sources=[
+        {"name": "web", "kind": kind, "url": server, "auth": True, **SOURCES[kind]},
+        {"name": "Bad Name!", "kind": kind, "url": server, "query": "x"}])
+    proc = run(phase[1], ["sentinel.nexo"], work, stdin=b"no\nno\n",
+               env={"XDG_CONFIG_HOME": str(work / "config"), **KEYS})
+    out = proc.stdout.decode("utf-8")
+    assert proc.returncode == 0 and out.startswith("Left out a source without a plain name: Bad Name!\n")
+    assert not any(value in out for value in KEYS.values())
     report = json.loads((work / "report.json").read_text(encoding="utf-8"))
     labels = json.loads((work / "findings.json").read_text(encoding="utf-8"))
     # with the one sentinel.json suppresses in the file, which nothing suppresses here
     assert [[f["file"], f["line"], f["rule"]] for f in report["findings"]] == sorted(
-        [["loki:nginx", line, rule] for file, line, rule in labels if file == "logs/nginx.log"]
-        + [["loki:nginx", 7, "SEN-109"]], key=lambda f: f[1])
+        [[f"{kind}:web", line, rule] for file, line, rule in labels if file == "logs/nginx.log"]
+        + [[f"{kind}:web", 7, "SEN-109"]], key=lambda f: f[1])
     assert (report["files"], report["lines"]) == (2, 28)
-    (path, query), = Outside.asked
-    assert path == "/loki/api/v1/query_range" and query == {
-        "query": '{job="nginx"}', "since": "30m", "limit": "500", "direction": "backward"}
+    (path, asked, keys), = Outside.asked
+    if kind == "loki":
+        assert path == "/loki/api/v1/query_range" and keys == "Bearer l0ki" and asked == {
+            "query": '{job="nginx"}', "since": "30m", "limit": "500", "direction": "backward"}
+    elif kind == "elastic":
+        assert path == "/logs-web-*/_search" and keys == {"Authorization": "ApiKey 3lastic"}
+        assert asked == {"size": 500, "sort": [{"@timestamp": {"order": "desc"}}], "query": {"bool": {"filter": [
+            {"query_string": {"query": "service:web AND status:[200 TO 599]"}},
+            {"range": {"@timestamp": {"gte": "now-30m"}}}]}}}
+    elif kind == "splunk":
+        assert path == "/services/search/jobs/export" and keys == {"Authorization": "Bearer splnk"}
+        assert asked == {"search": 'search index=web sourcetype="nginx:access" | head 500', "earliest_time": "-30m",
+                         "latest_time": "now", "output_mode": "json"}
+    else:
+        assert path == "/api/v2/logs/events/search" and keys == {"DD-API-KEY": "dd-api", "DD-APPLICATION-KEY": "dd-app"}
+        assert asked == {"filter": {"query": "service:web", "from": "now-30m", "to": "now"}, "sort": "-timestamp",
+                         "page": {"limit": 500}}
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
-def test_loki_that_fails_is_skipped_and_a_wrong_window_stops(phase, work):
-    settings_of(work, loki="http://127.0.0.1:1")
+def test_a_source_that_fails_is_skipped_and_wrong_settings_stop(phase, work, server):
+    settings_of(work, sources=[
+        {"name": "down", "kind": "loki", "url": "http://127.0.0.1:1", "query": "{}"},
+        {"name": "what", "kind": "graylog", "url": server, "query": "x"},
+        {"name": "keys", "kind": "datadog", "url": server, "query": "x"},
+        {"name": "idx", "kind": "elastic", "url": server, "query": "x", "index": "a/../b"}])
     code, out = sentinel(phase[1], work, "no\nno\n")
-    assert code == 0 and "  loki:nginx " in out and "skipped 4." in out
-    settings_of(work, loki_window="1h&limit=9")
+    assert code == 0 and "skipped 7." in out and Outside.asked == []
+    skipped = {line.split()[0]: line for line in out.split("SKIPPED\n")[1].split("\n\n")[0].splitlines()}
+    assert "loki:down" in skipped
+    assert "the kind of a source is loki, elastic, splunk or datadog" in skipped["graylog:what"]
+    assert "SENTINEL_DATADOG_API_KEY" in skipped["datadog:keys"]
+    assert "the index of an elastic source" in skipped["elastic:idx"]
+    settings_of(work, source_window="1h&limit=9")
     code, out = sentinel(phase[1], work, "no\nno\n")
-    assert out.startswith("Sentinel stopped: loki_window")
+    assert out.startswith("Sentinel stopped: source_window")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_syslog_file_of_sshd_is_read(phase, work):
+    settings_of(work, logs=["logs/auth.log"], suppress=[])
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    # the lines of systemd, cron and sudo are not entries of an address, and not malformed either
+    assert [(f["rule"], f["line"], f["source"], f["time"]) for f in report["findings"]] == [
+        ("SEN-201", 8, "203.0.113.77", "Nov  2 12:01:04"), ("SEN-202", 10, "203.0.113.77", "Nov  2 12:01:30")]
+    assert report["sources"][0]["priority"] == "P1"
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -417,11 +484,11 @@ def test_alertmanager_gets_an_alert_for_each_urgent_address(phase, work, server)
     code, out = sentinel(phase[1], work, "no\nno\n")
     assert code == 0 and "Alertmanager told.\n" in out
     (path, alerts), = Outside.seen
-    assert path == "/api/v2/alerts" and len(alerts) == 5
+    assert path == "/api/v2/alerts" and len(alerts) == 6
     assert alerts[0] == {
         "labels": {"alertname": "SentinelAttack", "severity": "critical", "source": "nexo-sentinel",
                    "instance": "198.51.100.140", "priority": "P1", "proposal": "block"},
         "annotations": {"summary": "198.51.100.140: Initial Access, Reconnaissance (SEN-102, SEN-105)"}}
-    assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 3 + ["warning"] * 2
+    assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 4 + ["warning"] * 2
     assert "GET" not in json.dumps(alerts) and ("alertmanager", "sent") in audit(work)
     assert blocks() == []

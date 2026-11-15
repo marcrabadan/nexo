@@ -100,7 +100,8 @@ read; a missing or wrong field stops the program.
 | `incremental` | `true` to report only the lines added since the run before |
 | `alert_webhook` | an address to send the urgent addresses to, or `""` for none |
 | `alertmanager` | the address of Prometheus Alertmanager, or `""` for none |
-| `loki`, `loki_window`, `loki_lines`, `loki_queries` | logs to read from Loki besides the files: its address, how far back, the most lines for each query, and the queries, each `{"name", "query"}` |
+| `sources` | logs to read from other systems besides the files (see Log sources) |
+| `source_window`, `source_lines` | how far back each source is read, such as `15m`, and the most lines of each (1 to 1000) |
 | `suppress` | findings to silence: each `{"rule", "source", "reason"}`, where `"*"` is any rule or any address (not both) |
 
 A suppressed finding is not scored and proposes nothing; it is listed
@@ -129,7 +130,7 @@ the run goes on.
 
 | With | What happens | Setting |
 |---|---|---|
-| Loki, as a source | `sentinel.nexo` reads the lines of each query of `loki_queries` in the last `loki_window`, and every rule applies to them; a finding is shown at `loki:name:line` | `loki` in `sentinel.json` |
+| Loki, Elasticsearch or OpenSearch, Splunk, Datadog, as sources | `sentinel.nexo` reads the lines of each query in the last `source_window`, and every rule applies to them; a finding is shown at `kind:name:line` | `sources` in `sentinel.json` |
 | Alertmanager | one alert for each address of priority P1 (`critical`) or P2 (`warning`); for each restart that is critical or high; for each container near a limit. Alertmanager routes them to PagerDuty, Opsgenie, Slack, mail or whatever it is set up for | `alertmanager` in the three settings files |
 | A webhook | one message with the urgent addresses, in the form Slack takes | `alert_webhook` in `sentinel.json` |
 | Grafana | an annotation for each restart that is critical or high, with the tags `nexo-sentinel`, `restart`, the namespace and the severity, to see it on the dashboards | `grafana` in `restarts.json`, and its token in `SENTINEL_GRAFANA_AUTH` (`"Bearer <token>"`) |
@@ -140,15 +141,49 @@ and carry the label `source="nexo-sentinel"`, to route them. None carries
 a line of a log. Each integration is off until its setting names an
 address, and the host of each has to be added to the `policy` block of
 the program. A failure to tell is said (and, in `sentinel.nexo`,
-recorded) and the report stands. The lines read from Loki are not part of
-`incremental`: each run reads the whole window.
+recorded) and the report stands.
 
 `notify.nexo` is the module with Alertmanager and Grafana.
+
+### Log sources
+
+A line is read in any of three forms, whichever it comes from: the simple
+form of the examples, the combined format of nginx and Apache, and the
+lines of `sshd` in a syslog file such as `/var/log/auth.log` (`Failed
+password for ... from address`, `Accepted ... for ... from address`),
+with a classic or an ISO time. Other lines of a syslog file (cron, sudo,
+systemd) are not reported as malformed.
+
+Besides the files of `logs`, each entry of `sources` is a query to a
+system that keeps logs:
+
+| `kind` | `query` is | Also | With `"auth": true`, the `Authorization` header is read from |
+|---|---|---|---|
+| `loki` | LogQL, such as `{job="nginx"}` | | `SENTINEL_LOKI_AUTH` |
+| `elastic` | a query string, such as `service:web` | `index`, the index or pattern; `field`, the field with the line (`message`). Elasticsearch and OpenSearch | `SENTINEL_ELASTIC_AUTH` (`"ApiKey ..."` or `"Basic ..."`) |
+| `splunk` | what follows `search`, such as `index=web` | | `SENTINEL_SPLUNK_AUTH` (`"Bearer ..."`) |
+| `datadog` | a log search, such as `service:web` | always sends `SENTINEL_DATADOG_API_KEY` and `SENTINEL_DATADOG_APP_KEY` | |
+
+```json
+"sources": [
+  {"name": "edge", "kind": "loki", "url": "http://loki:3100", "query": "{job=\"nginx\"}"},
+  {"name": "web", "kind": "elastic", "url": "https://es.example.com:9200", "index": "logs-web-*", "query": "service:web", "auth": true},
+  {"name": "legacy", "kind": "splunk", "url": "https://splunk.example.com:8089", "query": "index=web", "auth": true},
+  {"name": "cloud", "kind": "datadog", "url": "https://api.datadoghq.com", "query": "service:web"}
+]
+```
+
+Each needs its host in the `policy` block. The keys are read as secrets
+and never shown. A source that fails is listed under `SKIPPED` and the
+rest is scanned. The lines of a source are a window, not part of
+`incremental`: each run reads the whole `source_window`, the newest
+`source_lines` of it. `logsources.nexo` is the module with the four.
 
 ## What it may touch
 
 The `policy` block allows reading `sentinel.json`, `logs/` and
-`audit.json` and `state.json`, writing `audit.json`, `report.json` and
+`audit.json` and `state.json`, the five variables with the keys of the
+log sources, writing `audit.json`, `report.json` and
 `state.json`, and the network of this machine only;
 shell commands are denied. The program also refuses any log whose name is
 not under `logs/`. In development mode the policy warns; a release build
@@ -165,7 +200,7 @@ every address blocked or not.
 
 - `logs/`: the fixed corpus. `benign.log` (no findings, with look-alikes
   such as `/search?q=union+station+hotel` and `/docs/javascript-guide.html`), `attack.log`, `unicode.log`,
-  `nginx.log` (the combined format), `oversized.log` and `binary.log` (not UTF-8, skipped).
+  `nginx.log` (the combined format), `auth.log` (syslog, with sshd), `oversized.log` and `binary.log` (not UTF-8, skipped).
 - `findings.json`: the findings the corpus must give, each `[file, line, rule]`.
 - `sentinel.expected`: the output when both questions are answered `no`.
 - `safe.nexo`: the module that decides what may be shown, used by the

@@ -8,6 +8,7 @@ use nexo.ai
 use safe
 use monitoring
 use notify
+use logsources
 
 policy:
     allow read "sentinel.json"
@@ -17,6 +18,11 @@ policy:
     allow write "report.json"
     allow read "state.json"
     allow write "state.json"
+    allow env "SENTINEL_LOKI_AUTH"
+    allow env "SENTINEL_ELASTIC_AUTH"
+    allow env "SENTINEL_SPLUNK_AUTH"
+    allow env "SENTINEL_DATADOG_API_KEY"
+    allow env "SENTINEL_DATADOG_APP_KEY"
     allow net "127.0.0.1"
     allow net "localhost"
     deny shell
@@ -37,10 +43,9 @@ type Settings:
     incremental: bool
     alert_webhook: str
     alertmanager: str
-    loki: str
-    loki_window: str
-    loki_lines: int
-    loki_queries: list
+    sources: list
+    source_window: str
+    source_lines: int
 
 ## A detection: `pattern` is looked for in the message of a log entry;
 ## the rules without one are counted or checked by scan_file.
@@ -109,8 +114,10 @@ failed_login = regex("(?i)login failed|authentication failure|invalid password")
 accepted_login = regex("(?i)login accepted|session opened")
 not_found = regex(" 404( |$)")
 combined = regex("^(\\S+) \\S+ (\\S+) \\[([^\\]]+)\\] \"([A-Z]+) (\\S+)[^\"]*\" ([0-9]{{3}) \\S+( \"[^\"]*\" (\"[^\"]*\"))?")
+syslog_sshd = regex("^(\\S+ +[0-9]{{1,2} [0-9:]{{8}|[0-9]{{4}-\\S+) \\S+ sshd(\\[[0-9]+\\])?: (Failed|Accepted) \\S+ for (invalid user )?(\\S+) from (\\S+) port ")
+syslog_line = regex("^(\\S+ +[0-9]{{1,2} [0-9:]{{8}|[0-9]{{4}-\\S+) \\S+ [^ :]+: ")
 stream_name = regex("^[a-z0-9][a-z0-9_-]{{0,30}$")
-stamp = regex("[0-9][0-9A-Za-z:+/. -]{{0,30}")
+stamp = regex("[0-9A-Za-z][0-9A-Za-z:+/. -]{{0,30}")
 ID = "[0-9]+|[0-9a-fA-F]{{8}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{4}-[0-9a-fA-F]{{12}"
 login_user = regex(" user=([^ ]+)")
 object_in_path = regex("^[A-Z]+ ((/[^/ ?]+)*?)/({ID})(/[^ ?]*)?(\\?[^ ]*)? [0-9]{{3}( |$)")
@@ -140,7 +147,8 @@ fn finding(id: str, time: str, file: str, line: int, source: str, evidence: str)
 
 ## The address, message and time of a log entry, or none for any other line.
 ## A line of a web server (the combined format of nginx and Apache) is
-## read as `METHOD path status "agent" user=name`.
+## read as `METHOD path status "agent" user=name`, and a line of sshd in a
+## syslog file as a login failed or accepted.
 fn fields_of(line: str) -> list?:
     if len(line) > MAX_LINE:
         return none
@@ -152,6 +160,11 @@ fn fields_of(line: str) -> list?:
         if web[1] != "-":
             message = "{message} user={web[1]}"
         return [web[0], message, stamp.find(web[2]) ?? "-"]
+    ssh = syslog_sshd.groups(line)
+    if ssh != none and address.find(ssh[5]) != none:
+        if ssh[2] == "Failed":
+            return [ssh[5], "sshd login failed user={ssh[4]}", stamp.find(ssh[0]) ?? "-"]
+        return [ssh[5], "sshd login accepted user={ssh[4]}", stamp.find(ssh[0]) ?? "-"]
     fields = entry.groups(line)
     if fields == none or address.find(fields[1]) == none:
         return none
@@ -171,7 +184,8 @@ fn check_line(file: str, number: int, line: str) -> list:
     var message = line
     var time = "-"
     if fields == none:
-        found.add(finding("SEN-303", time, file, number, source, shown(line)))
+        if syslog_line.find(line) == none:
+            found.add(finding("SEN-303", time, file, number, source, shown(line)))
     else:
         source = fields[0]
         message = fields[1]
@@ -267,25 +281,17 @@ fn scan_file(file: str, settings: Settings, skip: int, given: list?) -> list!:
                         found.add(finding("SEN-205", fields[2], file, number, source, "user {other[0]} was answered an object of user {other[1]}: {shown(fields[1])}"))
     return [number, found, first]
 
-## The streams of Loki to read: [name as a report shows it, query]. A
-## name that is not plain is left out and said.
-fn loki_streams(settings: Settings) -> list:
+## The sources of sentinel.json to read besides files: [name as a
+## report shows it, the source]. A name that is not plain is left out
+## and said.
+fn remote_sources(settings: Settings) -> list:
     var out = []
-    if settings.loki == "":
-        return out
-    for entry in settings.loki_queries:
+    for entry in settings.sources:
         if stream_name.find(entry["name"] ?? "") == none:
-            print("Left out a Loki query without a plain name: {shown(entry["name"] ?? "")}")
+            print("Left out a source without a plain name: {shown(entry["name"] ?? "")}")
         else:
-            out.add(["loki:{entry["name"]}", entry["query"] ?? ""])
+            out.add(["{entry["kind"] ?? "source"}:{entry["name"]}", entry])
     return out
-
-## The lines Loki has for a query in the window, the oldest first.
-fn stream_lines(settings: Settings, query: str) -> list!:
-    var lines = []
-    for line in monitoring.log_lines(settings.loki, query, settings.loki_window, settings.loki_lines, {})?:
-        lines = [line] + lines
-    return lines
 
 ## The first line of a file as state.json keeps it, to know the file
 ## again in the next run.
@@ -327,9 +333,9 @@ fn scan(settings: Settings, state: map) -> Report:
                     findings.add(f)
             else e:
                 skipped.add([file, e.message])
-    for stream in loki_streams(settings):
+    for stream in remote_sources(settings):
         try:
-            result = scan_file(stream[0], settings, 0, stream_lines(settings, stream[1]))
+            result = scan_file(stream[0], settings, 0, logsources.lines_of(stream[1], settings.source_window, settings.source_lines))
             read_files += 1
             lines += result[0]
             new_lines += result[0]
@@ -525,8 +531,10 @@ fn main():
     settings: Settings = json.parse(read("sentinel.json")?, as: Settings)?
     check_suppress(settings.suppress)?
     var state = {}
-    if settings.loki != "" and not monitoring.is_window(settings.loki_window):
-        fail("loki_window must be a number and s, m, h or d, such as 15m")
+    if len(settings.sources) > 0 and not monitoring.is_window(settings.source_window):
+        fail("source_window must be a number and s, m, h or d, such as 15m")
+    if settings.source_lines < 1 or settings.source_lines > 1000:
+        fail("source_lines must be from 1 to 1000")
     if settings.incremental:
         try:
             state = json.parse(read("state.json")?)?
@@ -643,6 +651,13 @@ test "an alert names addresses and rules, not lines":
     found = [finding("SEN-101", "-", "logs/a.log", 1, "203.0.113.9", "GET /p?id=1+UNION+SELECT+1 200"), finding("SEN-104", "-", "logs/a.log", 2, "192.0.2.1", "")]
     assert alert_text(sources(found, [])) == "Nexo Sentinel: 1 addresses need attention\nP2 203.0.113.9 block (Initial Access) SEN-101"
     assert alert_text([]) == ""
+
+test "the logins of sshd in a syslog file are read":
+    failed = "Nov  2 09:14:01 web1 sshd[2211]: Failed password for invalid user admin from 203.0.113.9 port 51022 ssh2"
+    assert fields_of(failed) == ["203.0.113.9", "sshd login failed user=admin", "Nov  2 09:14:01"]
+    accepted = "2026-11-02T09:20:01.120+00:00 web1 sshd[2290]: Accepted publickey for ana from 192.0.2.44 port 40112 ssh2"
+    assert fields_of(accepted) == ["192.0.2.44", "sshd login accepted user=ana", "2026-11-02T09:20:01.120+00:00"]
+    assert check_line("logs/a.log", 1, "Nov  2 09:15:00 web1 CRON[2301]: pam_unix(cron:session): session opened for user root") == []
 
 test "only logs/ is scanned":
     assert inside_logs("logs/app.log")

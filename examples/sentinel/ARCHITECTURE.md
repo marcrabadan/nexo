@@ -19,6 +19,7 @@ flowchart LR
     sentinel -. alert, if configured .-> hook[(Webhook)]
     sentinel <--> state[state.json]
     loki -. as a source, if configured .-> sentinel
+    others[(Elasticsearch / OpenSearch<br>Splunk, Datadog)] -. as sources, if configured .-> sentinel
     sentinel -. alerts .-> am[(Alertmanager)]
     restarts -. alerts .-> am
     resources -. alerts .-> am
@@ -39,7 +40,8 @@ flowchart LR
 ```mermaid
 flowchart TD
     sentinel.nexo --> safe.nexo
-    sentinel.nexo --> monitoring.nexo
+    sentinel.nexo --> logsources.nexo
+    logsources.nexo --> monitoring.nexo
     sentinel.nexo --> notify.nexo
     restarts.nexo --> notify.nexo
     resources.nexo --> notify.nexo
@@ -55,6 +57,11 @@ flowchart TD
 - `monitoring.nexo`: the queries to Prometheus and Loki, the encoding of
   a query, the check of a Kubernetes name and of a window, and the
   request headers (tenant, `Authorization` from a secret).
+- `logsources.nexo`: one function, `lines_of(entry, window, limit)`,
+  that gives the lines of a query to Loki, Elasticsearch or OpenSearch,
+  Splunk or Datadog, the oldest first. `sentinel.nexo` scans those lines
+  with the code that scans a file, so a new system is one function here
+  and no change to a rule.
 - `notify.nexo`: the two places that are told, Alertmanager and Grafana.
   It builds an alert from labels and a summary; a program decides what
   is worth one. Paging tools are reached through Alertmanager, so there
@@ -180,9 +187,13 @@ a user that can read the logs and nothing more.
   how Alertmanager keeps one firing), but nothing schedules a run, and
   none is ever sent as resolved: it ends when its time in Alertmanager
   runs out.
-- The lines `sentinel.nexo` reads from Loki are a window, not part of
-  `incremental`, and at most `loki_lines` for each query.
-- Alertmanager, Grafana and Loki have been reached only as stand-ins that
-  answer their HTTP APIs in the tests.
+- The lines `sentinel.nexo` reads from a log source are a window, not
+  part of `incremental`, and at most `source_lines` (1000) for each
+  query, without paging: a busy window is cut to its newest lines.
+- Alertmanager, Grafana, Loki, Elasticsearch, Splunk and Datadog have
+  been reached only as stand-ins that answer their HTTP APIs in the
+  tests, written from each one's documented API.
+- CloudWatch Logs, Azure Monitor and Google Cloud Logging are not
+  sources: each needs its cloud's signed requests.
 - `audit.json` is a plain file; it is not signed or protected from
   whoever can write to the folder.
