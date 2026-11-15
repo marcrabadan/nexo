@@ -1,10 +1,11 @@
 ## Where sentinel.nexo reads logs besides files: Loki, Elasticsearch or
-## OpenSearch, Splunk and Datadog. Each gives the lines of a query in the
+## OpenSearch, Splunk, Datadog and Graylog. Each gives the lines of a query in the
 ## last window, the oldest first, and at most `limit` of them. They only
 ## read. A source with `auth` sends the Authorization header kept in a
 ## variable of the environment; Datadog always sends its two keys.
 use monitoring
 
+window_parts = regex("^([0-9]{{1,4})([smhd])$")
 index_name = regex("^[A-Za-z0-9_.*,-]{{1,200}$")
 
 fn authorization(entry: map, variable: str) -> map:
@@ -64,9 +65,33 @@ fn datadog(entry: map, window: str, limit: int) -> list!:
             lines.add(str(line))
     return reversed(lines)
 
+## Graylog: `query` is a search, such as source:web. The window goes in
+## seconds.
+fn graylog(entry: map, window: str, limit: int) -> list!:
+    parts = window_parts.groups(window)
+    if parts == none:
+        fail("the window of a graylog source is a number and s, m, h or d")
+    amount: int = validate(parts[0], as: int)?
+    var seconds = amount
+    if parts[1] == "m":
+        seconds = amount * 60
+    elif parts[1] == "h":
+        seconds = amount * 3600
+    elif parts[1] == "d":
+        seconds = amount * 86400
+    var headers = authorization(entry, "SENTINEL_GRAYLOG_AUTH")
+    headers["Accept"] = "application/json"
+    answer = http.get("{entry["url"]}/api/search/universal/relative?query={monitoring.encoded(entry["query"])}&range={seconds}&limit={limit}&sort=timestamp%3Adesc&fields=message", headers: headers, timeout: 15s)?
+    var lines = []
+    for found in answer.json()["messages"]:
+        line = found["message"]["message"]
+        if line != none:
+            lines.add(str(line))
+    return reversed(lines)
+
 ## The kinds of source there are.
 pub fn kinds() -> list:
-    return ["loki", "elastic", "splunk", "datadog"]
+    return ["loki", "elastic", "splunk", "datadog", "graylog"]
 
 ## The lines of a source of sentinel.json, the oldest first.
 pub fn lines_of(entry: map, window: str, limit: int) -> list!:
@@ -81,4 +106,6 @@ pub fn lines_of(entry: map, window: str, limit: int) -> list!:
         return splunk(entry, window, limit)?
     if kind == "datadog":
         return datadog(entry, window, limit)?
-    fail("the kind of a source is loki, elastic, splunk or datadog")
+    if kind == "graylog":
+        return graylog(entry, window, limit)?
+    fail("the kind of a source is loki, elastic, splunk, datadog or graylog")

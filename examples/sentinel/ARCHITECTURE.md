@@ -19,7 +19,8 @@ flowchart LR
     sentinel -. alert, if configured .-> hook[(Webhook)]
     sentinel <--> state[state.json]
     loki -. as a source, if configured .-> sentinel
-    others[(Elasticsearch / OpenSearch<br>Splunk, Datadog)] -. as sources, if configured .-> sentinel
+    others[(Elasticsearch / OpenSearch<br>Splunk, Datadog, Graylog)] -. as sources, if configured .-> sentinel
+    cw[(CloudWatch Logs)] --> cloudwatch[cloudwatch.nexo<br>collector] --> logs
     sentinel -. alerts .-> am[(Alertmanager)]
     restarts -. alerts .-> am
     resources -. alerts .-> am
@@ -32,6 +33,7 @@ flowchart LR
 | Program | Question it answers | Reads | Writes | Changes outside |
 |---|---|---|---|---|
 | `sentinel.nexo` | Who is attacking, how sure are we, who first? | `logs/`, `sentinel.json`, `state.json` | `report.json`, `audit.json`, `state.json` | the firewall, after a typed `yes`; a webhook is told, if one is set |
+| `cloudwatch.nexo` | (collector) What did CloudWatch log since the last run? | CloudWatch Logs, `cloudwatch.json` | `logs/cloudwatch-*.log`, `cloudwatch-state.json` | nothing |
 | `restarts.nexo` | Which containers restarted and why? | Prometheus, Loki | `restarts-report.json`, `.md` | nothing |
 | `resources.nexo` | Which containers grew or are near a limit? | Prometheus, Loki | `resources-report.json` | nothing |
 
@@ -59,7 +61,7 @@ flowchart TD
   request headers (tenant, `Authorization` from a secret).
 - `logsources.nexo`: one function, `lines_of(entry, window, limit)`,
   that gives the lines of a query to Loki, Elasticsearch or OpenSearch,
-  Splunk or Datadog, the oldest first. `sentinel.nexo` scans those lines
+  Splunk, Datadog or Graylog, the oldest first. `sentinel.nexo` scans those lines
   with the code that scans a file, so a new system is one function here
   and no change to a rule.
 - `notify.nexo`: the two places that are told, Alertmanager and Grafana.
@@ -161,6 +163,13 @@ a user that can read the logs and nothing more.
    same program in Python; the tests require the same output and report,
    which catches a rule that means something else than intended.
 
+11. **A collector where a source needs more than HTTP.** CloudWatch needs
+    signed requests, and so Python's HMAC and the keys of AWS. Putting
+    that in `sentinel.nexo` would give the program that reads untrusted
+    logs and can change the firewall both Python and cloud keys.
+    `cloudwatch.nexo` has them instead, can only write under `logs/`,
+    and hands over a file.
+
 ## Operating it
 
 - **P1**: look now. Read the address's findings in order, confirm with the
@@ -193,7 +202,11 @@ a user that can read the logs and nothing more.
 - Alertmanager, Grafana, Loki, Elasticsearch, Splunk and Datadog have
   been reached only as stand-ins that answer their HTTP APIs in the
   tests, written from each one's documented API.
-- CloudWatch Logs, Azure Monitor and Google Cloud Logging are not
-  sources: each needs its cloud's signed requests.
+- Graylog and CloudWatch Logs have likewise been reached only as
+  stand-ins. The one for CloudWatch checks every signature with its own
+  implementation, and the signing key is tested against the example of
+  the AWS documentation. It has not read a real log group.
+- Azure Monitor and Google Cloud Logging are not sources: each needs its
+  cloud's tokens.
 - `audit.json` is a plain file; it is not signed or protected from
   whoever can write to the folder.

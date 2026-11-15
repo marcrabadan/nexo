@@ -45,6 +45,11 @@ class Outside(BaseHTTPRequestHandler):
         """Loki: the lines of logs/nginx.log, the newest first."""
         url = urlparse(self.path)
         query = {k: v[0] for k, v in parse_qs(url.query).items()}
+        if url.path == "/api/search/universal/relative":
+            Outside.asked.append((url.path, query, {"Authorization": self.headers.get("Authorization"),
+                                                    "Accept": self.headers.get("Accept")}))
+            return self.answer({"query": query["query"], "messages": [
+                {"index": "graylog_0", "message": {"message": line, "source": "web1"}} for line in NGINX[::-1]]})
         Outside.asked.append((url.path, query, self.headers.get("Authorization")))
         values = [[str(1762768800000000000 - i), line] for i, line in enumerate(NGINX[::-1])]
         self.answer({"status": "success", "data": {"resultType": "streams", "result": [
@@ -205,7 +210,8 @@ def test_the_python_comparison_is_the_same(work, server, answers):
     settings.update(alert_webhook=f"{server}/alert", alertmanager=server, sources=[
         {"name": "edge", "kind": "loki", "url": server, "query": '{job="nginx"}'},
         {"name": "web", "kind": "elastic", "url": server, "index": "logs-*", "query": "service:web"},
-        {"name": "old", "kind": "splunk", "url": server, "query": "index=web"}])
+        {"name": "old", "kind": "splunk", "url": server, "query": "index=web"},
+        {"name": "gl", "kind": "graylog", "url": server, "query": "source:web1"}])
     (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     nexo = sentinel(commands()[0][1], work, answers)
     # the same calls outside; each asks the model in its own words
@@ -405,9 +411,11 @@ SOURCES = {
     "elastic": {"query": "service:web AND status:[200 TO 599]", "index": "logs-web-*"},
     "splunk": {"query": 'index=web sourcetype="nginx:access"'},
     "datadog": {"query": "service:web"},
+    "graylog": {"query": "source:web1 AND http_method:GET"},
 }
 KEYS = {"SENTINEL_LOKI_AUTH": "Bearer l0ki", "SENTINEL_ELASTIC_AUTH": "ApiKey 3lastic",
-        "SENTINEL_SPLUNK_AUTH": "Bearer splnk", "SENTINEL_DATADOG_API_KEY": "dd-api", "SENTINEL_DATADOG_APP_KEY": "dd-app"}
+        "SENTINEL_SPLUNK_AUTH": "Bearer splnk", "SENTINEL_DATADOG_API_KEY": "dd-api", "SENTINEL_DATADOG_APP_KEY": "dd-app",
+        "SENTINEL_GRAYLOG_AUTH": "Basic gr4ylog"}
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -442,6 +450,11 @@ def test_logs_are_read_from_other_systems(phase, work, server, kind):
         assert path == "/services/search/jobs/export" and keys == {"Authorization": "Bearer splnk"}
         assert asked == {"search": 'search index=web sourcetype="nginx:access" | head 500', "earliest_time": "-30m",
                          "latest_time": "now", "output_mode": "json"}
+    elif kind == "graylog":
+        assert path == "/api/search/universal/relative"
+        assert keys == {"Authorization": "Basic gr4ylog", "Accept": "application/json"}
+        assert asked == {"query": "source:web1 AND http_method:GET", "range": "1800", "limit": "500",
+                         "sort": "timestamp:desc", "fields": "message"}
     else:
         assert path == "/api/v2/logs/events/search" and keys == {"DD-API-KEY": "dd-api", "DD-APPLICATION-KEY": "dd-app"}
         assert asked == {"filter": {"query": "service:web", "from": "now-30m", "to": "now"}, "sort": "-timestamp",
@@ -452,14 +465,14 @@ def test_logs_are_read_from_other_systems(phase, work, server, kind):
 def test_a_source_that_fails_is_skipped_and_wrong_settings_stop(phase, work, server):
     settings_of(work, sources=[
         {"name": "down", "kind": "loki", "url": "http://127.0.0.1:1", "query": "{}"},
-        {"name": "what", "kind": "graylog", "url": server, "query": "x"},
+        {"name": "what", "kind": "syslogd", "url": server, "query": "x"},
         {"name": "keys", "kind": "datadog", "url": server, "query": "x"},
         {"name": "idx", "kind": "elastic", "url": server, "query": "x", "index": "a/../b"}])
     code, out = sentinel(phase[1], work, "no\nno\n")
     assert code == 0 and "skipped 7." in out and Outside.asked == []
     skipped = {line.split()[0]: line for line in out.split("SKIPPED\n")[1].split("\n\n")[0].splitlines()}
     assert "loki:down" in skipped
-    assert "the kind of a source is loki, elastic, splunk or datadog" in skipped["graylog:what"]
+    assert "the kind of a source is loki, elastic, splunk, datadog or graylog" in skipped["syslogd:what"]
     assert "SENTINEL_DATADOG_API_KEY" in skipped["datadog:keys"]
     assert "the index of an elastic source" in skipped["elastic:idx"]
     settings_of(work, source_window="1h&limit=9")

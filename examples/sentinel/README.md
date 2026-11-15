@@ -163,6 +163,7 @@ system that keeps logs:
 | `elastic` | a query string, such as `service:web` | `index`, the index or pattern; `field`, the field with the line (`message`). Elasticsearch and OpenSearch | `SENTINEL_ELASTIC_AUTH` (`"ApiKey ..."` or `"Basic ..."`) |
 | `splunk` | what follows `search`, such as `index=web` | | `SENTINEL_SPLUNK_AUTH` (`"Bearer ..."`) |
 | `datadog` | a log search, such as `service:web` | always sends `SENTINEL_DATADOG_API_KEY` and `SENTINEL_DATADOG_APP_KEY` | |
+| `graylog` | a search, such as `source:web1` | uses the relative search of Graylog's REST API | `SENTINEL_GRAYLOG_AUTH` (`"Basic ..."`, of a token) |
 
 ```json
 "sources": [
@@ -177,7 +178,36 @@ Each needs its host in the `policy` block. The keys are read as secrets
 and never shown. A source that fails is listed under `SKIPPED` and the
 rest is scanned. The lines of a source are a window, not part of
 `incremental`: each run reads the whole `source_window`, the newest
-`source_lines` of it. `logsources.nexo` is the module with the four.
+`source_lines` of it. `logsources.nexo` is the module with the five.
+
+### Amazon CloudWatch Logs
+
+CloudWatch is read by a program of its own, `cloudwatch.nexo`, which
+copies the new events of each log group of `cloudwatch.json` into
+`logs/cloudwatch-NAME.log`. `sentinel.nexo` scans that file like any
+other (add it to `logs`), so `incremental` works on it.
+
+```
+export AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...   # and AWS_SESSION_TOKEN, if temporary
+../../.venv/bin/nexo cloudwatch.nexo && ../../.venv/bin/nexo sentinel.nexo
+```
+
+| Field of `cloudwatch.json` | Meaning |
+|---|---|
+| `region` | the region of the log groups, such as `eu-west-1` |
+| `endpoint` | `""` for AWS itself (`https://logs.REGION.amazonaws.com`), or another address. The file in this folder names LocalStack on this machine, so that running the example sends nothing to AWS until you clear it |
+| `window` | how far back the first run reads, such as `15m`; later runs read from the last event on (`cloudwatch-state.json`) |
+| `max_pages` | the most pages of 1000 events read from a group in a run; the rest waits for the next |
+| `groups` | each `{"name", "group", "filter"}`: the name of the file, the log group and an optional filter pattern |
+
+The keys need the permission `logs:FilterLogEvents` on the groups and no
+other. It is a separate program because of what it needs: requests to
+AWS are signed (Signature Version 4), and Nexo has no HMAC of its own, so
+the program uses Python's `hmac` and `hashlib` through `use python` and
+reads the keys with Python's `os`. Its `policy` allows those modules, and
+the keys are therefore not under `allow env`. Keeping it apart leaves
+`sentinel.nexo` without Python and without the keys of AWS. Add
+`allow net "logs.REGION.amazonaws.com"` to its policy for a release build.
 
 ## What it may touch
 
@@ -203,6 +233,7 @@ every address blocked or not.
   `nginx.log` (the combined format), `auth.log` (syslog, with sshd), `oversized.log` and `binary.log` (not UTF-8, skipped).
 - `findings.json`: the findings the corpus must give, each `[file, line, rule]`.
 - `sentinel.expected`: the output when both questions are answered `no`.
+- `cloudwatch.nexo`, `cloudwatch.json`: the collector of CloudWatch Logs.
 - `safe.nexo`: the module that decides what may be shown, used by the
   three programs.
 - `compare/sentinel.py`: the same program in Python, with the same output

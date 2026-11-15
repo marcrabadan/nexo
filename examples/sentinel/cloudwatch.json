@@ -1,0 +1,9 @@
+{
+  "region": "eu-west-1",
+  "endpoint": "http://localhost:4566",
+  "window": "15m",
+  "max_pages": 10,
+  "groups": [
+    {"name": "web", "group": "/ecs/web/nginx", "filter": ""}
+  ]
+}

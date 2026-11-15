@@ -1,0 +1,198 @@
+## Nexo Sentinel, CloudWatch: copies the new events of Amazon CloudWatch
+## log groups into files of logs/, which sentinel.nexo then scans like
+## any other file. It only reads from AWS. Requests are signed here
+## (Signature Version 4) with the HMAC of Python's standard library, and
+## the keys are read from the usual variables of AWS.
+use python hmac
+use python hashlib
+use python builtins
+use python time
+use python os
+use safe
+
+policy:
+    allow read "cloudwatch.json"
+    allow read "cloudwatch-state.json"
+    allow write "cloudwatch-state.json"
+    allow read "logs/"
+    allow write "logs/"
+    allow net "127.0.0.1"
+    allow net "localhost"
+    allow python "hmac"
+    allow python "hashlib"
+    allow python "builtins"
+    allow python "time"
+    allow python "os"
+    deny shell
+
+type Settings:
+    region: str
+    endpoint: str
+    window: str
+    max_pages: int
+    groups: list
+
+plain_name = regex("^[a-z0-9][a-z0-9_-]{{0,30}$")
+region_name = regex("^[a-z0-9-]{{1,30}$")
+window_parts = regex("^([0-9]{{1,4})([smhd])$")
+host_of = regex("^https?://([^/]+)")
+line_break = regex("[\\r\\n]+")
+
+fn raw(text: str):
+    return builtins.bytes(text, "utf-8")
+
+fn mac(key, text: str):
+    return hmac.new(key, raw(text), "sha256").digest()
+
+fn digest(text: str) -> str:
+    return hashlib.sha256(raw(text)).hexdigest()
+
+## The key a day's requests to a service of a region are signed with.
+fn signing_key(secret_key: str, day: str, region: str, service: str):
+    return mac(mac(mac(mac(raw("AWS4{secret_key}"), day), region), service), "aws4_request")
+
+## The headers of a signed request to CloudWatch Logs: `target` is the
+## operation, `body` the exact text that is sent and `moment` the time
+## as 20261102T091400Z.
+fn signed(region: str, host: str, target: str, body: str, moment: str, access: str, secret_key: str, token: str?) -> map:
+    day = start_of(moment)
+    var names = "content-type;host;x-amz-date;x-amz-target"
+    var canonical = "content-type:application/x-amz-json-1.1\nhost:{host}\nx-amz-date:{moment}\n"
+    if token != none:
+        names = "content-type;host;x-amz-date;x-amz-security-token;x-amz-target"
+        canonical = "{canonical}x-amz-security-token:{token}\n"
+    canonical = "POST\n/\n\n{canonical}x-amz-target:{target}\n\n{names}\n{digest(body)}"
+    scope = "{day}/{region}/logs/aws4_request"
+    to_sign = "AWS4-HMAC-SHA256\n{moment}\n{scope}\n{digest(canonical)}"
+    signature = hmac.new(signing_key(secret_key, day, region, "logs"), raw(to_sign), "sha256").hexdigest()
+    var headers = {"Content-Type": "application/x-amz-json-1.1", "X-Amz-Date": moment, "X-Amz-Target": target, "Authorization": "AWS4-HMAC-SHA256 Credential={access}/{scope}, SignedHeaders={names}, Signature={signature}"}
+    if token != none:
+        headers["X-Amz-Security-Token"] = token
+    return headers
+
+## The day of a moment: its first eight characters.
+fn start_of(moment: str) -> str:
+    return regex("^[0-9]{{8}").find(moment) ?? ""
+
+## A window such as 15m in thousandths of a second.
+fn milliseconds(window: str) -> int!:
+    parts = window_parts.groups(window)
+    if parts == none:
+        fail("window must be a number and s, m, h or d, such as 15m")
+    amount: int = validate(parts[0], as: int)?
+    var unit = 1000
+    if parts[1] == "m":
+        unit = 60000
+    elif parts[1] == "h":
+        unit = 3600000
+    elif parts[1] == "d":
+        unit = 86400000
+    return amount * unit
+
+## One page of events of a log group from `since` on.
+fn page(settings: Settings, endpoint: str, group: map, since: int, next: str?) -> map!:
+    access = os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    if access == none or secret_key == none or access == "" or secret_key == "":
+        fail("AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are not set")
+    var asked = {"logGroupName": group["group"], "startTime": since, "limit": 1000}
+    if (group["filter"] ?? "") != "":
+        asked["filterPattern"] = group["filter"]
+    if next != none:
+        asked["nextToken"] = next
+    body = convert(asked, to: json)
+    host = host_of.groups(endpoint)
+    if host == none:
+        fail("endpoint must begin with http:// or https://")
+    moment = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    var token = os.environ.get("AWS_SESSION_TOKEN")
+    if token == "":
+        token = none
+    headers = signed(settings.region, host[0], "Logs_20140328.FilterLogEvents", body, moment, access, secret_key, token)
+    answer = http.post(endpoint, body, headers: headers, timeout: 20s)?
+    return answer.json()
+
+## Adds the new events of a group to its file and gives how many and
+## the time of the last one.
+fn collect(settings: Settings, endpoint: str, group: map, since: int) -> list!:
+    var text = ""
+    var count = 0
+    var last = since - 1
+    var next: str? = none
+    var pages = 0
+    var more = true
+    while more and pages < settings.max_pages:
+        pages += 1
+        answer = page(settings, endpoint, group, since, next)?
+        for event in answer["events"] ?? []:
+            text = "{text}{line_break.replace(str(event["message"]), " ").trim()}\n"
+            count += 1
+            if event["timestamp"] > last:
+                last = event["timestamp"]
+        next = answer["nextToken"]
+        more = next != none
+    if count > 0:
+        file = "logs/cloudwatch-{group["name"]}.log"
+        var before = ""
+        try:
+            before = read(file)
+        else e is NotFound:
+            before = ""
+        write(file, "{before}{text}")?
+    return [count, last, more]
+
+fn main():
+    settings: Settings = json.parse(read("cloudwatch.json")?, as: Settings)?
+    if region_name.find(settings.region) == none:
+        fail("region is a name such as eu-west-1")
+    if settings.max_pages < 1 or settings.max_pages > 100:
+        fail("max_pages must be from 1 to 100")
+    window = milliseconds(settings.window)?
+    var endpoint = settings.endpoint
+    if endpoint == "":
+        endpoint = "https://logs.{settings.region}.amazonaws.com"
+    var state = {}
+    try:
+        state = json.parse(read("cloudwatch-state.json")?)?
+    else e is NotFound:
+        state = {}
+    now_ms = int(time.time_ns() / 1000000)
+    print("NEXO SENTINEL - CloudWatch logs of {settings.region}")
+    for group in settings.groups:
+        name = group["name"] ?? ""
+        if plain_name.find(name) == none or (group["group"] ?? "") == "":
+            print("  Left out a group without a plain name or a log group: {safe.shown(name)}")
+        else:
+            var since = now_ms - window
+            if state[name] != none:
+                since = state[name] + 1
+            try:
+                result = collect(settings, endpoint, group, since)
+                state[name] = result[1]
+                var note = ""
+                if result[2]:
+                    note = " (more remain: run again or raise max_pages)"
+                print("  {safe.pad(name, 16)}{result[0]} new lines in logs/cloudwatch-{name}.log{note}")
+            else e:
+                print("  {safe.pad(name, 16)}not read: {safe.shown(e.message)}")
+    write("cloudwatch-state.json", convert(state, to: json))?
+
+try:
+    main()
+else e:
+    print("Sentinel stopped: {e.message}")
+
+test "the signing key of the example in the AWS documentation":
+    key = mac(mac(mac(mac(raw("AWS4wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), "20150830"), "us-east-1"), "iam"), "aws4_request")
+    assert key.hex() == "c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9"
+    assert digest("") == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+test "a signed request names its headers and scope":
+    headers = signed("eu-west-1", "logs.eu-west-1.amazonaws.com", "Logs_20140328.FilterLogEvents", "{{}", "20261102T091400Z", "AKIDEXAMPLE", "secret", none)
+    assert headers["Authorization"].starts_with("AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261102/eu-west-1/logs/aws4_request, SignedHeaders=content-type;host;x-amz-date;x-amz-target, Signature=")
+    with_token = signed("eu-west-1", "h", "t", "{{}", "20261102T091400Z", "a", "s", "tok")
+    assert with_token["X-Amz-Security-Token"] == "tok" and "x-amz-security-token" in with_token["Authorization"]
+
+test "a window in thousandths of a second":
+    assert milliseconds("15m") == 900000
+    assert milliseconds("2d") == 172800000

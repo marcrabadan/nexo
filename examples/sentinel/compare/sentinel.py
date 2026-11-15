@@ -259,8 +259,16 @@ def lines_of(entry, window, limit):
             "DD-APPLICATION-KEY": os.environ["SENTINEL_DATADOG_APP_KEY"]}))
         lines = [str(event["attributes"]["message"]) for event in body["data"]
                  if event["attributes"].get("message") is not None]
+    elif kind == "graylog":
+        amount, unit = int(window[:-1]), {"s": 1, "m": 60, "h": 3600, "d": 86400}[window[-1]]
+        asked = urllib.parse.urlencode({"query": query, "range": amount * unit, "limit": limit,
+                                        "sort": "timestamp:desc", "fields": "message"})
+        body = json.loads(fetch(f"{url}/api/search/universal/relative?{asked}",
+                                headers={**authorization(entry, "SENTINEL_GRAYLOG_AUTH"), "Accept": "application/json"}))
+        lines = [str(found["message"]["message"]) for found in body["messages"]
+                 if found["message"].get("message") is not None]
     else:
-        raise ValueError("the kind of a source is loki, elastic, splunk or datadog")
+        raise ValueError("the kind of a source is loki, elastic, splunk, datadog or graylog")
     return lines[::-1]
 
 

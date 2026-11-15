@@ -20,3 +20,5 @@ examples/sentinel/restarts-report.json
 examples/sentinel/restarts-report.md
 examples/sentinel/resources-report.json
 examples/sentinel/state.json
+examples/sentinel/cloudwatch-state.json
+examples/sentinel/logs/cloudwatch-*.log
