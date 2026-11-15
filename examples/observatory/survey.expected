@@ -1,3 +1,4 @@
+✓ the domains to survey again
 ✓ a domain name
 "PTR" is not a kind of record asked here: A,AAAA,CAA,CNAME,MX,NS,SOA,TXT
 "localhost" is not a domain name
@@ -66,4 +67,4 @@ Site: 15 (4 alerts)
 ✓ what the logs, a signature and Shodan say
 ✓ the surveys kept whole, and going back to one
 ✓ the route changes heard for a prefix
-24 tests: 24 passed, 0 failed
+25 tests: 25 passed, 0 failed

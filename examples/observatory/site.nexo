@@ -10,7 +10,8 @@
 ## the system's command (tracert on Windows; traceroute, tracepath or
 ## ping on Linux and macOS), through Python's subprocess.
 ## Four things go beyond the survey of now:
-## - every survey is kept whole, so the page goes back to any of them;
+## - every survey is kept whole, so the page goes back to any of them
+##   (resurvey.nexo, run by the system's scheduler, makes them on its own);
 ## - a cable picked on the map is cut on paper (whatif.nexo): what its
 ##   countries and the traces of the survey would be left with;
 ## - the route changes of each surveyed prefix are heard as they happen,

@@ -2137,6 +2137,31 @@ pub fn surveyed() -> list:
     else e:
         return []
 
+## The domains surveyed here whose last survey is older than some
+## hours, the one surveyed longest ago first: those resurvey.nexo
+## surveys again.
+pub fn due(hours: int) -> list:
+    try:
+        var last = {}
+        for r in db.Run |> sort by moment:
+            last[r.domain] = r.moment
+        limit = now - hours * 1h
+        rows = [{"domain": domain, "moment": last[domain]} for domain in last.keys() if last[domain] <= limit]
+        return [r["domain"] for r in rows |> sort by moment]
+    else e:
+        return []
+
+test "the domains to survey again":
+    assert due(6) == []
+    db.Run.add(domain: "old.example", moment: now - 30h, address: "", route: "whole", seeing: 0, total: 0, arrived: 0, probes: 0, status: 200, ms: 0, front: "", rpki: "valid", origin: "")
+    db.Run.add(domain: "older.example", moment: now - 50h, address: "", route: "whole", seeing: 0, total: 0, arrived: 0, probes: 0, status: 200, ms: 0, front: "", rpki: "valid", origin: "")
+    db.Run.add(domain: "again.example", moment: now - 40h, address: "", route: "whole", seeing: 0, total: 0, arrived: 0, probes: 0, status: 200, ms: 0, front: "", rpki: "valid", origin: "")
+    db.Run.add(domain: "again.example", moment: now - 1h, address: "", route: "whole", seeing: 0, total: 0, arrived: 0, probes: 0, status: 200, ms: 0, front: "", rpki: "valid", origin: "")
+    assert due(6) == ["older.example", "old.example"]
+    assert due(48) == ["older.example"]
+    assert due(0) == ["older.example", "old.example", "again.example"]
+    assert due(72) == []
+
 test "a domain name":
     assert valid("wikipedia.org")
     assert valid("en.wikipedia.org")

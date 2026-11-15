@@ -131,7 +131,9 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
                   submarine cable on paper; live.nexo reads RIS Live, which
                   site.nexo hears with `when websocket(...)` (D207);
                   brief.nexo is what the analyst, an agent of nexo.ai in
-                  site.nexo, reads of a survey; run with `nexo test` on
+                  site.nexo, reads of a survey; resurvey.nexo surveys again
+                  what is older than some hours, for the system's
+                  scheduler (`every` is not in scope); run with `nexo test` on
                   written answers (tests/test_examples.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made

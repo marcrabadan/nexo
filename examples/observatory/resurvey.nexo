@@ -1,0 +1,43 @@
+## Internet observatory, the surveys made again: every domain surveyed
+## here whose last survey is older than HOURS is surveyed now, the one
+## surveyed longest ago first, and each survey is kept like one asked
+## from the page, so the time machine of site.nexo fills on its own.
+##     nexo resurvey.nexo         surveys what is due, and ends
+##     nexo test resurvey.nexo    without the internet
+## The system's scheduler runs it, as often as it likes: a run that
+## finds nothing due ends at once. With cron, every hour:
+##     0 * * * *  cd /path/to/observatory && nexo resurvey.nexo
+## (a systemd timer or the Task Scheduler of Windows do the same). It
+## runs beside site.nexo, which goes on answering meanwhile: both keep
+## their surveys in observatory.db. A survey takes a minute or two.
+policy:
+    allow net "cloudflare-dns.com", "dns.google", "stat.ripe.net", "atlas.ripe.net", "api.ioda.inetintel.cc.gatech.edu"
+    allow net "www.submarinecablemap.com", "www.peeringdb.com", "crt.sh", "internetdb.shodan.io", "www.spamhaus.org", "www.cisa.gov"
+    allow read "data", "observatory.db"
+    allow write "observatory.db"
+    allow env "RIPE_ATLAS_KEY"
+    allow python "subprocess", "platform", "shutil", "socket", "math"
+
+use survey
+
+## How old a survey has to be, in hours, to be made again.
+HOURS = 6
+
+## Surveys again each domain that is due, and says how many it did.
+fn resurvey(hours: int) -> int:
+    var done = 0
+    for domain in survey.due(hours):
+        print("Surveying {domain} again")
+        try:
+            survey.report(domain, true)
+            done += 1
+        else e:
+            print("  not surveyed: {e.message}")
+    return done
+
+made = resurvey(HOURS)
+print("{made} surveys made again; those younger than {HOURS} hours were left.")
+
+test "nothing is due where nothing was surveyed":
+    assert survey.due(HOURS) == []
+    assert resurvey(HOURS) == 0
