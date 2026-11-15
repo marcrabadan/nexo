@@ -25,6 +25,9 @@ NGINX = (SENTINEL / "logs" / "nginx.log").read_text(encoding="utf-8").splitlines
 ADVICE = "Block 192.0.2.10 at once. Block them? yes"
 
 
+CLOUD_KEYS = {"SENTINEL_AZURE_AUTH": "Bearer az-t0ken", "SENTINEL_GCP_AUTH": "Bearer gcp-t0ken"}
+
+
 class Outside(BaseHTTPRequestHandler):
     """The firewall (/block) and the local model (/api/chat)."""
     seen: list = []
@@ -70,6 +73,21 @@ class Outside(BaseHTTPRequestHandler):
             Outside.asked.append((self.path, body, keys))
             return self.answer({"hits": {"hits": [{"_source": {"message": line, "@timestamp": "t"}}
                                                   for line in NGINX[::-1]] + [{"_source": {"other": 1}}]}})
+        if self.path.startswith("/v1/workspaces/"):
+            # Azure Monitor: a table with its columns; the rows as the query orders them
+            Outside.asked.append((self.path, body, keys))
+            return self.answer({"tables": [{"name": "PrimaryResult", "columns": [
+                {"name": "TimeGenerated", "type": "datetime"}, {"name": "LogMessage", "type": "string"}],
+                "rows": [["2026-11-02T10:30:00Z", line] for line in NGINX] + [["2026-11-02T10:40:00Z", None]]}]})
+        if self.path == "/v2/entries:list":
+            # Google Cloud Logging: text entries, one of a load balancer and one with nothing to read
+            Outside.asked.append((self.path, body, keys))
+            entries = [{"textPayload": line, "timestamp": "2026-11-02T10:30:00Z"} for line in NGINX[:8]]
+            entries.append({"timestamp": "2026-11-02T10:34:00Z", "httpRequest": {
+                "requestMethod": "GET", "requestUrl": "https://shop.example/api/v1/../../etc/passwd?x=1",
+                "status": 404, "remoteIp": "198.51.100.231"}})
+            entries.append({"timestamp": "2026-11-02T10:35:00Z", "protoPayload": {"methodName": "x"}})
+            return self.answer({"entries": entries[::-1]})
         if self.path == "/api/v2/logs/events/search":
             Outside.asked.append((self.path, body, keys))
             return self.answer({"data": [{"attributes": {"message": line}} for line in NGINX[::-1]]})
@@ -101,14 +119,14 @@ def work(tmp_path, server):
 
 def sentinel(prefix, folder, answers):
     proc = run(prefix, ["sentinel.nexo"], folder, stdin=answers.encode(),
-               env={"XDG_CONFIG_HOME": str(folder / "config")})
+               env={"XDG_CONFIG_HOME": str(folder / "config"), **CLOUD_KEYS})
     return proc.returncode, proc.stdout.decode("utf-8")
 
 
 def python(folder, answers, server):
     proc = subprocess.run([sys.executable, "compare/sentinel.py"], cwd=folder, input=answers.encode(),
                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60,
-                          env=dict(os.environ, OLLAMA_HOST=server, PYTHONIOENCODING="utf-8"))
+                          env=dict(os.environ, OLLAMA_HOST=server, PYTHONIOENCODING="utf-8", **CLOUD_KEYS))
     return proc.returncode, proc.stdout.decode("utf-8")
 
 
@@ -211,7 +229,11 @@ def test_the_python_comparison_is_the_same(work, server, answers):
         {"name": "edge", "kind": "loki", "url": server, "query": '{job="nginx"}'},
         {"name": "web", "kind": "elastic", "url": server, "index": "logs-*", "query": "service:web"},
         {"name": "old", "kind": "splunk", "url": server, "query": "index=web"},
-        {"name": "gl", "kind": "graylog", "url": server, "query": "source:web1"}])
+        {"name": "gl", "kind": "graylog", "url": server, "query": "source:web1"},
+        {"name": "aks", "kind": "azure", "url": server, "query": "ContainerLogV2",
+         "workspace": "0f8fad5b-d9cb-469f-a165-70867728950e"},
+        {"name": "lb", "kind": "gcp", "url": server, "query": 'resource.type="http_load_balancer"',
+         "project": "shop-prod-123"}])
     (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     nexo = sentinel(commands()[0][1], work, answers)
     # the same calls outside; each asks the model in its own words
@@ -412,10 +434,14 @@ SOURCES = {
     "splunk": {"query": 'index=web sourcetype="nginx:access"'},
     "datadog": {"query": "service:web"},
     "graylog": {"query": "source:web1 AND http_method:GET"},
+    "azure": {"query": "ContainerLogV2 | order by TimeGenerated asc",
+              "workspace": "0f8fad5b-d9cb-469f-a165-70867728950e"},
+    "gcp": {"query": 'resource.type="http_load_balancer"', "project": "shop-prod-123"},
 }
 KEYS = {"SENTINEL_LOKI_AUTH": "Bearer l0ki", "SENTINEL_ELASTIC_AUTH": "ApiKey 3lastic",
         "SENTINEL_SPLUNK_AUTH": "Bearer splnk", "SENTINEL_DATADOG_API_KEY": "dd-api", "SENTINEL_DATADOG_APP_KEY": "dd-app",
-        "SENTINEL_GRAYLOG_AUTH": "Basic gr4ylog"}
+        "SENTINEL_GRAYLOG_AUTH": "Basic gr4ylog", "SENTINEL_AZURE_AUTH": "Bearer az-t0ken",
+        "SENTINEL_GCP_AUTH": "Bearer gcp-t0ken"}
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -433,9 +459,15 @@ def test_logs_are_read_from_other_systems(phase, work, server, kind):
     report = json.loads((work / "report.json").read_text(encoding="utf-8"))
     labels = json.loads((work / "findings.json").read_text(encoding="utf-8"))
     # with the one sentinel.json suppresses in the file, which nothing suppresses here
-    assert [[f["file"], f["line"], f["rule"]] for f in report["findings"]] == sorted(
-        [[f"{kind}:web", line, rule] for file, line, rule in labels if file == "logs/nginx.log"]
-        + [[f"{kind}:web", 7, "SEN-109"]], key=lambda f: f[1])
+    expected = sorted([[f"{kind}:web", line, rule] for file, line, rule in labels if file == "logs/nginx.log"]
+                      + [[f"{kind}:web", 7, "SEN-109"]], key=lambda f: f[1])
+    if kind == "gcp":
+        # its ninth entry is a request of a load balancer, read as an access line of its address
+        expected = expected[:-1] + [["gcp:web", 9, "SEN-104"], ["gcp:web", 9, "SEN-105"]]
+        last = report["findings"][-1]
+        assert (last["source"], last["time"]) == ("198.51.100.231", "2026-11-02T10:34:00Z")
+        assert last["evidence"] == "GET /api/v1/../../etc/passwd?x=1 404"
+    assert [[f["file"], f["line"], f["rule"]] for f in report["findings"]] == expected
     assert (report["files"], report["lines"]) == (2, 28)
     (path, asked, keys), = Outside.asked
     if kind == "loki":
@@ -450,6 +482,16 @@ def test_logs_are_read_from_other_systems(phase, work, server, kind):
         assert path == "/services/search/jobs/export" and keys == {"Authorization": "Bearer splnk"}
         assert asked == {"search": 'search index=web sourcetype="nginx:access" | head 500', "earliest_time": "-30m",
                          "latest_time": "now", "output_mode": "json"}
+    elif kind == "azure":
+        assert path == "/v1/workspaces/0f8fad5b-d9cb-469f-a165-70867728950e/query"
+        assert keys == {"Authorization": "Bearer az-t0ken"}
+        assert asked == {"query": "ContainerLogV2 | order by TimeGenerated asc | take 500", "timespan": "PT30M"}
+    elif kind == "gcp":
+        assert path == "/v2/entries:list" and keys == {"Authorization": "Bearer gcp-t0ken"}
+        since = asked["filter"].split('timestamp>="')[1].rstrip('"')
+        assert asked == {"resourceNames": ["projects/shop-prod-123"], "orderBy": "timestamp desc", "pageSize": 500,
+                         "filter": f'(resource.type="http_load_balancer") AND timestamp>="{since}"'}
+        assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", since)
     elif kind == "graylog":
         assert path == "/api/search/universal/relative"
         assert keys == {"Authorization": "Basic gr4ylog", "Accept": "application/json"}
@@ -467,14 +509,21 @@ def test_a_source_that_fails_is_skipped_and_wrong_settings_stop(phase, work, ser
         {"name": "down", "kind": "loki", "url": "http://127.0.0.1:1", "query": "{}"},
         {"name": "what", "kind": "syslogd", "url": server, "query": "x"},
         {"name": "keys", "kind": "datadog", "url": server, "query": "x"},
-        {"name": "idx", "kind": "elastic", "url": server, "query": "x", "index": "a/../b"}])
+        {"name": "idx", "kind": "elastic", "url": server, "query": "x", "index": "a/../b"},
+        {"name": "ws", "kind": "azure", "url": server, "query": "x", "workspace": "../admin"},
+        {"name": "prj", "kind": "gcp", "url": server, "query": "x", "project": "p/../x"},
+        {"name": "tok", "kind": "azure", "url": server, "query": "x", "field": "Nope",
+         "workspace": "0f8fad5b-d9cb-469f-a165-70867728950e"}])
     code, out = sentinel(phase[1], work, "no\nno\n")
-    assert code == 0 and "skipped 7." in out and Outside.asked == []
+    assert code == 0 and "skipped 10." in out and Outside.asked[1:] == []
     skipped = {line.split()[0]: line for line in out.split("SKIPPED\n")[1].split("\n\n")[0].splitlines()}
     assert "loki:down" in skipped
-    assert "the kind of a source is loki, elastic, splunk, datadog or graylog" in skipped["syslogd:what"]
+    assert "the kind of a source is loki, elastic, splunk, datadog, graylog, azure or gcp" in skipped["syslogd:what"]
     assert "SENTINEL_DATADOG_API_KEY" in skipped["datadog:keys"]
     assert "the index of an elastic source" in skipped["elastic:idx"]
+    assert "the workspace of an azure source" in skipped["azure:ws"]
+    assert "the project of a gcp source" in skipped["gcp:prj"]
+    assert "the answer of Azure has no column Nope" in skipped["azure:tok"]
     settings_of(work, source_window="1h&limit=9")
     code, out = sentinel(phase[1], work, "no\nno\n")
     assert out.startswith("Sentinel stopped: source_window")

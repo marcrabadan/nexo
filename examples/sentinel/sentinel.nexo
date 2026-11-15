@@ -24,6 +24,8 @@ policy:
     allow env "SENTINEL_DATADOG_API_KEY"
     allow env "SENTINEL_DATADOG_APP_KEY"
     allow env "SENTINEL_GRAYLOG_AUTH"
+    allow env "SENTINEL_AZURE_AUTH"
+    allow env "SENTINEL_GCP_AUTH"
     allow net "127.0.0.1"
     allow net "localhost"
     deny shell

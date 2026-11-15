@@ -19,7 +19,7 @@ flowchart LR
     sentinel -. alert, if configured .-> hook[(Webhook)]
     sentinel <--> state[state.json]
     loki -. as a source, if configured .-> sentinel
-    others[(Elasticsearch / OpenSearch<br>Splunk, Datadog, Graylog)] -. as sources, if configured .-> sentinel
+    others[(Elasticsearch / OpenSearch<br>Splunk, Datadog, Graylog<br>Azure Monitor, Google Cloud Logging)] -. as sources, if configured .-> sentinel
     cw[(CloudWatch Logs)] --> cloudwatch[cloudwatch.nexo<br>collector] --> logs
     sentinel -. alerts .-> am[(Alertmanager)]
     restarts -. alerts .-> am
@@ -61,7 +61,8 @@ flowchart TD
   request headers (tenant, `Authorization` from a secret).
 - `logsources.nexo`: one function, `lines_of(entry, window, limit)`,
   that gives the lines of a query to Loki, Elasticsearch or OpenSearch,
-  Splunk, Datadog or Graylog, the oldest first. `sentinel.nexo` scans those lines
+  Splunk, Datadog, Graylog, Azure Monitor or Google Cloud Logging, the
+  oldest first. `sentinel.nexo` scans those lines
   with the code that scans a file, so a new system is one function here
   and no change to a rule.
 - `notify.nexo`: the two places that are told, Alertmanager and Grafana.
@@ -206,7 +207,10 @@ a user that can read the logs and nothing more.
   stand-ins. The one for CloudWatch checks every signature with its own
   implementation, and the signing key is tested against the example of
   the AWS documentation. It has not read a real log group.
-- Azure Monitor and Google Cloud Logging are not sources: each needs its
-  cloud's tokens.
+- Azure Monitor and Google Cloud Logging are read with a token the
+  operator gives, which lasts about an hour; Sentinel does not get or
+  renew one, because that needs a client secret in the body of a request
+  and a secret of Nexo goes only in a header. Both have been reached only
+  as stand-ins.
 - `audit.json` is a plain file; it is not signed or protected from
   whoever can write to the folder.

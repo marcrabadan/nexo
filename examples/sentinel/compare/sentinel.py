@@ -7,7 +7,7 @@ import re
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 MAX_LINE = 4096
 SPACE = r"(\s|\+|%20)"
@@ -46,6 +46,8 @@ WINDOW = re.compile(r"^[0-9]{1,4}[smhd]$")
 STAMP = re.compile(r"[0-9A-Za-z][0-9A-Za-z:+/. -]{0,30}")
 SYSLOG_SSHD = re.compile(r"^(\S+ +[0-9]{1,2} [0-9:]{8}|[0-9]{4}-\S+) \S+ sshd(\[[0-9]+\])?: (Failed|Accepted) \S+ for (invalid user )?(\S+) from (\S+) port ")
 SYSLOG_LINE = re.compile(r"^(\S+ +[0-9]{1,2} [0-9:]{8}|[0-9]{4}-\S+) \S+ [^ :]+: ")
+GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+PROJECT_ID = re.compile(r"^[a-z][a-z0-9-]{4,29}$")
 INDEX_NAME = re.compile(r"^[A-Za-z0-9_.*,-]{1,200}$")
 COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*"))?''')
 NAMED_SECRET = re.compile(r'''(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+''')
@@ -267,8 +269,45 @@ def lines_of(entry, window, limit):
                                 headers={**authorization(entry, "SENTINEL_GRAYLOG_AUTH"), "Accept": "application/json"}))
         lines = [str(found["message"]["message"]) for found in body["messages"]
                  if found["message"].get("message") is not None]
+    elif kind == "azure":
+        workspace = entry.get("workspace", "")
+        if GUID.search(workspace) is None:
+            raise ValueError("the workspace of an azure source is its id, such as 0f8fad5b-d9cb-469f-a165-70867728950e")
+        span = f"P{window[:-1]}D" if window[-1] == "d" else f"PT{window[:-1]}{window[-1].upper()}"
+        field = entry.get("field", "LogMessage")
+        body = json.loads(fetch(f"{url}/v1/workspaces/{workspace}/query",
+                                {"query": f"{query} | take {limit}", "timespan": span},
+                                {"Authorization": os.environ["SENTINEL_AZURE_AUTH"]}, 30))
+        lines = []
+        for table in body["tables"]:
+            names = [column["name"] for column in table["columns"]]
+            if field not in names:
+                raise ValueError(f"the answer of Azure has no column {field}; name it with field")
+            lines += [str(row[names.index(field)]) for row in table["rows"] if row[names.index(field)] is not None]
+        return lines
+    elif kind == "gcp":
+        project = entry.get("project", "")
+        if PROJECT_ID.search(project) is None:
+            raise ValueError("the project of a gcp source is its id, such as my-project-123")
+        amount, unit = int(window[:-1]), {"s": 1, "m": 60, "h": 3600, "d": 86400}[window[-1]]
+        since = (datetime.now(timezone.utc) - timedelta(seconds=amount * unit)).isoformat(
+            timespec="milliseconds").replace("+00:00", "Z")
+        body = json.loads(fetch(f"{url}/v2/entries:list", {
+            "resourceNames": [f"projects/{project}"], "filter": f'({query}) AND timestamp>="{since}"',
+            "orderBy": "timestamp desc", "pageSize": limit}, {"Authorization": os.environ["SENTINEL_GCP_AUTH"]}, 30))
+        lines = []
+        for found in body.get("entries", []):
+            request, payload = found.get("httpRequest"), found.get("jsonPayload")
+            if found.get("textPayload") is not None:
+                lines.append(str(found["textPayload"]))
+            elif request is not None and request.get("remoteIp") is not None:
+                path = re.sub(r"^https?://[^/]+", "", str(request.get("requestUrl", "/")))
+                lines.append(f'{found.get("timestamp", "-")} {request["remoteIp"]} gcp '
+                             f'{request.get("requestMethod", "GET")} {path} {request.get("status", 0)}')
+            elif payload is not None and payload.get("message") is not None:
+                lines.append(str(payload["message"]))
     else:
-        raise ValueError("the kind of a source is loki, elastic, splunk, datadog or graylog")
+        raise ValueError("the kind of a source is loki, elastic, splunk, datadog, graylog, azure or gcp")
     return lines[::-1]
 
 

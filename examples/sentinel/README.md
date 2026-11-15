@@ -164,6 +164,8 @@ system that keeps logs:
 | `splunk` | what follows `search`, such as `index=web` | | `SENTINEL_SPLUNK_AUTH` (`"Bearer ..."`) |
 | `datadog` | a log search, such as `service:web` | always sends `SENTINEL_DATADOG_API_KEY` and `SENTINEL_DATADOG_APP_KEY` | |
 | `graylog` | a search, such as `source:web1` | uses the relative search of Graylog's REST API | `SENTINEL_GRAYLOG_AUTH` (`"Basic ..."`, of a token) |
+| `azure` | KQL over a Log Analytics workspace of Azure Monitor, such as `ContainerLogV2 \| order by TimeGenerated asc` | `workspace`, its id; `field`, the column with the line (`LogMessage`). `url` is `https://api.loganalytics.io` | always `SENTINEL_AZURE_AUTH` (`"Bearer <token>"`) |
+| `gcp` | a filter of Google Cloud Logging, such as `resource.type="k8s_container"` | `project`, the project's id. `url` is `https://logging.googleapis.com` | always `SENTINEL_GCP_AUTH` (`"Bearer <token>"`) |
 
 ```json
 "sources": [
@@ -178,7 +180,22 @@ Each needs its host in the `policy` block. The keys are read as secrets
 and never shown. A source that fails is listed under `SKIPPED` and the
 rest is scanned. The lines of a source are a window, not part of
 `incremental`: each run reads the whole `source_window`, the newest
-`source_lines` of it. `logsources.nexo` is the module with the five.
+`source_lines` of it. `logsources.nexo` is the module with the seven.
+
+For Azure the rows come in the order of the query, so order it by time,
+the oldest first; the first `source_lines` rows are read. For Google a
+text entry is its text, an entry with a `message` in its JSON is that
+message, and a request of a load balancer is read as an access line of
+its address, so the rules for requests apply to it; other entries (audit
+records) are left out. Both take a token that lasts about an hour:
+
+```
+export SENTINEL_AZURE_AUTH="Bearer $(az account get-access-token --resource https://api.loganalytics.io --query accessToken -o tsv)"
+export SENTINEL_GCP_AUTH="Bearer $(gcloud auth print-access-token)"
+```
+
+A run on a schedule has to renew the token before it starts; Sentinel
+does not ask Azure or Google for one itself.
 
 ### Amazon CloudWatch Logs
 
