@@ -186,7 +186,10 @@ def check(call, kind: str, value: str) -> None:
         raise NexoError("security_isolation", call.span)
     if allowed:
         from .. import security_context
-        if not security_context.allows(kind, value, call.span.file):
+        # an access with no line of its own (a consumer that starts to
+        # listen) is the program's
+        file = call.span.file if call.span is not None else security_context.ROOT
+        if not security_context.allows(kind, value, file):
             security_event(kind, "deny", "capability_missing")
             raise NexoError("security_dependency", call.span)
         security_event(kind, "allow", "capability_granted")

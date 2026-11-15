@@ -181,6 +181,36 @@ def test_websocket(phase, tmp_path):
     assert (tmp_path / ".nexo" / "streams" / "websocket" / f"{dead}.log").read_text().count('"bad"') == 1
 
 
+@pytest.mark.parametrize("phase", PHASES, ids=lambda c: c[0])
+def test_websocket_consumer_starts_before_its_server(phase, tmp_path):
+    """D207: a WebSocket consumer asks its server nothing when it starts,
+    so a program (here with a policy, as one with a server has) keeps
+    running while the server cannot be reached, says so once, tries again
+    every second, and handles the messages when the server is there."""
+    port = ws_server.free_port()
+    url = f"ws://localhost:{port}/feed"
+    (tmp_path / "consumer.nexo").write_text(f'''policy:
+    allow net "localhost"
+
+when websocket("{url}") as msg:
+    print(msg.text())
+    websocket("{url}").send("got {{msg.text()}}")
+''')
+    state: dict = {}
+
+    def done():
+        state.setdefault("since", time.time())
+        if "server" not in state and time.time() > state["since"] + 3.5:
+            state["server"] = ws_server.start(["late"], port=port)
+        return "server" in state and state["server"].received == ["got late"]
+
+    lines = consume(phase, tmp_path, {}, done).splitlines()
+    assert lines[0] == f'Listening to websocket("{url}") (Ctrl-C to stop)'
+    assert sum(f"cannot reach localhost:{port}" in line for line in lines) == 1
+    assert lines[-1] == "late" and len(lines) == 3
+    assert state["server"].received == ["got late"]
+
+
 @pytest.mark.parametrize("program", [
     'websocket("feed")\n',
     'kafka("orders", key: secret("P"))\n',

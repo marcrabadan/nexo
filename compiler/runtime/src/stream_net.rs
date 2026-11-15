@@ -207,10 +207,8 @@ pub fn partitions(s: &Pair, place: &str, span: u32) -> R<i64> {
             rabbit(s, place, span, |c| c.declare(&s.1))?;
             Ok(1)
         }
-        _ => {
-            socket(s, place, span, |_, _| Ok(()))?;
-            Ok(1)
-        }
+        // one, without asking: the first read connects (D207)
+        _ => Ok(1),
     }
 }
 

@@ -3359,3 +3359,34 @@ one key to the block, next to `port` and `auth`:
   untrusted text into markup on the server. Tests: the `s15_web_files*`
   conformance cases, in both phases.
 
+
+**D207. A consumer and a broker that is not there.** D169 says a
+consumer "that cannot reach its broker tries again every second", and
+that under `nexo test` every source is on the in-memory broker. Three
+things did not follow it, found when a program with a server listened
+to a WebSocket feed (examples/observatory):
+- When a consumer starts, each broker is asked how many partitions the
+  stream has, and a broker that did not answer stopped the program: in
+  phase 1 the server with it, in phase 0 only the listener, with a
+  Python traceback when the program had a `policy`. A WebSocket has one
+  partition and keeps no position, so there is nothing to ask: its
+  consumer now starts without connecting, the first read connects, and
+  a server that is not there is tried again every second like one that
+  is lost later. Kafka, Event Hubs and RabbitMQ still stop the program
+  at the start: the topic or queue has to exist, and a wrong address or
+  password should be seen at once.
+- The line that says a broker cannot be reached was written every
+  second for as long as it lasted. It is written once, when the broker
+  stops answering, and again only after it has answered in between: the
+  simplest reading of "tries again every second" that leaves the
+  terminal usable.
+- In phase 1, what a test sent to a source on the network
+  (`websocket(...)`, `kafka(..., servers:)`) reached no handler, and
+  shared its numbers with the local stream of the same name; phase 0
+  did what D169 says. Both now deliver it to the handlers of that
+  source, numbered in a log of its own (`s19_stream_net_test`).
+- A WebSocket's `send` may come from a server's handler while the
+  consumer reads the same connection (D169: "on the same connection"):
+  phase 0 now takes turns on it with a lock, as phase 1 did.
+Tests: tests/test_stream_net.py (a consumer started before its server,
+in both phases) and the conformance case above.

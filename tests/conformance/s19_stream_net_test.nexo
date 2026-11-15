@@ -1,0 +1,20 @@
+# under `nexo test` a source on the network is on the in-memory broker:
+# what a test sends reaches the handlers of that source (section 19, D169)
+when websocket("wss://feed.example/live") as msg:
+    print("feed", msg.id, msg.text())
+
+when kafka("orders", servers: "broker.example:9092") as msg:
+    print("orders", msg.id, msg.json()["id"])
+
+when kafka("orders") as msg:
+    print("local orders", msg.id, msg.json()["id"])
+
+test "a message sent to a WebSocket is handled":
+    feed = websocket("wss://feed.example/live")
+    feed.send("hello")
+    feed.send({"n": 2})
+
+test "a broker on the network and the local one are two streams":
+    kafka("orders").send({"id": 6})
+    kafka("orders", servers: "broker.example:9092").send({"id": 7})
+    kafka("orders").send({"id": 8})
