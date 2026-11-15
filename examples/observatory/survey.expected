@@ -1,4 +1,8 @@
 ✓ a domain name
+"PTR" is not a kind of record asked here: A,AAAA,CAA,CNAME,MX,NS,SOA,TXT
+"localhost" is not a domain name
+"bad name.example" is not a domain name
+✓ only public names and known kinds are looked up
 ✓ the zones above a name
 ✓ the records of one type
 ✓ an edge in front of a site
@@ -60,4 +64,6 @@ Routes: 65 (3 alerts)
 Site: 15 (4 alerts)
 ✓ what is weak in DNS, the route and the site
 ✓ what the logs, a signature and Shodan say
-21 tests: 21 passed, 0 failed
+✓ the surveys kept whole, and going back to one
+✓ the route changes heard for a prefix
+24 tests: 24 passed, 0 failed

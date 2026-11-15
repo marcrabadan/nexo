@@ -4,4 +4,31 @@ localhost: GET URL/api/trace/localhost answered 400 Bad Request
 bad_name.example: GET URL/api/trace/bad_name.example answered 400 Bad Request
 ✓ only a domain name is surveyed
 ✓ the domains surveyed before
-3 tests: 3 passed, 0 failed
+[["whole", 1]]
+RPKI rejects the origin.
+GET URL/api/past/999 answered 404 Not Found
+✓ going back to a survey
+Atlantic One ["Portugal", "United States"] [{"probe": "Probe 7 in PT", "from": "probe in PT", "to": "New York", "km": 5400, "others": 0, "names": []}]
+It is the only cable of the map that lands in Portugal, United States. 1 trace of 1 may ride it, and 1 crossing (probe in PT to New York) has no other cable near both ends: that traffic would have to go another way round.
+No cable of the map is called "Nowhere".
+GET URL/api/cut/never.example?cable=Nowhere answered 404 Not Found
+✓ a cable cut on paper
+never.example has no survey with a route yet.
+198.51.100.0/23 64501  []
+critical  announced 198.51.100.0/24 at rrc00: AS64666 announces 198.51.100.0/24, inside 198.51.100.0/23 of AS64501: a hijack, or a hand-over.
+notice  withdrawn 198.51.101.0/24 at rrc00: A peer of rrc00 (AS64496) lost its route to 198.51.101.0/24.
+✓ a route change heard live
+Publish a ROA.
+invalid_asn
+["AS1299 TWELVE99"]
+No cable of the map is called "Nowhere".
+2
+never.example has not been surveyed here: nothing is known about it
+"not a name" is not a domain name
+"PTR" is not a kind of record asked here: A,AAAA,CAA,CNAME,MX,NS,SOA,TXT
+["alerts", "route", "router traces", "cable Nowhere", "live route changes", "DNS PTR of example.org"]
+{"answer": "The origin is rejected by RPKI: publish a ROA.", "looked": [], "error": ""}
+POST URL/api/ask/example.org answered 400 Bad Request
+POST URL/api/ask/never.example answered 404 Not Found
+✓ the analyst and its tools
+7 tests: 7 passed, 0 failed

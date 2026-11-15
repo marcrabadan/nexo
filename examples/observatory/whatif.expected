@@ -1,0 +1,14 @@
+✓ the places and the sea crossings of a trace
+United States: 1 others ["Atlantic Two"]
+Portugal: 2 others ["Atlantic Two", "Island Link"]
+Probe 7 in PT: probe in PT to New York, 5400 km, others ["Atlantic Two"]
+Every country it lands in has another cable; United States has the fewest, 1. 1 trace of 2 may ride it; every crossing has other cables near both ends, so the traffic would move to them, more slowly while they carry both loads.
+✓ a cable with others beside it
+It is the only cable of the map that lands in Azores. No trace of this survey crosses a sea where it lands, so the way to example.org would not change.
+✓ the only cable of an island
+It is the only cable of the map that lands in United States. 1 trace of 2 may ride it, and 1 crossing (probe in PT to New York) has no other cable near both ends: that traffic would have to go another way round.
+✓ a crossing with no other cable
+No cable of the map is called "Nowhere".
+The map of the cables could not be read, so nothing can be said.
+✓ a cable nobody knows, and no map
+5 tests: 5 passed, 0 failed

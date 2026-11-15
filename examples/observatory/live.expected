@@ -1,0 +1,10 @@
+{"type": "ris_subscribe", "data": {"prefix": "198.51.100.0/23", "moreSpecific": true, "type": "UPDATE", "socketOptions": {"includeRaw": false}}}
+✓ what is asked of RIS Live
+✓ a prefix inside another
+notice  announced 198.51.100.0/23 at rrc21, path 64496 64510 64501: A peer of rrc21 (AS64496) has a new path to 198.51.100.0/23.
+notice  withdrawn 198.51.101.0/24 at rrc21, path 64496 64510 64501: A peer of rrc21 (AS64496) lost its route to 198.51.101.0/24.
+critical  announced 198.51.100.0/24 at rrc00, path 64496 {64666,64667}: AS{64666,64667} announces 198.51.100.0/24, inside 198.51.100.0/23 of AS64501: a hijack, or a hand-over.
+AS64666 announces 198.51.100.0/23, which is AS64501's: a hijack, or a hand-over.
+warning AS64501 announces 198.51.101.0/24, a part of its own 198.51.100.0/23: traffic engineering, or an answer to a hijack.
+✓ the changes a message carries
+3 tests: 3 passed, 0 failed

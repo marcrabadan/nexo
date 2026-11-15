@@ -126,8 +126,13 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
   events/         streams and flags, run with `nexo test` (tests/test_examples.py)
   observatory/    an internet observatory: site.nexo serves a website from
                   site/ (D206) and its API; survey.nexo is the module that
-                  surveys a domain (DNS, routes, routers, outages); run with
-                  `nexo test` on written answers (tests/test_examples.py)
+                  surveys a domain (DNS, routes, routers, outages) and keeps
+                  each survey whole, to go back to; whatif.nexo cuts a
+                  submarine cable on paper; live.nexo reads RIS Live, which
+                  site.nexo hears with `when websocket(...)` (D207);
+                  brief.nexo is what the analyst, an agent of nexo.ai in
+                  site.nexo, reads of a survey; run with `nexo test` on
+                  written answers (tests/test_examples.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 docs/guarantees.md the state of each guarantee of the specification (phase 6)

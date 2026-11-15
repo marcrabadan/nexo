@@ -9,7 +9,9 @@
 ## exchange points to PeeringDB, certificates to crt.sh, outages to IODA,
 ## the cables to the Submarine Cable Map, and what is open at the site's
 ## address to Shodan InternetDB (the observatory scans nothing itself). Each run is kept in
-## observatory.db, so the page says what changed since the last one.
+## observatory.db, so the page says what changed since the last one, and
+## whole, so the page can go back to any of the last forty and show the
+## internet as it was then.
 ## A survey ends with its alerts: what an operator should look at (a
 ## zone not signed, a subdomain left hanging, mail anyone can forge, a
 ## route with no ROA, a second origin or a more specific prefix from
@@ -74,6 +76,41 @@ type Started:
     domain: str
     measurement: int
     moment: time
+
+## A whole survey as it was, for the page to go back to.
+@table
+type Snapshot:
+    id: id
+    domain: str
+    moment: time
+    route: str
+    alerts: int
+    body: str
+
+## The prefix of a domain whose route changes are listened to (live.nexo).
+@table
+type Watch:
+    id: id
+    domain: str
+    prefix: str
+    origin: str
+
+## A route change heard from RIS Live.
+@table
+type Heard:
+    id: id
+    message: str
+    moment: time
+    second: int
+    prefix: str
+    watched: str
+    kind: str
+    collector: str
+    peer: str
+    path: str
+    origin: str
+    level: str
+    text: str
 
 RESOLVER = "https://cloudflare-dns.com/dns-query"
 RIPE = "https://stat.ripe.net/data"
@@ -1838,11 +1875,31 @@ pub fn cables() -> map?:
 pub fn landings() -> map?:
     return cable_data("landing-point/landing-point-geo.json")
 
+## Keeps the two files of the map as given, in place of asking the
+## Submarine Cable Map for them: for a machine that cannot reach it.
+pub fn keep_cables(cables: map, landings: map):
+    keep("cable/cable-geo.json", convert(cables, to: json))
+    keep("landing-point/landing-point-geo.json", convert(landings, to: json))
+
 ## Whether a text is a domain name: labels of letters, digits and hyphens
 ## and a last one of letters, so neither an address nor a name of the
 ## local network is asked for.
 pub fn valid(domain: str) -> bool:
     return len(domain) <= 253 and DOMAIN.matches(domain)
+
+## The kinds of record lookup asks for.
+KINDS = ["A", "AAAA", "CAA", "CNAME", "MX", "NS", "SOA", "TXT"]
+
+## A DNS question asked now: the records of one kind a name has. Only
+## names of the public DNS are asked ("_dmarc.example.org" is one).
+pub fn lookup(name: str, kind: str) -> list!:
+    asked = name.trim().lower()
+    wanted = kind.trim().upper()
+    if not (wanted in KINDS):
+        fail("\"{kind}\" is not a kind of record asked here: {joined(KINDS)}")
+    if not valid(asked.replace("_", "a")):
+        fail("\"{name}\" is not a domain name")
+    return [bare(a["data"]) for a in ask_dns(asked, wanted)?]
 
 ## The survey of a domain, asked now. It takes a minute or two.
 pub fn trace(domain: str) -> map:
@@ -1953,9 +2010,119 @@ pub fn report(domain: str, fresh: bool) -> str:
         saved = kept(name, 15m)
         if saved != "":
             return saved
-    body = convert(trace(domain), to: json)
-    keep(name, body)
+    return keep_survey(domain, trace(domain))
+
+## Keeps a survey as the last one of its domain and as one to go back
+## to, listens to its prefix from now on, and gives it as JSON text.
+pub fn keep_survey(domain: str, data: map) -> str:
+    body = convert(data, to: json)
+    keep("survey {domain}", body)
+    snapshot(domain, data, body)
+    watch(domain, data["route"]["prefix"] ?? "", data["route"]["origin"] ?? "")
     return body
+
+## Keeps a whole survey, and of each domain only the last forty.
+fn snapshot(domain: str, data: map, body: str):
+    try:
+        wanted = domain
+        serious = data["alerts"] |> where it["level"] == "critical" |> count
+        db.Snapshot.add(domain: domain, moment: now, route: data["route"]["state"] ?? "unknown", alerts: serious, body: body)
+        kept_now = db.Snapshot |> where domain == wanted |> sort by id desc |> pick id
+        for i in range(40, len(kept_now)):
+            db.Snapshot.remove(kept_now[i]["id"])
+    else e:
+        print("  survey not kept: {e.message}")
+
+## The surveys of a domain kept whole, the oldest first: when each was
+## made, the state of its route and how many critical alerts it had.
+pub fn times(domain: str) -> list:
+    try:
+        wanted = domain
+        return [{"id": s["id"], "at": str(s["moment"].to_zone("UTC")), "route": s["route"], "alerts": s["alerts"]} for s in db.Snapshot |> where domain == wanted |> sort by id |> pick id, moment, route, alerts]
+    else e:
+        return []
+
+## A survey kept whole, as the JSON text it was; none when there is none
+## with that number.
+pub fn past(id: int) -> str?:
+    try:
+        wanted = id
+        found = db.Snapshot |> where id == wanted |> take 1
+        if len(found) > 0:
+            return found[0].body
+        return none
+    else e:
+        return none
+
+## The last survey of a domain as data, whatever its age; none when it
+## was never surveyed here.
+pub fn last(domain: str) -> map?:
+    try:
+        saved = kept("survey {domain}", 87600h)
+        if saved == "":
+            return none
+        return json.parse(saved)
+    else e:
+        return none
+
+## Listens to the route changes of a domain's prefix from now on, in
+## place of the prefix it had before.
+pub fn watch(domain: str, prefix: str, origin: str):
+    if prefix == "" or origin == "":
+        return
+    try:
+        wanted = domain
+        for old in db.Watch |> where domain == wanted:
+            db.Watch.remove(old.id)
+        db.Watch.add(domain: domain, prefix: prefix, origin: origin)
+    else e:
+        print("  not listened to: {e.message}")
+
+## The prefix listened to for a domain, with its origin; none when the
+## domain has no survey with a route.
+pub fn watch_of(domain: str) -> map?:
+    try:
+        wanted = domain
+        found = db.Watch |> where domain == wanted |> take 1
+        if len(found) > 0:
+            return {"domain": domain, "prefix": found[0].prefix, "origin": found[0].origin}
+        return none
+    else e:
+        return none
+
+## Every prefix listened to.
+pub fn watches() -> list:
+    try:
+        return [{"domain": w.domain, "prefix": w.prefix, "origin": w.origin} for w in db.Watch]
+    else e:
+        return []
+
+## Keeps the route changes just heard (live.events_of), each once: the
+## feed may send a message again. Those older than two days are dropped.
+pub fn hear(events: list):
+    try:
+        for e in events:
+            wanted = e["message"]
+            if len(db.Heard |> where message == wanted |> take 1) == 0:
+                db.Heard.add(message: e["message"], moment: now, second: e["at"], prefix: e["prefix"], watched: e["watched"], kind: e["kind"], collector: e["collector"], peer: e["peer"], path: e["path"], origin: e["origin"], level: e["level"], text: e["text"])
+        limit = now - 48h
+        for old in db.Heard |> where moment < limit |> pick id:
+            db.Heard.remove(old["id"])
+    else e:
+        print("  route change not kept: {e.message}")
+
+## The route changes heard for a domain's prefix after one of them
+## (after: its number, 0 for all), the oldest first, two hundred at most.
+pub fn heard(domain: str, after: int) -> list:
+    try:
+        found = watch_of(domain)
+        if found == none:
+            return []
+        wanted = found["prefix"]
+        rows = db.Heard |> where watched == wanted and id > after |> sort by id desc |> take 200
+        return [{"id": r.id, "at": r.second, "prefix": r.prefix, "kind": r.kind, "collector": r.collector, "peer": r.peer, "path": r.path, "origin": r.origin, "level": r.level, "text": r.text} for r in rows] |> sort by id
+    else e:
+        return []
 
 ## The domains surveyed here, the latest first, each with its last run.
 pub fn surveyed() -> list:
@@ -1978,6 +2145,14 @@ test "a domain name":
     assert not valid("example.com/path")
     assert not valid("-bad.example")
     assert not valid("")
+
+test "only public names and known kinds are looked up":
+    for question in [["example.org", "PTR"], ["localhost", "A"], ["bad name.example", "TXT"]]:
+        try:
+            lookup(question[0], question[1])
+            print("asked")
+        else e:
+            print(e.message)
 
 test "the zones above a name":
     assert zones_of("en.wikipedia.org") == [".", "org", "wikipedia.org", "en.wikipedia.org"]
@@ -2204,3 +2379,42 @@ test "what the logs, a signature and Shodan say":
     assert error_status("Cannot reach https://example.org/: there is no connection") == 0
     down = {"up": true, "status": 503, "hsts": none, "note": "", "front": {"kind": "unknown", "name": ""}}
     assert [a["text"] for a in site_alerts(down, [], "2026-11-28", [])] == ["The site answered 503, an error of the server."]
+
+test "the surveys kept whole, and going back to one":
+    assert times("example.org") == []
+    assert past(1) == none
+    assert last("example.org") == none
+    first = {"domain": "example.org", "route": {"state": "whole"}, "alerts": [{"level": "critical"}, {"level": "notice"}]}
+    snapshot("example.org", first, convert(first, to: json))
+    second = {"domain": "example.org", "route": {"state": "partly cut"}, "alerts": []}
+    snapshot("example.org", second, convert(second, to: json))
+    snapshot("other.example", second, "{{}")
+    rows = times("example.org")
+    assert [[r["route"], r["alerts"]] for r in rows] == [["whole", 1], ["partly cut", 0]]
+    assert json.parse(past(rows[0]["id"]))["route"]["state"] == "whole"
+    assert json.parse(past(rows[1]["id"]))["alerts"] == []
+    assert past(99) == none
+    repeat 41:
+        snapshot("example.org", second, "{{}")
+    assert len(times("example.org")) == 40
+    assert len(times("other.example")) == 1
+    keep("survey example.org", convert(second, to: json))
+    assert last("example.org")["route"]["state"] == "partly cut"
+
+test "the route changes heard for a prefix":
+    assert watch_of("example.org") == none
+    assert heard("example.org", 0) == []
+    watch("example.org", "198.51.100.0/22", "64501")
+    watch("example.org", "198.51.100.0/23", "64501")
+    watch("unrouted.example", "", "")
+    assert watches() == [{"domain": "example.org", "prefix": "198.51.100.0/23", "origin": "64501"}]
+    change = {"message": "21-7 198.51.100.0/23", "at": 1794000000, "prefix": "198.51.100.0/23", "watched": "198.51.100.0/23", "kind": "announced", "collector": "rrc21", "peer": "64496", "path": "64496 64501", "origin": "64501", "level": "notice", "text": "A new path."}
+    theft = {"message": "00-8 198.51.100.0/24", "at": 1794000060, "prefix": "198.51.100.0/24", "watched": "198.51.100.0/23", "kind": "announced", "collector": "rrc00", "peer": "64496", "path": "64496 64666", "origin": "64666", "level": "critical", "text": "A hijack, or a hand-over."}
+    elsewhere = {"message": "00-9 203.0.113.0/24", "at": 1794000090, "prefix": "203.0.113.0/24", "watched": "203.0.113.0/24", "kind": "withdrawn", "collector": "rrc00", "peer": "64496", "path": "", "origin": "", "level": "notice", "text": "Lost."}
+    hear([change, theft, elsewhere])
+    hear([change])
+    found = heard("example.org", 0)
+    assert [e["level"] for e in found] == ["notice", "critical"]
+    assert found[1]["at"] == 1794000060
+    assert [e["origin"] for e in heard("example.org", found[0]["id"])] == ["64666"]
+    assert heard("example.org", found[1]["id"]) == []

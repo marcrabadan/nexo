@@ -1,0 +1,102 @@
+## Internet observatory, a survey in brief: the parts of a survey the
+## analyst of site.nexo reads to answer a question. A whole survey is
+## hundreds of kilobytes; each view here is what one question needs,
+## small enough to send to a model.
+##     nexo test brief.nexo    on a survey written in the tests
+## Nothing here asks the internet: a view only picks from a survey.
+
+## The marks and the alerts of a survey, the most serious first, each
+## with its fix.
+pub fn verdict(data: map) -> map:
+    return {"domain": data["domain"] ?? "", "surveyed": data["time"] ?? "", "scores": data["scores"] ?? [], "alerts": data["alerts"] ?? []}
+
+## Who answers for the name and what its mail depends on.
+pub fn dns(data: map) -> map:
+    zones = [{"zone": s["zone"], "servers": s["servers"]} for s in data["steps"] ?? []]
+    servers = [{"name": p["name"], "ip": p["ip"] ?? "", "country": p["country"] ?? "", "asn": p["asn"] ?? ""} for p in data["places"] ?? [] if p["kind"] == "name server"]
+    return {"zones": zones, "aliases": data["aliases"] ?? [], "name_servers": servers, "health": data["health"] ?? {}, "subdomains": data["subdomains"] ?? {}}
+
+## What answered the request, its certificates and what is open at its
+## address.
+pub fn site(data: map) -> map:
+    addresses = [{"ip": p["ip"] ?? "", "country": p["country"] ?? "", "asn": p["asn"] ?? "", "holder": p["holder"] ?? ""} for p in data["places"] ?? [] if p["kind"] == "site"]
+    return {"addresses": addresses, "answer": data["site"] ?? {}, "certificates": (data["certificates"] ?? []) |> take 8, "exposure": data["exposure"] ?? {}, "used_in_attacks": data["exploited"] ?? [], "ipv6": (data["v6"] ?? {})["addresses"] ?? []}
+
+## How the world's routers see the way to the site's network.
+pub fn route(data: map) -> map:
+    r = data["route"] ?? {}
+    meets = data["peering"] ?? {}
+    return {"prefix": r["prefix"] ?? "", "origin": r["origin"] ?? "", "origin_holder": r["origin_holder"] ?? "", "state": r["state"] ?? "unknown", "peers_seeing": r["seeing"] ?? 0, "peers": r["total"] ?? 0, "rpki": r["rpki"] ?? "unknown", "roa_max_length": r["roa_max"] ?? 0, "route_objects": r["irr"] ?? [], "upstreams": r["upstreams"] ?? [], "transits": r["transits"] ?? [], "paths": r["paths"] ?? 0, "announced_by": r["history"] ?? [], "more_specifics": (r["specifics"] ?? []) |> take 10, "exchanges": len(meets["exchanges"] ?? []), "outages_on_the_route": data["path_outages"] ?? []}
+
+## The first word of a network's name: "TELEFONICA_DE_ESPANA - S.A." is
+## "TELEFONICA_DE_ESPANA".
+fn short(holder: str) -> str:
+    return holder.split(" - ")[0].split(" ")[0]
+
+## One router trace in a few lines: whether it arrived, the networks
+## and countries it crossed, the biggest wait between two routers and
+## the last router that answered.
+fn trace(probe: map) -> map:
+    var networks = []
+    var countries = []
+    var before = none
+    var step = {"ms": 0.0, "hop": 0, "where": ""}
+    var last = ""
+    var quiet = 0
+    for h in probe["hops"] ?? []:
+        if (h["asn"] ?? "") != "":
+            name = "AS{h["asn"]} {short(h["holder"] ?? "")}".trim()
+            if not (name in networks):
+                networks.add(name)
+        if (h["country"] ?? "") != "" and not (h["country"] in countries):
+            countries.add(h["country"])
+        if h["ip"] == "":
+            quiet += 1
+        else:
+            last = "hop {h["n"]} {h["host"] ?? ""} {h["ip"]}".replace("  ", " ")
+        if h["ms"] != none:
+            if before != none and h["ms"] - before > step["ms"]:
+                step = {"ms": h["ms"] - before, "hop": h["n"], "where": h["city"] ?? ""}
+            before = h["ms"]
+    var from = "probe {probe["id"] ?? ""} in {probe["country"] ?? ""}"
+    if probe["local"] ?? false:
+        from = "this machine"
+    return {"from": from, "arrived": probe["reached"] ?? false, "hops": len(probe["hops"] ?? []), "silent_hops": quiet, "networks": networks, "countries": countries, "biggest_wait": step, "ms_at_the_end": before, "last_answer": last}
+
+## Every router trace of a survey, and what the traces go to.
+pub fn traces(data: map) -> map:
+    routers = data["routers"] ?? {}
+    return {"target": routers["target"] ?? "", "to": routers["kind"] ?? "", "note": routers["note"] ?? "", "traces": [trace(p) for p in routers["probes"] ?? []], "path_security": data["path"] ?? {}}
+
+## The runs before a survey, the latest first, as the page compares them.
+pub fn runs(data: map) -> list:
+    return data["history"] ?? []
+
+test "a survey in brief":
+    hops = [
+        {"n": 1, "ip": "192.168.1.1", "ms": 0.4, "asn": "", "holder": "", "country": "", "city": "", "host": ""},
+        {"n": 2, "ip": "", "ms": none, "asn": "", "holder": "", "country": "", "city": "", "host": ""},
+        {"n": 3, "ip": "80.58.106.1", "ms": 9.0, "asn": "3352", "holder": "TELEFONICA_DE_ESPANA - S.A.", "country": "ES", "city": "", "host": ""},
+        {"n": 4, "ip": "62.115.1.1", "ms": 96.5, "asn": "1299", "holder": "TWELVE99 Arelion", "country": "US", "city": "New York", "host": "nyk-bb1.ip.twelve99.net"}
+    ]
+    data = {
+        "domain": "example.org", "time": "2026-11-15T10:00:00Z",
+        "scores": [{"block": "DNS", "score": 85, "alerts": 1}],
+        "alerts": [{"level": "warning", "area": "DNS", "text": "The zone is not signed.", "fix": "Sign it."}],
+        "steps": [{"zone": ".", "servers": ["a.root-servers.net"]}, {"zone": "example.org", "servers": ["ns1.example.org"], "error": ""}],
+        "places": [{"kind": "name server", "name": "ns1.example.org", "ip": "192.0.2.1", "country": "ES", "asn": "64500"}, {"kind": "site", "name": "example.org", "ip": "198.51.100.7", "country": "US", "asn": "64501", "holder": "EXAMPLE"}],
+        "route": {"prefix": "198.51.100.0/23", "origin": "64501", "state": "whole", "seeing": 318, "total": 318, "rpki": "valid", "specifics": [], "transits": [{"asn": "1299", "paths": 9, "holder": "TWELVE99"}]},
+        "routers": {"target": "198.51.100.7", "kind": "site", "note": "", "probes": [{"local": true, "reached": false, "hops": hops}, {"id": 7, "country": "JP", "reached": true, "hops": []}]}
+    }
+    assert verdict(data)["alerts"][0]["fix"] == "Sign it."
+    assert dns(data)["name_servers"] == [{"name": "ns1.example.org", "ip": "192.0.2.1", "country": "ES", "asn": "64500"}]
+    assert dns(data)["zones"][1] == {"zone": "example.org", "servers": ["ns1.example.org"]}
+    assert site(data)["addresses"][0]["holder"] == "EXAMPLE"
+    assert site(data)["certificates"] == []
+    found = route(data)
+    assert found["peers_seeing"] == 318 and found["rpki"] == "valid" and found["exchanges"] == 0
+    for t in traces(data)["traces"]:
+        print(t)
+    assert runs(data) == []
+    assert route({})["state"] == "unknown"
+    assert traces({})["traces"] == []

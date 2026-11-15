@@ -173,6 +173,50 @@ td.n + td:not(.n), th.n + th:not(.n) { padding-left: 16px }
 .export { margin-top: 12px; padding: 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg); font: 600 13px var(--sans); cursor: pointer }
 .export:hover { border-color: var(--dim) }
 
+/* the time machine: the surveys kept, to go back to */
+.time { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; display: grid; gap: 8px }
+.time.past { border-color: var(--trace) }
+.time .eyebrow { font: 600 12px var(--sans); letter-spacing: .09em; text-transform: uppercase; color: var(--dim) }
+.time.past .eyebrow { color: var(--trace) }
+.time-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px }
+.time-row input { flex: 1 1 200px; min-width: 0; accent-color: var(--trace) }
+.time-row button, form.line button, .chips button { padding: 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: 600 13px var(--sans); cursor: pointer }
+.time-row button:hover:not(:disabled), form.line button:hover:not(:disabled), .chips button:hover { border-color: var(--dim) }
+.time-row button:disabled, form.line button:disabled { opacity: .45; cursor: default }
+.ticks { display: flex; gap: 2px; height: 8px }
+.ticks i { flex: 1; min-width: 2px; border-radius: 2px; background: var(--line) }
+.ticks i.good { background: var(--good) } .ticks i.warn { background: var(--warn) } .ticks i.bad { background: var(--bad) }
+.ticks i.hot { box-shadow: inset 0 -3px 0 var(--bad) } .ticks i { opacity: .45 } .ticks i.on { opacity: 1 }
+
+/* a line to type in: the cable to cut, the question for the analyst */
+form.line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px }
+form.line label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%) }
+form.line input { flex: 1 1 260px; min-width: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: 14px var(--sans) }
+form.line input::placeholder { color: var(--dim); opacity: .8 }
+form.line button[type="submit"] { border-color: var(--trace); background: var(--trace); color: var(--bg) }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px }
+.chips button { font-weight: 400; color: var(--dim); border-radius: 999px; padding: 5px 12px }
+#answer { max-width: 75ch } #answer:not(:empty) { margin-top: 12px }
+#answer .q { margin: 0 0 6px; color: var(--dim); font-size: 13px } #answer .q::before { content: "Asked: " }
+#answer .a { margin: 0 0 8px; white-space: pre-line } #answer .status { margin: 0 }
+.cols.even { grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)) } #cut td:first-child { white-space: nowrap }
+
+/* a cable cut on paper, and those that could stand in for it */
+.cable.cut { stroke: var(--bad); stroke-width: 2; stroke-dasharray: 4 3; opacity: 1 }
+.cable.spare { stroke: var(--good); stroke-width: 1.2; opacity: 1 }
+.legend .cable.cut, .legend .cable.spare { stroke-width: 1.8 }
+
+/* live: a ring on the map for each route change, and the list of them */
+.pulse { fill: none; stroke: var(--bgp); stroke-width: 1.2; transform-box: fill-box; transform-origin: center; animation: pulse 2.4s ease-out forwards; pointer-events: none }
+.pulse.critical { stroke: var(--bad); stroke-width: 1.8 } .pulse.warning { stroke: var(--warn) }
+@keyframes pulse { from { transform: scale(.6); opacity: 1 } to { transform: scale(7); opacity: 0 } }
+@media (prefers-reduced-motion: reduce) { .pulse { animation-duration: .01s } }
+.live-head { margin: 0 0 6px } .live-head.on::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--good) }
+.feed { list-style: none; margin: 10px 0 0; padding: 0; max-height: 320px; overflow-y: auto; display: grid; gap: 6px; font-size: 14px }
+.feed li { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 0 10px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); border-left: 3px solid var(--bgp); background: var(--bg) }
+.feed li.critical { border-left-color: var(--bad) } .feed li.warning { border-left-color: var(--warn) }
+.feed time { font: 12px/1.7 var(--mono); color: var(--dim) } .feed .sub { grid-column: 2 }
+
 /* on paper (Export PDF): light, without the controls, every trace open */
 @media print {
   @page { margin: 12mm }
@@ -182,7 +226,7 @@ td.n + td:not(.n), th.n + th:not(.n) { padding-left: 16px }
   --good: #1c8a54; --warn: #a86400; --bad: #c2332b; --bgp: #6a45c9; --fac: #b03a78; color-scheme: light; --bg: #ffffff }
   * { -webkit-print-color-adjust: exact; print-color-adjust: exact }
   body { font-size: 10.5pt }
-  .top { background: none; border: 0 } .top .wrap { padding: 0 0 6px } form.ask, .parts, .zoom, .layers, .tip, .export, .recent, .status, .when a { display: none !important }
+  .top { background: none; border: 0 } .top .wrap { padding: 0 0 6px } form.ask, .parts, .zoom, .layers, .tip, .export, .recent, .status, .when a, .time, #ask-box, #cut-box, #live-box { display: none !important }
   main { max-width: none; padding: 0; gap: 14px } #report { gap: 14px }
   .summary { grid-template-columns: minmax(0, 1fr) } .scores { grid-template-columns: repeat(4, auto); justify-content: start } h1 { font-size: 24pt }
   .verdicts { grid-template-columns: repeat(5, 1fr) } .verdict .a { font-size: 12pt }

@@ -1,0 +1,163 @@
+## Internet observatory, the route changes as they happen: RIS Live, the
+## feed of RIPE's route collectors, sends each BGP message one of their
+## peers sends, a second or two after it. site.nexo listens to it with
+## `when websocket(...)`; this module writes what to ask the feed for and
+## reads what it sends.
+##     nexo test live.nexo    the parts that read the messages
+## A prefix is listened to with everything inside it, since a route more
+## specific than the real one is how most hijacks are done. An
+## announcement whose path ends in another network than the origin of
+## the survey is the one to look at: a hijack, or a hand-over.
+
+## What asks RIS Live for the changes of a prefix and of the routes
+## inside it.
+pub fn subscription(prefix: str) -> map:
+    return {"type": "ris_subscribe", "data": {"prefix": prefix, "moreSpecific": true, "type": "UPDATE", "socketOptions": {"includeRaw": false}}}
+
+## The number in a text, or -1.
+fn number(text: str) -> int:
+    try:
+        return validate(text, as: int)
+    else e:
+        return -1
+
+## The first address of an IPv4 block and its length, or none for
+## anything else.
+fn block_of(prefix: str) -> list?:
+    halves = prefix.split("/")
+    parts = halves[0].split(".")
+    if len(halves) != 2 or len(parts) != 4:
+        return none
+    var first = 0
+    for part in parts:
+        n = number(part)
+        if n < 0 or n > 255:
+            return none
+        first = first * 256 + n
+    length = number(halves[1])
+    if length < 0 or length > 32:
+        return none
+    return [first, length]
+
+## Whether a prefix is a block or a part of it. IPv4 blocks are compared
+## as numbers; an IPv6 one only with itself.
+pub fn inside(prefix: str, block: str) -> bool:
+    if prefix == block:
+        return true
+    small = block_of(prefix)
+    big = block_of(block)
+    if small == none or big == none or small[1] < big[1]:
+        return false
+    var size = 1
+    repeat 32 - big[1]:
+        size = size * 2
+    return small[0] >= big[0] and small[0] < big[0] + size
+
+## The networks of a path as texts; a set of networks joined at the end
+## of a path is written "{64500,64501}".
+fn networks(path: list) -> list:
+    var out = []
+    for hop in path:
+        if hop is list:
+            var set = ""
+            for asn in hop:
+                if set != "":
+                    set = set + ","
+                set = set + str(asn)
+            out.add("{{{set}}")
+        else:
+            out.add(str(hop))
+    return out
+
+## Texts in one, with spaces between them.
+fn spaced(items: list) -> str:
+    var out = ""
+    for item in items:
+        if out != "":
+            out = out + " "
+        out = out + item
+    return out
+
+## One change of a route: who saw it, what it says and how serious it is.
+fn event(data: map, watch: map, kind: str, prefix: str) -> map:
+    path = networks(data["path"] ?? [])
+    var origin = ""
+    if len(path) > 0:
+        origin = path[len(path) - 1]
+    collector = str(data["host"] ?? "").split(".")[0]
+    peer = str(data["peer_asn"] ?? "")
+    var level = "notice"
+    var text = "A peer of {collector} (AS{peer}) has a new path to {prefix}."
+    if kind == "withdrawn":
+        text = "A peer of {collector} (AS{peer}) lost its route to {prefix}."
+    elif origin != watch["origin"]:
+        level = "critical"
+        text = "AS{origin} announces {prefix}, inside {watch["prefix"]} of AS{watch["origin"]}: a hijack, or a hand-over."
+        if prefix == watch["prefix"]:
+            text = "AS{origin} announces {prefix}, which is AS{watch["origin"]}'s: a hijack, or a hand-over."
+    elif prefix != watch["prefix"]:
+        level = "warning"
+        text = "AS{origin} announces {prefix}, a part of its own {watch["prefix"]}: traffic engineering, or an answer to a hijack."
+    return {"message": "{data["id"] ?? ""} {prefix}", "at": int(data["timestamp"] ?? 0), "prefix": prefix, "watched": watch["prefix"], "kind": kind, "collector": collector, "peer": peer, "path": spaced(path), "origin": origin, "level": level, "text": text}
+
+## The watch a prefix belongs to, or none.
+fn watch_for(prefix: str, watches: list) -> map?:
+    for w in watches:
+        if inside(prefix, w["prefix"]):
+            return w
+    return none
+
+## The changes a message of RIS Live carries for the prefixes listened
+## to (each a map with "prefix" and "origin"). A message brings every
+## prefix of its BGP update, so those of other networks are left out; a
+## message that is not a route change (a pong, an error) gives none.
+pub fn events_of(text: str, watches: list) -> list:
+    var out = []
+    try:
+        message = json.parse(text)
+        if message["type"] != "ris_message":
+            return out
+        data = message["data"]
+        for a in data["announcements"] ?? []:
+            for prefix in a["prefixes"] ?? []:
+                watch = watch_for(prefix, watches)
+                if watch != none:
+                    out.add(event(data, watch, "announced", prefix))
+        for prefix in data["withdrawals"] ?? []:
+            watch = watch_for(prefix, watches)
+            if watch != none:
+                out.add(event(data, watch, "withdrawn", prefix))
+    else e:
+        return []
+    return out
+
+test "what is asked of RIS Live":
+    print(subscription("198.51.100.0/23"))
+
+test "a prefix inside another":
+    assert inside("198.51.100.0/24", "198.51.100.0/23")
+    assert inside("198.51.101.0/24", "198.51.100.0/23")
+    assert inside("198.51.100.0/23", "198.51.100.0/23")
+    assert not inside("198.51.102.0/24", "198.51.100.0/23")
+    assert not inside("198.51.100.0/22", "198.51.100.0/23")
+    assert inside("2001:db8::/32", "2001:db8::/32")
+    assert not inside("2001:db8:1::/48", "2001:db8::/32")
+    assert not inside("not a prefix", "198.51.100.0/23")
+
+test "the changes a message carries":
+    watches = [{"prefix": "198.51.100.0/23", "origin": "64501"}]
+    usual = "{{\"type\":\"ris_message\",\"data\":{{\"timestamp\":1794000000.25,\"peer\":\"192.0.2.1\",\"peer_asn\":\"64496\",\"id\":\"21-192-0-2-1-7\",\"host\":\"rrc21.ripe.net\",\"type\":\"UPDATE\",\"path\":[64496,64510,64501],\"announcements\":[{{\"next_hop\":\"192.0.2.1\",\"prefixes\":[\"198.51.100.0/23\",\"203.0.113.0/24\"]}],\"withdrawals\":[\"198.51.101.0/24\",\"192.0.2.0/24\"]}}"
+    for e in events_of(usual, watches):
+        print("{e["level"]}  {e["kind"]} {e["prefix"]} at {e["collector"]}, path {e["path"]}: {e["text"]}")
+    assert events_of(usual, watches)[0]["at"] == 1794000000
+    assert events_of(usual, watches)[0]["message"] == "21-192-0-2-1-7 198.51.100.0/23"
+    stolen = "{{\"type\":\"ris_message\",\"data\":{{\"timestamp\":1794000060,\"peer_asn\":\"64496\",\"id\":\"00-8\",\"host\":\"rrc00\",\"path\":[64496,[64666,64667]],\"announcements\":[{{\"prefixes\":[\"198.51.100.0/24\"]}]}}"
+    for e in events_of(stolen, watches):
+        print("{e["level"]}  {e["kind"]} {e["prefix"]} at {e["collector"]}, path {e["path"]}: {e["text"]}")
+    whole = "{{\"type\":\"ris_message\",\"data\":{{\"timestamp\":1794000090,\"peer_asn\":\"64496\",\"id\":\"00-9\",\"host\":\"rrc00\",\"path\":[64496,64666],\"announcements\":[{{\"prefixes\":[\"198.51.100.0/23\"]}]}}"
+    print(events_of(whole, watches)[0]["text"])
+    own = "{{\"type\":\"ris_message\",\"data\":{{\"timestamp\":1794000120,\"peer_asn\":\"64496\",\"id\":\"00-10\",\"host\":\"rrc00\",\"path\":[64496,64501],\"announcements\":[{{\"prefixes\":[\"198.51.101.0/24\"]}]}}"
+    print(events_of(own, watches)[0]["level"], events_of(own, watches)[0]["text"])
+    assert events_of("{{\"type\":\"pong\",\"data\":{{}}", watches) == []
+    assert events_of("not JSON", watches) == []
+    assert events_of(usual, []) == []

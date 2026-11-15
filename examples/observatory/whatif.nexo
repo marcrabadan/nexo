@@ -1,0 +1,307 @@
+## Internet observatory, what if a submarine cable were cut: which
+## countries it lands in and what other cables each would be left with,
+## and which traces of a survey may ride it, with the cables that could
+## carry them instead. site.nexo answers it for the cable picked on the
+## map.
+##     nexo test whatif.nexo    on a small sea written in the tests
+## Nobody publishes which cable a packet rides. A trace is said to
+## cross a sea where two routers named after their cities are more than
+## 800 km apart, and the cables that land within 700 km of both are its
+## candidates: the same rule the page uses to light them. So the answer
+## is what could be lost, never what would be.
+use python math as math
+
+## The kilometres between two places, each [longitude, latitude].
+fn distance(a: list, b: list) -> float:
+    one = math.radians(a[1])
+    two = math.radians(b[1])
+    half = math.sin((two - one) / 2) * math.sin((two - one) / 2) + math.cos(one) * math.cos(two) * math.sin(math.radians(b[0] - a[0]) / 2) * math.sin(math.radians(b[0] - a[0]) / 2)
+    return 12742.0 * math.asin(math.sqrt(half))
+
+## Where the lines of a cable start and stop: the places it lands.
+fn ends_of(cable: map) -> list:
+    shape = cable["geometry"]
+    var lines = shape["coordinates"]
+    if shape["type"] == "LineString":
+        lines = [shape["coordinates"]]
+    var ends = []
+    for line in lines:
+        if len(line) > 0:
+            ends.add(line[0])
+            ends.add(line[len(line) - 1])
+    return ends
+
+## Whether any of a cable's ends is within some kilometres of a place.
+## A degree of latitude is 111 km, so an end further north or south
+## than that needs no arithmetic.
+fn near(ends: list, spot: list, reach: float) -> bool:
+    for end in ends:
+        if end[1] - spot[1] < reach / 111 and spot[1] - end[1] < reach / 111 and distance(end, spot) < reach:
+            return true
+    return false
+
+## The places a trace passes, in order: the probe, then each router that
+## can be placed. When any router is named after its city only those
+## are kept, and those places are sure; the register's are not.
+fn stops_of(probe: map) -> list:
+    var sure = false
+    for h in probe["hops"]:
+        if h["by"] == "name":
+            sure = true
+    local = probe["local"] ?? false
+    var stops = []
+    if probe["lat"] != none:
+        if local:
+            stops.add({"at": [probe["lon"], probe["lat"]], "label": "this machine", "sure": false})
+        else:
+            stops.add({"at": [probe["lon"], probe["lat"]], "label": "probe in {probe["country"]}", "sure": true})
+    for h in probe["hops"]:
+        if h["lat"] != none and (not sure or h["by"] == "name"):
+            spot = [h["lon"], h["lat"]]
+            if len(stops) == 0 or stops[len(stops) - 1]["at"] != spot:
+                var label = h["city"]
+                if label == "":
+                    label = h["country"]
+                stops.add({"at": spot, "label": label, "sure": h["by"] == "name"})
+    return stops
+
+## The long jumps of a trace between two sure places: where it may
+## cross a sea.
+fn jumps_of(probe: map) -> list:
+    stops = stops_of(probe)
+    var jumps = []
+    for i in range(1, len(stops)):
+        a = stops[i - 1]
+        b = stops[i]
+        if a["sure"] and b["sure"]:
+            far = distance(a["at"], b["at"])
+            if far >= 800.0:
+                jumps.add({"from": a["label"], "to": b["label"], "a": a["at"], "b": b["at"], "km": int(far / 100 + 0.5) * 100})
+    return jumps
+
+## How a probe is called on the page.
+fn label_of(probe: map) -> str:
+    if probe["local"] ?? false:
+        return "This machine"
+    return "Probe {probe["id"]} in {probe["country"]}"
+
+## The country of a landing place: "Cork, Ireland" is in Ireland, and
+## "Muanda, Congo, Dem. Rep." in "Congo, Dem. Rep.", as the map writes it.
+fn country_of(place: str) -> str:
+    parts = place.split(",")
+    last = parts[len(parts) - 1].trim()
+    if last.ends_with("Rep.") and len(parts) > 2:
+        return "{parts[len(parts) - 2].trim()}, {last}"
+    return last
+
+## The square of the map a place is in, six tenths of a degree wide.
+fn square(lon: float, lat: float) -> str:
+    return "{int(lon / 0.6)} {int(lat / 0.6)}"
+
+## The landing places by square, to find those next to a cable's end
+## without comparing every end with every place.
+fn squares_of(places: list) -> map:
+    var squares = {}
+    for p in places:
+        spot = p["geometry"]["coordinates"]
+        key = square(spot[0], spot[1])
+        if not (key in squares):
+            squares[key] = []
+        squares[key].add(p)
+    return squares
+
+## The countries of the landing places within three tenths of a degree
+## of an end: where the cable lands.
+fn countries_at(end: list, squares: map) -> list:
+    var found = []
+    for dx in [-1, 0, 1]:
+        for dy in [-1, 0, 1]:
+            key = "{int(end[0] / 0.6) + dx} {int(end[1] / 0.6) + dy}"
+            for p in squares[key] ?? []:
+                spot = p["geometry"]["coordinates"]
+                if end[0] - spot[0] < 0.3 and spot[0] - end[0] < 0.3 and end[1] - spot[1] < 0.3 and spot[1] - end[1] < 0.3:
+                    country = country_of(p["properties"]["name"])
+                    if not (country in found):
+                        found.add(country)
+    return found
+
+## The cable of the map with a name, whatever its capitals; when no
+## name is that one, the first that holds it. None when there is none.
+fn cable_named(cables: list, name: str) -> map?:
+    wanted = name.trim().lower()
+    if wanted == "":
+        return none
+    for c in cables:
+        if c["properties"]["name"].lower() == wanted:
+            return c
+    for c in cables:
+        if wanted in c["properties"]["name"].lower():
+            return c
+    return none
+
+## A count and its noun: "1 cable", "3 cables".
+fn some(n: int, noun: str) -> str:
+    if n == 1:
+        return "1 {noun}"
+    return "{n} {noun}s"
+
+## What a survey could lose with a cable: `lands` has each country the
+## cable lands in and the other cables that land there, the fewest
+## first; `crossings` has each sea crossing of a trace it may carry and
+## the other cables that could; `summary` says it in a sentence.
+## data: a survey; cables and landings: the GeoJSON of the map.
+pub fn cut(data: map, cables: map?, landings: map?, name: str) -> map:
+    var out = {"cable": name, "known": false, "lands": [], "alone": [], "crossings": [], "riding": 0, "probes": 0, "summary": ""}
+    if cables == none:
+        out["summary"] = "The map of the cables could not be read, so nothing can be said."
+        return out
+    all = cables["features"] ?? []
+    chosen = cable_named(all, name)
+    if chosen == none:
+        out["summary"] = "No cable of the map is called \"{name}\"."
+        return out
+    out["known"] = true
+    out["cable"] = chosen["properties"]["name"]
+    mine = ends_of(chosen)
+    var others = []
+    for c in all:
+        if c["properties"]["name"] != out["cable"]:
+            others.add({"name": c["properties"]["name"], "ends": ends_of(c)})
+    if landings != none:
+        var countries = []
+        squares = squares_of(landings["features"] ?? [])
+        for end in mine:
+            for country in countries_at(end, squares):
+                if not (country in countries):
+                    countries.add(country)
+        var there = {}
+        for country in countries:
+            there[country] = []
+        for c in others:
+            for end in c["ends"]:
+                for country in countries_at(end, squares):
+                    if country in there and not (c["name"] in there[country]):
+                        there[country].add(c["name"])
+        rows = [{"country": country, "others": len(there[country]), "names": there[country] |> take 6} for country in countries]
+        out["lands"] = rows |> sort by others
+        out["alone"] = [r["country"] for r in out["lands"] if r["others"] == 0]
+    probes = data["routers"]["probes"] ?? []
+    out["probes"] = len(probes)
+    for probe in probes:
+        var rides = false
+        for jump in jumps_of(probe):
+            if near(mine, jump["a"], 700.0) and near(mine, jump["b"], 700.0):
+                rides = true
+                left = [c["name"] for c in others if near(c["ends"], jump["a"], 700.0) and near(c["ends"], jump["b"], 700.0)]
+                out["crossings"].add({"probe": label_of(probe), "from": jump["from"], "to": jump["to"], "km": jump["km"], "others": len(left), "names": left |> take 6})
+        if rides:
+            out["riding"] += 1
+    var parts = []
+    if len(out["alone"]) > 0:
+        parts.add("It is the only cable of the map that lands in {joined(out["alone"])}.")
+    elif len(out["lands"]) > 0:
+        least = out["lands"][0]
+        parts.add("Every country it lands in has another cable; {least["country"]} has the fewest, {least["others"]}.")
+    stranded = [c for c in out["crossings"] if c["others"] == 0]
+    if len(out["crossings"]) == 0:
+        parts.add("No trace of this survey crosses a sea where it lands, so the way to {data["domain"]} would not change.")
+    elif len(stranded) > 0:
+        parts.add("{some(out["riding"], "trace")} of {out["probes"]} may ride it, and {some(len(stranded), "crossing")} ({stranded[0]["from"]} to {stranded[0]["to"]}) has no other cable near both ends: that traffic would have to go another way round.")
+    else:
+        parts.add("{some(out["riding"], "trace")} of {out["probes"]} may ride it; every crossing has other cables near both ends, so the traffic would move to them, more slowly while they carry both loads.")
+    out["summary"] = spaced(parts)
+    return out
+
+## Texts in one, with ", " between them.
+fn joined(items: list) -> str:
+    var out = ""
+    for item in items:
+        if out != "":
+            out = out + ", "
+        out = out + item
+    return out
+
+## Texts in one, with spaces between them.
+fn spaced(items: list) -> str:
+    var out = ""
+    for item in items:
+        if out != "":
+            out = out + " "
+        out = out + item
+    return out
+
+## A cable of the tests' sea, with one line.
+fn cable(name: str, points: list) -> map:
+    return {"type": "Feature", "properties": {"name": name}, "geometry": {"type": "MultiLineString", "coordinates": [points]}}
+
+## A small sea for the tests: Lisbon and New York joined by two cables,
+## Lisbon and an island by one, and a cable far from both.
+fn sea() -> map:
+    return {"features": [
+        cable("Atlantic One", [[-9.14, 38.72], [-40.0, 40.0], [-74.01, 40.71]]),
+        cable("Atlantic Two", [[-9.3, 38.7], [-73.9, 40.6]]),
+        cable("Island Link", [[-9.14, 38.72], [-25.67, 37.74]]),
+        {"type": "Feature", "properties": {"name": "Pacific Far"}, "geometry": {"type": "LineString", "coordinates": [[139.69, 35.68], [-122.42, 37.77]]}}
+    ]}
+
+## A landing place of the tests' sea.
+fn shore(name: str, lon: float, lat: float) -> map:
+    return {"type": "Feature", "properties": {"name": name}, "geometry": {"type": "Point", "coordinates": [lon, lat]}}
+
+fn shores() -> map:
+    return {"features": [shore("Lisbon, Portugal", -9.14, 38.72), shore("Carcavelos, Portugal", -9.3, 38.7), shore("New York, NY, United States", -74.01, 40.71), shore("Ponta Delgada, Azores", -25.67, 37.74), shore("Tokyo, Japan", 139.69, 35.68)]}
+
+## A router of the tests' traces.
+fn hop(city: str, lon: float, lat: float, by: str) -> map:
+    return {"lat": lat, "lon": lon, "city": city, "country": "", "by": by}
+
+## A survey with two traces: one from Lisbon to New York, one that
+## never leaves New York.
+fn written() -> map:
+    over = {"id": 7, "country": "PT", "lon": -9.14, "lat": 38.72, "hops": [hop("Lisbon", -9.14, 38.72, "name"), hop("", -3.7, 40.42, "register"), hop("New York", -74.01, 40.71, "name")]}
+    home = {"id": 8, "country": "US", "lon": -74.0, "lat": 40.7, "hops": [hop("New York", -74.01, 40.71, "name")]}
+    return {"domain": "example.org", "routers": {"probes": [over, home]}}
+
+test "the places and the sea crossings of a trace":
+    probe = written()["routers"]["probes"][0]
+    assert [s["label"] for s in stops_of(probe)] == ["probe in PT", "New York"]
+    jumps = jumps_of(probe)
+    assert len(jumps) == 1
+    assert jumps[0]["km"] == 5400
+    assert jumps_of(written()["routers"]["probes"][1]) == []
+    mine = {"local": true, "country": "ES", "lon": -3.7, "lat": 40.42, "hops": [hop("Lisbon", -9.14, 38.72, "name"), hop("New York", -74.01, 40.71, "name")]}
+    assert label_of(mine) == "This machine"
+    assert [s["sure"] for s in stops_of(mine)] == [false, true, true]
+    assert len(jumps_of(mine)) == 1
+    assert country_of("New York, NY, United States") == "United States"
+    assert country_of("Muanda, Congo, Dem. Rep.") == "Congo, Dem. Rep."
+    assert country_of("Dominican Rep.") == "Dominican Rep."
+
+test "a cable with others beside it":
+    found = cut(written(), sea(), shores(), "atlantic one")
+    assert found["cable"] == "Atlantic One"
+    for row in found["lands"]:
+        print("{row["country"]}: {row["others"]} others {row["names"]}")
+    for c in found["crossings"]:
+        print("{c["probe"]}: {c["from"]} to {c["to"]}, {c["km"]} km, others {c["names"]}")
+    print(found["summary"])
+
+test "the only cable of an island":
+    found = cut(written(), sea(), shores(), "Island")
+    assert found["cable"] == "Island Link"
+    assert found["alone"] == ["Azores"]
+    assert found["crossings"] == []
+    print(found["summary"])
+
+test "a crossing with no other cable":
+    var one = sea()
+    one["features"] = [c for c in one["features"] if c["properties"]["name"] != "Atlantic Two"]
+    found = cut(written(), one, shores(), "Atlantic One")
+    assert found["crossings"][0]["others"] == 0
+    assert found["riding"] == 1
+    print(found["summary"])
+
+test "a cable nobody knows, and no map":
+    print(cut(written(), sea(), shores(), "Nowhere")["summary"])
+    print(cut(written(), none, none, "Atlantic One")["summary"])
+    assert cut(written(), sea(), none, "Pacific Far")["lands"] == []
