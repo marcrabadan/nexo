@@ -90,6 +90,14 @@
       ]
     },
     {
+      "title": "nexo.notify (settings in the [notify] table of nexo.toml)",
+      "entries": [
+        ["send_email(to: str, text: str, subject: str?) -> none!", "Hand a mail over to the SMTP server of [notify] (smtp = \"smtps://user@host\", from, key = the variable with the password); the subject is the first line of the text unless given. Under nexo test nothing is sent: it is a line of the output."],
+        ["slack(channel: str, text: str) -> none!", "Send a message to a channel of Slack (\"#deploys\") with the token of an app, held by the variable that slack = names in [notify]."],
+        ["notify(to: str, text: str) -> none!", "send_email when to is an address, slack when it is a #channel."]
+      ]
+    },
+    {
       "title": "Flags and privacy",
       "entries": [
         ["flag(name: str, user?) -> value", "The value of a flag of the flags block."],
@@ -133,6 +141,6 @@
   ],
   "unavailable": [
     "gcs", "blob",
-    "audit", "scan", "slack"
+    "audit", "scan"
   ]
 }
