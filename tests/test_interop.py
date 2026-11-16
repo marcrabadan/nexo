@@ -12,6 +12,8 @@ needs_cc = pytest.mark.skipif(shutil.which("cc") is None, reason="needs a C comp
 
 GREET_H = """#include <stdbool.h>
 #include <stdint.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic pop
 const char *greet(const char *name);
 double mix(int a, double b, const char *s, float f, unsigned char c, long long d, bool flag);
 float half(float x);

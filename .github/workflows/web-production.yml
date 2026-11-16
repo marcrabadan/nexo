@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Playwright 1.56 installs no browser on a newer image
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +49,7 @@ jobs:
           if-no-files-found: warn
   browsers:
     name: Release browser (${{ matrix.browser }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Playwright 1.56 installs no browser on a newer image
     timeout-minutes: 15
     strategy:
       fail-fast: false

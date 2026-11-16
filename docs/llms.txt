@@ -2,7 +2,7 @@
 
 > Versioned, curated Nexo context. Fetch only the documentation needed for the task.
 
-Nexo AI Guide v1 | source sha256:d00d857b2944a436f4963059586c4acbfe1f8ce3cb49fd9776f757b5857ab394
+Nexo AI Guide v1 | source sha256:8e83dc2210309642d086df3e3a146b05707bcef6d164a01b21931edafd22c1bf
 Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component versions, not a stable 1.0 promise.
 
 ## Availability boundaries
@@ -21,33 +21,33 @@ Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component
 - EXPERIMENTAL [nexo-web]: Experimental Python Web UI/data/tooling; M6 SSR/SSG, typed hydration/async data, PWA, WASM and SSE. Rust browser unavailable. Retrieve Web guidance for limits.
 
 ## Start here
-- [Syntax](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/nexo-syntax.txt)
-- [Full curated context](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/llms-full.txt)
+- [Syntax](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/nexo-syntax.txt)
+- [Full curated context](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/llms-full.txt)
 
 ## Security, when relevant
-Load [Shield Security Assessment](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/shield-security.txt) for policy configuration, profile selection and readiness reviews. Offline: request its text if needed; do not invent missing details.
+Load [Shield Security Assessment](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/shield-security.txt) for policy configuration, profile selection and readiness reviews. Offline: request its text if needed; do not invent missing details.
 
 ## Browser UI, only when relevant
-- [Nexo Web M1–M2 syntax, lifecycle, workflow and verified projects](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/nexo-web.txt). Offline: request this topic when needed.
+- [Nexo Web M1–M2 syntax, lifecycle, workflow and verified projects](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/nexo-web.txt). Offline: request this topic when needed.
 
 ## Task-specific engineering
-- [Readiness, architecture, ADRs and deployment](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/engineering.txt): retrieve only when relevant.
-- [Verified examples](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/examples.json): search by feature/domain; stated backend only.
+- [Readiness, architecture, ADRs and deployment](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/engineering.txt): retrieve only when relevant.
+- [Verified examples](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/examples.json): search by feature/domain; stated backend only.
 
 ## Documentation
-- [Core syntax and errors](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/00-especificacion-nexo.md.txt): docs/especificacion-nexo.md
-- [Machine diagnostics](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/01-diagnostics.md.txt): docs/diagnostics.md
-- [Effects and unknowns](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/02-effects.md.txt): docs/effects.md
-- [Agent lifecycle](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/03-agent-lifecycle.md.txt): docs/agent-lifecycle.md
-- [Token budgets](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/04-agent-token-budgets.md.txt): docs/agent-token-budgets.md
-- [Monetary reservations](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/05-ai-budget-reservations.md.txt): docs/ai-budget-reservations.md
-- [Confined recovery](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/06-agent-recovery.md.txt): docs/agent-recovery.md
-- [Tracing](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/07-agent-tracing.md.txt): docs/agent-tracing.md
-- [Exact standard-library API catalog](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/08-api.json.txt): nexo/stdlib/api.json
-- [Working invoice example](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/09-functions.nexo.txt): docs/learn/functions.nexo
-- [Working typed/privacy example](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/10-signup.nexo.txt): examples/signup.nexo
-- [Shield: API enforcement and decision tracing](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/11-shield.md.txt): docs/shield.md
-- [Shield: Offline worker and dependency ceilings](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/12-shield-isolation.md.txt): docs/shield-isolation.md
-- [Shield: Brokered public HTTP(S)](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/13-shield-online.md.txt): docs/shield-online.md
-- [Shield: Agent/tool authorization and context attenuation](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/14-shield-dispatch.md.txt): docs/shield-dispatch.md
-- [Shield: Hardened Docker and host validation](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-d00d857b2944a436f496/sources/15-shield-docker.md.txt): docs/shield-docker.md
+- [Core syntax and errors](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/00-especificacion-nexo.md.txt): docs/especificacion-nexo.md
+- [Machine diagnostics](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/01-diagnostics.md.txt): docs/diagnostics.md
+- [Effects and unknowns](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/02-effects.md.txt): docs/effects.md
+- [Agent lifecycle](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/03-agent-lifecycle.md.txt): docs/agent-lifecycle.md
+- [Token budgets](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/04-agent-token-budgets.md.txt): docs/agent-token-budgets.md
+- [Monetary reservations](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/05-ai-budget-reservations.md.txt): docs/ai-budget-reservations.md
+- [Confined recovery](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/06-agent-recovery.md.txt): docs/agent-recovery.md
+- [Tracing](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/07-agent-tracing.md.txt): docs/agent-tracing.md
+- [Exact standard-library API catalog](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/08-api.json.txt): nexo/stdlib/api.json
+- [Working invoice example](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/09-functions.nexo.txt): docs/learn/functions.nexo
+- [Working typed/privacy example](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/10-signup.nexo.txt): examples/signup.nexo
+- [Shield: API enforcement and decision tracing](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/11-shield.md.txt): docs/shield.md
+- [Shield: Offline worker and dependency ceilings](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/12-shield-isolation.md.txt): docs/shield-isolation.md
+- [Shield: Brokered public HTTP(S)](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/13-shield-online.md.txt): docs/shield-online.md
+- [Shield: Agent/tool authorization and context attenuation](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/14-shield-dispatch.md.txt): docs/shield-dispatch.md
+- [Shield: Hardened Docker and host validation](https://marcrabadan.github.io/nexo/ai-guide/versions/v1-8e83dc2210309642d086/sources/15-shield-docker.md.txt): docs/shield-docker.md

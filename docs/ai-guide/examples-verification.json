@@ -52,7 +52,7 @@
       "stdout": "ready\n201 Ana\n✓ routes return text and JSON\nhello Ana, number 7\nGET URL/greet/not-a-number answered 400 Bad Request\n✓ path and query parameters are typed\nPOST URL/registrations answered 400 Bad Request\n✓ missing record fields fail validation\n3 tests: 3 passed, 0 failed\n"
     }
   },
-  "runtime_revision": "38e3ef85fcebab33c5074ad3657d41d530af2273139e85c163f93d850af186c8",
+  "runtime_revision": "b68d0800800aa8ea6065c3cce3d5e94111c43a798e2ea37a0054284e3610cf22",
   "schema_version": 1,
   "tool_sha256": "840cc3b866959b3575d8b162821bdab2a3dc05202dd213755179163534fdf786"
 }
