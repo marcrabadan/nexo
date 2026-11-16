@@ -63,7 +63,7 @@ def test_events_example(phase, tmp_path):
     assert proc.stdout.decode("utf-8") == (work / "events.expected").read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("program", ["survey", "site", "live", "whatif", "brief", "resurvey"])
+@pytest.mark.parametrize("program", ["survey", "site", "live", "whatif", "brief"])
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
 def test_observatory_example(phase, program, tmp_path):
     """examples/observatory asks the internet, so its programs run under

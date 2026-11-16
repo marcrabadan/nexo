@@ -2099,17 +2099,21 @@ pub fn watches() -> list:
 
 ## Keeps the route changes just heard (live.events_of), each once: the
 ## feed may send a message again. Those older than two days are dropped.
-pub fn hear(events: list):
+## Gives the ones that were new.
+pub fn hear(events: list) -> list:
+    var fresh = []
     try:
         for e in events:
             wanted = e["message"]
             if len(db.Heard |> where message == wanted |> take 1) == 0:
+                fresh.add(e)
                 db.Heard.add(message: e["message"], moment: now, second: e["at"], prefix: e["prefix"], watched: e["watched"], kind: e["kind"], collector: e["collector"], peer: e["peer"], path: e["path"], origin: e["origin"], level: e["level"], text: e["text"])
         limit = now - 48h
         for old in db.Heard |> where moment < limit |> pick id:
             db.Heard.remove(old["id"])
     else e:
         print("  route change not kept: {e.message}")
+    return fresh
 
 ## The route changes heard for a domain's prefix after one of them
 ## (after: its number, 0 for all), the oldest first, two hundred at most.
@@ -2137,9 +2141,37 @@ pub fn surveyed() -> list:
     else e:
         return []
 
+## The hours a survey may age before site.nexo makes it again on its
+## own; 0 when it does not. Six until the page chooses another.
+pub fn interval() -> int:
+    saved = kept("survey again every", 876000h)
+    if saved == "":
+        return 6
+    return number(saved)
+
+## The choices the page offers for it: never, or from an hour to a week.
+pub fn intervals() -> list:
+    return [0, 1, 3, 6, 12, 24, 48, 168]
+
+## Keeps another of those choices; false for anything else.
+pub fn set_interval(hours: int) -> bool:
+    if not (hours in intervals()):
+        return false
+    keep("survey again every", str(hours))
+    return true
+
+## What a survey has that the one before it had not: the texts of its
+## critical alerts that are new. None when there is no survey before
+## it, since then everything is new and nothing changed.
+pub fn news(before: map?, data: map?) -> list:
+    if before == none or data == none:
+        return []
+    known = [a["text"] for a in before["alerts"] ?? []]
+    return [a["text"] for a in data["alerts"] ?? [] if a["level"] == "critical" and not (a["text"] in known)]
+
 ## The domains surveyed here whose last survey is older than some
-## hours, the one surveyed longest ago first: those resurvey.nexo
-## surveys again.
+## hours, the one surveyed longest ago first: those site.nexo surveys
+## again when their time comes.
 pub fn due(hours: int) -> list:
     try:
         var last = {}
@@ -2150,6 +2182,17 @@ pub fn due(hours: int) -> list:
         return [r["domain"] for r in rows |> sort by moment]
     else e:
         return []
+
+test "how often a survey is made again, and what is new in one":
+    assert interval() == 6
+    assert set_interval(24) and interval() == 24
+    assert not set_interval(5) and interval() == 24
+    assert set_interval(0) and interval() == 0
+    was = {"alerts": [{"level": "critical", "text": "RPKI rejects the origin."}, {"level": "notice", "text": "No IPv6."}]}
+    now_ = {"alerts": [{"level": "critical", "text": "RPKI rejects the origin."}, {"level": "critical", "text": "The route is cut."}, {"level": "warning", "text": "No CAA."}]}
+    assert news(was, now_) == ["The route is cut."]
+    assert news(none, now_) == []
+    assert news(was, was) == []
 
 test "the domains to survey again":
     assert due(6) == []
@@ -2436,8 +2479,8 @@ test "the route changes heard for a prefix":
     change = {"message": "21-7 198.51.100.0/23", "at": 1794000000, "prefix": "198.51.100.0/23", "watched": "198.51.100.0/23", "kind": "announced", "collector": "rrc21", "peer": "64496", "path": "64496 64501", "origin": "64501", "level": "notice", "text": "A new path."}
     theft = {"message": "00-8 198.51.100.0/24", "at": 1794000060, "prefix": "198.51.100.0/24", "watched": "198.51.100.0/23", "kind": "announced", "collector": "rrc00", "peer": "64496", "path": "64496 64666", "origin": "64666", "level": "critical", "text": "A hijack, or a hand-over."}
     elsewhere = {"message": "00-9 203.0.113.0/24", "at": 1794000090, "prefix": "203.0.113.0/24", "watched": "203.0.113.0/24", "kind": "withdrawn", "collector": "rrc00", "peer": "64496", "path": "", "origin": "", "level": "notice", "text": "Lost."}
-    hear([change, theft, elsewhere])
-    hear([change])
+    assert len(hear([change, theft, elsewhere])) == 3
+    assert hear([change]) == []
     found = heard("example.org", 0)
     assert [e["level"] for e in found] == ["notice", "critical"]
     assert found[1]["at"] == 1794000060

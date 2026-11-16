@@ -1,3 +1,4 @@
+✓ how often a survey is made again, and what is new in one
 ✓ the domains to survey again
 ✓ a domain name
 "PTR" is not a kind of record asked here: A,AAAA,CAA,CNAME,MX,NS,SOA,TXT
@@ -67,4 +68,4 @@ Site: 15 (4 alerts)
 ✓ what the logs, a signature and Shodan say
 ✓ the surveys kept whole, and going back to one
 ✓ the route changes heard for a prefix
-25 tests: 25 passed, 0 failed
+26 tests: 26 passed, 0 failed

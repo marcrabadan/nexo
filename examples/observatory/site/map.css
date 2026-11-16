@@ -188,6 +188,9 @@ td.n + td:not(.n), th.n + th:not(.n) { padding-left: 16px }
 .ticks i.good { background: var(--good) } .ticks i.warn { background: var(--warn) } .ticks i.bad { background: var(--bad) }
 .ticks i.hot { box-shadow: inset 0 -3px 0 var(--bad) } .ticks i { opacity: .45 } .ticks i.on { opacity: 1 }
 
+.again { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--dim) }
+.again select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: 13px var(--sans) }
+
 /* a line to type in: the cable to cut, the question for the analyst */
 form.line { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 10px }
 form.line label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%) }

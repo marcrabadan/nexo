@@ -719,6 +719,30 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
       playing = setInterval(() => { if (at >= last) stop(); else go(at + 1); }, 2000);
     });
     $("time").hidden = false; label();
+    schedule();
+  }
+
+  /* how often the server surveys again on its own: chosen here, kept there */
+  async function schedule() {
+    const pick = $("t-every"), words = h => h === 0 ? "never" : h < 24 ? "every " + (h === 1 ? "hour" : h + " hours") : h === 24 ? "every day" : h === 168 ? "every week" : "every " + h / 24 + " days";
+    const show = now => {
+      pick.value = String(now.hours);
+      $("t-due").textContent = now.hours === 0 ? "Surveys are made only when someone asks for one."
+        : "The server looks every ten minutes for surveys older than that" + (now.due && now.due.length ? "; due now: " + now.due.join(", ") : "") + "." +
+          (now.notices ? " A new critical alert is told by mail or Slack." : "");
+    };
+    try {
+      const now = await get("api/schedule");
+      for (const h of now.choices) { const o = document.createElement("option"); o.value = String(h); o.textContent = words(h); pick.append(o); }
+      show(now);
+      pick.addEventListener("change", async () => {
+        try {
+          const r = await fetch("api/schedule", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ hours: Number(pick.value) }) });
+          if (!r.ok) throw new Error(r.status + " " + r.statusText);
+          show(await get("api/schedule"));
+        } catch (e) { $("t-due").textContent = "Not changed: " + e.message; }
+      });
+    } catch (e) { $("t-every").closest("label").hidden = true; }
   }
 
   /* live: the route changes heard for the prefix, asked for every few seconds while the page is seen */
