@@ -7,4 +7,8 @@ critical  announced 198.51.100.0/24 at rrc00, path 64496 {64666,64667}: AS{64666
 AS64666 announces 198.51.100.0/23, which is AS64501's: a hijack, or a hand-over.
 warning AS64501 announces 198.51.101.0/24, a part of its own 198.51.100.0/23: traffic engineering, or an answer to a hijack.
 ✓ the changes a message carries
-3 tests: 3 passed, 0 failed
+critical  announced 198.51.100.0/24 for 198.51.100.0/23: 00-11 198.51.100.0/24 in 198.51.100.0/23
+notice  announced 198.51.100.0/24 for 198.51.100.0/24: 00-11 198.51.100.0/24 in 198.51.100.0/24
+notice  withdrawn 198.51.101.0/24 for 198.51.100.0/23: 00-11 198.51.101.0/24 in 198.51.100.0/23
+✓ two domains in blocks one inside the other
+4 tests: 4 passed, 0 failed

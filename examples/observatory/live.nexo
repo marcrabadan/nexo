@@ -98,19 +98,25 @@ fn event(data: map, watch: map, kind: str, prefix: str) -> map:
     elif prefix != watch["prefix"]:
         level = "warning"
         text = "AS{origin} announces {prefix}, a part of its own {watch["prefix"]}: traffic engineering, or an answer to a hijack."
-    return {"message": "{data["id"] ?? ""} {prefix}", "at": int(data["timestamp"] ?? 0), "prefix": prefix, "watched": watch["prefix"], "kind": kind, "collector": collector, "peer": peer, "path": spaced(path), "origin": origin, "level": level, "text": text}
+    return {"message": "{data["id"] ?? ""} {prefix} in {watch["prefix"]}", "at": int(data["timestamp"] ?? 0), "prefix": prefix, "watched": watch["prefix"], "kind": kind, "collector": collector, "peer": peer, "path": spaced(path), "origin": origin, "level": level, "text": text}
 
-## The watch a prefix belongs to, or none.
-fn watch_for(prefix: str, watches: list) -> map?:
+## The watches a prefix belongs to, one for each prefix listened to:
+## two domains may be in blocks one inside the other, and a change of
+## the smaller is a change for both.
+fn watches_for(prefix: str, watches: list) -> list:
+    var found = []
+    var seen = []
     for w in watches:
-        if inside(prefix, w["prefix"]):
-            return w
-    return none
+        if inside(prefix, w["prefix"]) and not (w["prefix"] in seen):
+            seen.add(w["prefix"])
+            found.add(w)
+    return found
 
 ## The changes a message of RIS Live carries for the prefixes listened
-## to (each a map with "prefix" and "origin"). A message brings every
-## prefix of its BGP update, so those of other networks are left out; a
-## message that is not a route change (a pong, an error) gives none.
+## to (each a map with "prefix" and "origin"), one for each of those a
+## changed route is in. A message brings every prefix of its BGP update,
+## so those of other networks are left out; a message that is not a
+## route change (a pong, an error) gives none.
 pub fn events_of(text: str, watches: list) -> list:
     var out = []
     try:
@@ -120,12 +126,10 @@ pub fn events_of(text: str, watches: list) -> list:
         data = message["data"]
         for a in data["announcements"] ?? []:
             for prefix in a["prefixes"] ?? []:
-                watch = watch_for(prefix, watches)
-                if watch != none:
+                for watch in watches_for(prefix, watches):
                     out.add(event(data, watch, "announced", prefix))
         for prefix in data["withdrawals"] ?? []:
-            watch = watch_for(prefix, watches)
-            if watch != none:
+            for watch in watches_for(prefix, watches):
                 out.add(event(data, watch, "withdrawn", prefix))
     else e:
         return []
@@ -150,7 +154,7 @@ test "the changes a message carries":
     for e in events_of(usual, watches):
         print("{e["level"]}  {e["kind"]} {e["prefix"]} at {e["collector"]}, path {e["path"]}: {e["text"]}")
     assert events_of(usual, watches)[0]["at"] == 1794000000
-    assert events_of(usual, watches)[0]["message"] == "21-192-0-2-1-7 198.51.100.0/23"
+    assert events_of(usual, watches)[0]["message"] == "21-192-0-2-1-7 198.51.100.0/23 in 198.51.100.0/23"
     stolen = "{{\"type\":\"ris_message\",\"data\":{{\"timestamp\":1794000060,\"peer_asn\":\"64496\",\"id\":\"00-8\",\"host\":\"rrc00\",\"path\":[64496,[64666,64667]],\"announcements\":[{{\"prefixes\":[\"198.51.100.0/24\"]}]}}"
     for e in events_of(stolen, watches):
         print("{e["level"]}  {e["kind"]} {e["prefix"]} at {e["collector"]}, path {e["path"]}: {e["text"]}")
@@ -161,3 +165,9 @@ test "the changes a message carries":
     assert events_of("{{\"type\":\"pong\",\"data\":{{}}", watches) == []
     assert events_of("not JSON", watches) == []
     assert events_of(usual, []) == []
+
+test "two domains in blocks one inside the other":
+    both = [{"prefix": "198.51.100.0/23", "origin": "64501"}, {"prefix": "198.51.100.0/24", "origin": "64502"}, {"prefix": "198.51.100.0/23", "origin": "64501"}]
+    change = "{{\"type\":\"ris_message\",\"data\":{{\"timestamp\":1794000000,\"peer_asn\":\"64496\",\"id\":\"00-11\",\"host\":\"rrc00\",\"path\":[64496,64502],\"announcements\":[{{\"prefixes\":[\"198.51.100.0/24\"]}],\"withdrawals\":[\"198.51.101.0/24\"]}}"
+    for e in events_of(change, both):
+        print("{e["level"]}  {e["kind"]} {e["prefix"]} for {e["watched"]}: {e["message"]}")
