@@ -1,0 +1,3 @@
+# a time of day is HH:MM (section 4, D208)
+every monday at 8:00:
+    print("report")

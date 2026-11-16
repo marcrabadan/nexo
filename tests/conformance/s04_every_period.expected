@@ -1,0 +1,5 @@
+before
+Error in s04_every_period.nexo, line 3:
+  every 5:
+  ^^^^^
+every takes how often: a duration greater than zero, or a day and its time. Write every 6h: or every monday at 08:00: (day, or monday to sunday).

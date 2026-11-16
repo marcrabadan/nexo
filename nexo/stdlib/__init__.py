@@ -24,7 +24,7 @@ class Namespace:
 
 
 def install(interp) -> None:
-    from . import ai, cfg, ci, clib, crypto, db, flags, http, infra, patterns, policy, privacy, pylib, stream, web
+    from . import ai, cfg, ci, clib, crypto, db, flags, http, infra, patterns, policy, privacy, pylib, schedule, stream, web
     policy.reset()
     patterns.reset()
     web.reset()
@@ -32,10 +32,11 @@ def install(interp) -> None:
     flags.reset()
     privacy.reset()
     stream.reset()
+    schedule.reset()
     infra.reset()
     ci.reset()
     env = interp.builtins
-    for module in (core, io, data, clock, text, crypto, http, db, web, ai, clib, pylib, cfg, flags, privacy, stream, infra, ci, policy, patterns):
+    for module in (core, io, data, clock, text, crypto, http, db, web, ai, clib, pylib, cfg, flags, privacy, stream, schedule, infra, ci, policy, patterns):
         for name, value in module.exports().items():
             env.define(name, value)
     from .. import cover

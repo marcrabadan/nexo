@@ -94,7 +94,7 @@ pub fn in_test_mode() -> bool {
 pub fn memory_profile() -> bool {
     std::env::var("NEXO_SECURITY_STREAMS").is_ok_and(|value| value == "memory-v1")
 }
-fn require_mode(span: u32) -> R<()> {
+pub fn require_mode(span: u32) -> R<()> {
     if crate::security::enforcing() && !memory_profile() {
         return Err(diag(Diagnostic::new_spanless("security_stream_mode"),span));
     }

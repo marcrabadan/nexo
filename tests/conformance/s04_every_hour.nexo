@@ -1,0 +1,3 @@
+# a time of day goes up to 23:59 (section 4, D208)
+every day at 24:00:
+    print("report")

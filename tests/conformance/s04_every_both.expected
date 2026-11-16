@@ -1,0 +1,4 @@
+Error in s04_every_both.nexo, line 2:
+  every 6h at 08:00:
+  ^^^^^
+every takes how often: a duration greater than zero, or a day and its time. Write every 6h: or every monday at 08:00: (day, or monday to sunday).

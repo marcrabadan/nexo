@@ -3390,3 +3390,41 @@ to a WebSocket feed (examples/observatory):
   phase 0 now takes turns on it with a lock, as phase 1 did.
 Tests: tests/test_stream_net.py (a consumer started before its server,
 in both phases) and the conformance case above.
+
+**D208. `every`.** Section 4 gives `every` one meaning, "scheduled
+task", the examples `every day at 09:00:` and `every monday at 08:00:`,
+and the grammar `"every" expr [ "at" expr ] block`; section 9 writes
+`every 30 days` and section 11 `every 6h`. What a period can be, which
+clock `at` reads, when the first run is and what a failing task does are
+not written. `every` was left out until now (D65, D89, D113).
+- A period is a duration greater than zero (`every 6h:`, `every 30
+  days:`, any expression that gives one), or a day and its time: `day`
+  or `monday` to `sunday`, then `at HH:MM`, two digits each, from 00:00
+  to 23:59. A day is a word only before `at`, so it is no reserved
+  word; a day without `at`, a duration with `at` and anything else are
+  errors (`every_day`, `every_at`, `every_period`). Other periods (the
+  first of the month, cron lines) are not in the specification and are
+  not invented: a task that runs every day can look at `today`.
+- Both parsers turn the block into a function and
+  `__every(period, it, at: "08:00")` (D90), as `when` on a stream. The
+  block takes nothing and gives nothing; `nexo fmt` keeps `08:00`
+  together.
+- After the top level (and the spawned tasks), a program with tasks
+  keeps running until it is stopped, next to its servers (D102) and its
+  streams (D117), and says `Scheduled tasks: 2 (Ctrl-C to stop)` on the
+  standard error output. Tasks run one at a time, on one thread of
+  their own when the program has a server.
+- A duration is counted from the start of the program: `every 6h` runs
+  six hours after it started, then twelve, and so on; it does not run
+  at the start, so a program that is restarted often does not repeat
+  its tasks each time. A turn that passes while a task is still running
+  is not made up for. A time of day is read on the clock of the
+  machine's zone (D94: TZ, then /etc/localtime, then UTC), as `now` is,
+  and follows its changes of offset.
+- An error that leaves a task is shown as an unhandled error and the
+  next turn comes, as with a route (D104); a mistake (a diagnostic)
+  stops the program with status 1, as everywhere else (D17).
+- Under `nexo test` no time passes: the tasks are kept and none runs, so
+  a test calls what the block calls. `lifecycle` stays unavailable.
+Tests: the `s04_every*` conformance cases, tests/test_schedule.py (both
+phases) and the same cases of the next time of day in time.rs.

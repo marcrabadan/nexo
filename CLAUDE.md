@@ -318,7 +318,13 @@ runtime is u64 on every target. The playground runs phase 0 on Pyodide.
 tests/test_playground.py checks both (skipped without node, Pyodide or
 target/web).
 
-Excluded (do not implement yet): ml, ui, notify, the registry service, every/lifecycle, canary and blue/green releases, chaos,
+Scheduled tasks (D208): `every 6h:` and `every monday at 08:00:` are
+turned by both parsers into a function and `__every(...)`; a program
+with tasks runs them next to its servers and streams until it is
+stopped (nexo/stdlib/schedule.py, compiler/runtime/src/schedule.rs;
+tests/test_schedule.py). Under `nexo test` none runs.
+
+Excluded (do not implement yet): ml, ui, notify, the registry service, lifecycle, canary and blue/green releases, chaos,
 vault and cloud secret managers, use rust/wasm, YAML/XML/Parquet (D89,
 D112, D113).
 

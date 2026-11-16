@@ -46,6 +46,7 @@ pub mod pylib;
 pub mod repl;
 pub mod state;
 pub mod stdlib;
+pub mod schedule;
 pub mod stream;
 pub mod stream_cloud;
 pub mod stream_net;
