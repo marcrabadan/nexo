@@ -6,7 +6,7 @@ USER 0:0
 RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
     apk add --no-cache brotli-libs=1.2.1-r0 curl=8.23.0-r0 libcurl=8.23.0-r0 \
-        libexpat=2.10.0-r0 \
+        libexpat=2.10.0-r0 libxslt=1.1.43-r4 \
         musl=1.2.6-r3 musl-utils=1.2.6-r3 zlib=1.4-r0
 COPY --chmod=0444 nginx.conf /etc/nginx/nginx.conf
 COPY dist/ /srv/nexo/
