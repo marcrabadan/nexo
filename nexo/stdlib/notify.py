@@ -10,8 +10,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import socket
-import ssl
 import time as _time
 from pathlib import Path
 
@@ -149,6 +147,9 @@ def server_of(url: str):
 
 def deliver(tls: bool, user: str, password: str, host: str, port: int, sender: str, to: str, data: bytes) -> None:
     """One message, handed over to the server (RFC 5321)."""
+    # here, not at the top: the playground has no sockets (D176)
+    import socket
+    import ssl
     if not tls and not local_host(host):
         raise Refused(f"{host} is reached with smtps:// only")
     try:

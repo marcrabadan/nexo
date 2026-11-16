@@ -1,4 +1,4 @@
-Nexo AI Guide v1 | source sha256:3b5c95193c1023cddfdbbdeee77852e1d3f6537a12f47d9e4539a4ed4340543f
+Nexo AI Guide v1 | source sha256:d00d857b2944a436f4963059586c4acbfe1f8ce3cb49fd9776f757b5857ab394
 Python package 0.0.1; Rust workspace 0.1.0; API edition 0.1. These are component versions, not a stable 1.0 promise.
 
 # Compact Nexo syntax reference
