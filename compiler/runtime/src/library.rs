@@ -87,7 +87,7 @@ static SIGS: &[Sig] = &[
     Sig { name: "comment", params: &[p("text")] },
     Sig { name: "audit", params: &[] },
     Sig { name: "scan", params: &[] },
-    Sig { name: "slack", params: &[] },
+    Sig { name: "slack", params: &[p("channel"), p("text")] },
     Sig { name: "__single", params: &[] },
     Sig { name: "__states", params: &[p("name"), p("pairs")] },
     Sig { name: "__protect", params: &[p("target"), p("name"), p("fails"), p("wait")] },
@@ -104,6 +104,9 @@ static SIGS: &[Sig] = &[
     Sig { name: "__workflow_undone", params: &[p("run"), p("n")] },
     Sig { name: "__workflow_end", params: &[p("run")] },
     Sig { name: "__cover", params: &[p("n")] },
+    Sig { name: "__every", params: &[p("period"), p("fn"), opt("at")] },
+    Sig { name: "send_email", params: &[p("to"), p("text"), opt("subject")] },
+    Sig { name: "notify", params: &[p("to"), p("text")] },
     Sig {
         name: "__web_route",
         params: &[p("server"), p("method"), p("path"), p("handler"), p("types"), opt("role"), opt("limit"), opt("public")],
@@ -165,6 +168,7 @@ pub fn release_all() {
     crate::policy::release_all();
     crate::privacy::release_all();
     crate::stream::release_all();
+    crate::schedule::release_all();
     crate::infra::release_all();
     crate::ci::release_all();
     crate::patterns::release_all();
@@ -195,7 +199,7 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
     if sig.name == "log" {
         return log(args, names, span);
     }
-    if matches!(sig.name, "audit" | "scan" | "slack") {
+    if matches!(sig.name, "audit" | "scan") {
         return crate::ci::unavailable(sig.name, span);
     }
     if crate::stream::KINDS.contains(&sig.name) {
@@ -279,6 +283,10 @@ pub fn call(id: BuiltinId, args: &[V], names: &[Option<&str>], span: u32) -> R<V
         "__workflow_undo" => crate::patterns::workflow_undo(x(0), x(1)),
         "__workflow_undone" => crate::patterns::workflow_undone(x(0), x(1), span),
         "__workflow_end" => crate::patterns::workflow_end(x(0), span),
+        "__every" => crate::schedule::every(x(0), x(1), a.get(2), span),
+        "send_email" => crate::notify::send_email(x(0), x(1), a.get(2), span),
+        "slack" => crate::notify::slack(x(0), x(1), span),
+        "notify" => crate::notify::notify(x(0), x(1), span),
         "__cover" => {
             cover_hit(x(0).as_int().unwrap_or(0));
             Ok(Val::none())

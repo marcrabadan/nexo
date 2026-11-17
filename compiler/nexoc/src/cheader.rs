@@ -167,6 +167,8 @@ pub fn analyse(name: &str, folder: &Path) -> String {
 // -------------------------------------------------------------- headers
 
 fn tokens(text: &str) -> Vec<String> {
+    // what the preprocessor leaves for the compiler (#pragma) declares nothing
+    let text = text.split('\n').filter(|line| !line.trim_start().starts_with('#')).collect::<Vec<_>>().join("\n");
     let c: Vec<char> = text.chars().collect();
     let mut raw = Vec::new();
     let mut i = 0;

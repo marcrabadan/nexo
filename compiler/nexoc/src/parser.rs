@@ -1155,11 +1155,7 @@ impl<'s> Parser<'s> {
             }
             params = args;
         } else if kind == "every" {
-            self.expr()?;
-            if self.at_kw("at") {
-                self.advance();
-                self.expr()?;
-            }
+            return self.every(tok.span);
         } else {
             name = self.expect_name()?.0;
             if self.at_op(",") {
@@ -1660,6 +1656,7 @@ impl<'s> Parser<'s> {
 // builtins whose names start with "__" (D90), so every later pass (the
 // checker, the resolver, the code generator) sees only core constructs.
 
+const EVERY_DAYS: &[&str] = &["day", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 const STREAM_SOURCES: &[&str] = &["kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket"];
 const MODULE_BLOCKS: &[&str] = &["ai", "agent", "server", "infra", "stage", "pipeline", "flags", "policy", "single", "states"];
 /// what a policy can allow or deny (D142)
@@ -2706,6 +2703,61 @@ impl<'s> Parser<'s> {
         let st = self.stmt_node(span, StmtKind::Fn(func));
         self.extra.push(st);
         Ok(self.name_expr(span, &fname))
+    }
+
+    /// every 6h: body, every monday at 08:00: body (section 4, D208), as a
+    /// function and __every(period, it, at: "08:00"). A day is a word only
+    /// before `at`; anything else is an expression (a duration).
+    fn every(&mut self, span: Span) -> PResult<Stmt> {
+        let word = self.peek().clone();
+        let day = match &word.tok {
+            Tok::Name(n) if EVERY_DAYS.contains(&n.as_str()) => Some(n.clone()),
+            _ => None,
+        };
+        let period = match day {
+            Some(d) if matches!(self.peek_at(1).tok, Tok::Keyword("at")) => {
+                self.advance();
+                self.text(word.span, &d)
+            }
+            Some(d) if matches!(&self.peek_at(1).tok, Tok::Op(o) if *o == ":") => {
+                return Err(Diagnostic::new("every_day", word.span).arg("day", d));
+            }
+            _ => self.expr()?,
+        };
+        let mut named = Vec::new();
+        if self.at_kw("at") {
+            self.advance();
+            named.push(("at".to_string(), self.time_of_day()?));
+        }
+        let fname = format!("every {}:{}", span.line, span.col);
+        let body = self.block()?;
+        let id = self.id();
+        let func = FnDef { id, span, name: fname.clone(), name_span: span, params: Vec::new(), ret: None, body, is_pub: false, annotations: Vec::new() };
+        let fstmt = self.stmt_node(span, StmtKind::Fn(func));
+        let fe = self.name_expr(span, &fname);
+        let c = self.call(span, "__every", vec![period, fe], named);
+        let st = self.expr_stmt(c);
+        self.extra.push(st);
+        Ok(fstmt)
+    }
+
+    /// HH:MM, two digits each, as one text.
+    fn time_of_day(&mut self) -> PResult<Expr> {
+        let (hour, colon, minute) = (self.peek().clone(), self.peek_at(1).clone(), self.peek_at(2).clone());
+        let two = |t: &Token| match &t.tok {
+            Tok::Int(v) if v.len() == 2 && t.span.end_col - t.span.col == 2 => v.parse::<u32>().ok(),
+            _ => None,
+        };
+        let together = hour.span.line == minute.span.line && colon.span.col == hour.span.end_col && minute.span.col == colon.span.end_col;
+        match (two(&hour), two(&minute)) {
+            (Some(h), Some(m)) if matches!(&colon.tok, Tok::Op(o) if *o == ":") && together && h < 24 && m < 60 => {
+                self.advance();
+                self.advance();
+                self.advance();
+                Ok(self.text(hour.span.to(minute.span), &format!("{h:02}:{m:02}")))
+            }
+            _ => Err(Diagnostic::new("every_at", hour.span)),
+        }
     }
 
     /// when kafka("orders") as msg[, key: msg.id]: body (section 19), as a

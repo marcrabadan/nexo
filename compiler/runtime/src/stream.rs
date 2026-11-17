@@ -94,7 +94,7 @@ pub fn in_test_mode() -> bool {
 pub fn memory_profile() -> bool {
     std::env::var("NEXO_SECURITY_STREAMS").is_ok_and(|value| value == "memory-v1")
 }
-fn require_mode(span: u32) -> R<()> {
+pub fn require_mode(span: u32) -> R<()> {
     if crate::security::enforcing() && !memory_profile() {
         return Err(diag(Diagnostic::new_spanless("security_stream_mode"),span));
     }
@@ -189,7 +189,14 @@ impl Native for Stream {
                     crate::stream_cloud::send(&self.pair(), place, &data, ms, key.as_deref(), None, span)?
                 }
             }
-            _ => append(&self.pair(), data, ms, key, self.wanted, Some(span))?,
+            // under `nexo test` a source on the network is on the
+            // in-memory broker (D169), in a log of its own
+            Some(place) => {
+                let log = (self.kind.clone(), format!("{}@{place}", self.name));
+                let m = append(&log, data, ms, key, self.wanted, Some(span))?;
+                Message { stream: self.pair(), place: self.place.clone(), ..m }
+            }
+            None => append(&self.pair(), data, ms, key, self.wanted, Some(span))?,
         };
         if test_mode() {
             deliver(&message, span)?;
@@ -1070,6 +1077,8 @@ struct Source {
     count: i64,
     /// what was delivered in each partition
     read: Vec<Option<String>>,
+    /// its broker does not answer now
+    down: bool,
 }
 
 /// `nexo file.nexo` with `when` handlers or stream pipelines: read the new
@@ -1120,7 +1129,7 @@ pub fn listen_forever(program: &str) {
             Ok(r) => r,
             Err(_) => stop(),
         };
-        sources.push(Source { stream, place, backend, count, read });
+        sources.push(Source { stream, place, backend, count, read, down: false });
     }
     loop {
         let mut idle = true;
@@ -1134,12 +1143,18 @@ pub fn listen_forever(program: &str) {
                     Ok(_) => {}
                     Err(_) => {
                         // a broker that cannot be reached now: tried again
-                        crate::state::report_pending();
+                        // every second, and said once (D207)
+                        if src.down {
+                            drop(crate::state::take_pending());
+                        } else {
+                            crate::state::report_pending();
+                        }
                         unreachable = true;
                         break;
                     }
                 }
             }
+            src.down = unreachable;
             if unreachable {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 continue;

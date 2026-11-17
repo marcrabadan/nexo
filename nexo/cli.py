@@ -70,12 +70,20 @@ def run_file(path: str) -> int:
         if stream.memory_profile():
             stream.drain(interp)
             wait_all()
+        # and its scheduled tasks run when their time comes (D208): on
+        # the main thread when the program has nothing else to wait for
+        from .stdlib import schedule
+        tasks = schedule.scheduled() and not stream.memory_profile()
         if stream.listening():
-            if not SERVERS:
+            if not SERVERS and not tasks:
                 stream.listen_forever(interp, path)
                 return 0
             import threading
             threading.Thread(target=stream.listen_forever, args=(interp, path), daemon=True).start()
+        if tasks:
+            if not SERVERS:
+                return 0 if schedule.run_forever(interp) else 1
+            schedule.run_in_background(interp)
         if not serve_forever(interp):
             return 1
     except (NexoError, NexoFailure) as exc:

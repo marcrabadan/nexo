@@ -3359,3 +3359,123 @@ one key to the block, next to `port` and `auth`:
   untrusted text into markup on the server. Tests: the `s15_web_files*`
   conformance cases, in both phases.
 
+
+**D207. A consumer and a broker that is not there.** D169 says a
+consumer "that cannot reach its broker tries again every second", and
+that under `nexo test` every source is on the in-memory broker. Three
+things did not follow it, found when a program with a server listened
+to a WebSocket feed (examples/observatory):
+- When a consumer starts, each broker is asked how many partitions the
+  stream has, and a broker that did not answer stopped the program: in
+  phase 1 the server with it, in phase 0 only the listener, with a
+  Python traceback when the program had a `policy`. A WebSocket has one
+  partition and keeps no position, so there is nothing to ask: its
+  consumer now starts without connecting, the first read connects, and
+  a server that is not there is tried again every second like one that
+  is lost later. Kafka, Event Hubs and RabbitMQ still stop the program
+  at the start: the topic or queue has to exist, and a wrong address or
+  password should be seen at once.
+- The line that says a broker cannot be reached was written every
+  second for as long as it lasted. It is written once, when the broker
+  stops answering, and again only after it has answered in between: the
+  simplest reading of "tries again every second" that leaves the
+  terminal usable.
+- In phase 1, what a test sent to a source on the network
+  (`websocket(...)`, `kafka(..., servers:)`) reached no handler, and
+  shared its numbers with the local stream of the same name; phase 0
+  did what D169 says. Both now deliver it to the handlers of that
+  source, numbered in a log of its own (`s19_stream_net_test`).
+- A WebSocket's `send` may come from a server's handler while the
+  consumer reads the same connection (D169: "on the same connection"):
+  phase 0 now takes turns on it with a lock, as phase 1 did.
+Tests: tests/test_stream_net.py (a consumer started before its server,
+in both phases) and the conformance case above.
+
+**D208. `every`.** Section 4 gives `every` one meaning, "scheduled
+task", the examples `every day at 09:00:` and `every monday at 08:00:`,
+and the grammar `"every" expr [ "at" expr ] block`; section 9 writes
+`every 30 days` and section 11 `every 6h`. What a period can be, which
+clock `at` reads, when the first run is and what a failing task does are
+not written. `every` was left out until now (D65, D89, D113).
+- A period is a duration greater than zero (`every 6h:`, `every 30
+  days:`, any expression that gives one), or a day and its time: `day`
+  or `monday` to `sunday`, then `at HH:MM`, two digits each, from 00:00
+  to 23:59. A day is a word only before `at`, so it is no reserved
+  word; a day without `at`, a duration with `at` and anything else are
+  errors (`every_day`, `every_at`, `every_period`). Other periods (the
+  first of the month, cron lines) are not in the specification and are
+  not invented: a task that runs every day can look at `today`.
+- Both parsers turn the block into a function and
+  `__every(period, it, at: "08:00")` (D90), as `when` on a stream. The
+  block takes nothing and gives nothing; `nexo fmt` keeps `08:00`
+  together.
+- After the top level (and the spawned tasks), a program with tasks
+  keeps running until it is stopped, next to its servers (D102) and its
+  streams (D117), and says `Scheduled tasks: 2 (Ctrl-C to stop)` on the
+  standard error output. Tasks run one at a time, on one thread of
+  their own when the program has a server.
+- A duration is counted from the start of the program: `every 6h` runs
+  six hours after it started, then twelve, and so on; it does not run
+  at the start, so a program that is restarted often does not repeat
+  its tasks each time. A turn that passes while a task is still running
+  is not made up for. A time of day is read on the clock of the
+  machine's zone (D94: TZ, then /etc/localtime, then UTC), as `now` is,
+  and follows its changes of offset.
+- An error that leaves a task is shown as an unhandled error and the
+  next turn comes, as with a route (D104); a mistake (a diagnostic)
+  stops the program with status 1, as everywhere else (D17).
+- Under `nexo test` no time passes: the tasks are kept and none runs, so
+  a test calls what the block calls. `lifecycle` stays unavailable.
+Tests: the `s04_every*` conformance cases, tests/test_schedule.py (both
+phases) and the same cases of the next time of day in time.rs.
+
+**D209. `nexo.notify`.** Section 15 lists the module with three names,
+`send_email`, `slack` and `notify`, and `use nexo.notify`; the examples
+are `send_email(order.customer, "Thank you for your purchase!")`
+(section 4), `notify("security@company.com", "DB_PASS rotated")`
+(section 9) and `slack("#deploys", "v{version} is in production")` in a
+pipeline (section 12). How a mail leaves, where its settings are and
+what `notify` adds to the other two are not written. It was left out
+until now (D89, D113).
+- `send_email(to, text, subject:)` hands one mail to an SMTP server. The
+  subject is the first line of the text unless `subject:` is given; the
+  body is the whole text. `slack(channel, text)` sends a message to a
+  channel with Slack's Web API (`chat.postMessage`) and the token of an
+  app. `notify(to, text)` is the one that needs no choice: an address
+  gets the mail and a `#channel` the message, so the program of section
+  9 and a pipeline read alike; anything else is InvalidValue.
+- The pipeline of section 12 calls `slack` with no `use`, so the three
+  names are always there and `use nexo.notify` is accepted and changes
+  nothing, as `use nexo.stream` (D117). A function of the program with
+  one of these names takes its place, as with any builtin. `slack` in a
+  pipeline is no longer reported as unavailable (D122).
+- Settings are a `[notify]` table in the nexo.toml of the program's
+  folder or the nearest above, the one place (D106 reads `[ai]` there):
+  `smtp = "smtps://user@host"` (port 465, or `:port`), `from`, `key`
+  and `slack`. `key` and `slack` are the NAMES of the variables that
+  hold the password and the token: a key is never written in a file
+  (section 9), and the policy checks `env` for them and `net` for the
+  server (D142). A password in the address is refused, as in D163.
+- Both phases speak SMTP themselves (RFC 5321): EHLO, AUTH PLAIN when
+  the address has a user, one recipient, and a text/plain UTF-8 message
+  in base64 with From, To, Subject (encoded words when it is not
+  ASCII), Date and Message-ID. A server on another machine is reached
+  with TLS from the first byte (`smtps://`) only, checked against the
+  system's certificates; `smtp://` is for a server on this machine, as
+  the brokers of D169. STARTTLS is not spoken: one way, and the
+  providers offer port 465.
+- All of it can fail with error values, so a program decides what a
+  message that did not leave means: NetworkError when nothing is set up
+  (`[notify]` missing), when the server cannot be reached or refuses
+  (`localhost did not take the mail for ana@mail.com: it answered 550
+  ...`), when Slack answers `ok: false` (its own word, such as
+  `channel_not_found`); InvalidValue for what is not an address or a
+  channel; NotFound for a variable that is not set (D97).
+- Under `nexo test` nothing is sent: each call writes a line on the
+  test's output, `email to ana@mail.com: Thank you for your purchase!`
+  or `slack #deploys: v1.2.0 is in production`, so a test shows what the
+  program would have sent. `NEXO_SLACK_URL` replaces Slack's address (a
+  stand-in, as NEXO_EVENTHUB_SERVERS in D169).
+Tests: `s15_notify`, and tests/test_notify.py on tests/smtp_server.py
+(written from the RFC, sharing no code with the clients) and a stand-in
+for Slack, in both phases.

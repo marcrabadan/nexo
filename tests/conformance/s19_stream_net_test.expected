@@ -1,0 +1,8 @@
+feed 1 hello
+feed 2 {"n":2}
+✓ a message sent to a WebSocket is handled
+local orders 1 6
+orders 1 7
+local orders 2 8
+✓ a broker on the network and the local one are two streams
+2 tests: 2 passed, 0 failed

@@ -1,0 +1,4 @@
+{"from": "this machine", "arrived": false, "hops": 4, "silent_hops": 1, "networks": ["AS3352 TELEFONICA_DE_ESPANA", "AS1299 TWELVE99"], "countries": ["ES", "US"], "biggest_wait": {"ms": 87.5, "hop": 4, "where": "New York"}, "ms_at_the_end": 96.5, "last_answer": "hop 4 nyk-bb1.ip.twelve99.net 62.115.1.1"}
+{"from": "probe 7 in JP", "arrived": true, "hops": 0, "silent_hops": 0, "networks": [], "countries": [], "biggest_wait": {"ms": 0.0, "hop": 0, "where": ""}, "ms_at_the_end": none, "last_answer": ""}
+✓ a survey in brief
+1 test: 1 passed, 0 failed

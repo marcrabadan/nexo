@@ -232,7 +232,13 @@ fn row_code(before: Option<&Piece>, row: &Row) -> String {
     for (i, piece) in row.pieces.iter().enumerate() {
         if i > 0 {
             let prev = if i >= 2 { Some(&row.pieces[i - 2]) } else { before };
-            out.push_str(gap(prev, &row.pieces[i - 1], piece, row.cfg));
+            // a time of day after `at`: 08:00 (D208)
+            let clock = i >= 3
+                && matches!(piece.tok, Tok::Int(_))
+                && is_op(&row.pieces[i - 1].tok, ":")
+                && matches!(row.pieces[i - 2].tok, Tok::Int(_))
+                && matches!(row.pieces[i - 3].tok, Tok::Keyword("at"));
+            out.push_str(if clock { "" } else { gap(prev, &row.pieces[i - 1], piece, row.cfg) });
         }
         out.push_str(&piece.text);
     }

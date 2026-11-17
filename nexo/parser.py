@@ -14,6 +14,7 @@ from .lexer import Interp, Token, tokenize, tokenize_expr
 STEP_WORDS = {"where", "map", "pick", "group", "sum", "count", "avg", "sort", "take", "each",
               "window", "sliding", "session"}  # the last three: streams (section 19)
 STREAM_SOURCES = {"kafka", "rabbit", "sqs", "kinesis", "servicebus", "eventhub", "pubsub", "websocket"}
+EVERY_DAYS = {"day", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 ASSIGN_OPS = ("=", "+=", "-=", "*=", "/=")
 COMPARE_OPS = ("==", "!=", "<", ">", "<=", ">=")
 
@@ -823,16 +824,47 @@ class Parser:
                     and trigger.func.name in STREAM_SOURCES):
                 return self.stream_when(tok, trigger, alias)
         elif tok.value == "every":
-            trigger = self.expr()
-            if self.at_kw("at"):
-                self.advance()
-                self.expr()
+            return self.every(tok)
         else:
             trigger = A.Name(self.peek().span, self.expect_name().value)
             if self.at_op(","):
                 self.advance()
                 self.args(":")
         return A.EventStmt(tok.span, tok.value, trigger, alias, self.block())
+
+    def every(self, tok: Token) -> A.Stmt:
+        """every 6h: body, every monday at 08:00: body (section 4, D208), as
+        a function and __every(period, it, at: "08:00"). A day is a word
+        only before `at`; anything else is an expression (a duration)."""
+        span = tok.span
+        word_ = self.peek()
+        if word_.kind == "NAME" and word_.value in EVERY_DAYS and self.peek(1).is_kw("at"):
+            self.advance()
+            period: A.Expr = text(word_.span, word_.value)
+        elif word_.kind == "NAME" and word_.value in EVERY_DAYS and self.peek(1).is_op(":"):
+            raise NexoError("every_day", word_.span, day=word_.value)
+        else:
+            period = self.expr()
+        named = []
+        if self.at_kw("at"):
+            self.advance()
+            named.append(("at", self.time_of_day()))
+        fname = f"every {span.line}:{span.col}"
+        fn = A.FnDef(span, fname, span, [], None, self.block())
+        self.extra.append(A.ExprStmt(span, call(span, "__every", [period, A.Name(span, fname)], named)))
+        return fn
+
+    def time_of_day(self) -> A.Expr:
+        """HH:MM, two digits each, as one text."""
+        hour, colon, minute = self.peek(), self.peek(1), self.peek(2)
+        written = source_text(hour.span.to(minute.span)) if hour.kind == "INT" and minute.kind == "INT" else ""
+        if not (colon.is_op(":") and len(written) == 5 and written[2] == ":" and (written[:2] + written[3:]).isdigit()
+                and int(written[:2]) < 24 and int(written[3:]) < 60):
+            raise NexoError("every_at", hour.span)
+        self.advance()
+        self.advance()
+        self.advance()
+        return text(hour.span.to(minute.span), written)
 
     def stream_when(self, tok: Token, source: A.Call, alias) -> A.Stmt:
         """when kafka("orders") as msg[, key: msg.id]: body (section 19), as a

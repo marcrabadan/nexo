@@ -126,8 +126,15 @@ examples/         real programs; NAME.expected (and NAME.stdin) checked by
   events/         streams and flags, run with `nexo test` (tests/test_examples.py)
   observatory/    an internet observatory: site.nexo serves a website from
                   site/ (D206) and its API; survey.nexo is the module that
-                  surveys a domain (DNS, routes, routers, outages); run with
-                  `nexo test` on written answers (tests/test_examples.py)
+                  surveys a domain (DNS, routes, routers, outages) and keeps
+                  each survey whole, to go back to; whatif.nexo cuts a
+                  submarine cable on paper; live.nexo reads RIS Live, which
+                  site.nexo hears with `when websocket(...)` (D207);
+                  brief.nexo is what the analyst, an agent of nexo.ai in
+                  site.nexo, reads of a survey; `every 10m:` surveys again
+                  what is older than the hours the page chose and
+                  `notify` tells a new critical alert; run with `nexo test` on
+                  written answers (tests/test_examples.py)
 editors/vscode/   the VS Code extension (npm install && npm test)
 docs/decisions.md every ambiguity found and the choice made
 docs/guarantees.md the state of each guarantee of the specification (phase 6)
@@ -311,7 +318,20 @@ runtime is u64 on every target. The playground runs phase 0 on Pyodide.
 tests/test_playground.py checks both (skipped without node, Pyodide or
 target/web).
 
-Excluded (do not implement yet): ml, ui, notify, the registry service, every/lifecycle, canary and blue/green releases, chaos,
+Scheduled tasks (D208): `every 6h:` and `every monday at 08:00:` are
+turned by both parsers into a function and `__every(...)`; a program
+with tasks runs them next to its servers and streams until it is
+stopped (nexo/stdlib/schedule.py, compiler/runtime/src/schedule.rs;
+tests/test_schedule.py). Under `nexo test` none runs.
+
+nexo.notify (D209): `send_email`, `slack` and `notify` (an address gets
+a mail, a `#channel` a message), always available; settings in the
+`[notify]` table of nexo.toml; SMTP spoken by both phases
+(nexo/stdlib/notify.py, compiler/runtime/src/notify.rs); under `nexo
+test` each message is a line of the output. Tests in tests/test_notify.py
+on tests/smtp_server.py.
+
+Excluded (do not implement yet): ml, ui, the registry service, lifecycle, canary and blue/green releases, chaos,
 vault and cloud secret managers, use rust/wasm, YAML/XML/Parquet (D89,
 D112, D113).
 

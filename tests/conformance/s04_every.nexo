@@ -1,0 +1,23 @@
+# section 4: `every` is a scheduled task; under `nexo test` no time passes,
+# so its block does not run and a test calls what the block calls (D208)
+var built = 0
+
+fn build_report() -> str:
+    built += 1
+    return "report {built}"
+
+every monday at 08:00:
+    print(build_report())
+
+every day at 23:59:
+    print(build_report())
+
+every 6h:
+    print(build_report())
+
+every 30 days:
+    print(build_report())
+
+test "the report a task builds":
+    assert built == 0
+    print(build_report())

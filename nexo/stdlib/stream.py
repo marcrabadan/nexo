@@ -718,6 +718,7 @@ def listen_forever(interp, program: str) -> None:
         from ..cli import report
         report(exc)
         raise SystemExit(1)
+    down = []  # the streams whose broker does not answer now
     try:
         while True:
             idle = True
@@ -727,10 +728,15 @@ def listen_forever(interp, program: str) -> None:
                     batches = [(p, b.poll(call, s, p, read[(s, p)])) for p in range(counts[s])]
                 except (NexoFailure, NexoError) as exc:
                     # a broker that cannot be reached now: tried again
-                    from ..cli import report
-                    report(exc)
+                    # every second, and said once (D207)
+                    if s not in down:
+                        down.append(s)
+                        from ..cli import report
+                        report(exc)
                     _time.sleep(1)
                     continue
+                if s in down:
+                    down.remove(s)
                 batches = [(p, ms) for p, ms in batches if ms]
                 if not batches:
                     continue

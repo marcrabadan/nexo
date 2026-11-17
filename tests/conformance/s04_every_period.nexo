@@ -1,0 +1,4 @@
+# every takes a duration or a day (section 4, D208)
+print("before")
+every 5:
+    print("report")

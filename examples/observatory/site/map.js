@@ -1,5 +1,10 @@
 /* The page of the internet observatory: it asks its own server (site.nexo)
-   for the survey of the domain in the address and draws it. */
+   for the survey of the domain in the address and draws it. The survey
+   drawn can be an earlier one (the time machine), so render() draws on a
+   blank copy of the report each time; what belongs to now and not to the
+   survey shown (the live route changes, the analyst) is kept across. */
+const LIVE = { pulse: null, events: [], after: 0 };
+let VIEW = null;
 function render(WORLD, CABLES, LANDINGS, DATA) {
   const NS = "http://www.w3.org/2000/svg", STRONG = 20;
   const $ = id => document.getElementById(id);
@@ -82,7 +87,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     const land = hot.find(h => ends.some(e => Math.abs(e[0] - h.geometry.coordinates[0]) < .3 && Math.abs(e[1] - h.geometry.coordinates[1]) < .3));
     const p = el("path", { class: "cable" + (land ? " hit" : ""), d: lines.map(line).join("") });
     if (land) marked++;
-    cableList.push({ name: f.properties.name, ends, node: p });
+    cableList.push({ name: f.properties.name, ends, node: p, lines: lines.map(l => l.map(q => [X(q[0]), Y(q[1])])) });
     hint(p, f.properties.name, land ? "lands at " + land.properties.name + ", where an outage signal is open" : "submarine cable, no outage signal at its landings");
     gCable.append(p);
   }
@@ -173,12 +178,23 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     gFac.append(d);
   }
   map.append(gFac);
-  map.append(gBgp, gRouters, gTrace);
+  /* a route change heard live: a ring that grows from the collector that saw it */
+  const gLive = el("g");
+  map.append(gBgp, gRouters, gTrace, gLive);
+  LIVE.pulse = e => {
+    const c = (route.collectors || []).find(c => c.lat != null && String(c.name).toLowerCase() === e.collector);
+    const x = c ? X(c.lon) : target ? target.x : null, y = c ? Y(c.lat) : target ? target.y : null;
+    if (x == null) return;
+    const ring = el("circle", { class: "pulse " + e.level, cx: x, cy: y, r: 3 });
+    ring.addEventListener("animationend", () => ring.remove());
+    gLive.append(ring);
+  };
   for (const [id, g] of [["l-cables", gCable], ["l-routers", gRouters], ["l-bgp", gBgp], ["l-fac", gFac]]) $(id).onchange = e => { g.style.display = e.target.checked ? "" : "none"; };
 
   /* zoom and pan on the viewBox */
-  const HOME = [0, 14, 1000, 400]; let view = HOME.slice();
-  const show = () => map.setAttribute("viewBox", view.join(" "));
+  const HOME = [0, 14, 1000, 400]; let view = VIEW || HOME.slice();
+  const show = () => { VIEW = view; map.setAttribute("viewBox", view.join(" ")); };
+  show();
   function zoom(f, cx, cy) {
     const w = Math.min(1000, Math.max(60, view[2] * f)), h = w * .4;
     cx = cx ?? view[0] + view[2] / 2; cy = cy ?? view[1] + view[3] / 2;
@@ -193,7 +209,58 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   map.addEventListener("pointermove", e => { if (!drag) return; const b = map.getBoundingClientRect();
     view[0] = Math.max(0, Math.min(1000 - view[2], drag[2] - (e.clientX - drag[0]) / b.width * view[2]));
     view[1] = Math.max(0, Math.min(500 - view[3], drag[3] - (e.clientY - drag[1]) / b.height * view[3])); show(); });
-  map.addEventListener("pointerup", () => { drag = null; });
+  map.addEventListener("pointerup", e => {
+    const still = drag && Math.hypot(e.clientX - drag[0], e.clientY - drag[1]) < 4; drag = null;
+    if (!still) return;
+    /* a click, not a drag: the cable nearest to it, when one is within a few pixels, is cut on paper */
+    const b = map.getBoundingClientRect(), px = view[0] + (e.clientX - b.left) / b.width * view[2], py = view[1] + (e.clientY - b.top) / b.height * view[3];
+    let best = null, least = 7 * view[2] / b.width;
+    for (const c of cableList) for (const l of c.lines) for (let i = 1; i < l.length; i++) {
+      const ax = l[i - 1][0], ay = l[i - 1][1], dx = l[i][0] - ax, dy = l[i][1] - ay;
+      if (Math.abs(dx) > 500) continue;
+      const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy || 1))), d = Math.hypot(px - ax - t * dx, py - ay - t * dy);
+      if (d < least) { least = d; best = c; }
+    }
+    if (best) cut(best.name);
+  });
+
+  /* what if a cable were cut: the server reads the last survey against the map (whatif.nexo) */
+  const mend = () => { for (const c of cableList) c.node.classList.remove("cut", "spare"); $("cut").replaceChildren(); $("cut-mend").hidden = true; $("cut-name").value = ""; };
+  async function cut(name) {
+    mend(); $("cut-name").value = name;
+    $("cut").append(el("p", { class: "note", style: "margin-top:0" }, "Cutting " + name + " on paper…"));
+    let found;
+    try {
+      const r = await fetch("api/cut/" + encodeURIComponent(DATA.domain) + "?cable=" + encodeURIComponent(name));
+      if (!r.ok) throw new Error(r.status === 404 ? "this domain has no survey kept to cut it against" : r.status + " " + r.statusText);
+      found = await r.json();
+    } catch (err) { $("cut").replaceChildren(el("p", { class: "note no", style: "margin-top:0" }, "Not answered: " + err.message)); return; }
+    const out = [el("p", { style: "margin:0 0 10px" }, found.summary)];
+    if (found.known) {
+      $("cut-name").value = found.cable; $("cut-mend").hidden = false;
+      const lit = new Set([...found.lands, ...found.crossings].flatMap(x => x.names));
+      for (const c of cableList) { if (c.name === found.cable) c.node.classList.add("cut"); else if (lit.has(c.name)) c.node.classList.add("spare"); }
+      const cols = el("div", { class: "cols even" });
+      if (found.lands.length) {
+        const t = el("table", {}, el("tr", {}, el("th", {}, "lands in"), el("th", { class: "n" }, "other cables"), el("th", {}, "such as")));
+        for (const l of found.lands) t.append(el("tr", {}, el("td", { class: l.others ? "" : "no" }, l.country), el("td", { class: "n" + (l.others ? "" : " no") }, String(l.others)),
+          el("td", { class: "sub" }, l.names.join(", ") + (l.others > l.names.length ? " and " + (l.others - l.names.length) + " more" : "") || "none: it would be cut off the map")));
+        cols.append(el("div", { class: "scroll" }, t));
+      }
+      if (found.crossings.length) {
+        const t = el("table", {}, el("tr", {}, el("th", {}, "trace that may ride it"), el("th", {}, "crossing"), el("th", { class: "n" }, "other cables")));
+        for (const c of found.crossings) t.append(el("tr", {}, el("td", {}, c.probe), el("td", {}, c.from + " → " + c.to, el("div", { class: "sub" }, "about " + c.km.toLocaleString("en") + " km")),
+          el("td", { class: "n" + (c.others ? "" : " no") }, String(c.others), el("div", { class: "sub" }, c.names.slice(0, 3).join(", ")))));
+        cols.append(el("div", { class: "scroll" }, t));
+      }
+      if (cols.children.length) out.push(cols);
+      out.push(el("p", { class: "note" }, "The cable is dashed red on the map and the ones that could stand in for it are lit. Nobody publishes which cable a packet rides: a trace may ride a cable that lands within 700 km of both ends of a long jump between two routers named after their cities. So this is what could be lost, not what would be."));
+    }
+    $("cut").replaceChildren(...out);
+  }
+  for (const c of cableList.map(c => c.name).sort()) $("cut-names").append(el("option", { value: c }));
+  $("cut-form").addEventListener("submit", e => { e.preventDefault(); const name = $("cut-name").value.trim(); if (name) cut(name); });
+  $("cut-mend").addEventListener("click", mend);
 
   /* legend */
   const key = (shape, text) => el("span", {}, shape, text);
@@ -206,7 +273,8 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
     key(sw("pt col", "dot"), "BGP route collector"), key(sw("fac", "dot"), "building where the site's network meets others"),
     key(sw("cable cand", "l"), "cables a trace may ride (open a probe below)"),
     key(sw("cable", "l"), ((CABLES && CABLES.features) || []).length + " submarine cables"),
-    key(sw("cable hit", "l"), marked + " landing where routes or probes are down " + STRONG + "% or more"));
+    key(sw("cable hit", "l"), marked + " landing where routes or probes are down " + STRONG + "% or more"),
+    key(sw("cable cut", "l"), "a cable cut on paper (click one)"), key(sw("cable spare", "l"), "cables that could stand in for it"));
 
   /* a long list of names: the first twelve, and the rest behind a line to open */
   function some(names, sep) {
@@ -217,8 +285,8 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
 
   /* export: the browser prints the report, and its dialog saves it as a PDF. Every trace is opened for the paper and closed again after. */
   let closed = [];
-  window.addEventListener("beforeprint", () => { closed = [...document.querySelectorAll("details:not(.more):not([open])")]; for (const d of closed) d.open = true; });
-  window.addEventListener("afterprint", () => { for (const d of closed) d.open = false; closed = []; });
+  window.onbeforeprint = () => { closed = [...document.querySelectorAll("details:not(.more):not([open])")]; for (const d of closed) d.open = true; };
+  window.onafterprint = () => { for (const d of closed) d.open = false; closed = []; };
   $("export").addEventListener("click", () => {
     const title = document.title;
     document.title = "observatory-" + DATA.domain + "-" + String(DATA.time).slice(0, 10);
@@ -555,7 +623,7 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   })();
 
   const src = (t, u) => el("a", { href: u }, t);
-  $("foot").append("Sources, all asked when this page was made: DNS from Cloudflare's resolver over HTTPS; places, networks and routes from ", src("RIPEstat", "https://stat.ripe.net/"), "; router traces from ", src("RIPE Atlas", "https://atlas.ripe.net/"), "; exchange points from ", src("PeeringDB", "https://www.peeringdb.com/"), "; certificates from ", src("crt.sh", "https://crt.sh/"),
+  $("foot").append("Sources, all asked when this page was made: DNS from Cloudflare's resolver over HTTPS; places, networks and routes from ", src("RIPEstat", "https://stat.ripe.net/"), "; router traces from ", src("RIPE Atlas", "https://atlas.ripe.net/"), "; route changes as they happen from ", src("RIS Live", "https://ris-live.ripe.net/"), "; exchange points from ", src("PeeringDB", "https://www.peeringdb.com/"), "; certificates from ", src("crt.sh", "https://crt.sh/"),
     "; outage signals from ", src("IODA", "https://ioda.inetintel.cc.gatech.edu/"), " (Georgia Tech); cables from the ", src("Submarine Cable Map", "https://www.submarinecablemap.com/"),
     " (TeleGeography); coastlines from Natural Earth. A place is the city in a router's name where it has one; otherwise it is the address register's, usually exact to the country only.");
 }
@@ -601,11 +669,142 @@ function render(WORLD, CABLES, LANDINGS, DATA) {
   $("field").value = domain;
   if (!isDomain(domain)) { say("\"" + domain + "\" is not a domain name. Type one like example.com."); return; }
   say("Surveying " + domain + ": DNS, routes, routers, certificates, outages. A new survey takes one to two minutes; one made in the last quarter of an hour comes at once.", true);
-  try {
-    const world = await get("world.json"), cables = await get("api/cables"), landings = await get("api/landings");
-    const data = await get("api/trace/" + encodeURIComponent(domain) + (query.get("fresh") ? "?fresh=true" : ""));
-    say(""); $("report").hidden = false;
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const stamp = t => String(t).slice(0, 16).replace("T", " ") + " UTC";
+  const BLANK = $("report").cloneNode(true);
+  let world, cables, landings, latest;
+  /* draws a survey on a blank report; the analyst and the live changes are of now, so their boxes move across as they are */
+  function show(data) {
+    const stay = ["ask-box", "live-box"].map(id => $(id)), fresh = BLANK.cloneNode(true);
+    fresh.hidden = false; $("report").replaceWith(fresh);
+    for (const box of stay) $(box.id).replaceWith(box);
+    $("foot").replaceChildren();
     render(world, cables, landings, data);
+  }
+
+  /* the time machine: every survey kept whole, to go back to */
+  async function timeMachine() {
+    const points = await get("api/times/" + encodeURIComponent(domain)).catch(() => []);
+    if (!points || !points.length) return;
+    const range = $("t-range"), last = points.length - 1, seen = new Map([[last, latest]]);
+    let at = last, playing = null;
+    range.max = String(last); range.value = String(last);
+    for (const p of points) $("t-ticks").append(el("i", (p.route === "whole" ? "good" : p.route === "partly cut" ? "warn" : p.route === "cut" ? "bad" : "") + (p.alerts ? " hot" : "")));
+    const label = () => {
+      const p = points[at];
+      $("t-label").textContent = points.length === 1 ? "One survey kept so far, of " + stamp(p.at) + ". Each new survey adds a point to go back to; the last forty are kept."
+        : at === last ? "The latest of " + points.length + " surveys kept, of " + stamp(p.at) + ". Drag back to see the internet as it was."
+        : "Survey " + (at + 1) + " of " + points.length + ", of " + stamp(p.at) + ": everything below is as it was then" + (p.alerts ? ", with " + p.alerts + " critical " + (p.alerts === 1 ? "alert" : "alerts") : "") + ".";
+      $("time").classList.toggle("past", at !== last);
+      $("t-back").disabled = at === 0; $("t-next").disabled = at === last; $("t-play").disabled = points.length < 2;
+      [...$("t-ticks").children].forEach((tick, i) => tick.classList.toggle("on", i === at));
+    };
+    async function go(i) {
+      at = Math.max(0, Math.min(last, i)); range.value = String(at); label();
+      const want = at;
+      try {
+        if (!seen.has(want)) seen.set(want, await get("api/past/" + points[want].id));
+        if (want === at) show(seen.get(want));
+      } catch (e) { $("t-label").textContent = "That survey could not be read: " + e.message; }
+    }
+    const stop = () => { clearInterval(playing); playing = null; $("t-play").textContent = "Play"; };
+    range.addEventListener("input", () => { stop(); go(Number(range.value)); });
+    $("t-back").addEventListener("click", () => { stop(); go(at - 1); });
+    $("t-next").addEventListener("click", () => { stop(); go(at + 1); });
+    $("t-play").addEventListener("click", () => {
+      if (playing) { stop(); return; }
+      $("t-play").textContent = "Pause";
+      /* from the oldest when it is at the end; a step every two seconds */
+      go(at === last ? 0 : at + 1);
+      playing = setInterval(() => { if (at >= last) stop(); else go(at + 1); }, 2000);
+    });
+    $("time").hidden = false; label();
+    schedule();
+  }
+
+  /* how often the server surveys again on its own: chosen here, kept there */
+  async function schedule() {
+    const pick = $("t-every"), words = h => h === 0 ? "never" : h < 24 ? "every " + (h === 1 ? "hour" : h + " hours") : h === 24 ? "every day" : h === 168 ? "every week" : "every " + h / 24 + " days";
+    const show = now => {
+      pick.value = String(now.hours);
+      $("t-due").textContent = now.hours === 0 ? "Surveys are made only when someone asks for one."
+        : "The server looks every ten minutes for surveys older than that" + (now.due && now.due.length ? "; due now: " + now.due.join(", ") : "") + "." +
+          (now.notices ? " A new critical alert is told by mail or Slack." : "");
+    };
+    try {
+      const now = await get("api/schedule");
+      for (const h of now.choices) { const o = document.createElement("option"); o.value = String(h); o.textContent = words(h); pick.append(o); }
+      show(now);
+      pick.addEventListener("change", async () => {
+        try {
+          const r = await fetch("api/schedule", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ hours: Number(pick.value) }) });
+          if (!r.ok) throw new Error(r.status + " " + r.statusText);
+          show(await get("api/schedule"));
+        } catch (e) { $("t-due").textContent = "Not changed: " + e.message; }
+      });
+    } catch (e) { $("t-every").closest("label").hidden = true; }
+  }
+
+  /* live: the route changes heard for the prefix, asked for every few seconds while the page is seen */
+  function drawLive(info) {
+    const box = $("live"), events = LIVE.events, count = f => events.filter(f).length, others = count(e => e.level === "critical");
+    const head = !info.prefix ? info.note
+      : "Listening to RIS Live for " + info.prefix + " of AS" + info.origin + " and every route inside it." + (info.note ? " The feed cannot be asked now (" + info.note + "); it is tried again." : "");
+    const kids = [el("p", "live-head" + (info.prefix && !info.note ? " on" : ""), head)];
+    if (events.length) {
+      const some = (n, word) => n + " " + word + (n === 1 ? "" : "s");
+      kids.push(el("p", "sub", some(count(e => e.kind === "announced"), "announcement") + " and " + some(count(e => e.kind === "withdrawn"), "withdrawal") + " heard since " + stamp(new Date(events[0].at * 1000).toISOString()) +
+        (others ? "; " + others + " from another origin" : "") + "."));
+      const list = el("ul", "feed");
+      for (const e of events.slice(-40).reverse()) {
+        const li = el("li", e.level);
+        li.append(el("time", "", new Date(e.at * 1000).toISOString().slice(11, 19)), el("span", "", e.text), el("span", "mono sub", e.kind === "withdrawn" ? e.collector : e.collector + " · path " + e.path.split(" ").map(a => "AS" + a).join(" → ")));
+        list.append(li);
+      }
+      kids.push(list);
+    } else if (info.prefix) kids.push(el("p", "sub", "Nothing heard yet. A stable route is quiet for hours: a change shows here, and as a ring on the map at the collector that saw it, a second or two after it happens."));
+    kids.push(el("p", "note", "Each line is one BGP message a peer of RIPE's route collectors sent. An announcement that ends in another network than the survey's origin is marked: a hijack, or a hand-over."));
+    box.replaceChildren(...kids);
+  }
+  async function listenLive() {
+    if (document.visibilityState === "visible") try {
+      const info = await get("api/live/" + encodeURIComponent(domain) + "?after=" + LIVE.after);
+      for (const e of info.events) { LIVE.events.push(e); LIVE.after = Math.max(LIVE.after, e.id); if (LIVE.pulse && Date.now() / 1000 - e.at < 120) LIVE.pulse(e); }
+      LIVE.events = LIVE.events.slice(-200);
+      drawLive(info);
+    } catch (e) { /* the server is busy with a survey: the next turn asks again */ }
+    setTimeout(listenLive, 5000);
+  }
+
+  /* the analyst: a question about the domain, answered by the agent of site.nexo */
+  function analyst() {
+    const ask = async text => {
+      const out = $("answer"), button = $("ask-form").querySelector("button");
+      $("ask-text").value = text; button.disabled = true;
+      out.replaceChildren(el("p", "status busy", "The analyst is reading the survey of " + domain + "…"));
+      try {
+        const r = await fetch("api/ask/" + encodeURIComponent(domain), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+        if (!r.ok) throw new Error(r.status === 429 ? "too many questions in a minute; wait a little" : r.status === 404 ? "this domain has no survey kept here" : r.status + " " + r.statusText);
+        const said = await r.json();
+        if (said.error) throw new Error(said.error);
+        const kids = [el("p", "q", text)];
+        for (const part of said.answer.split(/\n\s*\n/)) if (part.trim()) kids.push(el("p", "a", part.trim()));
+        if (said.looked.length) kids.push(el("p", "sub", "Looked at: " + said.looked.join(", ") + "."));
+        out.replaceChildren(...kids);
+      } catch (e) { out.replaceChildren(el("p", "note no", "No answer: " + e.message)); }
+      button.disabled = false;
+    };
+    $("ask-form").addEventListener("submit", e => { e.preventDefault(); const text = $("ask-text").value.trim(); if (text) ask(text); });
+    for (const q of ["What should I fix first?", "Could someone hijack its route?", "Why would it be slow from another continent?", "What changed since the earlier runs?"]) {
+      const chip = el("button", "", q); chip.type = "button"; chip.addEventListener("click", () => ask(q)); $("ask-chips").append(chip);
+    }
+  }
+
+  try {
+    world = await get("world.json"); cables = await get("api/cables"); landings = await get("api/landings");
+    latest = await get("api/trace/" + encodeURIComponent(domain) + (query.get("fresh") ? "?fresh=true" : ""));
+    say(""); analyst(); show(latest);
+    timeMachine(); listenLive();
   } catch (e) {
     say("The survey of " + domain + " failed: " + e.message);
   }

@@ -1,0 +1,4 @@
+Error in s04_every_day.nexo, line 2:
+  every day:
+        ^^^
+every day needs the time of day it runs at. Write every day at 09:00:.

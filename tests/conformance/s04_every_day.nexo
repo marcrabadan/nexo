@@ -1,0 +1,3 @@
+# a day needs its time (section 4, D208)
+every day:
+    print("report")

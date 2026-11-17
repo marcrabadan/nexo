@@ -1,0 +1,3 @@
+# a duration takes no time of day (section 4, D208)
+every 6h at 08:00:
+    print("report")

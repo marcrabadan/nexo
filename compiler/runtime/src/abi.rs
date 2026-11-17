@@ -197,13 +197,31 @@ pub extern "C" fn nx_exit(code: i32) -> ! {
         if state::failing() != 0 { state::report_pending(); code = 1; }
         crate::sync::wait_all();
     }
+    // and its scheduled tasks run when their time comes (D208): on the
+    // main thread when the program has nothing else to wait for
+    let tasks = code == 0 && crate::schedule::scheduled() && !crate::stream::in_test_mode() && !crate::stream::memory_profile();
     if code == 0 && crate::stream::listening() && !crate::stream::in_test_mode() {
         let file = state::program().file.to_string();
-        if !crate::web::has_servers() {
+        if !crate::web::has_servers() && !tasks {
             crate::stream::listen_forever(&file);
         }
         crate::value::going_multi();
         std::thread::spawn(move || crate::stream::listen_forever(&file));
+    }
+    if tasks {
+        if !crate::web::has_servers() {
+            if !crate::schedule::run_forever() {
+                code = 1;
+            }
+        } else {
+            crate::value::going_multi();
+            std::thread::spawn(|| {
+                if !crate::schedule::run_forever() {
+                    state::flush();
+                    std::process::exit(1);
+                }
+            });
+        }
     }
     if code == 0 && !crate::web::serve_forever() {
         code = 1;

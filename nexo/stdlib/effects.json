@@ -149,6 +149,33 @@
         "mode": "dynamic"
       }
     ],
+    "send_email": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": null,
+        "keyword": null,
+        "mode": "dynamic"
+      }
+    ],
+    "slack": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": null,
+        "keyword": null,
+        "mode": "dynamic"
+      }
+    ],
+    "notify": [
+      {
+        "operation": "network.connect",
+        "capability": "net",
+        "argument": null,
+        "keyword": null,
+        "mode": "dynamic"
+      }
+    ],
     "run": [
       {
         "operation": "process.execute",
@@ -209,6 +236,7 @@
     "log",
     "mcp",
     "move_file",
+    "notify",
     "password",
     "plan",
     "print",
@@ -225,9 +253,11 @@
     "s3",
     "save",
     "secret",
+    "send_email",
     "servicebus",
     "set",
     "sign",
+    "slack",
     "split",
     "sqs",
     "str",

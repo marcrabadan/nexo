@@ -136,6 +136,8 @@ TYPE_WORDS = INT_WORDS | {"void", "float", "double", "const", "struct", "union",
 
 def tokens(text: str) -> list[str]:
     out = []
+    # what the preprocessor leaves for the compiler (#pragma) declares nothing
+    text = "\n".join(line for line in text.split("\n") if not line.lstrip().startswith("#"))
     toks = TOKEN.findall(text)
     i = 0
     while i < len(toks):

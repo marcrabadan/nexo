@@ -72,6 +72,15 @@ that database; the separate HIGH/CRITICAL exit-code gate passed. This is dated
 scanner evidence, not proof of vulnerability freedom. Package pins require
 deliberate maintenance if upstream repositories remove versions.
 
+On 2026-11-16 Alpine 3.24 no longer offered `zlib=1.3.2-r1`: its index had
+`zlib=1.4-r0` in its place, so the image could not be built. The pin moved to
+`1.4-r0`, a later version than the correction above; the other pins were still
+the ones the index offers. With the image built again, the CI scan (a newer
+database) found three HIGH findings in libxslt 1.1.43-r3 (CVE-2026-125350,
+CVE-2026-87636, CVE-2026-9947), fixed in `libxslt=1.1.43-r4`, which Alpine 3.24
+offers and the Dockerfile now pins as well. The image-scan gate of the CI job
+is the evidence for both pins.
+
 The optional BuildKit proxy-CA secret is read only during package installation;
 it is not copied into layers. No credentials or generated certificate keys are
 published. The exact local image ID, scanner checksum, database metadata, report

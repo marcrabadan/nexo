@@ -10,7 +10,8 @@ CONFORMANCE = Path(__file__).resolve().parent.parent / "conformance"
 SYNTAX_ERRORS = {"s03_else_without_var", "s24_tab", "s24_indent", "s06_sum_without_group",
                  "s09_policy_entry", "s09_policy_place", "s09_policy_twice",
                  "s10_protect_args", "s10_protect_return", "s10_single_place", "s10_action_parts",
-                 "s10_action_return", "s10_workflow_place", "s10_workflow_wait"}
+                 "s10_action_return", "s10_workflow_place", "s10_workflow_wait",
+                 "s04_every_at", "s04_every_day", "s04_every_hour"}
 
 
 def stmt(src):

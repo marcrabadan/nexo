@@ -1,0 +1,4 @@
+Error in s04_every_hour.nexo, line 2:
+  every day at 24:00:
+               ^^
+A time of day is written HH:MM, from 00:00 to 23:59. Write it with two digits each, as in every day at 09:00:.

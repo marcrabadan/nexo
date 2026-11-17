@@ -602,7 +602,7 @@ fn check_zone(fname: &str, z: V, span: u32) -> R<String> {
     Ok(s.to_string())
 }
 
-fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
@@ -614,6 +614,32 @@ pub fn clock(name: &str) -> Val {
     } else {
         native(t)
     }
+}
+
+/// The milliseconds of a duration, or none for anything else.
+pub fn duration_ms(v: V) -> Option<i64> {
+    let seconds = duration(v)?;
+    seconds.mul(&Dec::from_i64(1000)).to_i64()
+}
+
+/// The next time the clock of a zone shows a time of day (minutes after
+/// midnight), on any day (0) or on a day of the week (1 is Monday): the
+/// first one after a moment.
+pub fn next_at(after: i64, day: i64, minutes: i64, z: &str) -> i64 {
+    let today = Time { ms: after, zone: z.to_string() }.date().days;
+    for ahead in 0..9 {
+        let days = today + ahead;
+        if day != 0 && weekday(days) != day {
+            continue;
+        }
+        let (y, m, d) = civil_from_days(days);
+        if let Some(at) = wall_to_ms(y, m, d, minutes / 60, minutes % 60, 0, 0, z) {
+            if at > after {
+                return at;
+            }
+        }
+    }
+    after + 86_400_000
 }
 
 fn wall_to_ms(y: i64, m: i64, d: i64, h: i64, mi: i64, s: i64, ms: i64, z: &str) -> Option<i64> {
@@ -788,4 +814,28 @@ pub fn arith(op: Op, a: V, b: V, span: u32) -> R<Val> {
         return Ok(Val::new(Obj::Quantity(normalize(d), "s")));
     }
     Err(bad(op, a, b, span))
+}
+
+#[cfg(test)]
+mod schedule_tests {
+    use super::*;
+
+    fn ms(zone: &str, y: i64, m: i64, d: i64, h: i64, mi: i64) -> i64 {
+        wall_to_ms(y, m, d, h, mi, 0, 0, zone).unwrap()
+    }
+
+    /// 2026-11-16 is a Monday. The same cases are in tests/test_schedule.py.
+    #[test]
+    fn the_next_time_of_day() {
+        let noon = ms("UTC", 2026, 11, 16, 12, 0);
+        assert_eq!(next_at(noon, 0, 13 * 60, "UTC"), ms("UTC", 2026, 11, 16, 13, 0));
+        assert_eq!(next_at(noon, 0, 9 * 60, "UTC"), ms("UTC", 2026, 11, 17, 9, 0));
+        assert_eq!(next_at(noon, 0, 12 * 60, "UTC"), ms("UTC", 2026, 11, 17, 12, 0));
+        assert_eq!(next_at(noon, 1, 13 * 60, "UTC"), ms("UTC", 2026, 11, 16, 13, 0));
+        assert_eq!(next_at(noon, 1, 8 * 60, "UTC"), ms("UTC", 2026, 11, 23, 8, 0));
+        assert_eq!(next_at(noon, 7, 8 * 60, "UTC"), ms("UTC", 2026, 11, 22, 8, 0));
+        assert_eq!(next_at(noon, 0, 9 * 60, "Europe/Madrid"), ms("UTC", 2026, 11, 17, 8, 0));
+        let saturday = ms("UTC", 2027, 3, 27, 12, 0);
+        assert_eq!(next_at(saturday, 0, 9 * 60, "Europe/Madrid"), ms("UTC", 2027, 3, 28, 7, 0));
+    }
 }

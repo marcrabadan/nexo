@@ -12,6 +12,7 @@ import re
 import socket
 import ssl
 import struct
+import threading
 import time as _time
 import urllib.parse
 
@@ -172,24 +173,27 @@ class WebSocket:
     def __init__(self):
         self.socks: dict = {}
         self.counts: dict = {}
+        # a consumer reads while a server's handler sends (D207)
+        self.lock = threading.Lock()
 
     def host(self, stream) -> str:
         return urllib.parse.urlsplit(stream.where).hostname or "localhost"
 
     def run(self, call, stream, what):
         from .stream_net import broker_failure
-        try:
-            if stream.ident() not in self.socks:
-                self.socks[stream.ident()] = Socket(stream.where)
-            return what(self.socks[stream.ident()])
-        except WsError as exc:
-            old = self.socks.pop(stream.ident(), None)
-            if old is not None:
-                old.close()
-            raise broker_failure(call, stream, exc.reason)
+        with self.lock:
+            try:
+                if stream.ident() not in self.socks:
+                    self.socks[stream.ident()] = Socket(stream.where)
+                return what(self.socks[stream.ident()])
+            except WsError as exc:
+                old = self.socks.pop(stream.ident(), None)
+                if old is not None:
+                    old.close()
+                raise broker_failure(call, stream, exc.reason)
 
     def partitions(self, call, stream) -> int:
-        self.run(call, stream, lambda s: None)
+        # one, without asking: the first read connects (D207)
         return 1
 
     def start(self, call, stream, partition):

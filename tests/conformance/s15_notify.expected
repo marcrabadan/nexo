@@ -1,0 +1,13 @@
+email to ana@mail.com: Thank you for your purchase!
+email to ana@mail.com: Order 7
+slack #deploys: v1.2.0 is in production
+email to ana@mail.com: The route changed
+sent
+slack #network: The route changed
+AS64666 announces 198.51.100.0/24
+sent
+InvalidValue: "nobody" is neither an email address nor a #channel of Slack
+InvalidValue: "a b@mail.com" is neither an email address nor a #channel of Slack
+"not a channel" is not a channel of Slack
+✓ what a test would send
+1 test: 1 passed, 0 failed

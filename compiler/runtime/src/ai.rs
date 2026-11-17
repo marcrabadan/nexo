@@ -196,7 +196,7 @@ fn config_dir() -> PathBuf {
     }
 }
 
-fn toml_value(text: &str) -> Option<Json> {
+pub(crate) fn toml_value(text: &str) -> Option<Json> {
     let text = text.split(" #").next().unwrap_or("").trim();
     let j = crate::data::parse_json(text).ok()?;
     match &j {

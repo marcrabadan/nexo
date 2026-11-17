@@ -438,5 +438,4 @@ def exports() -> dict:
         "comment": Builtin("comment", b_comment),
         "audit": Builtin("audit", unavailable("audit")),
         "scan": Builtin("scan", unavailable("scan")),
-        "slack": Builtin("slack", unavailable("slack")),
     }

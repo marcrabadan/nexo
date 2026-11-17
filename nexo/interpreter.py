@@ -622,7 +622,7 @@ class Interpreter:
             for name, value in db_exports().items():
                 self.builtins.define(name, value)
             return
-        if s.lang in ("c", "python") or (s.lang is None and s.name in ("nexo.ai", "nexo.web", "nexo.stream", "nexo.infra", "nexo.ci")):
+        if s.lang in ("c", "python") or (s.lang is None and s.name in ("nexo.ai", "nexo.web", "nexo.stream", "nexo.infra", "nexo.ci", "nexo.notify")):
             return  # the statements that follow it bind the names (D90)
         name = f"{s.lang} {s.name}" if s.lang else s.name
         raise NexoError("not_supported", s.span, what=f'"use {name}"')

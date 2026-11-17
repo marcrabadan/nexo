@@ -6,11 +6,15 @@ messages a client sends.
 
     server = start(["hello", "world"])
     server.port, server.received
+
+`start(messages, port=n)` listens on a port chosen before (free_port()),
+for a client that is started first.
 """
 from __future__ import annotations
 
 import base64
 import hashlib
+import socket
 import socketserver
 import struct
 import threading
@@ -22,7 +26,14 @@ class Server:
         self.received: list = []
 
 
-def start(outgoing) -> Server:
+def free_port() -> int:
+    """A port nothing listens on now."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def start(outgoing, port: int = 0) -> Server:
     state = Server(outgoing)
 
     class Handler(socketserver.BaseRequestHandler):
@@ -81,7 +92,8 @@ def start(outgoing) -> Server:
             except (ConnectionError, OSError):
                 return
 
-    server = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Handler)
+    socketserver.ThreadingTCPServer.allow_reuse_address = True
+    server = socketserver.ThreadingTCPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     state.port = server.server_address[1]
     state.server = server

@@ -1,0 +1,23 @@
+# nexo.notify (section 15): under `nexo test` nothing is sent, each message
+# is a line of the output (D209)
+use nexo.notify
+
+fn warn(to: str) -> str:
+    try:
+        notify(to, "The route changed\nAS64666 announces 198.51.100.0/24")
+        return "sent"
+    else e:
+        return "{e.kind}: {e.message}"
+
+test "what a test would send":
+    send_email("ana@mail.com", "Thank you for your purchase!")
+    send_email("ana@mail.com", "Hello Ana,\nyour order is on its way.", subject: "Order   7")
+    slack("#deploys", "v1.2.0 is in production")
+    print(warn("ana@mail.com"))
+    print(warn("#network"))
+    print(warn("nobody"))
+    print(warn("a b@mail.com"))
+    try:
+        slack("not a channel", "x")
+    else e:
+        print(e.message)

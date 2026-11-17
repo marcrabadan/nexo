@@ -531,7 +531,7 @@ fn conv_int(v: V, span: u32) -> R<Val> {
 }
 
 /// An address with one @, a name before it and a domain with a dot after it.
-fn is_email(t: &str) -> bool {
+pub fn is_email(t: &str) -> bool {
     let Some((user, domain)) = t.split_once('@') else { return false };
     let bad = |c: char| c == '@' || c.is_whitespace();
     !user.is_empty()

@@ -192,7 +192,10 @@ def row_code(before: Piece | None, row: Row) -> str:
     for i, piece in enumerate(row.pieces):
         if i:
             prev = row.pieces[i - 2] if i >= 2 else before
-            parts.append(gap(prev, row.pieces[i - 1], piece, row.cfg))
+            # a time of day after `at`: 08:00 (D208)
+            clock = (i >= 3 and piece.tok.kind == "INT" and row.pieces[i - 1].tok.is_op(":")
+                     and row.pieces[i - 2].tok.kind == "INT" and row.pieces[i - 3].tok.is_kw("at"))
+            parts.append("" if clock else gap(prev, row.pieces[i - 1], piece, row.cfg))
         parts.append(piece.text)
     return "".join(parts)
 
