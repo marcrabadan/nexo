@@ -54,12 +54,12 @@ takes part.
 | SEN-107 | `server_side_request` | high | a `url=`, `redirect=`, `callback=` or alike points at this machine or at a cloud's metadata address (SSRF) |
 | SEN-108 | `jndi_injection` | high | the message has `${jndi:` (Log4Shell), also URL-encoded |
 | SEN-109 | `secret_in_request` | medium | the request carries `password=`, `token=`, `api_key=` or alike, an AWS access key or a signed token (JWT) |
-| SEN-201 | `brute_force` | high | an address reaches `max_failed_logins` failed logins in a file |
-| SEN-202 | `login_after_failures` | high | a login is accepted from an address that reached that limit |
-| SEN-203 | `enumeration` | medium | an address reaches `max_not_found` requests answered 404 in a file |
-| SEN-204 | `object_enumeration` | high | an address asks for `max_object_ids` different numbers or UUIDs on one route (`/api/orders/{id}`, `?doc_id={id}`) in a file |
+| SEN-201 | `brute_force` | high | an address reaches `max_failed_logins` failed logins within `count_window` |
+| SEN-202 | `login_after_failures` | high | a login is accepted from an address that reached that limit within `count_window` before it |
+| SEN-203 | `enumeration` | medium | an address reaches `max_not_found` requests answered 404 within `count_window` |
+| SEN-204 | `object_enumeration` | high | an address asks for `max_object_ids` different numbers or UUIDs on one route (`/api/orders/{id}`, `?doc_id={id}`) within `count_window` |
 | SEN-205 | `foreign_object` | high | a request with `user=N` is answered 2xx for `/users/M/...` (also accounts, customers, profiles, members) and M is not N |
-| SEN-206 | `login_from_many` | high | logins of one user fail from `max_login_sources` different addresses in a file; no single address is to blame, so none is proposed for blocking |
+| SEN-206 | `login_from_many` | high | logins of one user fail from `max_login_sources` different addresses within `count_window`; no single address is to blame, so none is proposed for blocking |
 | SEN-301 | `hidden_text` | medium | the line has invisible or direction-changing Unicode characters, or control characters such as terminal escapes |
 | SEN-302 | `oversized_line` | low | the line is longer than 4096 characters; it is not examined further |
 | SEN-303 | `malformed_line` | low | the line is not a log entry, or its address is not an IPv4 address |
@@ -97,6 +97,7 @@ read; a missing or wrong field stops the program.
 | `max_not_found` | 404 answers to one address before SEN-203 |
 | `max_object_ids` | different ids of one route asked by one address before SEN-204 |
 | `max_login_sources` | addresses from which the logins of one user fail before SEN-206 |
+| `count_window` | the window the five counted rules count within, such as `10m` or `1h` |
 | `incremental` | `true` to report only the lines added since the run before |
 | `alert_webhook` | an address to send the urgent addresses to, or `""` for none |
 | `alertmanager` | the address of Prometheus Alertmanager, or `""` for none |
@@ -113,8 +114,30 @@ with its reason.
 With `incremental`, each run writes to `state.json` how many lines of each
 file it read and the first line of each. The next run reads a file from
 where it was left when it begins the same, and whole when it does not or
-is shorter (it was rotated). Counts such as failed logins start again in
-each run, so an attack split between two runs can stay under a limit.
+is shorter (it was rotated). It also keeps the events of the last
+`count_window` (failed and accepted logins, 404s, objects asked for) and
+when each counted rule was last reported, so the counts go on from one
+run to the next: 3 failed logins in one run and 2 in the next are 5.
+
+### Counting in a window of time
+
+SEN-201 to SEN-204 and SEN-206 count events. Every log of a run, and the
+events `state.json` kept, are put in the order they happened and each
+event is counted with those of the same key in the `count_window` before
+it, whatever file it is in. A rule is reported when its count reaches
+the limit, and then not again for that key until a window has passed:
+a burst gives one finding, and an attack that goes on gives one for each
+window. To find a slower attack, widen the window: one failed login
+every 4 minutes never puts 5 in `10m`, but does in `1h`.
+
+The time is read from each line: ISO 8601 with its zone (`Z`, `+01:00`),
+the combined format (`02/Nov/2026:10:30:00 +0000`) and syslog
+(`Nov  2 12:01:04`). A syslog time has no year and no zone: it is taken
+as UTC, of this year, or of the year before for a month still to come.
+A line whose time cannot be read is counted at the time of the line
+before it in the same log. The events of a log source (Loki and the
+rest) are not kept between runs, since each run reads its whole window
+again.
 
 ### Alerts
 

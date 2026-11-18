@@ -23,6 +23,7 @@
     }
   ],
   "max_login_sources": 4,
+  "count_window": "10m",
   "incremental": false,
   "alert_webhook": "",
   "alertmanager": "",

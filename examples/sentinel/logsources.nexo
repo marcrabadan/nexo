@@ -84,7 +84,7 @@ fn graylog(entry: map, window: str, limit: int) -> list!:
     return reversed(lines)
 
 ## A window as seconds: 15m is 900.
-fn seconds_of(window: str) -> int!:
+pub fn seconds_of(window: str) -> int!:
     parts = window_parts.groups(window)
     if parts == none:
         fail("the window of a source is a number and s, m, h or d")

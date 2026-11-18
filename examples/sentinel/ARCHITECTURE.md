@@ -72,6 +72,16 @@ flowchart TD
 - Each program keeps what is its own: its settings type, its table of
   rules or causes, its decisions and its report.
 
+In `sentinel.nexo` detection has two stages. `scan_file` reads one log
+and gives the findings a line shows by itself (an injection, a hidden
+character) and **events**: a failed or accepted login, a 404, an object
+asked for, each with when it happened in seconds. `correlate` then puts
+every event of the run, and those of the last window kept in
+`state.json`, in the order they happened, and counts each with the
+others of its key in `count_window`. So a count does not depend on which
+file or which run an event came in, and the rules that count live in one
+function.
+
 Inside each program the steps are the same, and each is a function that
 can be tested alone:
 
@@ -171,6 +181,12 @@ a user that can read the logs and nothing more.
     `cloudwatch.nexo` has them instead, can only write under `logs/`,
     and hands over a file.
 
+12. **Count by time, not by file.** A limit such as "5 failed logins"
+    means nothing without a time. Counting in a window of time, across
+    logs and runs, is what lets an attack spread over files or runs be
+    found, and lets the same limit mean the same thing on a busy host and
+    a quiet one. Each rule reports once for each window so that a long
+    attack does not fill the report with copies.
 ## Operating it
 
 - **P1**: look now. Read the address's findings in order, confirm with the
@@ -185,10 +201,11 @@ a user that can read the logs and nothing more.
 
 ## Limits
 
-- With `incremental` a run reports only new lines, but counts (failed
-  logins, 404s, ids) start again in each run and are for each file, not
-  for a window of time: an attack split between runs or files can stay
-  under a limit.
+- Counts are kept between runs only with `incremental`. Without it, a
+  run counts across all its logs, but an attack split between two runs
+  can stay under a limit.
+- A syslog time has no zone and is taken as UTC; a host that logs in
+  local time shifts its events by its offset from UTC.
 - Addresses are joined up only for failed logins of one user (SEN-206);
   other attacks spread over many addresses are not.
 - `restarts.nexo` and `resources.nexo` have run against stand-ins that

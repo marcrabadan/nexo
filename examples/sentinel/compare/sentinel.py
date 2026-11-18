@@ -43,6 +43,11 @@ ACCEPTED_LOGIN = re.compile(r"(?i)login accepted|session opened")
 NOT_FOUND = re.compile(r" 404( |$)")
 STREAM_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,30}$")
 WINDOW = re.compile(r"^[0-9]{1,4}[smhd]$")
+ISO_TIME = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})[T ]([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]+)?(Z|([+-])([0-9]{2}):?([0-9]{2}))?")
+CLF_TIME = re.compile(r"^([0-9]{2})/([A-Z][a-z]{2})/([0-9]{4}):([0-9]{2}):([0-9]{2}):([0-9]{2}) ([+-])([0-9]{2})([0-9]{2})")
+SYSLOG_TIME = re.compile(r"^([A-Z][a-z]{2}) +([0-9]{1,2}) ([0-9]{2}):([0-9]{2}):([0-9]{2})")
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+SLOTS = 10000000
 STAMP = re.compile(r"[0-9A-Za-z][0-9A-Za-z:+/. -]{0,30}")
 SYSLOG_SSHD = re.compile(r"^(\S+ +[0-9]{1,2} [0-9:]{8}|[0-9]{4}-\S+) \S+ sshd(\[[0-9]+\])?: (Failed|Accepted) \S+ for (invalid user )?(\S+) from (\S+) port ")
 SYSLOG_LINE = re.compile(r"^(\S+ +[0-9]{1,2} [0-9:]{8}|[0-9]{4}-\S+) \S+ [^ :]+: ")
@@ -149,9 +154,56 @@ def foreign_object(message):
     return found.group(4), found.group(2)
 
 
-def scan_file(file, settings, skip, given=None):
-    found, failed, missing, number = [], {}, {}, 0
-    objects, foreign, targets, first = {}, [], {}, ""
+def seconds_of(window):
+    return int(window[:-1]) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[window[-1]]
+
+
+def days_from_civil(year, month, day):
+    y = year - 1 if month <= 2 else year
+    era = y // 400
+    yoe = y - era * 400
+    doy = (153 * ((month + 9) % 12) + 2) // 5 + day - 1
+    return era * 146097 + yoe * 365 + yoe // 4 - yoe // 100 + doy - 719468
+
+
+def seconds_at(year, month, day, hour, minute, second):
+    return days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second
+
+
+def month_of(name):
+    return MONTHS.index(name) + 1 if name in MONTHS else 0
+
+
+def epoch_of(text, today):
+    """Seconds since 1970 in UTC of a time as a log shows it; -1 when unreadable."""
+    iso = ISO_TIME.search(text)
+    if iso:
+        moment = seconds_at(*(int(iso.group(i)) for i in range(1, 7)))
+        if iso.group(9):
+            offset = int(iso.group(10)) * 3600 + int(iso.group(11)) * 60
+            moment += -offset if iso.group(9) == "+" else offset
+        return moment
+    clf = CLF_TIME.search(text)
+    if clf and month_of(clf.group(2)):
+        moment = seconds_at(int(clf.group(3)), month_of(clf.group(2)), int(clf.group(1)), int(clf.group(4)),
+                            int(clf.group(5)), int(clf.group(6)))
+        offset = int(clf.group(8)) * 3600 + int(clf.group(9)) * 60
+        return moment - offset if clf.group(7) == "+" else moment + offset
+    sys_time = SYSLOG_TIME.search(text)
+    if sys_time and month_of(sys_time.group(1)):
+        year = today.year - 1 if month_of(sys_time.group(1)) > today.month else today.year
+        return seconds_at(year, month_of(sys_time.group(1)), *(int(sys_time.group(i)) for i in range(2, 6)))
+    return -1
+
+
+def event(kind, key, value, at, time, file, line, source, detail):
+    return {"kind": kind, "key": key, "value": value, "at": at, "time": time, "file": file, "line": line,
+            "source": source, "detail": detail}
+
+
+def scan_file(file, skip, given=None):
+    found, events, foreign, first, number, last_at = [], [], [], "", 0, 0
+    today = datetime.now().date()
     for line in (given if given is not None else file_lines(file)):
         number += 1
         if number == 1:
@@ -163,39 +215,62 @@ def scan_file(file, settings, skip, given=None):
         if fields is None:
             continue
         source, message, time = fields
+        at = epoch_of(time, today)
+        if at < 0:
+            at = last_at
+        last_at = at
         if FAILED_LOGIN.search(message):
-            failed[source] = failed.get(source, 0) + 1
-            if failed[source] == settings["max_failed_logins"]:
-                found.append(finding("SEN-201", time, file, number, source, f"{failed[source]} failed logins"))
+            events.append(event("failed", source, "", at, time, file, number, source, ""))
             user = LOGIN_USER.search(message)
             if user:
-                origins = targets.setdefault(user.group(1), [])
-                if source not in origins:
-                    origins.append(source)
-                    if len(origins) == settings["max_login_sources"]:
-                        found.append(finding("SEN-206", time, file, number, "-",
-                                             f"user {shown(user.group(1))} failed to log in from {len(origins)} addresses"))
-        elif ACCEPTED_LOGIN.search(message) and failed.get(source, 0) >= settings["max_failed_logins"]:
-            found.append(finding("SEN-202", time, file, number, source,
-                                 f"accepted after {failed[source]} failed logins: {shown(message)}"))
+                events.append(event("failed_user", shown(user.group(1)), source, at, time, file, number, "-", ""))
+        elif ACCEPTED_LOGIN.search(message):
+            events.append(event("accepted", source, "", at, time, file, number, source, shown(message)))
         if NOT_FOUND.search(message):
-            missing[source] = missing.get(source, 0) + 1
-            if missing[source] == settings["max_not_found"]:
-                found.append(finding("SEN-203", time, file, number, source, f"{missing[source]} requests answered 404"))
+            events.append(event("missing", source, "", at, time, file, number, source, ""))
         asked = object_of(message)
         if asked:
-            ids = objects.setdefault(f"{source} {asked[0]}", [])
-            if asked[1] not in ids:
-                ids.append(asked[1])
-                if len(ids) == settings["max_object_ids"]:
-                    found.append(finding("SEN-204", time, file, number, source,
-                                         f"{len(ids)} different ids of {shown(asked[0])}"))
+            events.append(event("object", f"{source} {shown(asked[0])}", asked[1], at, time, file, number, source,
+                                shown(asked[0])))
         other = foreign_object(message)
         if other and other not in foreign:
             foreign.append(other)
             found.append(finding("SEN-205", time, file, number, source,
                                  f"user {other[0]} was answered an object of user {other[1]}: {shown(message)}"))
-    return number, found, first
+    return number, found, first, events
+
+
+def correlate(events, told, settings, window):
+    """Findings of the counted rules, as (rank, finding), and when each rule was last reported for a key."""
+    w, found, told, times, values = settings["count_window"], [], dict(told), {}, {}
+    for e in sorted(events, key=lambda e: e["pos"]):
+        at, kind, rule, detail = e["at"], e["kind"], "", ""
+        if kind in ("failed", "missing"):
+            name = f'{kind} {e["key"]}'
+            kept = times[name] = [t for t in times.get(name, []) if t >= at - window] + [at]
+            if kind == "failed" and len(kept) >= settings["max_failed_logins"]:
+                rule, detail = "SEN-201", f"{len(kept)} failed logins in {w}"
+            if kind == "missing" and len(kept) >= settings["max_not_found"]:
+                rule, detail = "SEN-203", f"{len(kept)} requests answered 404 in {w}"
+        elif kind == "accepted":
+            failures = [t for t in times.get(f'failed {e["key"]}', []) if t >= at - window]
+            if len(failures) >= settings["max_failed_logins"]:
+                rule, detail = "SEN-202", f'accepted after {len(failures)} failed logins in {w}: {e["detail"]}'
+        else:
+            name = f'{kind} {e["key"]}'
+            kept = {value: t for value, t in values.get(name, {}).items() if t >= at - window}
+            kept[e["value"]] = at
+            values[name] = kept
+            if kind == "failed_user" and len(kept) >= settings["max_login_sources"]:
+                rule, detail = "SEN-206", f'user {e["key"]} failed to log in from {len(kept)} addresses in {w}'
+            if kind == "object" and len(kept) >= settings["max_object_ids"]:
+                rule, detail = "SEN-204", f'{len(kept)} different ids of {e["detail"]} in {w}'
+        if rule and e["fresh"]:
+            key = f'{rule} {e["key"]}'
+            if key not in told or at >= told[key] + window:
+                told[key] = at
+                found.append((e["rank"], finding(rule, e["time"], e["file"], e["line"], e["source"], detail)))
+    return found, told
 
 
 def file_lines(file):
@@ -319,42 +394,57 @@ def first_line(file):
 
 
 def scan(settings, state):
-    read_files, lines, new_lines, skipped, findings, following = 0, 0, 0, [], [], {}
+    window = seconds_of(settings["count_window"])
+    files = state.get("files", state)
+    read_files, lines, new_lines, skipped, following, events, scanned = 0, 0, 0, [], {}, [], []
+    for old in state.get("events", []):
+        events.append({**old, "fresh": False, "rank": 0, "pos": old["at"] * SLOTS + len(events)})
     for file in settings["logs"]:
         if not inside_logs(file):
             skipped.append((shown(file), "outside logs/"))
             continue
         try:
             skip = 0
-            before = state.get(file)
+            before = files.get(file)
             if settings["incremental"] and before is not None and first_line(file) == before["first"]:
                 skip = before["lines"]
-            number, found, first = scan_file(file, settings, skip)
-            if number < skip:
+            result = scan_file(file, skip)
+            if result[0] < skip:
                 skip = 0
-                number, found, first = scan_file(file, settings, 0)
+                result = scan_file(file, 0)
         except UnicodeDecodeError:
             skipped.append((file, f'Invalid data: the file "{file}" is not UTF-8'))
         except FileNotFoundError:
             skipped.append((file, f'File "{file}" not found'))
         else:
             read_files += 1
-            lines += number
-            new_lines += number - skip
-            following[file] = {"lines": number, "first": first}
-            findings += found
+            lines += result[0]
+            new_lines += result[0] - skip
+            following[file] = {"lines": result[0], "first": result[2]}
+            scanned.append(result)
     for name, entry in remote_sources(settings):
         try:
-            number, found, first = scan_file(name, settings, 0, lines_of(entry, settings["source_window"],
-                                                                         settings["source_lines"]))
+            result = scan_file(name, 0, lines_of(entry, settings["source_window"], settings["source_lines"]))
         except Exception as e:
             skipped.append((name, str(e)))
         else:
             read_files += 1
-            lines += number
-            new_lines += number
-            findings += found
-    return read_files, lines, new_lines, skipped, findings, following
+            lines += result[0]
+            new_lines += result[0]
+            scanned.append(result)
+    ranked = []
+    for position, result in enumerate(scanned, 1):
+        ranked += [(position * SLOTS + f["line"], f) for f in result[1]]
+        for e in result[3]:
+            events.append({**e, "fresh": True, "rank": position * SLOTS + e["line"], "pos": e["at"] * SLOTS + len(events)})
+    counted, told = correlate(events, state.get("reported", {}), settings, window)
+    ranked += counted
+    newest = max([0] + [e["at"] for e in events])
+    kept = [event(e["kind"], e["key"], e["value"], e["at"], e["time"], e["file"], e["line"], e["source"], e["detail"])
+            for e in events if e["at"] >= newest - window and e["file"].startswith("logs/")]
+    told = {key: at for key, at in told.items() if at >= newest - window}
+    findings = [f for _, f in sorted(ranked, key=lambda r: r[0])]
+    return read_files, lines, new_lines, skipped, findings, {"files": following, "events": kept, "reported": told}
 
 
 def count_of(findings, severity):
@@ -521,6 +611,8 @@ def main():
     with open("sentinel.json", encoding="utf-8") as f:
         settings = json.load(f)
     check_suppress(settings["suppress"])
+    if WINDOW.search(settings["count_window"]) is None:
+        raise ValueError("count_window must be a number and s, m, h or d, such as 10m")
     if settings["sources"] and WINDOW.search(settings["source_window"]) is None:
         raise ValueError("source_window must be a number and s, m, h or d, such as 15m")
     if not 1 <= settings["source_lines"] <= 1000:
