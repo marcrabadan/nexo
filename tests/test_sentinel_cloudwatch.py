@@ -18,7 +18,6 @@ SENTINEL = ROOT / "examples" / "sentinel"
 NGINX = (SENTINEL / "logs" / "nginx.log").read_text(encoding="utf-8").splitlines()
 KEYS = {"AWS_ACCESS_KEY_ID": "AKIDEXAMPLE", "AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
         "AWS_SESSION_TOKEN": ""}
-START = int(time.time() * 1000) - 60000
 
 
 def signature_of(handler, body, secret):
@@ -41,6 +40,7 @@ def signature_of(handler, body, secret):
 class Aws(BaseHTTPRequestHandler):
     seen: list = []
     signed: list = []
+    start = 0  # when the first event happened, set by each test: a minute before it starts
 
     def log_message(self, *a):
         pass
@@ -61,8 +61,8 @@ class Aws(BaseHTTPRequestHandler):
         asked = json.loads(body)
         Aws.seen.append((self.headers["X-Amz-Target"], asked))
         Aws.signed.append((names, scope, self.headers.get("X-Amz-Security-Token")))
-        events = [{"timestamp": START + i, "message": line + "\n", "logStreamName": "web/1"}
-                  for i, line in enumerate(NGINX) if START + i >= asked["startTime"]]
+        events = [{"timestamp": Aws.start + i, "message": line + "\n", "logStreamName": "web/1"}
+                  for i, line in enumerate(NGINX) if Aws.start + i >= asked["startTime"]]
         offset = int(asked.get("nextToken", 0))
         answer = {"events": events[offset:offset + 4]}
         if offset + 4 < len(events):
@@ -82,6 +82,7 @@ def server():
 def work(tmp_path, server):
     Aws.seen.clear()
     Aws.signed.clear()
+    Aws.start = int(time.time() * 1000) - 60000
     folder = tmp_path / "sentinel"
     shutil.copytree(SENTINEL, folder)
     configure(folder, endpoint=server)
@@ -114,10 +115,10 @@ def test_events_become_a_file_sentinel_scans(phase, work, server):
     names, (day, region, service, moment), token = Aws.signed[0]
     assert names == "content-type;host;x-amz-date;x-amz-target" and token is None
     assert (region, service) == ("eu-west-1", "logs") and moment.startswith(day) and len(moment) == 16
-    assert json.loads((work / "cloudwatch-state.json").read_text(encoding="utf-8")) == {"web": START + 8}
+    assert json.loads((work / "cloudwatch-state.json").read_text(encoding="utf-8")) == {"web": Aws.start + 8}
     # nothing new: the next run asks from the last event on and leaves the file as it is
     code, out = collect(phase[1], work)
-    assert "  web             0 new lines" in out and Aws.seen[-1][1]["startTime"] == START + 9
+    assert "  web             0 new lines" in out and Aws.seen[-1][1]["startTime"] == Aws.start + 9
     assert (work / "logs" / "cloudwatch-web.log").read_text(encoding="utf-8").splitlines() == NGINX
     # sentinel.nexo finds in that file what it finds in nginx.log
     settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
