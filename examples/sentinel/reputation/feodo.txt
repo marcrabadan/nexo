@@ -1,0 +1,6 @@
+# Feodo Tracker IP blocklist, in the format of abuse.ch: one address on each line.
+# This file is an example made of documentation addresses, not the real list:
+# download the real one from https://feodotracker.abuse.ch/downloads/ipblocklist.txt
+198.51.100.170
+this line is not an address
+198.51.100.250

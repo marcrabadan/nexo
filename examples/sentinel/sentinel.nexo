@@ -18,6 +18,7 @@ use runlock
 policy:
     allow read "sentinel.json"
     allow read "logs/"
+    allow read "reputation/"
     allow read "audit.json"
     allow write "audit.json"
     allow env "SENTINEL_AUDIT_KEY"
@@ -72,6 +73,7 @@ type Settings:
     source_lines: int
     trusted_proxies: list
     block_ttl: str
+    reputation: list
 
 ## A detection: `pattern` is looked for in the message of a log entry;
 ## the rules without one are counted or checked by scan_file.
@@ -557,10 +559,61 @@ fn priority_of(proposal: str, tactics: list, rules: list) -> str:
         return "P3"
     return "P4"
 
+## A priority one step more urgent, for an address on a reputation list.
+fn sooner(priority: str) -> str:
+    if priority == "P4":
+        return "P3"
+    if priority == "P3":
+        return "P2"
+    return "P1"
+
+## The reputation lists of sentinel.json, read once: [[name, ranges]]. A
+## list is a file of reputation/ with an address or range on each line;
+## what follows # or ; is a comment (as in Spamhaus DROP, FireHOL and the
+## lists of abuse.ch). A list that cannot be read is said and left out.
+fn reputation_lists(settings: Settings) -> list:
+    var out = []
+    for entry in settings.reputation:
+        name = entry["name"] ?? ""
+        file = entry["file"] ?? ""
+        if stream_name.find(name) == none or not file.starts_with("reputation/") or ".." in file:
+            print("Left out a reputation list without a plain name or outside reputation/: {shown(name)}")
+        else:
+            try:
+                var ranges = []
+                for line in read_lines(file):
+                    text = line.split("#")[0].split(";")[0].trim()
+                    if text != "":
+                        found = addresses.range_of(text)
+                        if len(found) > 0:
+                            ranges.add(found)
+                out.add([name, ranges])
+            else e:
+                print("Reputation list {name} not read: {shown(e.message)}")
+    return out
+
+## For each address with a finding, the reputation lists it is on.
+fn listed_of(findings: list, lists: list) -> map:
+    var out = {}
+    for f in findings:
+        if f.source != "-" and out[f.source] == none:
+            parsed = addresses.parse(f.source)
+            var names = []
+            if parsed != none:
+                for entry in lists:
+                    var hit = false
+                    for range in entry[1]:
+                        if not hit and addresses.in_parsed(parsed, range):
+                            hit = true
+                    if hit:
+                        names.add(entry[0])
+            out[f.source] = names
+    return out
+
 ## One row for each address: its priority, score, tactics and rules, the
 ## times of its first and last finding and what Sentinel proposes. The
 ## most urgent comes first and, among equals, the highest score.
-fn sources(findings: list, never: list) -> list:
+fn sources(findings: list, never: list, listed: map = {}) -> list:
     var seen = []
     for f in findings:
         if f.source != "-" and not (f.source in seen):
@@ -578,8 +631,12 @@ fn sources(findings: list, never: list) -> list:
                 if not (f.tactic in tactics):
                     tactics.add(f.tactic)
             proposal = proposal_of(own, addresses.in_any(source, never))
-            if priority_of(proposal, tactics, rules) == priority:
-                row = {"priority": priority, "address": source, "score": score_of(own), "high": count_of(own, "high"), "medium": count_of(own, "medium"), "low": count_of(own, "low"), "proposal": proposal, "tactics": tactics, "rules": rules, "first": own[0].time, "last": own[len(own) - 1].time}
+            lists = listed[source] ?? []
+            var own_priority = priority_of(proposal, tactics, rules)
+            if len(lists) > 0:
+                own_priority = sooner(own_priority)
+            if own_priority == priority:
+                row = {"priority": priority, "address": source, "listed": lists, "score": score_of(own), "high": count_of(own, "high"), "medium": count_of(own, "medium"), "low": count_of(own, "low"), "proposal": proposal, "tactics": tactics, "rules": rules, "first": own[0].time, "last": own[len(own) - 1].time}
                 var next = []
                 var placed = false
                 for other in group:
@@ -693,6 +750,11 @@ fn alert(webhook: str, text: str):
 fn yes(question: str) -> bool:
     return input("{question} (yes/no) ").trim().lower() == "yes"
 
+fn listed_text(lists: list) -> str:
+    if len(lists) == 0:
+        return "-"
+    return joined(lists)
+
 fn print_report(report: Report, findings: list, silenced: list, rows: list):
     print("NEXO SENTINEL - security report of the logs")
     print("")
@@ -717,9 +779,9 @@ fn print_report(report: Report, findings: list, silenced: list, rows: list):
     if len(rows) > 0:
         print("")
         print("SOURCES")
-        print("  {pad("PRI", 5)}{pad("ADDRESS", 17)}{pad("SCORE", 7)}{pad("PROPOSAL", 11)}{pad("FIRST", 28)}{pad("LAST", 28)}TACTICS")
+        print("  {pad("PRI", 5)}{pad("ADDRESS", 17)}{pad("SCORE", 7)}{pad("PROPOSAL", 11)}{pad("FIRST", 28)}{pad("LAST", 28)}{pad("LISTED", 14)}TACTICS")
         for row in rows:
-            print("  {pad(row["priority"], 5)}{pad(row["address"], 17)}{pad(str(row["score"]), 7)}{pad(row["proposal"], 11)}{pad(row["first"], 28)}{pad(row["last"], 28)}{joined(row["tactics"])}")
+            print("  {pad(row["priority"], 5)}{pad(row["address"], 17)}{pad(str(row["score"]), 7)}{pad(row["proposal"], 11)}{pad(row["first"], 28)}{pad(row["last"], 28)}{pad(listed_text(row["listed"]), 14)}{joined(row["tactics"])}")
     if len(silenced) > 0:
         print("")
         print("SUPPRESSED")
@@ -763,7 +825,7 @@ fn main():
             findings.add(f)
         else:
             silenced.add({"rule": f.rule, "file": f.file, "line": f.line, "source": f.source, "reason": rule["reason"]})
-    rows = sources(findings, settings.never_block + settings.trusted_proxies)
+    rows = sources(findings, settings.never_block + settings.trusted_proxies, listed_of(findings, reputation_lists(settings)))
     print_report(report, findings, silenced, rows)
     var events = ended + [["scan", "{report.files} logs, {report.lines} lines, {report.new_lines} new, {len(findings)} findings, {len(silenced)} suppressed"]]
     for reason in report.skipped:
@@ -916,7 +978,7 @@ fn failures(times: list, source: str) -> list:
     return out
 
 test "failures count within the window and are reported once for it":
-    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [], "24h")
+    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [], "24h", [])
     burst = correlate(failures([0, 60, 120, 180, 240, 300, 360], "203.0.113.9"), {}, s, 600)
     assert [entry["finding"].line for entry in burst[0]] == [5]
     assert burst[0][0]["finding"].evidence == "5 failed logins in 10m"
@@ -935,7 +997,7 @@ test "only new events give findings":
     var last = failures([4], "203.0.113.9")[0]
     last["pos"] = 4 * SLOTS + 9
     both.add(last)
-    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [], "24h")
+    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [], "24h", [])
     found = correlate(both, {}, s, 600)
     assert len(found[0]) == 1 and found[1]["SEN-201 203.0.113.9"] == 4
     again = correlate(both, {"SEN-201 203.0.113.9": 4}, s, 600)
@@ -968,6 +1030,14 @@ test "a log source is read from where the run before left it":
     more = lines + ["2026-11-02T09:00:05Z 192.0.2.1 web GET /c 200", "2026-11-02T09:01:00Z 192.0.2.1 web GET /d 200"]
     assert unseen(more, first[1], [])[0] == [more[3], more[4]]
     assert unseen([], first[1], [])[1] == first[1]
+
+test "an address on a reputation list comes sooner":
+    found = [finding("SEN-104", "-", "logs/a.log", 1, "203.0.113.5", ""), finding("SEN-104", "-", "logs/a.log", 2, "192.0.2.1", "")]
+    lists = [["drop", [addresses.range_of("203.0.113.0/26")]], ["v6", [addresses.range_of("2001:db8::/32")]]]
+    listed = listed_of(found, lists)
+    assert listed == {"203.0.113.5": ["drop"], "192.0.2.1": []}
+    rows = sources(found, [], listed)
+    assert [[row["address"], row["priority"], row["listed"]] for row in rows] == [["203.0.113.5", "P3", ["drop"]], ["192.0.2.1", "P4", []]]
 
 test "only logs/ is scanned":
     assert inside_logs("logs/app.log")

@@ -133,40 +133,53 @@ pub fn canonical(text: str) -> str?:
         position += 1
     return out
 
-## True when `address` is the address or inside the range (CIDR, such as
-## 10.0.0.0/8 or 2001:db8::/32) that `range` names.
-pub fn in_range(address: str, range: str) -> bool:
+## A range read once, to check many addresses against it: [bits of a
+## group, its groups, the prefix], or an empty list when it is not one.
+pub fn range_of(range: str) -> list:
     parts = range.split("/")
     if len(parts) > 2:
-        return false
-    a = parse(address)
+        return []
     base = parse(parts[0])
-    if a == none or base == none or a[0] != base[0]:
-        return false
-    bits = a[0]
-    total = bits * len(a[1])
+    if base == none:
+        return []
+    total = base[0] * len(base[1])
     var prefix = total
     if len(parts) == 2:
         try:
             prefix = number(parts[1])
         else e:
-            return false
+            return []
     if prefix < 0 or prefix > total:
+        return []
+    return [base[0], base[1], prefix]
+
+## True when a parsed address (parse) is inside a range read by range_of.
+pub fn in_parsed(a: list, range: list) -> bool:
+    if len(range) == 0 or a[0] != range[0]:
         return false
+    bits = a[0]
     var position = 0
-    var left = prefix
+    var left = range[2]
     while left > 0:
         if left >= bits:
-            if a[1][position] != base[1][position]:
+            if a[1][position] != range[1][position]:
                 return false
             left -= bits
         else:
             unit = 2 ** (bits - left)
-            if int(a[1][position] / unit) != int(base[1][position] / unit):
+            if int(a[1][position] / unit) != int(range[1][position] / unit):
                 return false
             left = 0
         position += 1
     return true
+
+## True when `address` is the address or inside the range (CIDR, such as
+## 10.0.0.0/8 or 2001:db8::/32) that `range` names.
+pub fn in_range(address: str, range: str) -> bool:
+    a = parse(address)
+    if a == none:
+        return false
+    return in_parsed(a, range_of(range))
 
 ## True when `address` is in any of the addresses and ranges.
 pub fn in_any(address: str, ranges: list) -> bool:

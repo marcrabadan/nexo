@@ -548,14 +548,51 @@ def priority_of(proposal, tactics, rules):
     return "P3" if proposal == "review" else "P4"
 
 
-def sources(findings, never):
+def sooner(priority):
+    return {"P4": "P3", "P3": "P2"}.get(priority, "P1")
+
+
+def reputation_lists(settings):
+    out = []
+    for entry in settings["reputation"]:
+        name, file = entry.get("name", ""), entry.get("file", "")
+        if STREAM_NAME.search(name) is None or not file.startswith("reputation/") or ".." in file:
+            print(f"Left out a reputation list without a plain name or outside reputation/: {shown(name)}")
+            continue
+        try:
+            nets = []
+            for line in file_lines(file):
+                text = line.split("#")[0].split(";")[0].strip()
+                if text and network(text) is not None:
+                    nets.append(network(text))
+            out.append((name, nets))
+        except FileNotFoundError:
+            print(f'Reputation list {name} not read: File "{file}" not found')
+    return out
+
+
+def listed_of(findings, lists):
+    out = {}
+    for f in findings:
+        if f["source"] != "-" and f["source"] not in out:
+            address = ipaddress.ip_address(f["source"])
+            out[f["source"]] = [name for name, nets in lists
+                                if any(address.version == net.version and address in net for net in nets)]
+    return out
+
+
+def sources(findings, never, listed=None):
+    listed = listed or {}
     rows = []
     for source in dict.fromkeys(f["source"] for f in findings if f["source"] != "-"):
         own = [f for f in findings if f["source"] == source]
         rules = list(dict.fromkeys(f["rule"] for f in own))
         tactics = list(dict.fromkeys(f["tactic"] for f in own))
         proposal = proposal_of(own, in_any(source, never))
-        rows.append({"priority": priority_of(proposal, tactics, rules), "address": source, "score": score_of(own),
+        lists = listed.get(source, [])
+        priority = priority_of(proposal, tactics, rules)
+        rows.append({"priority": sooner(priority) if lists else priority, "address": source, "listed": lists,
+                     "score": score_of(own),
                      "high": count_of(own, "high"), "medium": count_of(own, "medium"), "low": count_of(own, "low"),
                      "proposal": proposal, "tactics": tactics, "rules": rules, "first": own[0]["time"],
                      "last": own[-1]["time"]})
@@ -800,10 +837,10 @@ def print_report(files, lines, new_lines, skipped, findings, silenced, rows):
             print(f'  {f["severity"]:<10}{f["rule"]:<9}{f["name"]:<22}{sure:<6}{where:<23}{f["source"]:<17}{f["evidence"]}')
     if rows:
         print("\nSOURCES")
-        print(f'  {"PRI":<5}{"ADDRESS":<17}{"SCORE":<7}{"PROPOSAL":<11}{"FIRST":<28}{"LAST":<28}TACTICS')
+        print(f'  {"PRI":<5}{"ADDRESS":<17}{"SCORE":<7}{"PROPOSAL":<11}{"FIRST":<28}{"LAST":<28}{"LISTED":<14}TACTICS')
         for row in rows:
             print(f'  {row["priority"]:<5}{row["address"]:<17}{row["score"]:<7}{row["proposal"]:<11}{row["first"]:<28}'
-                  f'{row["last"]:<28}{", ".join(row["tactics"])}')
+                  f'{row["last"]:<28}{", ".join(row["listed"]) or "-":<14}{", ".join(row["tactics"])}')
     if silenced:
         print("\nSUPPRESSED")
         for entry in silenced:
@@ -849,7 +886,8 @@ def main():
         else:
             silenced.append({"rule": f["rule"], "file": f["file"], "line": f["line"], "source": f["source"],
                              "reason": rule["reason"]})
-    rows = sources(findings, settings["never_block"] + settings["trusted_proxies"])
+    rows = sources(findings, settings["never_block"] + settings["trusted_proxies"],
+                   listed_of(findings, reputation_lists(settings)))
     print_report(files, lines, new_lines, skipped, findings, silenced, rows)
     events = ended + [("scan", f"{files} logs, {lines} lines, {new_lines} new, {len(findings)} findings, {len(silenced)} suppressed")]
     events += [("skipped", f"{file}: {reason}") for file, reason in skipped]

@@ -105,6 +105,7 @@ read; a missing or wrong field stops the program.
 | `alertmanager` | the address of Prometheus Alertmanager, or `""` for none |
 | `sources` | logs to read from other systems besides the files (see Log sources) |
 | `source_window`, `source_lines` | how far back each source is read, such as `15m`, and the most lines of each (1 to 1000) |
+| `reputation` | lists of known bad addresses, each `{"name", "file"}` with the file in `reputation/`; see below |
 | `suppress` | findings to silence: each `{"rule", "source", "reason"}`, where `"*"` is any rule or any address (not both) |
 
 A suppressed finding is not scored and proposes nothing; it is listed
@@ -143,6 +144,26 @@ asks which (an address, or `all`) and then asks for a `yes`.
 ```
 ../../.venv/bin/nexo unblock.nexo
 ```
+
+### Reputation lists
+
+An address with a finding that is also on a reputation list comes one
+priority sooner (P4 to P3, P3 to P2, P2 to P1), and the `LISTED` column
+and `report.json` say which lists. A list never makes a finding by
+itself: an address that is listed and did nothing seen is not reported.
+A list is a file of `reputation/` with an address or range on each
+line, and what follows `#` or `;` is a comment, which reads the
+formats of:
+
+| List | Where |
+|---|---|
+| Spamhaus DROP | `https://www.spamhaus.org/drop/drop.txt` |
+| FireHOL level 1 | `https://iplists.firehol.org/files/firehol_level1.netset` |
+| abuse.ch Feodo Tracker | `https://feodotracker.abuse.ch/downloads/ipblocklist.txt` |
+
+Download them on a schedule of your own (each has its terms of use);
+Sentinel only reads the files. `drop.txt` and `feodo.txt` in this
+folder are examples made of documentation ranges, not the real lists.
 
 ### The audit, signed and archived
 
@@ -375,6 +396,7 @@ every address blocked or not.
 - `logs/`: the fixed corpus. `benign.log` (no findings, with look-alikes
   such as `/search?q=union+station+hotel` and `/docs/javascript-guide.html`), `attack.log`, `unicode.log`,
   `nginx.log` (the combined format), `proxy.log` (behind a load balancer, and IPv6), `auth.log` (syslog, with sshd), `oversized.log` and `binary.log` (not UTF-8, skipped).
+- `reputation/`: two example reputation lists.
 - `findings.json`: the findings the corpus must give, each `[file, line, rule]`.
 - `sentinel.expected`: the output when both questions are answered `no`.
 - `cloudwatch.nexo`, `cloudwatch.json`: the collector of CloudWatch Logs.

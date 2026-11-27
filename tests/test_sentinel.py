@@ -284,7 +284,7 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "22 tests: 22 passed, 0 failed" in out, out
+    assert proc.returncode == 0 and "23 tests: 23 passed, 0 failed" in out, out
     for name in ("sentinel.nexo", "safe.nexo", "logsources.nexo", "addresses.nexo"):
         before = (work / name).read_bytes()
         # no character a reader cannot see in the source of a tool that looks for them
@@ -428,11 +428,13 @@ def test_an_alert_names_the_urgent_addresses(phase, work, server):
     assert code == 0 and "Alert sent.\n" in out
     (path, body), = Outside.seen
     lines = body["text"].split("\n")
-    assert path == "/alert" and lines[0] == "Nexo Sentinel: 8 addresses need attention"
+    assert path == "/alert" and lines[0] == "Nexo Sentinel: 9 addresses need attention"
     assert lines[1] == "P1 198.51.100.140 block (Initial Access, Reconnaissance) SEN-102, SEN-105"
-    assert [line.split(" ")[0] for line in lines[1:]] == ["P1"] * 4 + ["P2"] * 4
+    assert [line.split(" ")[0] for line in lines[1:]] == ["P1"] * 4 + ["P2"] * 5
     # addresses and rules only: no line of a log, and no address that is only to review
-    assert "GET" not in body["text"] and not any(address in body["text"] for address in REVIEW)
+    # a suspicion asks for a review and is not urgent, unless a reputation list has its address
+    assert "GET" not in body["text"] and not any(a in body["text"] for a in REVIEW if a != "198.51.100.250")
+    assert "P2 198.51.100.250 review" in body["text"]
     assert ("alert", "sent") in audit(work)
     # an alert is not an approval
     assert blocks() == [] and audit(work)[-1] == ("approval", "no")
@@ -576,16 +578,16 @@ def test_a_syslog_file_of_sshd_is_read(phase, work):
 def test_alertmanager_gets_an_alert_for_each_urgent_address(phase, work, server):
     settings_of(work, alertmanager=server)
     code, out = sentinel(phase[1], work, "no\nno\n")
-    assert code == 0 and "Alertmanager told: 8 firing, 0 resolved.\n" in out
+    assert code == 0 and "Alertmanager told: 9 firing, 0 resolved.\n" in out
     (path, alerts), = Outside.seen
-    assert path == "/api/v2/alerts" and len(alerts) == 8
+    assert path == "/api/v2/alerts" and len(alerts) == 9
     assert all(re.fullmatch(STAMP, a["startsAt"]) and re.fullmatch(STAMP, a["endsAt"]) for a in alerts)
     assert untimed(alerts)[0] == {
         "labels": {"alertname": "SentinelAttack", "severity": "critical", "source": "nexo-sentinel",
                    "instance": "198.51.100.140", "priority": "P1", "proposal": "block"},
         "annotations": {"summary": "198.51.100.140: Initial Access, Reconnaissance (SEN-102, SEN-105)"}}
-    assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 4 + ["warning"] * 4
-    assert "GET" not in json.dumps(alerts) and ("alertmanager", "8 firing, 0 resolved") in audit(work)
+    assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 4 + ["warning"] * 5
+    assert "GET" not in json.dumps(alerts) and ("alertmanager", "9 firing, 0 resolved") in audit(work)
     assert blocks() == []
 
 
@@ -928,12 +930,12 @@ def test_alerts_that_no_longer_fire_are_resolved(phase, work, server):
     Outside.seen.clear()
     code, out = sentinel(phase[1], work, "no\nno\n")
     (_, again), = Outside.seen
-    assert "8 firing, 0 resolved" in out and [a["startsAt"] for a in again] == [a["startsAt"] for a in first]
+    assert "9 firing, 0 resolved" in out and [a["startsAt"] for a in again] == [a["startsAt"] for a in first]
     # only the benign log: every alert of before is sent with an end of now
     settings_of(work, logs=["logs/benign.log"])
     Outside.seen.clear()
     code, out = sentinel(phase[1], work, "no\nno\n")
-    assert "Alertmanager told: 0 firing, 8 resolved.\n" in out
+    assert "Alertmanager told: 0 firing, 9 resolved.\n" in out
     (_, gone), = Outside.seen
     assert untimed(gone) == untimed(first) and [a["startsAt"] for a in gone] == [a["startsAt"] for a in first]
     assert all(abs(seconds(a["endsAt"]) - time.time()) < 120 for a in gone)
@@ -953,7 +955,7 @@ def test_a_resolution_that_fails_is_sent_again(phase, work, server):
     settings_of(work, alertmanager=server)
     Outside.seen.clear()
     code, out = sentinel(phase[1], work, "no\nno\n")
-    assert "Alertmanager told: 0 firing, 8 resolved.\n" in out
+    assert "Alertmanager told: 0 firing, 9 resolved.\n" in out
 
 
 def check_audit(prefix, work):
@@ -1049,3 +1051,26 @@ def test_a_full_audit_is_archived_and_the_chain_goes_on(phase, work):
     code, out = check_audit(phase[1], work)
     assert code == 0, out
     assert f"{5000 + len(current)} records in 2 files; 1 from before the chain began.\nThe chain is whole.\n" in out
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_reputation_lists_bring_listed_addresses_sooner(phase, work):
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    rows = {r["address"]: (r["priority"], r["listed"]) for r in report["sources"]}
+    # 198.51.100.170 only enumerated (P4) but is on both lists; 203.0.113.9 was P1 already
+    assert rows["198.51.100.170"] == ("P3", ["drop", "feodo"])
+    assert rows["198.51.100.250"] == ("P2", ["feodo"]) and rows["203.0.113.9"] == ("P1", ["drop"])
+    assert rows["203.0.113.77"] == ("P1", [])
+    # an IPv6 range, a list that is not there and one outside reputation/
+    (work / "logs" / "v6.log").write_text(
+        "2026-11-02T09:00:00Z 2001:db8:bad::5 web GET /.env 404\n", encoding="utf-8")
+    settings_of(work, logs=["logs/v6.log"], reputation=[
+        {"name": "drop", "file": "reputation/drop.txt"}, {"name": "gone", "file": "reputation/gone.txt"},
+        {"name": "etc", "file": "/etc/hosts"}])
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert 'Reputation list gone not read: File "reputation/gone.txt" not found\n' in out
+    assert "Left out a reputation list without a plain name or outside reputation/: etc\n" in out
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert [(r["address"], r["priority"], r["listed"]) for r in report["sources"]] == [
+        ("2001:db8:bad::5", "P3", ["drop"])]

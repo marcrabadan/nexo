@@ -1,0 +1,6 @@
+; Spamhaus DROP List, in its own format: a range, then ; and its reference.
+; This file is an example made of documentation ranges (RFC 5737), not the real list:
+; download the real one from https://www.spamhaus.org/drop/drop.txt
+203.0.113.0/26 ; SBL000001
+198.51.100.160/28 ; SBL000002
+2001:db8:bad::/48 ; SBL000003
