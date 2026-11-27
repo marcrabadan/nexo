@@ -1125,3 +1125,71 @@ def test_findings_are_written_as_ocsf(phase, work):
     assert [(e["finding_info"]["analytic"]["uid"], e["status"]) for e in suppressed] == [("SEN-109", "Suppressed")]
     assert "9f8e7d6c5b4a3f2e" not in (work / "findings.ocsf.jsonl").read_text(encoding="utf-8")
     assert all(e["time"] > 1700000000000 for e in events)
+
+
+def rules_of(work):
+    return json.loads((work / "rules.json").read_text(encoding="utf-8"))
+
+
+def write_rules(work, rules):
+    (work / "rules.json").write_text(json.dumps(rules, indent=2), encoding="utf-8")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_team_changes_the_rules_in_rules_json(phase, work):
+    rules = [r for r in rules_of(work) if r["id"] != "SEN-106"]
+    rules.append({"id": "SEN-110", "name": "wordpress_login", "severity": "medium", "confidence": "high",
+                  "tactic": "Credential Access", "reference": "ATT&CK T1110.001", "pattern": "(?i)/wp-login\\.php",
+                  "action": "Nobody here runs WordPress: block the address."})
+    write_rules(work, rules)
+    (work / "logs" / "wp.log").write_text("2026-11-02T09:00:00Z 198.51.100.44 web POST /wp-login.php 200\n"
+                                          "2026-11-02T09:00:01Z 198.51.100.45 web GET / 200 \"sqlmap/1.8\"\n",
+                                          encoding="utf-8")
+    settings_of(work, logs=["logs/wp.log"], suppress=[])
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert [(f["rule"], f["name"], f["severity"], f["tactic"], f["source"]) for f in report["findings"]] == [
+        ("SEN-110", "wordpress_login", "medium", "Credential Access", "198.51.100.44")]
+    assert "  SEN-110  wordpress_login       Nobody here runs WordPress: block the address. (ATT&CK T1110.001)" in out
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+@pytest.mark.parametrize("change,message", [
+    ("twice", "rule SEN-101 is twice in rules.json"),
+    ("missing", "rule SEN-201 is missing from rules.json"),
+    ("counted", "rule SEN-202 is counted by the program and takes no pattern in rules.json"),
+    ("no_pattern", "rule SEN-101 of rules.json needs a pattern"),
+    ("id", "the id of a rule of rules.json is SEN- and three digits, not rule-1"),
+    ("severity", "severity"),
+])
+def test_wrong_rules_stop_before_anything(phase, work, change, message):
+    rules = rules_of(work)
+    if change == "twice":
+        rules.append(dict(rules[0]))
+    elif change == "missing":
+        rules = [r for r in rules if r["id"] != "SEN-201"]
+    elif change == "counted":
+        next(r for r in rules if r["id"] == "SEN-202")["pattern"] = "x"
+    elif change == "no_pattern":
+        rules[0]["pattern"] = ""
+    elif change == "id":
+        rules[0]["id"] = "rule-1"
+    else:
+        rules[0]["severity"] = "urgent"
+    write_rules(work, rules)
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert out.startswith("Sentinel stopped: ") and message in out.splitlines()[0], out
+    assert not (work / "report.json").exists() and Outside.seen == []
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_pattern_that_is_not_a_regular_expression_leaves_no_lock(phase, work):
+    rules = rules_of(work)
+    rules[0]["pattern"] = "union(select"
+    write_rules(work, rules)
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 1 and '"union(select" is not a valid regular expression' in out
+    rules[0]["pattern"] = "(?i)union(\\s|\\+|%20)+select"
+    write_rules(work, rules)
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and not out.startswith(BUSY)

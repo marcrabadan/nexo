@@ -40,8 +40,19 @@ Then it asks two questions. Anything but `yes` (an empty answer too) is a no.
 A log line is `time address service message`, or a line of nginx or Apache
 in the combined format (`address - user [time] "GET /path HTTP/1.1" status
 size "referer" "agent"`), which is read as the same message. The rules are fixed: regular
-expressions and counts, in the `RULES` table of the program. No model
-takes part.
+expressions and counts, in `rules.json`. No model takes part.
+
+`rules.json` is a list of rules, each with `id` (`SEN-` and three
+digits), `name`, `severity`, `confidence` (`high` when a match is the
+thing itself, `low` for a suspicion), `tactic` (of MITRE ATT&CK),
+`reference`, `pattern` and `action`. A rule with a `pattern` is looked
+for in the message of each line, so a team adds a detection by adding a
+rule there, changes one by editing it, and drops one by removing it.
+SEN-201 to SEN-206 and SEN-301 to SEN-303 are counted or checked by the
+program itself: they must be there and have an empty `pattern`, though
+their severity and action can be changed. A rules file that is not
+right, or a pattern that is not a regular expression (lookarounds and
+backreferences are not allowed), stops the run before it reads a log.
 
 | Rule | Name | Severity | A line is reported when |
 |---|---|---|---|
@@ -415,6 +426,7 @@ every address blocked or not.
   `nginx.log` (the combined format), `proxy.log` (behind a load balancer, and IPv6), `auth.log` (syslog, with sshd), `oversized.log` and `binary.log` (not UTF-8, skipped).
 - `reputation/`: two example reputation lists.
 - `ocsf.nexo`: findings as OCSF events.
+- `rules.json`: the rules.
 - `findings.json`: the findings the corpus must give, each `[file, line, rule]`.
 - `sentinel.expected`: the output when both questions are answered `no`.
 - `cloudwatch.nexo`, `cloudwatch.json`: the collector of CloudWatch Logs.

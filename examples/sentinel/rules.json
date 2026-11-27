@@ -1,0 +1,182 @@
+[
+  {
+    "id": "SEN-101",
+    "name": "sql_injection",
+    "severity": "high",
+    "confidence": "high",
+    "tactic": "Initial Access",
+    "reference": "CWE-89, ATT&CK T1190",
+    "pattern": "(?i)union(\\s|\\+|%20)+select|(\\s|\\+|%20)or(\\s|\\+|%20)+1=1|(%27|')(\\s|\\+|%20)*(--|;|%3b)",
+    "action": "Review the queries of the endpoint; use parameters, never text put together."
+  },
+  {
+    "id": "SEN-102",
+    "name": "command_injection",
+    "severity": "high",
+    "confidence": "high",
+    "tactic": "Initial Access",
+    "reference": "CWE-78, ATT&CK T1190",
+    "pattern": "(?i)(;|\\||%3b|%7c|&&|%26%26|\\$\\(|`)(\\s|\\+|%20)*(cat|wget|curl|nc|bash|sh|id|whoami|uname)((\\s|\\+|%20)|$|&|;)",
+    "action": "Check the host for commands run by the web service; never pass input to a shell."
+  },
+  {
+    "id": "SEN-103",
+    "name": "cross_site_scripting",
+    "severity": "medium",
+    "confidence": "high",
+    "tactic": "Initial Access",
+    "reference": "CWE-79",
+    "pattern": "(?i)(<|%3c)script|javascript:|on(error|load)(\\s|\\+|%20)*(=|%3d)",
+    "action": "Encode output in the page named; add a Content-Security-Policy."
+  },
+  {
+    "id": "SEN-104",
+    "name": "path_traversal",
+    "severity": "medium",
+    "confidence": "high",
+    "tactic": "Initial Access",
+    "reference": "CWE-22",
+    "pattern": "(?i)\\.\\./|\\.\\.\\\\|%2e%2e(/|%2f)|\\.\\.%2f",
+    "action": "Resolve file names inside one folder and refuse the rest."
+  },
+  {
+    "id": "SEN-105",
+    "name": "sensitive_file",
+    "severity": "medium",
+    "confidence": "high",
+    "tactic": "Reconnaissance",
+    "reference": "CWE-538",
+    "pattern": "(?i)/etc/(passwd|shadow)|/\\.env|/\\.git/|/\\.ssh/|/wp-config\\.php",
+    "action": "Make sure the file is not served; rotate any secret that was answered with 200."
+  },
+  {
+    "id": "SEN-106",
+    "name": "scanner",
+    "severity": "medium",
+    "confidence": "high",
+    "tactic": "Reconnaissance",
+    "reference": "ATT&CK T1595.002",
+    "pattern": "(?i)sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wpscan|acunetix|nuclei",
+    "action": "Expect more requests from this address; rate-limit it."
+  },
+  {
+    "id": "SEN-107",
+    "name": "server_side_request",
+    "severity": "high",
+    "confidence": "high",
+    "tactic": "Credential Access",
+    "reference": "CWE-918 (SSRF)",
+    "pattern": "(?i)(url|uri|dest|destination|redirect|next|target|callback|webhook)=(https?(:|%3a)(/|%2f)(/|%2f))?(169\\.254\\.169\\.254|localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|metadata\\.google\\.internal)",
+    "action": "Allow only the hosts the feature needs; never fetch an address a request gives."
+  },
+  {
+    "id": "SEN-108",
+    "name": "jndi_injection",
+    "severity": "high",
+    "confidence": "high",
+    "tactic": "Initial Access",
+    "reference": "CWE-917, CVE-2021-44228",
+    "pattern": "(?i)(\\$|%24)(\\{|%7b)jndi(:|%3a)",
+    "action": "Update Log4j and check the host for connections to the address named."
+  },
+  {
+    "id": "SEN-109",
+    "name": "secret_in_request",
+    "severity": "medium",
+    "confidence": "high",
+    "tactic": "Credential Access",
+    "reference": "CWE-598",
+    "pattern": "(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& \"]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\\.eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]+",
+    "action": "Rotate the secret: it is now in every log and proxy on the way; send secrets in a header or the body."
+  },
+  {
+    "id": "SEN-201",
+    "name": "brute_force",
+    "severity": "high",
+    "confidence": "high",
+    "tactic": "Credential Access",
+    "reference": "CWE-307, ATT&CK T1110",
+    "pattern": "",
+    "action": "Lock the accounts tried and require a second factor."
+  },
+  {
+    "id": "SEN-202",
+    "name": "login_after_failures",
+    "severity": "high",
+    "confidence": "high",
+    "tactic": "Initial Access",
+    "reference": "ATT&CK T1078",
+    "pattern": "",
+    "action": "Treat the account as compromised: end its sessions and reset its password."
+  },
+  {
+    "id": "SEN-203",
+    "name": "enumeration",
+    "severity": "medium",
+    "confidence": "high",
+    "tactic": "Reconnaissance",
+    "reference": "ATT&CK T1595.003",
+    "pattern": "",
+    "action": "Rate-limit requests that are answered 404."
+  },
+  {
+    "id": "SEN-204",
+    "name": "object_enumeration",
+    "severity": "high",
+    "confidence": "low",
+    "tactic": "Collection",
+    "reference": "CWE-639 (IDOR)",
+    "pattern": "",
+    "action": "Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed."
+  },
+  {
+    "id": "SEN-205",
+    "name": "foreign_object",
+    "severity": "high",
+    "confidence": "low",
+    "tactic": "Collection",
+    "reference": "CWE-639 (IDOR)",
+    "pattern": "",
+    "action": "Confirm the user may read that object; if not, the endpoint does not check the owner."
+  },
+  {
+    "id": "SEN-206",
+    "name": "login_from_many",
+    "severity": "high",
+    "confidence": "high",
+    "tactic": "Credential Access",
+    "reference": "ATT&CK T1110",
+    "pattern": "",
+    "action": "Lock the account and require a second factor; blocking one address does not stop it."
+  },
+  {
+    "id": "SEN-301",
+    "name": "hidden_text",
+    "severity": "medium",
+    "confidence": "high",
+    "tactic": "Defense Evasion",
+    "reference": "CWE-117, ATT&CK T1036.002",
+    "pattern": "",
+    "action": "Open the line with a tool that shows every character before trusting it."
+  },
+  {
+    "id": "SEN-302",
+    "name": "oversized_line",
+    "severity": "low",
+    "confidence": "high",
+    "tactic": "Impact",
+    "reference": "CWE-400",
+    "pattern": "",
+    "action": "Limit the length of a request at the proxy."
+  },
+  {
+    "id": "SEN-303",
+    "name": "malformed_line",
+    "severity": "low",
+    "confidence": "high",
+    "tactic": "Defense Evasion",
+    "reference": "CWE-117",
+    "pattern": "",
+    "action": "Check what writes this log; a broken line can hide an entry."
+  }
+]

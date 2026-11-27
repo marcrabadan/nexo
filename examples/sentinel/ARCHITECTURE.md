@@ -97,10 +97,12 @@ flowchart LR
     act --> audit[audit]
 ```
 
-Detections are data. A rule of `sentinel.nexo` is a row of `RULES` (id,
-name, severity, confidence, tactic, reference, pattern, action); a cause
-of `restarts.nexo` a row of `CAUSES`. Adding one that a pattern can
-express is one line and one line of the corpus.
+Detections are data. A rule of `sentinel.nexo` is an entry of
+`rules.json` (id, name, severity, confidence, tactic, reference,
+pattern, action), checked when the program starts; a cause of
+`restarts.nexo` is a row of `CAUSES`. Adding a rule that a pattern can
+express is an entry of that file, with no change to the program; add a
+line to the corpus and to `findings.json` to test it.
 
 ## Triage in sentinel.nexo
 

@@ -13,29 +13,11 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 MAX_LINE = 4096
-SPACE = r"(\s|\+|%20)"
 
-# id, name, severity, confidence, tactic, reference, pattern of the message (or ""), action
-RULES = [
-    ("SEN-101", "sql_injection", "high", "high", "Initial Access", "CWE-89, ATT&CK T1190", rf"(?i)union{SPACE}+select|{SPACE}or{SPACE}+1=1|(%27|'){SPACE}*(--|;|%3b)", "Review the queries of the endpoint; use parameters, never text put together."),
-    ("SEN-102", "command_injection", "high", "high", "Initial Access", "CWE-78, ATT&CK T1190", rf"(?i)(;|\||%3b|%7c|&&|%26%26|\$\(|`){SPACE}*(cat|wget|curl|nc|bash|sh|id|whoami|uname)({SPACE}|$|&|;)", "Check the host for commands run by the web service; never pass input to a shell."),
-    ("SEN-103", "cross_site_scripting", "medium", "high", "Initial Access", "CWE-79", rf"(?i)(<|%3c)script|javascript:|on(error|load){SPACE}*(=|%3d)", "Encode output in the page named; add a Content-Security-Policy."),
-    ("SEN-104", "path_traversal", "medium", "high", "Initial Access", "CWE-22", r"(?i)\.\./|\.\.\\|%2e%2e(/|%2f)|\.\.%2f", "Resolve file names inside one folder and refuse the rest."),
-    ("SEN-105", "sensitive_file", "medium", "high", "Reconnaissance", "CWE-538", r"(?i)/etc/(passwd|shadow)|/\.env|/\.git/|/\.ssh/|/wp-config\.php", "Make sure the file is not served; rotate any secret that was answered with 200."),
-    ("SEN-106", "scanner", "medium", "high", "Reconnaissance", "ATT&CK T1595.002", r"(?i)sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wpscan|acunetix|nuclei", "Expect more requests from this address; rate-limit it."),
-    ("SEN-107", "server_side_request", "high", "high", "Credential Access", "CWE-918 (SSRF)", r"(?i)(url|uri|dest|destination|redirect|next|target|callback|webhook)=(https?(:|%3a)(/|%2f)(/|%2f))?(169\.254\.169\.254|localhost|127\.0\.0\.1|0\.0\.0\.0|metadata\.google\.internal)", "Allow only the hosts the feature needs; never fetch an address a request gives."),
-    ("SEN-108", "jndi_injection", "high", "high", "Initial Access", "CWE-917, CVE-2021-44228", r"(?i)(\$|%24)(\{|%7b)jndi(:|%3a)", "Update Log4j and check the host for connections to the address named."),
-    ("SEN-109", "secret_in_request", "medium", "high", "Credential Access", "CWE-598", r"""(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+""", "Rotate the secret: it is now in every log and proxy on the way; send secrets in a header or the body."),
-    ("SEN-201", "brute_force", "high", "high", "Credential Access", "CWE-307, ATT&CK T1110", "", "Lock the accounts tried and require a second factor."),
-    ("SEN-202", "login_after_failures", "high", "high", "Initial Access", "ATT&CK T1078", "", "Treat the account as compromised: end its sessions and reset its password."),
-    ("SEN-203", "enumeration", "medium", "high", "Reconnaissance", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
-    ("SEN-204", "object_enumeration", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed."),
-    ("SEN-205", "foreign_object", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Confirm the user may read that object; if not, the endpoint does not check the owner."),
-    ("SEN-206", "login_from_many", "high", "high", "Credential Access", "ATT&CK T1110", "", "Lock the account and require a second factor; blocking one address does not stop it."),
-    ("SEN-301", "hidden_text", "medium", "high", "Defense Evasion", "CWE-117, ATT&CK T1036.002", "", "Open the line with a tool that shows every character before trusting it."),
-    ("SEN-302", "oversized_line", "low", "high", "Impact", "CWE-400", "", "Limit the length of a request at the proxy."),
-    ("SEN-303", "malformed_line", "low", "high", "Defense Evasion", "CWE-117", "", "Check what writes this log; a broken line can hide an entry."),
-]
+# id, name, severity, confidence, tactic, reference, pattern of the message (or ""), action: from rules.json
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "rules.json"), encoding="utf-8") as f:
+    RULES = [(r["id"], r["name"], r["severity"], r["confidence"], r["tactic"], r["reference"], r["pattern"], r["action"])
+             for r in json.load(f)]
 BY_ID = {rule[0]: rule for rule in RULES}
 PATTERNS = [(rule[0], re.compile(rule[6])) for rule in RULES if rule[6]]
 

@@ -18,6 +18,7 @@ use ocsf
 
 policy:
     allow read "sentinel.json"
+    allow read "rules.json"
     allow read "logs/"
     allow read "reputation/"
     allow read "audit.json"
@@ -114,28 +115,42 @@ type Report:
     state: map
 
 MAX_LINE = 4096
-SPACE = "(\\s|\\+|%20)"
+## The rules are data, in rules.json: the ones with a `pattern` are
+## looked for in each message, and a team can add, change or remove
+## them there. The ones without (REQUIRED_RULES) are counted or checked
+## by the program, so they must be there, with no pattern. A pattern that
+## is not a valid regular expression stops the program before it takes
+## its lock, with the pattern in the message.
+REQUIRED_RULES = ["SEN-201", "SEN-202", "SEN-203", "SEN-204", "SEN-205", "SEN-206", "SEN-301", "SEN-302", "SEN-303"]
+rule_id = regex("^SEN-[0-9]{{3}$")
 
-RULES = [
-    Rule("SEN-101", "sql_injection", "high", "high", "Initial Access", "CWE-89, ATT&CK T1190", "(?i)union{SPACE}+select|{SPACE}or{SPACE}+1=1|(%27|'){SPACE}*(--|;|%3b)", "Review the queries of the endpoint; use parameters, never text put together."),
-    Rule("SEN-102", "command_injection", "high", "high", "Initial Access", "CWE-78, ATT&CK T1190", "(?i)(;|\\||%3b|%7c|&&|%26%26|\\$\\(|`){SPACE}*(cat|wget|curl|nc|bash|sh|id|whoami|uname)({SPACE}|$|&|;)", "Check the host for commands run by the web service; never pass input to a shell."),
-    Rule("SEN-103", "cross_site_scripting", "medium", "high", "Initial Access", "CWE-79", "(?i)(<|%3c)script|javascript:|on(error|load){SPACE}*(=|%3d)", "Encode output in the page named; add a Content-Security-Policy."),
-    Rule("SEN-104", "path_traversal", "medium", "high", "Initial Access", "CWE-22", "(?i)\\.\\./|\\.\\.\\\\|%2e%2e(/|%2f)|\\.\\.%2f", "Resolve file names inside one folder and refuse the rest."),
-    Rule("SEN-105", "sensitive_file", "medium", "high", "Reconnaissance", "CWE-538", "(?i)/etc/(passwd|shadow)|/\\.env|/\\.git/|/\\.ssh/|/wp-config\\.php", "Make sure the file is not served; rotate any secret that was answered with 200."),
-    Rule("SEN-106", "scanner", "medium", "high", "Reconnaissance", "ATT&CK T1595.002", "(?i)sqlmap|nikto|nmap|masscan|dirbuster|gobuster|wpscan|acunetix|nuclei", "Expect more requests from this address; rate-limit it."),
-    Rule("SEN-107", "server_side_request", "high", "high", "Credential Access", "CWE-918 (SSRF)", "(?i)(url|uri|dest|destination|redirect|next|target|callback|webhook)=(https?(:|%3a)(/|%2f)(/|%2f))?(169\\.254\\.169\\.254|localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0|metadata\\.google\\.internal)", "Allow only the hosts the feature needs; never fetch an address a request gives."),
-    Rule("SEN-108", "jndi_injection", "high", "high", "Initial Access", "CWE-917, CVE-2021-44228", "(?i)(\\$|%24)(\\{{|%7b)jndi(:|%3a)", "Update Log4j and check the host for connections to the address named."),
-    Rule("SEN-109", "secret_in_request", "medium", "high", "Credential Access", "CWE-598", "(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& \"]+|AKIA[0-9A-Z]{{16}|eyJ[A-Za-z0-9_-]{{8,}\\.eyJ[A-Za-z0-9_-]{{8,}\\.[A-Za-z0-9_-]+", "Rotate the secret: it is now in every log and proxy on the way; send secrets in a header or the body."),
-    Rule("SEN-201", "brute_force", "high", "high", "Credential Access", "CWE-307, ATT&CK T1110", "", "Lock the accounts tried and require a second factor."),
-    Rule("SEN-202", "login_after_failures", "high", "high", "Initial Access", "ATT&CK T1078", "", "Treat the account as compromised: end its sessions and reset its password."),
-    Rule("SEN-203", "enumeration", "medium", "high", "Reconnaissance", "ATT&CK T1595.003", "", "Rate-limit requests that are answered 404."),
-    Rule("SEN-204", "object_enumeration", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Check that the endpoint answers only for objects of the user who asks; use ids that cannot be guessed."),
-    Rule("SEN-205", "foreign_object", "high", "low", "Collection", "CWE-639 (IDOR)", "", "Confirm the user may read that object; if not, the endpoint does not check the owner."),
-    Rule("SEN-206", "login_from_many", "high", "high", "Credential Access", "ATT&CK T1110", "", "Lock the account and require a second factor; blocking one address does not stop it."),
-    Rule("SEN-301", "hidden_text", "medium", "high", "Defense Evasion", "CWE-117, ATT&CK T1036.002", "", "Open the line with a tool that shows every character before trusting it."),
-    Rule("SEN-302", "oversized_line", "low", "high", "Impact", "CWE-400", "", "Limit the length of a request at the proxy."),
-    Rule("SEN-303", "malformed_line", "low", "high", "Defense Evasion", "CWE-117", "", "Check what writes this log; a broken line can hide an entry.")
-]
+fn load_rules() -> list!:
+    entries: list = json.parse(read("rules.json")?)?
+    var out = []
+    var ids = []
+    for entry in entries:
+        rule: Rule = validate(entry, as: Rule)?
+        if rule_id.find(rule.id) == none:
+            fail("the id of a rule of rules.json is SEN- and three digits, not {rule.id}")
+        if rule.id in ids:
+            fail("rule {rule.id} is twice in rules.json")
+        if rule.id in REQUIRED_RULES and rule.pattern != "":
+            fail("rule {rule.id} is counted by the program and takes no pattern in rules.json")
+        if not (rule.id in REQUIRED_RULES) and rule.pattern == "":
+            fail("rule {rule.id} of rules.json needs a pattern")
+        ids.add(rule.id)
+        out.add(rule)
+    for id in REQUIRED_RULES:
+        if not (id in ids):
+            fail("rule {id} is missing from rules.json: the program counts or checks it itself")
+    return out
+
+var RULES = []
+var RULES_ERROR = ""
+try:
+    RULES = load_rules()
+else e:
+    RULES_ERROR = e.message
 
 PATTERNS = [regex(rule.pattern) for rule in RULES if rule.pattern != ""]
 
@@ -917,6 +932,8 @@ LOCK_STALE = 3600
 ## The run, holding the lock that keeps two runs from writing the same
 ## files at once.
 fn locked(name: str):
+    if RULES_ERROR != "":
+        fail(RULES_ERROR)
     token = password.generate(24)
     if not runlock.take(name, token, clock.now_seconds()?, LOCK_STALE)?:
         fail("another run of Sentinel is under way; a lock left by a run that stopped ends an hour after it was taken")
