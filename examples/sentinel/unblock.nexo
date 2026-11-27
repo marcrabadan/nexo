@@ -5,10 +5,14 @@ use addresses
 use audit
 use blocks
 use safe
+use runlock
+use times as clock
 
 policy:
     allow read "sentinel.json"
     allow read "blocks.json"
+    allow read "sentinel.lock.db"
+    allow write "sentinel.lock.db"
     allow write "blocks.json"
     allow read "audit.json"
     allow write "audit.json"
@@ -68,8 +72,24 @@ fn main():
     blocks.save(in_force)?
     audit.record(events)?
 
+## A lock older than this was left by a run that stopped.
+LOCK_STALE = 3600
+
+## The run, holding the lock that keeps two runs from writing the same
+## files at once.
+fn locked(name: str):
+    token = password.generate(24)
+    if not runlock.take(name, token, clock.now_seconds()?, LOCK_STALE)?:
+        fail("another run of Sentinel is under way; a lock left by a run that stopped ends an hour after it was taken")
+    try:
+        main()
+    else e:
+        runlock.release(name, token)?
+        fail(e.message)
+    runlock.release(name, token)?
+
 try:
-    main()
+    locked("sentinel")
 else e:
     print("Sentinel stopped: {e.message}")
 

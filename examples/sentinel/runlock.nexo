@@ -1,0 +1,35 @@
+## One run at a time: a row of an SQLite table, sentinel.lock.db, taken
+## in a transaction. SQLite keeps two programs from taking it together;
+## a lock older than `stale` seconds was left by a run that stopped, and
+## is taken over.
+use nexo.db
+
+db = connect("sentinel.lock.db")
+
+@table
+type RunLock:
+    id: id
+    name: str @unique
+    holder: str
+    since: int
+
+## Takes the lock `name` for `token`; false when another run holds it.
+pub fn take(name: str, token: str, now_seconds: int, stale: int) -> bool!:
+    var taken = false
+    db.transaction:
+        held = db.RunLock.all() |> where name == name
+        if len(held) == 0:
+            db.RunLock.add(name: name, holder: token, since: now_seconds)
+            taken = true
+        elif held[0].since < now_seconds - stale:
+            db.RunLock.update(held[0], holder: token, since: now_seconds)
+            taken = true
+    return taken
+
+## Gives the lock back, if `token` still holds it.
+pub fn release(name: str, token: str) -> bool!:
+    db.transaction:
+        for held in db.RunLock.all() |> where name == name:
+            if held.holder == token:
+                db.RunLock.remove(held.id)
+    return true

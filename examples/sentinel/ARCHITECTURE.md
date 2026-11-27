@@ -237,5 +237,8 @@ a user that can read the logs and nothing more.
   renew one, because that needs a client secret in the body of a request
   and a secret of Nexo goes only in a header. Both have been reached only
   as stand-ins.
+- A lock left by a run that stopped holds for an hour, and a run that
+  waits more than an hour for its questions can have its lock taken
+  over.
 - `audit.json` is a plain file; it is not signed or protected from
   whoever can write to the folder.

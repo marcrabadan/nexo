@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -827,7 +828,7 @@ def test_unblock_lifts_what_a_person_names(phase, work):
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
 def test_unblock_and_the_new_modules_are_tested_and_formatted(phase, work):
-    for name in ("unblock.nexo", "times.nexo", "audit.nexo", "blocks.nexo"):
+    for name in ("unblock.nexo", "times.nexo", "audit.nexo", "blocks.nexo", "runlock.nexo"):
         proc = run(phase[1], ["test", name], work)
         assert proc.returncode == 0, proc.stdout.decode()
         before = (work / name).read_bytes()
@@ -835,3 +836,61 @@ def test_unblock_and_the_new_modules_are_tested_and_formatted(phase, work):
         assert run(phase[1], ["fmt", name], work).returncode == 0
         assert (work / name).read_bytes() == before
         assert run(phase[1], ["lint", name], work).stdout.decode() == f"No warnings in {name}.\n"
+
+
+BUSY = "Sentinel stopped: another run of Sentinel is under way"
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_one_run_at_a_time(phase, work):
+    """A run that waits for its questions holds the lock: another run of any of the programs
+    that write the same files stops before it reads or writes anything."""
+    env = dict(os.environ, PYTHONPATH=str(ROOT), PYTHONIOENCODING="utf-8", XDG_CONFIG_HOME=str(work / "c"))
+    first = subprocess.Popen([*phase[1], "sentinel.nexo"], cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, env=env)
+    try:
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            if (work / "report.json").exists():
+                break
+            time.sleep(0.2)
+        assert (work / "report.json").exists()
+        report = (work / "report.json").read_bytes()
+        for program in ("sentinel.nexo", "unblock.nexo"):
+            code, out = (sentinel(phase[1], work, "no\nyes\n") if program == "sentinel.nexo"
+                         else unblock(phase[1], work, "all\nyes\n"))
+            assert out.startswith(BUSY), out
+        assert python(work, "no\nyes\n", "")[1].startswith(BUSY)
+        assert (work / "report.json").read_bytes() == report and not (work / "audit.json").exists()
+    finally:
+        out = first.communicate(b"no\nno\n", timeout=60)[0].decode()
+    assert out.endswith("Nothing was changed.\n")
+    # given back: the next run goes on
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and not out.startswith(BUSY)
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_lock_left_by_a_run_that_stopped_is_taken_over(phase, work):
+    sentinel(phase[1], work, "no\nno\n")
+    db = sqlite3.connect(work / "sentinel.lock.db")
+    db.execute("INSERT INTO runlock (name, holder, since) VALUES ('sentinel', 'gone', ?)", (int(time.time()) - 60,))
+    db.commit()
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert out.startswith(BUSY)
+    db.execute("UPDATE runlock SET since = ?", (int(time.time()) - 3700,))
+    db.commit()
+    db.close()
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and not out.startswith(BUSY)
+    assert sqlite3.connect(work / "sentinel.lock.db").execute("SELECT * FROM runlock").fetchall() == []
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_run_that_fails_gives_the_lock_back(phase, work):
+    settings_of(work, block_ttl="never")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert out.startswith("Sentinel stopped: block_ttl")
+    settings_of(work, block_ttl="24h")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert code == 0 and not out.startswith(BUSY)

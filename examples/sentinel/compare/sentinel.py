@@ -5,6 +5,8 @@ import ipaddress
 import json
 import os
 import re
+import secrets
+import sqlite3
 import sys
 import urllib.parse
 import urllib.request
@@ -844,6 +846,48 @@ def main():
     record(events)
 
 
+LOCK_STALE = 3600
+
+
+def take_lock(name, token, now_seconds):
+    """The lock of runlock.nexo: the same table of sentinel.lock.db, so the two exclude each other."""
+    db = sqlite3.connect("sentinel.lock.db", timeout=5, isolation_level=None)
+    try:
+        db.execute('CREATE TABLE IF NOT EXISTS "runlock" ("id" INTEGER PRIMARY KEY AUTOINCREMENT, '
+                   '"name" TEXT NOT NULL UNIQUE, "holder" TEXT NOT NULL, "since" INTEGER NOT NULL)')
+        db.execute("BEGIN IMMEDIATE")
+        held = db.execute('SELECT "id", "since" FROM "runlock" WHERE "name" = ?', (name,)).fetchone()
+        taken = held is None or held[1] < now_seconds - LOCK_STALE
+        if held is None:
+            db.execute('INSERT INTO "runlock" ("name", "holder", "since") VALUES (?, ?, ?)', (name, token, now_seconds))
+        elif taken:
+            db.execute('UPDATE "runlock" SET "holder" = ?, "since" = ? WHERE "id" = ?', (token, now_seconds, held[0]))
+        db.execute("COMMIT")
+        return taken
+    finally:
+        db.close()
+
+
+def release_lock(name, token):
+    db = sqlite3.connect("sentinel.lock.db", timeout=5, isolation_level=None)
+    try:
+        db.execute('DELETE FROM "runlock" WHERE "name" = ? AND "holder" = ?', (name, token))
+    finally:
+        db.close()
+
+
+def locked(name):
+    token = secrets.token_urlsafe(18)
+    if not take_lock(name, token, int(datetime.now(timezone.utc).timestamp())):
+        print("Sentinel stopped: another run of Sentinel is under way; a lock left by a run that stopped "
+              "ends an hour after it was taken")
+        return
+    try:
+        main()
+    finally:
+        release_lock(name, token)
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
-    main()
+    locked("sentinel")

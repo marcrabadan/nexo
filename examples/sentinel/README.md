@@ -144,6 +144,19 @@ asks which (an address, or `all`) and then asks for a `yes`.
 ../../.venv/bin/nexo unblock.nexo
 ```
 
+### One run at a time
+
+`sentinel.nexo`, `unblock.nexo` and `cloudwatch.nexo` each take a lock
+before they read or write anything, so two runs (a schedule that
+overlaps, a person running it by hand meanwhile) cannot write
+`state.json`, `blocks.json` or `audit.json` over each other. The lock is
+a row of an SQLite table in `sentinel.lock.db`, taken in a transaction:
+SQLite keeps two programs from taking it together, which a file written
+with `write` could not. A second run stops with `another run of Sentinel
+is under way`. A run that stopped without giving the lock back leaves
+it for an hour; after that it is taken over. A run that waits for its
+questions holds the lock while it waits.
+
 ### Load balancers, IPv6 and ranges
 
 Behind a load balancer or a proxy (an ALB, Cloudflare, the ingress of
@@ -333,8 +346,9 @@ every address blocked or not.
 - `cloudwatch.nexo`, `cloudwatch.json`: the collector of CloudWatch Logs.
 - `addresses.nexo`: IPv4 and IPv6, ranges and the client behind proxies.
 - `unblock.nexo`: lists the blocks and lifts the ones a person names.
-- `blocks.nexo`, `audit.nexo`, `times.nexo`: the blocks in force, the
-  audit file and the times of logs, shared by the programs.
+- `blocks.nexo`, `audit.nexo`, `times.nexo`, `runlock.nexo`: the blocks
+  in force, the audit file, the times of logs and the lock of a run,
+  shared by the programs.
 - `safe.nexo`: the module that decides what may be shown, used by the
   three programs.
 - `compare/sentinel.py`: the same program in Python, with the same output

@@ -9,12 +9,16 @@ use python builtins
 use python time
 use python os
 use safe
+use runlock
+use times as clock
 
 policy:
     allow read "cloudwatch.json"
     allow read "cloudwatch-state.json"
     allow write "cloudwatch-state.json"
     allow read "logs/"
+    allow read "sentinel.lock.db"
+    allow write "sentinel.lock.db"
     allow write "logs/"
     allow net "127.0.0.1"
     allow net "localhost"
@@ -177,8 +181,24 @@ fn main():
                 print("  {safe.pad(name, 16)}not read: {safe.shown(e.message)}")
     write("cloudwatch-state.json", convert(state, to: json))?
 
+## A lock older than this was left by a run that stopped.
+LOCK_STALE = 3600
+
+## The run, holding the lock that keeps two runs from writing the same
+## files at once.
+fn locked(name: str):
+    token = password.generate(24)
+    if not runlock.take(name, token, clock.now_seconds()?, LOCK_STALE)?:
+        fail("another run of Sentinel is under way; a lock left by a run that stopped ends an hour after it was taken")
+    try:
+        main()
+    else e:
+        runlock.release(name, token)?
+        fail(e.message)
+    runlock.release(name, token)?
+
 try:
-    main()
+    locked("cloudwatch")
 else e:
     print("Sentinel stopped: {e.message}")
 
