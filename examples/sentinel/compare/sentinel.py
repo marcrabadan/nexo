@@ -751,6 +751,49 @@ def sync_alerts(url, file, alerts):
     return len(alerts), len(gone)
 
 
+TACTIC_UIDS = {"Initial Access": "TA0001", "Credential Access": "TA0006", "Reconnaissance": "TA0043",
+               "Collection": "TA0009", "Defense Evasion": "TA0005", "Impact": "TA0040"}
+
+
+def ocsf_event(f, seconds, status, row):
+    """ocsf.event: a Detection Finding (class 2004) of OCSF 1.1.0."""
+    info = {"uid": f'{f["rule"]}:{f["file"]}:{f["line"]}:{seconds}', "title": f["name"], "desc": f["evidence"],
+            "analytic": {"uid": f["rule"], "name": f["name"], "type_id": 1, "type": "Rule"}}
+    if f["tactic"] in TACTIC_UIDS:
+        attack = {"tactic": {"uid": TACTIC_UIDS[f["tactic"]], "name": f["tactic"]}}
+        found = re.search(r"T[0-9]{4}(\.[0-9]{3})?", BY_ID[f["rule"]][5])
+        if found:
+            attack["technique"] = {"uid": found.group(0)}
+        info["attacks"] = [attack]
+    one = {"activity_id": 1, "activity_name": "Create", "category_uid": 2, "category_name": "Findings",
+           "class_uid": 2004, "class_name": "Detection Finding", "type_uid": 200401,
+           "type_name": "Detection Finding: Create", "time": seconds * 1000,
+           "severity_id": {"low": 2, "medium": 3, "high": 4}[f["severity"]],
+           "severity": f["severity"].capitalize(), "confidence_id": {"low": 1, "high": 3}[f["confidence"]],
+           "status_id": 3 if status == "suppressed" else 1, "status": "Suppressed" if status == "suppressed" else "New",
+           "message": f'{f["name"]} from {f["source"]}',
+           "metadata": {"version": "1.1.0", "product": {"name": "Nexo Sentinel", "vendor_name": "Nexo"},
+                        "log_name": f["file"]}, "finding_info": info}
+    if f["source"] != "-":
+        one["evidences"] = [{"src_endpoint": {"ip": f["source"]}}]
+    one["unmapped"] = {"file": f["file"], "line": f["line"], "reference": BY_ID[f["rule"]][5]}
+    if row:
+        one["unmapped"].update(priority=row["priority"], proposal=row["proposal"])
+    return one
+
+
+def ocsf_text(findings, muted, rows):
+    today, now_seconds, text = datetime.now().date(), int(datetime.now(timezone.utc).timestamp()), ""
+    for status, group in (("new", findings), ("suppressed", muted)):
+        for f in group:
+            seconds = epoch_of(f["time"], today)
+            if seconds < 0:
+                seconds = now_seconds
+            row = ([r for r in rows if r["address"] == f["source"]] or [{}])[-1]
+            text += json.dumps(ocsf_event(f, seconds, status, row), ensure_ascii=False, separators=(",", ": ")) + "\n"
+    return text
+
+
 def post_json(url, value):
     request = urllib.request.Request(url, json.dumps(value).encode(), {"Content-Type": "application/json"})
     urllib.request.urlopen(request, timeout=5).close()
@@ -878,12 +921,13 @@ def main():
         except FileNotFoundError:
             pass
     files, lines, new_lines, skipped, found, following = scan(settings, state)
-    findings, silenced = [], []
+    findings, silenced, muted = [], [], []
     for f in found:
         rule = suppression_of(f, settings["suppress"])
         if rule is None:
             findings.append(f)
         else:
+            muted.append(f)
             silenced.append({"rule": f["rule"], "file": f["file"], "line": f["line"], "source": f["source"],
                              "reason": rule["reason"]})
     rows = sources(findings, settings["never_block"] + settings["trusted_proxies"],
@@ -897,6 +941,10 @@ def main():
                                "skipped": [{"file": file, "reason": reason} for file, reason in skipped],
                                "findings": findings, "suppressed": silenced, "sources": rows})
     print("The report is in report.json.")
+    if settings["ocsf"]:
+        with open("findings.ocsf.jsonl", "w", encoding="utf-8") as f:
+            f.write(ocsf_text(findings, muted, rows))
+        print("The findings are in findings.ocsf.jsonl (OCSF 1.1.0).")
     events.append(("report", "report.json"))
     if settings["incremental"]:
         write_json("state.json", following)

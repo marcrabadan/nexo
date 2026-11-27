@@ -106,6 +106,7 @@ read; a missing or wrong field stops the program.
 | `sources` | logs to read from other systems besides the files (see Log sources) |
 | `source_window`, `source_lines` | how far back each source is read, such as `15m`, and the most lines of each (1 to 1000) |
 | `reputation` | lists of known bad addresses, each `{"name", "file"}` with the file in `reputation/`; see below |
+| `ocsf` | `true` to write the findings as OCSF to `findings.ocsf.jsonl`; see below |
 | `suppress` | findings to silence: each `{"rule", "source", "reason"}`, where `"*"` is any rule or any address (not both) |
 
 A suppressed finding is not scored and proposes nothing; it is listed
@@ -144,6 +145,22 @@ asks which (an address, or `all`) and then asks for a `yes`.
 ```
 ../../.venv/bin/nexo unblock.nexo
 ```
+
+### OCSF, for a SIEM
+
+With `ocsf`, each run writes its findings to `findings.ocsf.jsonl`, one
+JSON object on each line, as OCSF 1.1.0 Detection Finding events (class
+2004, category Findings): `severity_id`, `confidence_id`, `time` in
+milliseconds, `finding_info` with the rule as its `analytic` and the
+MITRE ATT&CK tactic and technique in `attacks`, the address in
+`evidences[].src_endpoint.ip`, and the file, line, reference, priority
+and proposal in `unmapped`. A suppressed finding is there too, with
+`status_id` 3 (Suppressed). Evidence is shown as on screen, without
+secrets. Have the collector of the SIEM read the file (Filebeat or Elastic
+Agent, the Splunk universal forwarder, Fluent Bit, the Sentinel agent of
+Azure), or post it; with `incremental` each file holds only what is new.
+The events were written from the schema in the ocsf/ocsf-schema
+repository (v1.1.0); no SIEM has read them yet.
 
 ### Reputation lists
 
@@ -397,6 +414,7 @@ every address blocked or not.
   such as `/search?q=union+station+hotel` and `/docs/javascript-guide.html`), `attack.log`, `unicode.log`,
   `nginx.log` (the combined format), `proxy.log` (behind a load balancer, and IPv6), `auth.log` (syslog, with sshd), `oversized.log` and `binary.log` (not UTF-8, skipped).
 - `reputation/`: two example reputation lists.
+- `ocsf.nexo`: findings as OCSF events.
 - `findings.json`: the findings the corpus must give, each `[file, line, rule]`.
 - `sentinel.expected`: the output when both questions are answered `no`.
 - `cloudwatch.nexo`, `cloudwatch.json`: the collector of CloudWatch Logs.

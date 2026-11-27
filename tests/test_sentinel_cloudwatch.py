@@ -15,6 +15,11 @@ import pytest
 from phases import ROOT, commands, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
+
+# what runs of the programs write in examples/sentinel; a copy for a test leaves them out
+GENERATED = ("audit.json", "audit.key", "audit.pub", "audit-archive", "report.json", "state.json", "blocks.json",
+             "sentinel.lock.db", "findings.ocsf.jsonl", "alerts-*.json", "*-report.json", "*-report.md",
+             "cloudwatch-state.json", "cloudwatch-*.log")
 NGINX = (SENTINEL / "logs" / "nginx.log").read_text(encoding="utf-8").splitlines()
 KEYS = {"AWS_ACCESS_KEY_ID": "AKIDEXAMPLE", "AWS_SECRET_ACCESS_KEY": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
         "AWS_SESSION_TOKEN": ""}
@@ -84,7 +89,7 @@ def work(tmp_path, server):
     Aws.signed.clear()
     Aws.start = int(time.time() * 1000) - 60000
     folder = tmp_path / "sentinel"
-    shutil.copytree(SENTINEL, folder)
+    shutil.copytree(SENTINEL, folder, ignore=shutil.ignore_patterns(*GENERATED))
     configure(folder, endpoint=server)
     return folder
 

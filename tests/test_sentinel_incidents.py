@@ -12,6 +12,11 @@ from phases import ROOT, commands, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
 
+# what runs of the programs write in examples/sentinel; a copy for a test leaves them out
+GENERATED = ("audit.json", "audit.key", "audit.pub", "audit-archive", "report.json", "state.json", "blocks.json",
+             "sentinel.lock.db", "findings.ocsf.jsonl", "alerts-*.json", "*-report.json", "*-report.md",
+             "cloudwatch-state.json", "cloudwatch-*.log")
+
 
 def restart(pod, container, severity, name, namespace="shop"):
     return {"severity": severity, "namespace": namespace, "pod": pod, "container": container, "restarts": 3,
@@ -27,7 +32,7 @@ def pressure(pod, container, severity, name, detail):
 @pytest.fixture
 def work(tmp_path):
     folder = tmp_path / "sentinel"
-    shutil.copytree(SENTINEL, folder)
+    shutil.copytree(SENTINEL, folder, ignore=shutil.ignore_patterns(*GENERATED))
     proc = run(commands()[0][1], ["sentinel.nexo"], folder, stdin=b"no\nno\n")
     assert proc.returncode == 0, proc.stdout.decode()
     return folder

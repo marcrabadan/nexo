@@ -22,6 +22,11 @@ import pytest
 from phases import ROOT, commands, compiler, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
+
+# what runs of the programs write in examples/sentinel; a copy for a test leaves them out
+GENERATED = ("audit.json", "audit.key", "audit.pub", "audit-archive", "report.json", "state.json", "blocks.json",
+             "sentinel.lock.db", "findings.ocsf.jsonl", "alerts-*.json", "*-report.json", "*-report.md",
+             "cloudwatch-state.json", "cloudwatch-*.log")
 EXPECTED = (SENTINEL / "sentinel.expected").read_text(encoding="utf-8")
 BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.210", "203.0.113.77", "198.51.100.23", "203.0.113.150",
            "198.51.100.240"]
@@ -114,7 +119,7 @@ def work(tmp_path, server):
     Outside.seen.clear()
     Outside.asked.clear()
     folder = tmp_path / "sentinel"
-    shutil.copytree(SENTINEL, folder)
+    shutil.copytree(SENTINEL, folder, ignore=shutil.ignore_patterns(*GENERATED))
     settings = json.loads((folder / "sentinel.json").read_text(encoding="utf-8"))
     settings["firewall"] = server
     (folder / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
@@ -247,7 +252,7 @@ def test_a_firewall_that_fails_is_recorded(phase, work):
 @pytest.mark.parametrize("answers", ["no\nno\n", "no\nyes\n", "yes\nyes\n"])
 def test_the_python_comparison_is_the_same(work, server, answers):
     settings = json.loads((work / "sentinel.json").read_text(encoding="utf-8"))
-    settings.update(alert_webhook=f"{server}/alert", alertmanager=server, sources=[
+    settings.update(alert_webhook=f"{server}/alert", alertmanager=server, ocsf=True, sources=[
         {"name": "edge", "kind": "loki", "url": server, "query": '{job="nginx"}'},
         {"name": "web", "kind": "elastic", "url": server, "index": "logs-*", "query": "service:web"},
         {"name": "old", "kind": "splunk", "url": server, "query": "index=web"},
@@ -270,7 +275,10 @@ def test_the_python_comparison_is_the_same(work, server, answers):
     nexo_blocks = json.loads(blocked.read_text(encoding="utf-8")) if blocked.exists() else {}
     if blocked.exists():
         blocked.unlink()
+    nexo_ocsf = (work / "findings.ocsf.jsonl").read_text(encoding="utf-8")
     assert python(work, answers, server) == nexo
+    # the same OCSF events; a finding without a time has the time of its run
+    assert same_events(nexo_ocsf, (work / "findings.ocsf.jsonl").read_text(encoding="utf-8"))
     python_blocks = json.loads(blocked.read_text(encoding="utf-8")) if blocked.exists() else {}
     # the same blocks, ending within a second of each other
     assert {a: b["rules"] for a, b in nexo_blocks.items()} == {a: b["rules"] for a, b in python_blocks.items()}
@@ -851,7 +859,8 @@ def test_unblock_lifts_what_a_person_names(phase, work):
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
 def test_unblock_and_the_new_modules_are_tested_and_formatted(phase, work):
-    for name in ("unblock.nexo", "times.nexo", "audit.nexo", "blocks.nexo", "runlock.nexo", "auditcheck.nexo"):
+    for name in ("unblock.nexo", "times.nexo", "audit.nexo", "blocks.nexo", "runlock.nexo", "auditcheck.nexo",
+                 "ocsf.nexo"):
         proc = run(phase[1], ["test", name], work)
         assert proc.returncode == 0, proc.stdout.decode()
         before = (work / name).read_bytes()
@@ -1074,3 +1083,45 @@ def test_reputation_lists_bring_listed_addresses_sooner(phase, work):
     report = json.loads((work / "report.json").read_text(encoding="utf-8"))
     assert [(r["address"], r["priority"], r["listed"]) for r in report["sources"]] == [
         ("2001:db8:bad::5", "P3", ["drop"])]
+
+
+def same_events(left, right):
+    a, b = [json.loads(line) for line in left.splitlines()], [json.loads(line) for line in right.splitlines()]
+    assert len(a) == len(b)
+    for x, y in zip(a, b):
+        if x["time"] != y["time"]:
+            assert abs(x["time"] - y["time"]) < 120000
+            for e in (x, y):
+                e["time"] = 0
+                e["finding_info"]["uid"] = e["finding_info"]["uid"].rsplit(":", 1)[0]
+        assert x == y
+    return True
+
+
+REQUIRED = ["activity_id", "category_uid", "class_uid", "type_uid", "time", "severity_id", "metadata", "finding_info"]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_findings_are_written_as_ocsf(phase, work):
+    settings_of(work, ocsf=True)
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert "The findings are in findings.ocsf.jsonl (OCSF 1.1.0).\n" in out
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    events = [json.loads(line) for line in (work / "findings.ocsf.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(events) == len(report["findings"]) + len(report["suppressed"])
+    for e in events:
+        assert all(key in e for key in REQUIRED)
+        assert (e["class_uid"], e["category_uid"], e["type_uid"]) == (2004, 2, 200401)
+        assert e["metadata"]["version"] == "1.1.0" and e["metadata"]["product"]["vendor_name"] == "Nexo"
+        assert e["finding_info"]["uid"] and e["finding_info"]["title"] and e["finding_info"]["analytic"]["type_id"] == 1
+        assert e["severity_id"] in (2, 3, 4) and e["confidence_id"] in (1, 3)
+    first = events[0]
+    assert first["time"] == 1793610846000 and first["evidences"] == [{"src_endpoint": {"ip": "203.0.113.9"}}]
+    assert first["finding_info"]["attacks"] == [{"tactic": {"uid": "TA0006", "name": "Credential Access"},
+                                                 "technique": {"uid": "T1110"}}]
+    assert first["unmapped"]["priority"] == "P1" and first["unmapped"]["proposal"] == "block"
+    # the finding sentinel.json suppresses is there too, as Suppressed; and no secret is in any of them
+    suppressed = [e for e in events if e["status_id"] == 3]
+    assert [(e["finding_info"]["analytic"]["uid"], e["status"]) for e in suppressed] == [("SEN-109", "Suppressed")]
+    assert "9f8e7d6c5b4a3f2e" not in (work / "findings.ocsf.jsonl").read_text(encoding="utf-8")
+    assert all(e["time"] > 1700000000000 for e in events)

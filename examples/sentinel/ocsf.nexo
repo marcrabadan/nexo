@@ -1,0 +1,53 @@
+## Findings as OCSF 1.1.0 Detection Finding events (class 2004 of the
+## category Findings), one JSON object on each line, for a SIEM to read.
+
+SEVERITY_IDS = {"low": 2, "medium": 3, "high": 4}
+SEVERITIES = {"low": "Low", "medium": "Medium", "high": "High"}
+CONFIDENCE_IDS = {"low": 1, "high": 3}
+TACTICS = {"Initial Access": "TA0001", "Credential Access": "TA0006", "Reconnaissance": "TA0043", "Collection": "TA0009", "Defense Evasion": "TA0005", "Impact": "TA0040"}
+technique = regex("T[0-9]{{4}(\\.[0-9]{{3})?")
+
+## The text of JSON on one line: convert writes it over many, and a line
+## break inside a value is always written as \n, so the breaks between
+## lines are only layout.
+pub fn one_line(value: map) -> str:
+    var out = ""
+    for piece in convert(value, to: json).split("\n"):
+        out = "{out}{piece.trim()}"
+    return out
+
+## An event for a finding (a map of report.json). `seconds` is when it
+## happened; `status` is new or suppressed; `row` is the row of its
+## address in the report, or an empty map.
+pub fn event(f: map, seconds: int, status: str, row: map) -> map:
+    var info = {"uid": "{f["rule"]}:{f["file"]}:{f["line"]}:{seconds}", "title": f["name"], "desc": f["evidence"], "analytic": {"uid": f["rule"], "name": f["name"], "type_id": 1, "type": "Rule"}}
+    tactic = TACTICS[f["tactic"]]
+    if tactic != none:
+        var attack = {"tactic": {"uid": tactic, "name": f["tactic"]}}
+        found = technique.find(f["reference"] ?? "")
+        if found != none:
+            attack["technique"] = {"uid": found}
+        info["attacks"] = [attack]
+    var status_id = 1
+    var status_name = "New"
+    if status == "suppressed":
+        status_id = 3
+        status_name = "Suppressed"
+    var one = {"activity_id": 1, "activity_name": "Create", "category_uid": 2, "category_name": "Findings", "class_uid": 2004, "class_name": "Detection Finding", "type_uid": 200401, "type_name": "Detection Finding: Create", "time": seconds * 1000, "severity_id": SEVERITY_IDS[f["severity"]] ?? 0, "severity": SEVERITIES[f["severity"]] ?? "Unknown", "confidence_id": CONFIDENCE_IDS[f["confidence"]] ?? 0, "status_id": status_id, "status": status_name, "message": "{f["name"]} from {f["source"]}", "metadata": {"version": "1.1.0", "product": {"name": "Nexo Sentinel", "vendor_name": "Nexo"}, "log_name": f["file"]}, "finding_info": info}
+    if f["source"] != "-":
+        one["evidences"] = [{"src_endpoint": {"ip": f["source"]}}]
+    var unmapped = {"file": f["file"], "line": f["line"], "reference": f["reference"] ?? ""}
+    if row["priority"] != none:
+        unmapped["priority"] = row["priority"]
+        unmapped["proposal"] = row["proposal"]
+    one["unmapped"] = unmapped
+    return one
+
+test "a finding is a Detection Finding":
+    f = {"rule": "SEN-101", "name": "sql_injection", "severity": "high", "confidence": "high", "tactic": "Initial Access", "reference": "CWE-89, ATT&CK T1190", "file": "logs/a.log", "line": 3, "source": "203.0.113.9", "evidence": "GET /p?id=1+UNION+SELECT+1 200"}
+    e = event(f, 1793610841, "new", {"priority": "P2", "proposal": "block"})
+    assert e["class_uid"] == 2004 and e["type_uid"] == 200401 and e["severity_id"] == 4 and e["time"] == 1793610841000
+    assert e["finding_info"]["attacks"] == [{"tactic": {"uid": "TA0001", "name": "Initial Access"}, "technique": {"uid": "T1190"}}]
+    assert e["evidences"] == [{"src_endpoint": {"ip": "203.0.113.9"}}] and e["unmapped"]["priority"] == "P2"
+    assert event(f, 0, "suppressed", {})["status_id"] == 3
+    assert one_line({"a": [1, 2], "b": "x\ny"}) == "{{\"a\": [1,2],\"b\": \"x\\ny\"}"

@@ -14,6 +14,7 @@ use monitoring
 use notify
 use logsources
 use runlock
+use ocsf
 
 policy:
     allow read "sentinel.json"
@@ -31,6 +32,7 @@ policy:
     allow read "audit-archive-readme.txt"
     allow write "audit-archive-readme.txt"
     allow write "report.json"
+    allow write "findings.ocsf.jsonl"
     allow read "alerts-sentinel.json"
     allow write "alerts-sentinel.json"
     allow read "state.json"
@@ -74,6 +76,7 @@ type Settings:
     trusted_proxies: list
     block_ttl: str
     reputation: list
+    ocsf: bool
 
 ## A detection: `pattern` is looked for in the message of a log entry;
 ## the rules without one are counted or checked by scan_file.
@@ -750,6 +753,26 @@ fn alert(webhook: str, text: str):
 fn yes(question: str) -> bool:
     return input("{question} (yes/no) ").trim().lower() == "yes"
 
+## The findings of the run, and those suppressed, as OCSF events, one on
+## each line. A finding whose time cannot be read has the time of the run.
+fn ocsf_text(findings: list, muted: list, rows: list) -> str!:
+    today_text = str(today)
+    now_seconds = clock.now_seconds()?
+    var text = ""
+    for pair in [["new", findings], ["suppressed", muted]]:
+        for f in pair[1]:
+            var as_map = json.parse(convert(f, to: json))?
+            as_map["reference"] = rule_of(f.rule).reference
+            var seconds = clock.epoch_of(f.time, today_text)?
+            if seconds < 0:
+                seconds = now_seconds
+            var row = {}
+            for r in rows:
+                if r["address"] == f.source:
+                    row = r
+            text = "{text}{ocsf.one_line(ocsf.event(as_map, seconds, pair[0], row))}\n"
+    return text
+
 fn listed_text(lists: list) -> str:
     if len(lists) == 0:
         return "-"
@@ -819,11 +842,13 @@ fn main():
     report = scan(settings, state)?
     var findings = []
     var silenced = []
+    var muted = []
     for f in report.findings:
         rule = suppression_of(f, settings.suppress)
         if rule == none:
             findings.add(f)
         else:
+            muted.add(f)
             silenced.add({"rule": f.rule, "file": f.file, "line": f.line, "source": f.source, "reason": rule["reason"]})
     rows = sources(findings, settings.never_block + settings.trusted_proxies, listed_of(findings, reputation_lists(settings)))
     print_report(report, findings, silenced, rows)
@@ -834,6 +859,9 @@ fn main():
         events.add(["suppressed", "{entry["rule"]} of {entry["source"]} at {entry["file"]}:{entry["line"]}: {shown(entry["reason"])}"])
     write("report.json", convert({"tool": "sentinel", "schema": 2, "files": report.files, "lines": report.lines, "new_lines": report.new_lines, "skipped": [{"file": reason[0], "reason": reason[1]} for reason in report.skipped], "findings": findings, "suppressed": silenced, "sources": rows}, to: json))?
     print("The report is in report.json.")
+    if settings.ocsf:
+        write("findings.ocsf.jsonl", ocsf_text(findings, muted, rows)?)?
+        print("The findings are in findings.ocsf.jsonl (OCSF 1.1.0).")
     events.add(["report", "report.json"])
     if settings.incremental:
         write("state.json", convert(report.state, to: json))?
@@ -978,7 +1006,7 @@ fn failures(times: list, source: str) -> list:
     return out
 
 test "failures count within the window and are reported once for it":
-    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [], "24h", [])
+    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [], "24h", [], false)
     burst = correlate(failures([0, 60, 120, 180, 240, 300, 360], "203.0.113.9"), {}, s, 600)
     assert [entry["finding"].line for entry in burst[0]] == [5]
     assert burst[0][0]["finding"].evidence == "5 failed logins in 10m"
@@ -997,7 +1025,7 @@ test "only new events give findings":
     var last = failures([4], "203.0.113.9")[0]
     last["pos"] = 4 * SLOTS + 9
     both.add(last)
-    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [], "24h", [])
+    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [], "24h", [], false)
     found = correlate(both, {}, s, 600)
     assert len(found[0]) == 1 and found[1]["SEN-201 203.0.113.9"] == 4
     again = correlate(both, {"SEN-201 203.0.113.9": 4}, s, 600)

@@ -36,5 +36,6 @@
   "reputation": [
     {"name": "drop", "file": "reputation/drop.txt"},
     {"name": "feodo", "file": "reputation/feodo.txt"}
-  ]
+  ],
+  "ocsf": false
 }

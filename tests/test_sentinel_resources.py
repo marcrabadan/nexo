@@ -12,6 +12,11 @@ import pytest
 from phases import ROOT, commands, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
+
+# what runs of the programs write in examples/sentinel; a copy for a test leaves them out
+GENERATED = ("audit.json", "audit.key", "audit.pub", "audit-archive", "report.json", "state.json", "blocks.json",
+             "sentinel.lock.db", "findings.ocsf.jsonl", "alerts-*.json", "*-report.json", "*-report.md",
+             "cloudwatch-state.json", "cloudwatch-*.log")
 EXPECTED = (SENTINEL / "resources.expected").read_text(encoding="utf-8")
 MI = 1048576
 API, WORKER, CART, IMPORTER, TINY, BAD = (("shop", "api-7d9f8-x2k4p", "api"), ("shop", "worker-5c6b7-q8z1m", "worker"),
@@ -101,7 +106,7 @@ def work(tmp_path, server):
     Monitoring.posted.clear()
     Monitoring.without = ""
     folder = tmp_path / "sentinel"
-    shutil.copytree(SENTINEL, folder)
+    shutil.copytree(SENTINEL, folder, ignore=shutil.ignore_patterns(*GENERATED))
     configure(folder, prometheus=server, loki=server)
     return folder
 
