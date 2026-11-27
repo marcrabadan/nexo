@@ -254,7 +254,7 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "21 tests: 21 passed, 0 failed" in out, out
+    assert proc.returncode == 0 and "22 tests: 22 passed, 0 failed" in out, out
     for name in ("sentinel.nexo", "safe.nexo", "logsources.nexo", "addresses.nexo"):
         before = (work / name).read_bytes()
         # no character a reader cannot see in the source of a tool that looks for them
@@ -377,7 +377,7 @@ def test_incremental_runs_report_only_what_is_new(phase, work):
     rotated = run_once()
     assert [(f["rule"], f["line"]) for f in rotated["findings"]] == [("SEN-105", 1)]
     state = json.loads((work / "state.json").read_text(encoding="utf-8"))
-    assert set(state) == {"files", "events", "reported"}
+    assert set(state) == {"files", "remote", "events", "reported"}
     assert state["files"]["logs/attack.log"]["lines"] == 1 and set(state["files"]) == {
         "logs/benign.log", "logs/attack.log", "logs/unicode.log", "logs/oversized.log", "logs/nginx.log",
         "logs/auth.log", "logs/proxy.log"}
@@ -692,3 +692,28 @@ def test_wrong_addresses_in_the_settings_stop(phase, work, change):
     settings_of(work, **change)
     code, out = sentinel(phase[1], work, "no\nyes\n")
     assert out.startswith("Sentinel stopped: ") and Outside.seen == [] and not (work / "report.json").exists()
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+@pytest.mark.parametrize("kind", ["loki", "elastic"])
+def test_a_log_source_is_not_reported_twice(phase, work, server, kind):
+    """Each run reads the whole window of a source again; with incremental, what the run before
+    saw is neither reported nor counted again, and no text of a line is kept."""
+    settings_of(work, logs=[], incremental=True, suppress=[], sources=[
+        {"name": "web", "kind": kind, "url": server, **SOURCES[kind]}])
+
+    def run_once():
+        proc = run(phase[1], ["sentinel.nexo"], work, stdin=b"no\nno\n", env={"XDG_CONFIG_HOME": str(work / "c")})
+        assert proc.returncode == 0, proc.stdout.decode()
+        return json.loads((work / "report.json").read_text(encoding="utf-8"))
+
+    first = run_once()
+    assert len(first["findings"]) == 5 and first["new_lines"] == 9
+    again = run_once()
+    assert (again["lines"], again["new_lines"], again["findings"]) == (9, 0, [])
+    state = (work / "state.json").read_text(encoding="utf-8")
+    assert json.loads(state)["remote"] == {f"{kind}:web": {"at": 1793615640, "count": 1}}
+    assert "9f8e7d6c5b4a3f2e" not in state and "${jndi" not in state
+    # without incremental each run reports the whole window
+    settings_of(work, incremental=False)
+    assert len(run_once()["findings"]) == 5

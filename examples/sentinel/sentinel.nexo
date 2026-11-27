@@ -355,6 +355,47 @@ fn scan_file(file: str, skip: int, given: list?, trusted: list) -> list!:
                         found.add(finding("SEN-205", fields[2], file, n, source, "user {other[0]} was answered an object of user {other[1]}: {shown(fields[1])}"))
     return [number_of_lines, found, first, events]
 
+## The lines of a log source that the run before did not see, and the
+## mark to leave for the next: the time of its newest line in seconds and
+## how many lines it has at that second. A source gives the lines of a
+## window again in each run; the mark keeps their findings from being
+## reported, and their events counted, twice. Only times are kept, never
+## the text of a line, which may hold a secret.
+fn unseen(lines: list, mark: map?, trusted: list) -> list!:
+    today_text = str(today)
+    var last = 0
+    var times = []
+    for line in lines:
+        fields = fields_of(line, trusted)
+        if fields != none:
+            seconds = epoch_of(fields[2], today_text)?
+            if seconds >= 0:
+                last = seconds
+        times.add(last)
+    var newest = -1
+    for t in times:
+        if t > newest:
+            newest = t
+    var at_newest = 0
+    for t in times:
+        if t == newest:
+            at_newest += 1
+    var fresh = []
+    var at_mark = 0
+    var position = 0
+    for line in lines:
+        t = times[position]
+        position += 1
+        if mark == none or t > mark["at"]:
+            fresh.add(line)
+        elif t == mark["at"]:
+            at_mark += 1
+            if at_mark > mark["count"]:
+                fresh.add(line)
+    if newest < 0:
+        return [fresh, mark ?? {"at": -1, "count": 0}]
+    return [fresh, {"at": newest, "count": at_newest}]
+
 ## True when the rule has not been reported for the key within the window
 ## before `at`: a burst gives one finding, and a long one one for each window.
 fn due(told: map, name: str, seconds: int, window: int) -> bool:
@@ -477,15 +518,25 @@ fn scan(settings: Settings, state: map) -> Report!:
                 scanned.add(result)
             else e:
                 skipped.add([file, e.message])
+    var marks = {}
     for stream in remote_sources(settings):
         try:
-            result = scan_file(stream[0], 0, logsources.lines_of(stream[1], settings.source_window, settings.source_lines), settings.trusted_proxies)
+            fetched = logsources.lines_of(stream[1], settings.source_window, settings.source_lines)?
+            var mark: map? = none
+            if settings.incremental:
+                mark = (state["remote"] ?? {})[stream[0]]
+            fresh = unseen(fetched, mark, settings.trusted_proxies)?
+            result = scan_file(stream[0], 0, fresh[0], settings.trusted_proxies)
             read_files += 1
-            lines += result[0]
+            lines += len(fetched)
             new_lines += result[0]
+            marks[stream[0]] = fresh[1]
             scanned.add(result)
         else e:
             skipped.add([stream[0], e.message])
+            kept_mark = (state["remote"] ?? {})[stream[0]]
+            if settings.incremental and kept_mark != none:
+                marks[stream[0]] = kept_mark
     for result in scanned:
         position += 1
         for f in result[1]:
@@ -505,14 +556,14 @@ fn scan(settings: Settings, state: map) -> Report!:
             newest = e["at"]
     var kept = []
     for e in events:
-        if e["at"] >= newest - window and e["file"].starts_with("logs/"):
+        if e["at"] >= newest - window:
             kept.add(event(e["kind"], e["key"], e["value"], e["at"], e["time"], e["file"], e["line"], e["source"], e["detail"]))
     var told = {}
     for name in counted[1].keys():
         if counted[1][name] >= newest - window:
             told[name] = counted[1][name]
     findings = [entry["finding"] for entry in ranked |> sort by rank]
-    return Report(read_files, lines, new_lines, skipped, findings, {"files": next, "events": kept, "reported": told})
+    return Report(read_files, lines, new_lines, skipped, findings, {"files": next, "remote": marks, "events": kept, "reported": told})
 
 fn count_of(findings: list, severity: str) -> int:
     return [f for f in findings if f.severity == severity] |> count
@@ -909,6 +960,15 @@ test "a range is never blocked and can be suppressed":
         assert false
     else e:
         assert "cannot silence" in e.message
+
+test "a log source is read from where the run before left it":
+    lines = ["2026-11-02T09:00:00Z 192.0.2.1 web GET / 200", "2026-11-02T09:00:05Z 192.0.2.1 web GET /a 200", "2026-11-02T09:00:05Z 192.0.2.1 web GET /b 200"]
+    first = unseen(lines, none, [])
+    assert first[0] == lines and first[1] == {"at": 1793610005, "count": 2}
+    assert unseen(lines, first[1], [])[0] == []
+    more = lines + ["2026-11-02T09:00:05Z 192.0.2.1 web GET /c 200", "2026-11-02T09:01:00Z 192.0.2.1 web GET /d 200"]
+    assert unseen(more, first[1], [])[0] == [more[3], more[4]]
+    assert unseen([], first[1], [])[1] == first[1]
 
 test "only logs/ is scanned":
     assert inside_logs("logs/app.log")

@@ -288,6 +288,28 @@ def scan_file(file, skip, given, trusted):
     return number, found, first, events
 
 
+def unseen(lines, mark, trusted):
+    """The lines a log source gives that the run before did not see, and the mark for the next run."""
+    today, last, times = datetime.now().date(), 0, []
+    for line in lines:
+        fields = fields_of(line, trusted)
+        if fields is not None and epoch_of(fields[2], today) >= 0:
+            last = epoch_of(fields[2], today)
+        times.append(last)
+    fresh, at_mark = [], 0
+    for line, t in zip(lines, times):
+        if mark is None or t > mark["at"]:
+            fresh.append(line)
+        elif t == mark["at"]:
+            at_mark += 1
+            if at_mark > mark["count"]:
+                fresh.append(line)
+    if not times:
+        return fresh, mark or {"at": -1, "count": 0}
+    newest = max(times)
+    return fresh, {"at": newest, "count": times.count(newest)}
+
+
 def correlate(events, told, settings, window):
     """Findings of the counted rules, as (rank, finding), and when each rule was last reported for a key."""
     w, found, told, times, values = settings["count_window"], [], dict(told), {}, {}
@@ -470,15 +492,22 @@ def scan(settings, state):
             new_lines += result[0] - skip
             following[file] = {"lines": result[0], "first": result[2]}
             scanned.append(result)
+    marks = {}
     for name, entry in remote_sources(settings):
         try:
-            result = scan_file(name, 0, lines_of(entry, settings["source_window"], settings["source_lines"]),
-                               settings["trusted_proxies"])
+            fetched = lines_of(entry, settings["source_window"], settings["source_lines"])
+            mark = state.get("remote", {}).get(name) if settings["incremental"] else None
+            fresh, marks[name] = unseen(fetched, mark, settings["trusted_proxies"])
+            result = scan_file(name, 0, fresh, settings["trusted_proxies"])
         except Exception as e:
+            marks.pop(name, None)
             skipped.append((name, str(e)))
+            kept_mark = state.get("remote", {}).get(name)
+            if settings["incremental"] and kept_mark is not None:
+                marks[name] = kept_mark
         else:
             read_files += 1
-            lines += result[0]
+            lines += len(fetched)
             new_lines += result[0]
             scanned.append(result)
     ranked = []
@@ -490,10 +519,11 @@ def scan(settings, state):
     ranked += counted
     newest = max([0] + [e["at"] for e in events])
     kept = [event(e["kind"], e["key"], e["value"], e["at"], e["time"], e["file"], e["line"], e["source"], e["detail"])
-            for e in events if e["at"] >= newest - window and e["file"].startswith("logs/")]
+            for e in events if e["at"] >= newest - window]
     told = {key: at for key, at in told.items() if at >= newest - window}
     findings = [f for _, f in sorted(ranked, key=lambda r: r[0])]
-    return read_files, lines, new_lines, skipped, findings, {"files": following, "events": kept, "reported": told}
+    return read_files, lines, new_lines, skipped, findings, {"files": following, "remote": marks, "events": kept,
+                                                       "reported": told}
 
 
 def count_of(findings, severity):

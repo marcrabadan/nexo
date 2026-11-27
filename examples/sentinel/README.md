@@ -232,8 +232,12 @@ system that keeps logs:
 Each needs its host in the `policy` block. The keys are read as secrets
 and never shown. A source that fails is listed under `SKIPPED` and the
 rest is scanned. The lines of a source are a window, not part of
-`incremental`: each run reads the whole `source_window`, the newest
-`source_lines` of it. `logsources.nexo` is the module with the seven.
+`incremental` for files, but with `incremental` each run still reads the
+whole `source_window` (the newest `source_lines` of it) and leaves out
+the lines the run before saw: `state.json` keeps, for each source, the
+time of its newest line and how many lines it had at that second, never
+the text of a line. Lines of a source whose times are the same and come
+in another order are taken as the same lines. `logsources.nexo` is the module with the seven.
 
 For Azure the rows come in the order of the query, so order it by time,
 the oldest first; the first `source_lines` rows are read. For Google a

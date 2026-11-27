@@ -216,9 +216,12 @@ a user that can read the logs and nothing more.
   how Alertmanager keeps one firing), but nothing schedules a run, and
   none is ever sent as resolved: it ends when its time in Alertmanager
   runs out.
-- The lines `sentinel.nexo` reads from a log source are a window, not
-  part of `incremental`, and at most `source_lines` (1000) for each
-  query, without paging: a busy window is cut to its newest lines.
+- The lines `sentinel.nexo` reads from a log source are a window of at
+  most `source_lines` (1000) for each query, without paging: a busy
+  window is cut to its newest lines, and lines older than the newest
+  1000 are never seen. With `incremental`, a source is followed by the
+  time of its newest line, so a run that starts after a long stop only
+  sees the newest `source_window`.
 - Alertmanager, Grafana, Loki, Elasticsearch, Splunk and Datadog have
   been reached only as stand-ins that answer their HTTP APIs in the
   tests, written from each one's documented API.
