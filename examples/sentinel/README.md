@@ -226,7 +226,13 @@ the run goes on.
 | Prometheus and Loki | the two monitoring programs below | `restarts.json`, `resources.json` |
 
 Alerts are named `SentinelAttack`, `SentinelRestart` and `SentinelResource`
-and carry the label `source="nexo-sentinel"`, to route them. None carries
+and carry the label `source="nexo-sentinel"`, to route them. Each run
+sends the alerts that fire with the time they began and an end an hour
+away, and those of the run before that fire no more with an end of now,
+so Alertmanager resolves them; `alerts-sentinel.json`,
+`alerts-restarts.json` and `alerts-resources.json` keep what fires
+between runs. Run the programs at least once an hour, or alerts end by
+themselves. None carries
 a line of a log. Each integration is off until its setting names an
 address, and the host of each has to be added to the `policy` block of
 the program. A failure to tell is said (and, in `sentinel.nexo`,

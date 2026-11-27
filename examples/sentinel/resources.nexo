@@ -9,6 +9,8 @@ use notify
 policy:
     allow read "resources.json"
     allow write "resources-report.json"
+    allow read "alerts-resources.json"
+    allow write "alerts-resources.json"
     allow env "SENTINEL_AUTH"
     allow net "127.0.0.1"
     allow net "localhost"
@@ -234,10 +236,11 @@ fn main():
     write("resources-report.json", convert({"window": settings.window, "containers": len(uses), "findings": findings, "logs": logs, "use": uses}, to: json))?
     print("The report is in resources-report.json.")
     alerts = alerts_of(findings)
-    if settings.alertmanager != "" and len(alerts) > 0:
+    if settings.alertmanager != "":
         try:
-            notify.alertmanager(settings.alertmanager, alerts, {})?
-            print("Alertmanager told: {len(alerts)} alerts.")
+            told = notify.sync(settings.alertmanager, "alerts-resources.json", alerts, {})?
+            if told[0] + told[1] > 0:
+                print("Alertmanager told: {told[0]} firing, {told[1]} resolved.")
         else e:
             print("Alertmanager not told: {e.message}")
 

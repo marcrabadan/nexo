@@ -24,3 +24,4 @@ examples/sentinel/cloudwatch-state.json
 examples/sentinel/logs/cloudwatch-*.log
 examples/sentinel/blocks.json
 examples/sentinel/sentinel.lock.db
+examples/sentinel/alerts-*.json

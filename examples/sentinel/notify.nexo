@@ -14,6 +14,53 @@ pub fn alertmanager(url: str, alerts: list, headers: map) -> bool!:
     http.post("{url}/api/v2/alerts", alerts, headers: headers, timeout: 5s)?
     return true
 
+## How long an alert stays firing in Alertmanager if it is not sent
+## again: a program that runs at least once an hour keeps it firing, and
+## one that stops leaves it to end by itself instead of firing for ever.
+ALERT_HOLD = 3600
+
+## The same labels in the same order are the same alert.
+fn fingerprint(labels: map) -> str:
+    var out = ""
+    for key in labels.keys():
+        out = "{out}{key}={labels[key]};"
+    return out
+
+## Sends to Alertmanager the alerts that fire now, each with the time it
+## began and an end ALERT_HOLD away, and those of the run before that no
+## longer fire, with an end of now, so that Alertmanager resolves them.
+## `file` keeps what fires between runs; it is written only when
+## Alertmanager took the alerts, so a resolution that failed is sent
+## again. Gives [firing, resolved].
+pub fn sync(url: str, file: str, alerts: list, headers: map) -> list!:
+    var before = {}
+    try:
+        before = json.parse(read(file)?)?
+    else e is NotFound:
+        before = {}
+    started = str(now)
+    ends = str(now + ALERT_HOLD * 1s)
+    var firing = {}
+    var sent = []
+    for one in alerts:
+        key = fingerprint(one["labels"])
+        var alert_now = one
+        alert_now["startsAt"] = (before[key] ?? {})["startsAt"] ?? started
+        alert_now["endsAt"] = ends
+        firing[key] = alert_now
+        sent.add(alert_now)
+    var resolved = 0
+    for key in before.keys():
+        if firing[key] == none:
+            var gone = before[key]
+            gone["endsAt"] = started
+            sent.add(gone)
+            resolved += 1
+    if len(sent) > 0:
+        alertmanager(url, sent, headers)?
+    write(file, convert(firing, to: json))?
+    return [len(alerts), resolved]
+
 ## Writes an annotation in Grafana, at the time it is sent.
 pub fn annotation(url: str, text: str, tags: list, headers: map) -> bool!:
     http.post("{url}/api/annotations", {"text": text, "tags": tags}, headers: headers, timeout: 5s)?

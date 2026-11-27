@@ -10,6 +10,8 @@ policy:
     allow read "restarts.json"
     allow write "restarts-report.json"
     allow write "restarts-report.md"
+    allow read "alerts-restarts.json"
+    allow write "alerts-restarts.json"
     allow env "SENTINEL_AUTH"
     allow env "SENTINEL_GRAFANA_AUTH"
     allow net "127.0.0.1"
@@ -303,15 +305,14 @@ fn alerts_of(restarts: list) -> list:
 ## Tells Alertmanager and marks Grafana, when the settings name them. A
 ## failure is said and the report stands.
 fn tell(settings: Settings, restarts: list):
-    if len(urgent(restarts)) == 0:
-        return
     if settings.alertmanager != "":
         try:
-            notify.alertmanager(settings.alertmanager, alerts_of(restarts), {})?
-            print("Alertmanager told: {len(urgent(restarts))} alerts.")
+            told = notify.sync(settings.alertmanager, "alerts-restarts.json", alerts_of(restarts), {})?
+            if told[0] + told[1] > 0:
+                print("Alertmanager told: {told[0]} firing, {told[1]} resolved.")
         else e:
             print("Alertmanager not told: {e.message}")
-    if settings.grafana != "":
+    if settings.grafana != "" and len(urgent(restarts)) > 0:
         try:
             for r in urgent(restarts):
                 notify.annotation(settings.grafana, "{r.namespace}/{r.pod}/{r.container} restarted {r.restarts} times: {r.name}", ["nexo-sentinel", "restart", r.namespace, r.severity], {"Authorization": secret("SENTINEL_GRAFANA_AUTH")})?

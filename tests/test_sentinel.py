@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+from datetime import datetime
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -141,6 +142,23 @@ def audit(folder):
     return [(r["event"], r["detail"]) for r in records]
 
 
+STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z"
+
+
+def untimed(alerts):
+    """Alerts without their times, which differ from run to run."""
+    return [{k: v for k, v in a.items() if k not in ("startsAt", "endsAt")} for a in alerts]
+
+
+def untimed_calls():
+    return [(path, untimed(body) if path == "/api/v2/alerts" else body)
+            for path, body in Outside.seen if path != "/api/chat"]
+
+
+def seconds(stamp):
+    return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+
+
 def blocks():
     return [body["address"] for path, body in Outside.seen if path == "/block"]
 
@@ -240,12 +258,13 @@ def test_the_python_comparison_is_the_same(work, server, answers):
     (work / "sentinel.json").write_text(json.dumps(settings), encoding="utf-8")
     nexo = sentinel(commands()[0][1], work, answers)
     # the same calls outside; each asks the model in its own words
-    seen, records = [(path, body) for path, body in Outside.seen if path != "/api/chat"], audit(work)
+    seen, records = untimed_calls(), audit(work)
     asked = len(Outside.seen)
     Outside.seen.clear()
     report = (work / "report.json").read_bytes()
     (work / "audit.json").unlink()
     (work / "report.json").unlink()
+    (work / "alerts-sentinel.json").unlink()
     blocked = work / "blocks.json"
     nexo_blocks = json.loads(blocked.read_text(encoding="utf-8")) if blocked.exists() else {}
     if blocked.exists():
@@ -257,7 +276,7 @@ def test_the_python_comparison_is_the_same(work, server, answers):
     assert all(abs(nexo_blocks[a]["until"] - python_blocks[a]["until"]) <= 5 for a in nexo_blocks)
     assert (work / "report.json").read_bytes() == report
     assert len(Outside.seen) == asked and audit(work) == records
-    assert [(path, body) for path, body in Outside.seen if path != "/api/chat"] == seen
+    assert untimed_calls() == seen
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -556,15 +575,16 @@ def test_a_syslog_file_of_sshd_is_read(phase, work):
 def test_alertmanager_gets_an_alert_for_each_urgent_address(phase, work, server):
     settings_of(work, alertmanager=server)
     code, out = sentinel(phase[1], work, "no\nno\n")
-    assert code == 0 and "Alertmanager told.\n" in out
+    assert code == 0 and "Alertmanager told: 8 firing, 0 resolved.\n" in out
     (path, alerts), = Outside.seen
     assert path == "/api/v2/alerts" and len(alerts) == 8
-    assert alerts[0] == {
+    assert all(re.fullmatch(STAMP, a["startsAt"]) and re.fullmatch(STAMP, a["endsAt"]) for a in alerts)
+    assert untimed(alerts)[0] == {
         "labels": {"alertname": "SentinelAttack", "severity": "critical", "source": "nexo-sentinel",
                    "instance": "198.51.100.140", "priority": "P1", "proposal": "block"},
         "annotations": {"summary": "198.51.100.140: Initial Access, Reconnaissance (SEN-102, SEN-105)"}}
     assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 4 + ["warning"] * 4
-    assert "GET" not in json.dumps(alerts) and ("alertmanager", "sent") in audit(work)
+    assert "GET" not in json.dumps(alerts) and ("alertmanager", "8 firing, 0 resolved") in audit(work)
     assert blocks() == []
 
 
@@ -894,3 +914,42 @@ def test_a_run_that_fails_gives_the_lock_back(phase, work):
     settings_of(work, block_ttl="24h")
     code, out = sentinel(phase[1], work, "no\nno\n")
     assert code == 0 and not out.startswith(BUSY)
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_alerts_that_no_longer_fire_are_resolved(phase, work, server):
+    settings_of(work, alertmanager=server)
+    sentinel(phase[1], work, "no\nno\n")
+    (_, first), = Outside.seen
+    now = time.time()
+    assert all(abs(seconds(a["endsAt"]) - (now + 3600)) < 120 for a in first)
+    # the same alerts again: the same start, and nothing resolved
+    Outside.seen.clear()
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    (_, again), = Outside.seen
+    assert "8 firing, 0 resolved" in out and [a["startsAt"] for a in again] == [a["startsAt"] for a in first]
+    # only the benign log: every alert of before is sent with an end of now
+    settings_of(work, logs=["logs/benign.log"])
+    Outside.seen.clear()
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert "Alertmanager told: 0 firing, 8 resolved.\n" in out
+    (_, gone), = Outside.seen
+    assert untimed(gone) == untimed(first) and [a["startsAt"] for a in gone] == [a["startsAt"] for a in first]
+    assert all(abs(seconds(a["endsAt"]) - time.time()) < 120 for a in gone)
+    # nothing fires and nothing did: nothing is sent
+    Outside.seen.clear()
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert Outside.seen == [] and "Alertmanager told" not in out
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_resolution_that_fails_is_sent_again(phase, work, server):
+    settings_of(work, alertmanager=server)
+    sentinel(phase[1], work, "no\nno\n")
+    settings_of(work, alertmanager="http://127.0.0.1:1", logs=["logs/benign.log"])
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert "Alertmanager not told: " in out
+    settings_of(work, alertmanager=server)
+    Outside.seen.clear()
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert "Alertmanager told: 0 firing, 8 resolved.\n" in out

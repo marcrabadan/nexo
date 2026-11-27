@@ -691,6 +691,29 @@ def alerts_of(rows):
             for row in rows if row["priority"] in ("P1", "P2")]
 
 
+def sync_alerts(url, file, alerts):
+    """notify.sync: what fires now, with its start and an end an hour away, and what fires no more, ended now."""
+    try:
+        with open(file, encoding="utf-8") as f:
+            before = json.load(f)
+    except FileNotFoundError:
+        before = {}
+    stamp_of = lambda t: t.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    now_time = datetime.now(timezone.utc)
+    started, ends = stamp_of(now_time), stamp_of(now_time + timedelta(seconds=3600))
+    firing, sent = {}, []
+    for one in alerts:
+        key = "".join(f"{k}={v};" for k, v in one["labels"].items())
+        firing[key] = {**one, "startsAt": before.get(key, {}).get("startsAt", started), "endsAt": ends}
+        sent.append(firing[key])
+    gone = [{**before[key], "endsAt": started} for key in before if key not in firing]
+    sent += gone
+    if sent:
+        post_json(f"{url}/api/v2/alerts", sent)
+    write_json(file, firing)
+    return len(alerts), len(gone)
+
+
 def post_json(url, value):
     request = urllib.request.Request(url, json.dumps(value).encode(), {"Content-Type": "application/json"})
     urllib.request.urlopen(request, timeout=5).close()
@@ -809,11 +832,12 @@ def main():
         except Exception as e:
             print(f"Alert not sent: {e}")
             events.append(("alert", "failed"))
-    if settings["alertmanager"] and text:
+    if settings["alertmanager"]:
         try:
-            post_json(f'{settings["alertmanager"]}/api/v2/alerts', alerts_of(rows))
-            print("Alertmanager told.")
-            events.append(("alertmanager", "sent"))
+            firing, resolved = sync_alerts(settings["alertmanager"], "alerts-sentinel.json", alerts_of(rows))
+            if firing + resolved:
+                print(f"Alertmanager told: {firing} firing, {resolved} resolved.")
+                events.append(("alertmanager", f"{firing} firing, {resolved} resolved"))
         except Exception as e:
             print(f"Alertmanager not told: {e}")
             events.append(("alertmanager", "failed"))

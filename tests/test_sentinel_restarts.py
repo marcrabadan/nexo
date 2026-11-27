@@ -233,10 +233,11 @@ def test_its_tests_pass_and_it_is_formatted(phase, work):
 def test_alertmanager_and_grafana_hear_of_the_serious_restarts(phase, work, server):
     configure(work, alertmanager=server, grafana=server)
     code, out = restarts(phase[1], work, env={"SENTINEL_GRAFANA_AUTH": "Bearer gr4fana"})
-    assert code == 0 and out.endswith("Alertmanager told: 4 alerts.\nGrafana marked: 4 annotations.\n")
+    assert code == 0 and out.endswith("Alertmanager told: 4 firing, 0 resolved.\nGrafana marked: 4 annotations.\n")
     (path, alerts, auth), *marks = Monitoring.posted
     assert path == "/api/v2/alerts" and auth is None
-    assert alerts[0] == {
+    assert {"startsAt", "endsAt"} <= set(alerts[0])
+    assert {k: v for k, v in alerts[0].items() if k not in ("startsAt", "endsAt")} == {
         "labels": {"alertname": "SentinelRestart", "severity": "critical", "source": "nexo-sentinel",
                    "namespace": "data", "pod": "importer-0", "container": "importer", "cause": "configuration"},
         "annotations": {"summary": "data/importer-0/importer restarted 4 times: configuration"}}
@@ -255,3 +256,18 @@ def test_a_failed_notification_leaves_the_report(phase, work, server):
     assert code == 0 and "Alertmanager not told: " in out and "Grafana not marked: " in out
     assert "SENTINEL_GRAFANA_AUTH" in out and (work / "restarts-report.json").exists()
     assert Monitoring.posted == []
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_restarts_that_stop_are_resolved(phase, work, server):
+    configure(work, alertmanager=server)
+    restarts(phase[1], work)
+    configure(work, namespace="data")
+    Monitoring.posted.clear()
+    code, out = restarts(phase[1], work)
+    # in data only importer-0 is critical or high: the three of shop are resolved
+    assert out.endswith("Alertmanager told: 1 firing, 3 resolved.\n")
+    (path, alerts, _), = Monitoring.posted
+    assert [a["labels"]["pod"] for a in alerts] == ["importer-0", "api-7d9f8-x2k4p", "worker-5c6b7-q8z1m",
+                                                     "mail-9b8a7-k3j5d"]
+    assert alerts[1]["endsAt"] < alerts[0]["endsAt"]

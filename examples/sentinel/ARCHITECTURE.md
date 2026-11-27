@@ -215,10 +215,9 @@ a user that can read the logs and nothing more.
   other attacks spread over many addresses are not.
 - `restarts.nexo` and `resources.nexo` have run against stand-ins that
   answer the HTTP APIs of Prometheus and Loki, not against real ones.
-- Alerts are sent again by every run that still sees the cause (which is
-  how Alertmanager keeps one firing), but nothing schedules a run, and
-  none is ever sent as resolved: it ends when its time in Alertmanager
-  runs out.
+- An alert is resolved by the run after the one that last saw its cause.
+  Nothing schedules a run: a program that stops running leaves its
+  alerts to end by themselves an hour after they were last sent.
 - The lines `sentinel.nexo` reads from a log source are a window of at
   most `source_lines` (1000) for each query, without paging: a busy
   window is cut to its newest lines, and lines older than the newest

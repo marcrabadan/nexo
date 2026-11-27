@@ -188,7 +188,7 @@ def test_its_tests_pass_and_it_is_formatted(phase, work):
 def test_alertmanager_hears_of_the_containers_near_a_limit(phase, work, server):
     configure(work, alertmanager=server)
     code, out = resources(phase[1], work)
-    assert code == 0 and out.endswith("Alertmanager told: 2 alerts.\n")
+    assert code == 0 and out.endswith("Alertmanager told: 2 firing, 0 resolved.\n")
     (path, alerts), = Monitoring.posted
     assert path == "/api/v2/alerts"
     assert [(a["labels"]["rule"], a["labels"]["pod"], a["labels"]["severity"]) for a in alerts] == [

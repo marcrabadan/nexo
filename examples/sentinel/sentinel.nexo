@@ -21,6 +21,8 @@ policy:
     allow read "audit.json"
     allow write "audit.json"
     allow write "report.json"
+    allow read "alerts-sentinel.json"
+    allow write "alerts-sentinel.json"
     allow read "state.json"
     allow read "blocks.json"
     allow read "sentinel.lock.db"
@@ -773,11 +775,12 @@ fn main():
         else e:
             print("Alert not sent: {e.message}")
             events.add(["alert", "failed"])
-    if settings.alertmanager != "" and text != "":
+    if settings.alertmanager != "":
         try:
-            notify.alertmanager(settings.alertmanager, alerts_of(rows), {})?
-            print("Alertmanager told.")
-            events.add(["alertmanager", "sent"])
+            told = notify.sync(settings.alertmanager, "alerts-sentinel.json", alerts_of(rows), {})?
+            if told[0] + told[1] > 0:
+                print("Alertmanager told: {told[0]} firing, {told[1]} resolved.")
+                events.add(["alertmanager", "{told[0]} firing, {told[1]} resolved"])
         else e:
             print("Alertmanager not told: {e.message}")
             events.add(["alertmanager", "failed"])
