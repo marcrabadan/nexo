@@ -3,6 +3,7 @@ docs/ai-native-roadmap.md: the same findings in both phases and in the
 Python comparison, without a model; a refusal changes nothing outside;
 the model's answer cannot block an address; a release build cannot read
 a log outside logs/."""
+import base64
 import json
 import os
 import re
@@ -848,7 +849,7 @@ def test_unblock_lifts_what_a_person_names(phase, work):
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
 def test_unblock_and_the_new_modules_are_tested_and_formatted(phase, work):
-    for name in ("unblock.nexo", "times.nexo", "audit.nexo", "blocks.nexo", "runlock.nexo"):
+    for name in ("unblock.nexo", "times.nexo", "audit.nexo", "blocks.nexo", "runlock.nexo", "auditcheck.nexo"):
         proc = run(phase[1], ["test", name], work)
         assert proc.returncode == 0, proc.stdout.decode()
         before = (work / name).read_bytes()
@@ -953,3 +954,98 @@ def test_a_resolution_that_fails_is_sent_again(phase, work, server):
     Outside.seen.clear()
     code, out = sentinel(phase[1], work, "no\nno\n")
     assert "Alertmanager told: 0 firing, 8 resolved.\n" in out
+
+
+def check_audit(prefix, work):
+    proc = run(prefix, ["auditcheck.nexo"], work)
+    return proc.returncode, proc.stdout.decode("utf-8")
+
+
+def verified_independently(work, records):
+    """The chain checked here, with Python's cryptography, not with Nexo."""
+    import base64
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    public = Ed25519PublicKey.from_public_bytes(base64.b64decode((work / "audit.pub").read_text().strip()))
+    prev = ""
+    for r in records:
+        text = f'{r["number"]}\n{r["at"]}\n{r["event"]}\n{r["detail"]}\n{r["prev"]}'
+        public.verify(base64.b64decode(r["sig"]), text.encode("utf-8"))
+        assert r["prev"] == prev
+        prev = r["sig"]
+    return True
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_the_audit_is_a_signed_chain(phase, work):
+    sentinel(phase[1], work, "no\nno\n")
+    unblock(phase[1], work, "")
+    sentinel(commands()[0][1], work, "no\nno\n")
+    records = json.loads((work / "audit.json").read_text(encoding="utf-8"))
+    assert [r["number"] for r in records] == list(range(1, len(records) + 1))
+    assert verified_independently(work, records)
+    code, out = check_audit(phase[1], work)
+    assert code == 0 and out.endswith(f"{len(records)} records in 1 files; 0 from before the chain began.\n"
+                                      "The chain is whole.\n")
+    public = (work / "audit.pub").read_text().strip()
+    assert f"Public key (compare it with your copy): {public}\n" in out
+    assert len(base64.b64decode((work / "audit.key").read_text().strip())) == 32
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+@pytest.mark.parametrize("change,problem", [
+    ("edit", "record 3 does not match its signature"),
+    ("remove", "record 5 does not follow the one before it"),
+    ("insert", "record 4 does not follow the one before it"),
+    ("sign_again", "record 2 does not match its signature"),
+])
+def test_a_changed_audit_shows(phase, work, change, problem):
+    sentinel(phase[1], work, "no\nno\n")
+    path = work / "audit.json"
+    records = json.loads(path.read_text(encoding="utf-8"))
+    if change == "edit":
+        records[2]["detail"] = "nothing was skipped"
+    elif change == "remove":
+        del records[3]
+    elif change == "insert":
+        records.insert(3, {**records[2], "number": 4, "event": "approval", "detail": "yes"})
+    else:
+        # signed again with another key, as someone without the private key could
+        import base64
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        other = Ed25519PrivateKey.generate()
+        r = records[1]
+        r["detail"] = "changed"
+        text = f'{r["number"]}\n{r["at"]}\n{r["event"]}\n{r["detail"]}\n{r["prev"]}'
+        r["sig"] = base64.b64encode(other.sign(text.encode())).decode()
+    path.write_text(json.dumps(records), encoding="utf-8")
+    code, out = check_audit(phase[1], work)
+    assert code == 1 and f"  {problem}\n" in out and "The chain is whole." not in out
+    assert "the audit chain is not whole" in out
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_full_audit_is_archived_and_the_chain_goes_on(phase, work):
+    """5000 records signed here with SENTINEL_AUDIT_KEY; the next run moves them to the archive
+    and goes on with the chain in a new audit.json."""
+    import base64
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    seed = os.urandom(32)
+    key = Ed25519PrivateKey.from_private_bytes(seed)
+    old, prev = [{"number": 1, "at": "2026-01-01T00:00:00.000Z", "event": "scan", "detail": "before the chain"}], ""
+    for n in range(2, 5001):
+        r = {"number": n, "at": "2026-01-01T00:00:00.000Z", "event": "scan", "detail": f"run {n}", "prev": prev}
+        r["sig"] = base64.b64encode(key.sign(f'{n}\n{r["at"]}\nscan\nrun {n}\n{prev}'.encode())).decode()
+        prev = r["sig"]
+        old.append(r)
+    (work / "audit.json").write_text(json.dumps(old), encoding="utf-8")
+    proc = run(phase[1], ["sentinel.nexo"], work, stdin=b"no\nno\n",
+               env={"SENTINEL_AUDIT_KEY": base64.b64encode(seed).decode()})
+    assert proc.returncode == 0, proc.stdout.decode()
+    assert not (work / "audit.key").exists()
+    archived = json.loads((work / "audit-archive" / "audit-000001.json").read_text(encoding="utf-8"))
+    assert archived == old and (work / "audit-archive" / "audit-archive-readme.txt").exists()
+    current = json.loads((work / "audit.json").read_text(encoding="utf-8"))
+    assert current[0]["number"] == 5001 and current[0]["prev"] == old[-1]["sig"]
+    code, out = check_audit(phase[1], work)
+    assert code == 0, out
+    assert f"{5000 + len(current)} records in 2 files; 1 from before the chain began.\nThe chain is whole.\n" in out

@@ -239,5 +239,9 @@ a user that can read the logs and nothing more.
 - A lock left by a run that stopped holds for an hour, and a run that
   waits more than an hour for its questions can have its lock taken
   over.
-- `audit.json` is a plain file; it is not signed or protected from
-  whoever can write to the folder.
+- The audit chain shows a change; it does not stop one. Whoever can
+  write the folder can delete the whole of `audit.json`, or the last
+  records of it (the check cannot tell a chain that was cut at its end
+  from one that ended there): ship the records elsewhere as well. With
+  `audit.key` in the folder instead of `SENTINEL_AUDIT_KEY`, the chain
+  can be signed again by whoever reads that file.

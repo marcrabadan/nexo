@@ -1,6 +1,52 @@
-## The audit file of the Sentinel programs, audit.json: what each run did.
+## The audit file of the Sentinel programs, audit.json: what each run did,
+## as a chain. Each record is signed (Ed25519) together with the signature
+## of the record before it, so a record changed, removed or put in shows
+## when the chain is checked (auditcheck.nexo), and it cannot be signed
+## again without the private key. The key is SENTINEL_AUDIT_KEY (32 bytes
+## in base64, kept outside this folder) or, without it, audit.key, made
+## on the first run; its public half is written to audit.pub. When
+## audit.json has AUDIT_MAX records it is moved to audit-archive/ and a
+## new one goes on with the chain.
 
-## The records of this run are added to the ones audit.json has.
+AUDIT_MAX = 5000
+README = "Records of audit.json moved here when it reached its size, named by their first number.\nCheck them, with audit.json, with auditcheck.nexo.\n"
+
+fn pair():
+    try:
+        return keypair.load(secret("SENTINEL_AUDIT_KEY"))?
+    else e:
+        try:
+            return keypair.load(read("audit.key")?.trim())?
+        else missing is NotFound:
+            made = keypair.new()
+            write("audit.key", "{made.private.export()}\n")?
+            return made
+
+## The text a record is signed as.
+pub fn signed_text(record: map) -> str:
+    return "{record["number"]}\n{record["at"]}\n{record["event"]}\n{record["detail"]}\n{record["prev"]}"
+
+fn padded(n: int) -> str:
+    var out = str(n)
+    while len(out) < 6:
+        out = "0{out}"
+    return out
+
+## The name of the archive that begins with record `first`.
+pub fn archive_name(first: int) -> str:
+    return "audit-archive/audit-{padded(first)}.json"
+
+fn archive(records: list) -> bool!:
+    name = archive_name(records[0]["number"])
+    try:
+        write(name, convert(records, to: json))
+    else e is NotFound:
+        write("audit-archive-readme.txt", README)?
+        move_file("audit-archive-readme.txt", "audit-archive")?
+        write(name, convert(records, to: json))?
+    return true
+
+## The records of this run are added to the chain of audit.json.
 pub fn record(events: list) -> bool!:
     var all = []
     try:
@@ -8,7 +54,21 @@ pub fn record(events: list) -> bool!:
             all.add(old_event)
     else e is NotFound:
         all = []
+    var last_number = 0
+    var prev = ""
+    if len(all) > 0:
+        last_number = all[len(all) - 1]["number"]
+        prev = all[len(all) - 1]["sig"] ?? ""
+    if len(all) >= AUDIT_MAX:
+        archive(all)?
+        all = []
+    keys = pair()?
+    write("audit.pub", "{keys.public}\n")?
     for event in events:
-        all.add({"number": len(all) + 1, "at": str(now), "event": event[0], "detail": event[1]})
+        last_number += 1
+        var one = {"number": last_number, "at": str(now), "event": event[0], "detail": event[1], "prev": prev}
+        one["sig"] = sign(signed_text(one), keys.private)
+        prev = one["sig"]
+        all.add(one)
     write("audit.json", convert(all, to: json))?
     return true

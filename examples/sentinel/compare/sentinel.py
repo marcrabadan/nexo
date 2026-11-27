@@ -724,15 +724,54 @@ def alert(webhook, text):
     urllib.request.urlopen(request, timeout=5).close()
 
 
+AUDIT_MAX = 5000
+
+
+def audit_pair():
+    """The key of audit.nexo: SENTINEL_AUDIT_KEY, or audit.key, made on the first run."""
+    import base64
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    text = os.environ.get("SENTINEL_AUDIT_KEY")
+    if not text:
+        try:
+            with open("audit.key", encoding="utf-8") as f:
+                text = f.read().strip()
+        except FileNotFoundError:
+            text = base64.b64encode(os.urandom(32)).decode()
+            with open("audit.key", "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+    return Ed25519PrivateKey.from_private_bytes(base64.b64decode(text))
+
+
+def signed_text(record):
+    return f'{record["number"]}\n{record["at"]}\n{record["event"]}\n{record["detail"]}\n{record["prev"]}'
+
+
 def record(events):
+    import base64
+    from cryptography.hazmat.primitives import serialization
     try:
         with open("audit.json", encoding="utf-8") as f:
             records = json.load(f)
     except FileNotFoundError:
         records = []
+    number = records[-1]["number"] if records else 0
+    prev = records[-1].get("sig", "") if records else ""
+    if len(records) >= AUDIT_MAX:
+        os.makedirs("audit-archive", exist_ok=True)
+        write_json(f"audit-archive/audit-{records[0]['number']:06d}.json", records)
+        records = []
+    key = audit_pair()
+    public = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    with open("audit.pub", "w", encoding="utf-8") as f:
+        f.write(base64.b64encode(public).decode() + "\n")
     for event, detail in events:
+        number += 1
         at = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        records.append({"number": len(records) + 1, "at": at, "event": event, "detail": detail})
+        one = {"number": number, "at": at, "event": event, "detail": detail, "prev": prev}
+        one["sig"] = base64.b64encode(key.sign(signed_text(one).encode("utf-8"))).decode()
+        prev = one["sig"]
+        records.append(one)
     write_json("audit.json", records)
 
 

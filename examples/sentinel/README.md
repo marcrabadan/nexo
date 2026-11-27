@@ -144,6 +144,34 @@ asks which (an address, or `all`) and then asks for a `yes`.
 ../../.venv/bin/nexo unblock.nexo
 ```
 
+### The audit, signed and archived
+
+Every record of `audit.json` is signed (Ed25519) together with the
+signature of the record before it, so a record changed, removed or put
+in breaks the chain, and the chain cannot be signed again without the
+private key. Check it with:
+
+```
+../../.venv/bin/nexo auditcheck.nexo
+```
+
+It prints the public key it used, how many records it read and
+`The chain is whole.`, or each place where the chain breaks and then
+ends with an error (exit code 1), for a schedule or a pipeline to see.
+
+The private key is `SENTINEL_AUDIT_KEY` (32 random bytes in base64, for
+instance `openssl rand -base64 32`), read as a secret and kept outside
+this folder. Without it, the first run makes `audit.key` here, which
+only shows changes made by someone who does not read that file. The
+public key is written to `audit.pub`; the check reads it from there, so
+compare the key it prints with a copy kept elsewhere.
+
+When `audit.json` has 5000 records, the next run moves them to
+`audit-archive/audit-000001.json` (named by their first number) and
+starts a new `audit.json` that goes on with the chain. The check reads
+the archives and `audit.json` together. Records written before the chain
+existed are counted and not checked.
+
 ### One run at a time
 
 `sentinel.nexo`, `unblock.nexo` and `cloudwatch.nexo` each take a lock
@@ -352,6 +380,7 @@ every address blocked or not.
 - `cloudwatch.nexo`, `cloudwatch.json`: the collector of CloudWatch Logs.
 - `addresses.nexo`: IPv4 and IPv6, ranges and the client behind proxies.
 - `unblock.nexo`: lists the blocks and lifts the ones a person names.
+- `auditcheck.nexo`: checks the chain of the audit records.
 - `blocks.nexo`, `audit.nexo`, `times.nexo`, `runlock.nexo`: the blocks
   in force, the audit file, the times of logs and the lock of a run,
   shared by the programs.

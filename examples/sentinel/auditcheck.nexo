@@ -1,0 +1,86 @@
+## Nexo Sentinel, auditcheck: checks the chain of the audit records, in
+## audit-archive/ and audit.json, with the public key of audit.pub. That
+## file is in the same folder as the records, and whoever can change them
+## can change it too: the check prints the key it used, to compare with a
+## copy kept elsewhere.
+use audit
+use safe
+
+policy:
+    allow read "audit.json"
+    allow read "audit.pub"
+    allow read "audit-archive/"
+    deny shell
+
+## The records of a file; none when it is not there.
+fn records_of(path: str) -> list!:
+    try:
+        return json.parse(read(path)?)?
+    else e is NotFound:
+        return []
+
+## The problems of a chain of records: a record not signed with the key,
+## not following the one before it, or not where its number says.
+fn problems(records: list, public: str) -> list:
+    var found = []
+    var prev = ""
+    var expected = 0
+    var signed = false
+    for r in records:
+        expected += 1
+        if (r["sig"] ?? "") == "":
+            if signed:
+                found.add("record {r["number"] ?? expected} is not signed")
+        else:
+            if signed and r["prev"] != prev:
+                found.add("record {r["number"]} does not follow the one before it")
+            if not verify(audit.signed_text(r), r["sig"], public):
+                found.add("record {r["number"]} does not match its signature")
+            if signed and r["number"] != expected:
+                found.add("record {r["number"]} is where {expected} should be")
+            signed = true
+            prev = r["sig"]
+        expected = r["number"] ?? expected
+    return found
+
+## Prints what it found and gives how many problems there are.
+fn main() -> int!:
+    public = read("audit.pub")?.trim()
+    var all = []
+    var files = 0
+    var first = 1
+    var more = true
+    while more:
+        part = records_of(audit.archive_name(first))?
+        if len(part) == 0:
+            more = false
+        else:
+            files += 1
+            for r in part:
+                all.add(r)
+            first = part[len(part) - 1]["number"] + 1
+    current = records_of("audit.json")?
+    if len(current) > 0:
+        files += 1
+        for r in current:
+            all.add(r)
+    print("NEXO SENTINEL - audit check")
+    print("Public key (compare it with your copy): {safe.shown(public)}")
+    found = problems(all, public)
+    unsigned = [r for r in all if (r["sig"] ?? "") == ""] |> count
+    print("{len(all)} records in {files} files; {unsigned} from before the chain began.")
+    if len(found) == 0:
+        print("The chain is whole.")
+    for problem in found:
+        print("  {safe.shown(problem)}")
+    return len(found)
+
+var broken = 0
+try:
+    broken = main()
+else e:
+    print("Sentinel stopped: {e.message}")
+    broken = 1
+# a broken chain ends the program with an error, so a schedule or a pipeline sees it
+if broken > 0:
+    fail("the audit chain is not whole")
