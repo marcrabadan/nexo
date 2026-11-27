@@ -62,7 +62,7 @@ takes part.
 | SEN-206 | `login_from_many` | high | logins of one user fail from `max_login_sources` different addresses within `count_window`; no single address is to blame, so none is proposed for blocking |
 | SEN-301 | `hidden_text` | medium | the line has invisible or direction-changing Unicode characters, or control characters such as terminal escapes |
 | SEN-302 | `oversized_line` | low | the line is longer than 4096 characters; it is not examined further |
-| SEN-303 | `malformed_line` | low | the line is not a log entry, or its address is not an IPv4 address |
+| SEN-303 | `malformed_line` | low | the line is not a log entry, or its address is neither IPv4 nor IPv6 |
 
 SEN-204 and SEN-205 are the signs of IDOR (insecure direct object
 reference, CWE-639) that a log can show. They are suspicions, so their
@@ -91,7 +91,8 @@ read; a missing or wrong field stops the program.
 | Field | Meaning |
 |---|---|
 | `logs` | the files to scan, all under `logs/` |
-| `never_block` | addresses that are reported and never proposed for blocking |
+| `never_block` | addresses and ranges (`192.0.2.10`, `10.0.0.0/8`, `2001:db8::/32`) that are reported and never proposed for blocking |
+| `trusted_proxies` | the load balancers and proxies in front of the servers, as addresses and ranges; see below |
 | `firewall` | the address of the firewall's API |
 | `max_failed_logins` | failed logins of one address before SEN-201 |
 | `max_not_found` | 404 answers to one address before SEN-203 |
@@ -118,6 +119,35 @@ is shorter (it was rotated). It also keeps the events of the last
 `count_window` (failed and accepted logins, 404s, objects asked for) and
 when each counted rule was last reported, so the counts go on from one
 run to the next: 3 failed logins in one run and 2 in the next are 5.
+
+### Load balancers, IPv6 and ranges
+
+Behind a load balancer or a proxy (an ALB, Cloudflare, the ingress of
+Kubernetes), the address in the log is the proxy's, not the client's.
+Blocking it would cut everyone off. List the proxies in
+`trusted_proxies`, and have nginx write X-Forwarded-For as the last field,
+as its `main` format does:
+
+```
+log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                '$status $body_bytes_sent "$http_referer" '
+                '"$http_user_agent" "$http_x_forwarded_for"';
+```
+
+When the address that connected is a trusted proxy, the source of the
+line is read from X-Forwarded-For, from the right, skipping the trusted
+proxies. When it is not, the header is ignored: anyone can send one,
+and believing it would let an attacker blame, or have Sentinel block,
+another address. A trusted proxy is never proposed for blocking; if a
+line from one has no client in it, the finding is the proxy's and is
+`protected`.
+
+Addresses are IPv4 or IPv6. IPv6 is written one way (RFC 5952:
+`2001:DB8:0:0:0:0:0:7` is `2001:db8::7`), so the same address is always
+counted as one, and an IPv4 address inside IPv6 (`::ffff:203.0.113.9`)
+is the IPv4 address. `never_block`, `trusted_proxies` and the `source` of
+a `suppress` entry take ranges; a range that is not valid stops the run.
+`addresses.nexo` is the module with all this.
 
 ### Counting in a window of time
 
@@ -270,10 +300,11 @@ every address blocked or not.
 
 - `logs/`: the fixed corpus. `benign.log` (no findings, with look-alikes
   such as `/search?q=union+station+hotel` and `/docs/javascript-guide.html`), `attack.log`, `unicode.log`,
-  `nginx.log` (the combined format), `auth.log` (syslog, with sshd), `oversized.log` and `binary.log` (not UTF-8, skipped).
+  `nginx.log` (the combined format), `proxy.log` (behind a load balancer, and IPv6), `auth.log` (syslog, with sshd), `oversized.log` and `binary.log` (not UTF-8, skipped).
 - `findings.json`: the findings the corpus must give, each `[file, line, rule]`.
 - `sentinel.expected`: the output when both questions are answered `no`.
 - `cloudwatch.nexo`, `cloudwatch.json`: the collector of CloudWatch Logs.
+- `addresses.nexo`: IPv4 and IPv6, ranges and the client behind proxies.
 - `safe.nexo`: the module that decides what may be shown, used by the
   three programs.
 - `compare/sentinel.py`: the same program in Python, with the same output

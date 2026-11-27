@@ -6,6 +6,7 @@
     "logs/oversized.log",
     "logs/nginx.log",
     "logs/auth.log",
+    "logs/proxy.log",
     "logs/binary.log",
     "logs/../sentinel.json",
     "/etc/passwd"
@@ -29,5 +30,6 @@
   "alertmanager": "",
   "sources": [],
   "source_window": "15m",
-  "source_lines": 1000
+  "source_lines": 1000,
+  "trusted_proxies": ["10.0.0.0/8"]
 }

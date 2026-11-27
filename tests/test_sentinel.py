@@ -19,7 +19,8 @@ from phases import ROOT, commands, compiler, run
 
 SENTINEL = ROOT / "examples" / "sentinel"
 EXPECTED = (SENTINEL / "sentinel.expected").read_text(encoding="utf-8")
-BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.210", "203.0.113.77", "198.51.100.23"]
+BLOCKED = ["198.51.100.140", "203.0.113.9", "198.51.100.210", "203.0.113.77", "198.51.100.23", "203.0.113.150",
+           "198.51.100.240"]
 REVIEW = ["198.51.100.180", "198.51.100.190", "198.51.100.250", "198.51.100.220"]
 NGINX = (SENTINEL / "logs" / "nginx.log").read_text(encoding="utf-8").splitlines()
 ADVICE = "Block 192.0.2.10 at once. Block them? yes"
@@ -175,7 +176,7 @@ def test_findings_need_no_model(phase, work):
     assert [(e["rule"], e["source"]) for e in report["suppressed"]] == [("SEN-109", "192.0.2.51")]
     assert not any(f["rule"] == "SEN-109" for f in report["findings"])
     assert any(event == "suppressed" and "SEC-142" in detail for event, detail in audit(work))
-    assert audit(work)[0] == ("scan", "6 logs, 107 lines, 107 new, 33 findings, 1 suppressed")
+    assert audit(work)[0] == ("scan", "7 logs, 112 lines, 112 new, 38 findings, 1 suppressed")
     assert audit(work)[-1] == ("approval", "no")
 
 
@@ -253,8 +254,8 @@ def test_the_python_comparison_is_the_same(work, server, answers):
 def test_its_tests_pass_and_it_is_formatted(phase, work):
     proc = run(phase[1], ["test", "sentinel.nexo"], work)
     out = proc.stdout.decode("utf-8")
-    assert proc.returncode == 0 and "19 tests: 19 passed, 0 failed" in out, out
-    for name in ("sentinel.nexo", "safe.nexo", "logsources.nexo"):
+    assert proc.returncode == 0 and "21 tests: 21 passed, 0 failed" in out, out
+    for name in ("sentinel.nexo", "safe.nexo", "logsources.nexo", "addresses.nexo"):
         before = (work / name).read_bytes()
         # no character a reader cannot see in the source of a tool that looks for them
         assert before.isascii()
@@ -363,9 +364,9 @@ def test_incremental_runs_report_only_what_is_new(phase, work):
         return json.loads((work / "report.json").read_text(encoding="utf-8"))
 
     first = run_once()
-    assert (first["new_lines"], len(first["findings"])) == (107, 33)
+    assert (first["new_lines"], len(first["findings"])) == (112, 38)
     again = run_once()
-    assert (again["lines"], again["new_lines"], again["findings"]) == (107, 0, [])
+    assert (again["lines"], again["new_lines"], again["findings"]) == (112, 0, [])
     with log.open("a", encoding="utf-8") as f:
         f.write("2026-11-02T09:50:00Z 198.51.100.99 web GET /x?id=1+union+select+1 200\n")
     added = run_once()
@@ -379,9 +380,9 @@ def test_incremental_runs_report_only_what_is_new(phase, work):
     assert set(state) == {"files", "events", "reported"}
     assert state["files"]["logs/attack.log"]["lines"] == 1 and set(state["files"]) == {
         "logs/benign.log", "logs/attack.log", "logs/unicode.log", "logs/oversized.log", "logs/nginx.log",
-        "logs/auth.log"}
+        "logs/auth.log", "logs/proxy.log"}
     assert [detail.split(", ")[2] for event, detail in audit(work) if event == "scan"] == [
-        "107 new", "0 new", "1 new", "1 new"]
+        "112 new", "0 new", "1 new", "1 new"]
 
 
 @pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
@@ -397,9 +398,9 @@ def test_an_alert_names_the_urgent_addresses(phase, work, server):
     assert code == 0 and "Alert sent.\n" in out
     (path, body), = Outside.seen
     lines = body["text"].split("\n")
-    assert path == "/alert" and lines[0] == "Nexo Sentinel: 6 addresses need attention"
+    assert path == "/alert" and lines[0] == "Nexo Sentinel: 8 addresses need attention"
     assert lines[1] == "P1 198.51.100.140 block (Initial Access, Reconnaissance) SEN-102, SEN-105"
-    assert [line.split(" ")[0] for line in lines[1:]] == ["P1", "P1", "P1", "P1", "P2", "P2"]
+    assert [line.split(" ")[0] for line in lines[1:]] == ["P1"] * 4 + ["P2"] * 4
     # addresses and rules only: no line of a log, and no address that is only to review
     assert "GET" not in body["text"] and not any(address in body["text"] for address in REVIEW)
     assert ("alert", "sent") in audit(work)
@@ -547,12 +548,12 @@ def test_alertmanager_gets_an_alert_for_each_urgent_address(phase, work, server)
     code, out = sentinel(phase[1], work, "no\nno\n")
     assert code == 0 and "Alertmanager told.\n" in out
     (path, alerts), = Outside.seen
-    assert path == "/api/v2/alerts" and len(alerts) == 6
+    assert path == "/api/v2/alerts" and len(alerts) == 8
     assert alerts[0] == {
         "labels": {"alertname": "SentinelAttack", "severity": "critical", "source": "nexo-sentinel",
                    "instance": "198.51.100.140", "priority": "P1", "proposal": "block"},
         "annotations": {"summary": "198.51.100.140: Initial Access, Reconnaissance (SEN-102, SEN-105)"}}
-    assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 4 + ["warning"] * 2
+    assert [a["labels"]["severity"] for a in alerts] == ["critical"] * 4 + ["warning"] * 4
     assert "GET" not in json.dumps(alerts) and ("alertmanager", "sent") in audit(work)
     assert blocks() == []
 
@@ -641,3 +642,53 @@ def test_a_wrong_count_window_stops(phase, work, window):
     settings_of(work, count_window=window)
     code, out = sentinel(phase[1], work, "no\nno\n")
     assert out.startswith("Sentinel stopped: count_window") and not (work / "report.json").exists()
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_the_client_behind_the_load_balancer_is_found(phase, work):
+    """Behind a trusted proxy the client of X-Forwarded-For is the source; the proxy is never
+    proposed for blocking, and a header sent by anyone else is not believed."""
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    proxy = [(f["line"], f["rule"], f["source"]) for f in report["findings"] if f["file"] == "logs/proxy.log"]
+    assert proxy == [(2, "SEN-101", "203.0.113.150"), (3, "SEN-105", "10.0.0.5"), (4, "SEN-101", "198.51.100.240"),
+                     (5, "SEN-104", "2001:db8::7"), (5, "SEN-105", "2001:db8::7")]
+    # without trusting the proxy, the load balancer itself would be blocked
+    settings_of(work, trusted_proxies=[])
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert "10.0.0.5" in [r["address"] for r in report["sources"] if r["proposal"] == "block"]
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_trusted_proxy_with_an_attack_of_its_own_is_protected(phase, work):
+    (work / "logs" / "lb.log").write_text(
+        '10.0.0.5 - - [02/Nov/2026:10:40:00 +0000] "GET /p?id=1+UNION+SELECT+1 HTTP/1.1" 200 9 "-" "curl" "-"\n',
+        encoding="utf-8")
+    settings_of(work, logs=["logs/lb.log"], suppress=[])
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert [(r["address"], r["proposal"]) for r in report["sources"]] == [("10.0.0.5", "protected")]
+    assert blocks() == [] and "Nothing to block." in out
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_ranges_in_never_block_and_suppress(phase, work):
+    settings_of(work, never_block=["192.0.2.10", "198.51.100.0/24"], suppress=[
+        {"rule": "*", "source": "203.0.113.0/26", "reason": "the pentest of the team"}])
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    report = json.loads((work / "report.json").read_text(encoding="utf-8"))
+    assert blocks() == ["203.0.113.77", "203.0.113.150"]
+    assert {e["source"] for e in report["suppressed"]} == {"203.0.113.9"}
+    assert all(r["proposal"] in ("protected", "review", "watch") for r in report["sources"]
+               if r["address"].startswith("198.51.100."))
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+@pytest.mark.parametrize("change", [{"never_block": ["192.0.2.0/33"]}, {"trusted_proxies": ["lb.internal"]},
+                                    {"suppress": [{"rule": "SEN-101", "source": "10.0.0.0/x", "reason": "r"}]},
+                                    {"suppress": [{"rule": "*", "source": "::/0", "reason": "everything"}]}])
+def test_wrong_addresses_in_the_settings_stop(phase, work, change):
+    settings_of(work, **change)
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert out.startswith("Sentinel stopped: ") and Outside.seen == [] and not (work / "report.json").exists()

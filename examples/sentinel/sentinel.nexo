@@ -6,6 +6,7 @@
 ## count and decision is added to audit.json.
 use nexo.ai
 use safe
+use addresses
 use monitoring
 use notify
 use logsources
@@ -50,6 +51,7 @@ type Settings:
     sources: list
     source_window: str
     source_lines: int
+    trusted_proxies: list
 
 ## A detection: `pattern` is looked for in the message of a log entry;
 ## the rules without one are counted or checked by scan_file.
@@ -113,11 +115,10 @@ RULES = [
 PATTERNS = [regex(rule.pattern) for rule in RULES if rule.pattern != ""]
 
 entry = regex("^(\\S+) (\\S+) (\\S+) (.*)$")
-address = regex("^[0-9]{{1,3}(\\.[0-9]{{1,3}){{3}$")
 failed_login = regex("(?i)login failed|authentication failure|invalid password")
 accepted_login = regex("(?i)login accepted|session opened")
 not_found = regex(" 404( |$)")
-combined = regex("^(\\S+) \\S+ (\\S+) \\[([^\\]]+)\\] \"([A-Z]+) (\\S+)[^\"]*\" ([0-9]{{3}) \\S+( \"[^\"]*\" (\"[^\"]*\"))?")
+combined = regex("^(\\S+) \\S+ (\\S+) \\[([^\\]]+)\\] \"([A-Z]+) (\\S+)[^\"]*\" ([0-9]{{3}) \\S+( \"[^\"]*\" (\"[^\"]*\")( \"([^\"]*)\")?)?")
 syslog_sshd = regex("^(\\S+ +[0-9]{{1,2} [0-9:]{{8}|[0-9]{{4}-\\S+) \\S+ sshd(\\[[0-9]+\\])?: (Failed|Accepted) \\S+ for (invalid user )?(\\S+) from (\\S+) port ")
 syslog_line = regex("^(\\S+ +[0-9]{{1,2} [0-9:]{{8}|[0-9]{{4}-\\S+) \\S+ [^ :]+: ")
 iso_time = regex("^([0-9]{{4})-([0-9]{{2})-([0-9]{{2})[T ]([0-9]{{2}):([0-9]{{2}):([0-9]{{2})(\\.[0-9]+)?(Z|([+-])([0-9]{{2}):?([0-9]{{2}))?")
@@ -159,39 +160,48 @@ fn finding(id: str, time: str, file: str, line: int, source: str, evidence: str)
 
 ## The address, message and time of a log entry, or none for any other line.
 ## A line of a web server (the combined format of nginx and Apache) is
-## read as `METHOD path status "agent" user=name`, and a line of sshd in a
+## read as `METHOD path status "agent" user=name`, its address the client
+## behind the trusted proxies (X-Forwarded-For, the last field of the main
+## format of nginx), and a line of sshd in a
 ## syslog file as a login failed or accepted.
-fn fields_of(line: str) -> list?:
+fn fields_of(line: str, trusted: list) -> list?:
     if len(line) > MAX_LINE:
         return none
     web = combined.groups(line)
-    if web != none and address.find(web[0]) != none:
-        var message = "{web[3]} {web[4]} {web[5]}"
-        if web[7] != none:
-            message = "{message} {web[7]}"
-        if web[1] != "-":
-            message = "{message} user={web[1]}"
-        return [web[0], message, stamp.find(web[2]) ?? "-"]
+    if web != none:
+        remote = addresses.canonical(web[0])
+        if remote != none:
+            var message = "{web[3]} {web[4]} {web[5]}"
+            if web[7] != none:
+                message = "{message} {web[7]}"
+            if web[1] != "-":
+                message = "{message} user={web[1]}"
+            return [addresses.client_of(remote, web[9], trusted), message, stamp.find(web[2]) ?? "-"]
     ssh = syslog_sshd.groups(line)
-    if ssh != none and address.find(ssh[5]) != none:
-        if ssh[2] == "Failed":
-            return [ssh[5], "sshd login failed user={ssh[4]}", stamp.find(ssh[0]) ?? "-"]
-        return [ssh[5], "sshd login accepted user={ssh[4]}", stamp.find(ssh[0]) ?? "-"]
+    if ssh != none:
+        from_address = addresses.canonical(ssh[5])
+        if from_address != none:
+            if ssh[2] == "Failed":
+                return [from_address, "sshd login failed user={ssh[4]}", stamp.find(ssh[0]) ?? "-"]
+            return [from_address, "sshd login accepted user={ssh[4]}", stamp.find(ssh[0]) ?? "-"]
     fields = entry.groups(line)
-    if fields == none or address.find(fields[1]) == none:
+    if fields == none:
         return none
-    return [fields[1], fields[3], stamp.find(fields[0]) ?? "-"]
+    source = addresses.canonical(fields[1])
+    if source == none:
+        return none
+    return [source, fields[3], stamp.find(fields[0]) ?? "-"]
 
 ## The findings one line gives by itself; scan_file adds the ones that
 ## count lines.
-fn check_line(file: str, number: int, line: str) -> list:
+fn check_line(file: str, number: int, line: str, trusted: list) -> list:
     var found = []
     if len(line) > MAX_LINE:
         found.add(finding("SEN-302", "-", file, number, "-", "{len(line)} characters"))
         return found
     if line.trim() == "":
         return found
-    fields = fields_of(line)
+    fields = fields_of(line, trusted)
     var source = "-"
     var message = line
     var time = "-"
@@ -299,7 +309,7 @@ fn foreign_object(message: str) -> list?:
 ## The number of lines of a file (or the lines `given`, read from
 ## elsewhere), the findings of the lines after `skip` and its first line; fails when the file cannot be read, and then
 ## nothing of it is reported.
-fn scan_file(file: str, skip: int, given: list?) -> list!:
+fn scan_file(file: str, skip: int, given: list?, trusted: list) -> list!:
     var found = []
     var events = []
     var foreign = []
@@ -316,9 +326,9 @@ fn scan_file(file: str, skip: int, given: list?) -> list!:
         if n == 1:
             first = shown(line)
         if n > skip:
-            for f in check_line(file, n, line):
+            for f in check_line(file, n, line, trusted):
                 found.add(f)
-            fields = fields_of(line)
+            fields = fields_of(line, trusted)
             if fields != none:
                 source = fields[0]
                 var seconds = epoch_of(fields[2], today_text)?
@@ -456,10 +466,10 @@ fn scan(settings: Settings, state: map) -> Report!:
                 if settings.incremental and before != none:
                     if first_line(file) == before["first"]:
                         skip = before["lines"]
-                var result = scan_file(file, skip, none)
+                var result = scan_file(file, skip, none, settings.trusted_proxies)
                 if result[0] < skip:
                     skip = 0
-                    result = scan_file(file, 0, none)
+                    result = scan_file(file, 0, none, settings.trusted_proxies)
                 read_files += 1
                 lines += result[0]
                 new_lines += result[0] - skip
@@ -469,7 +479,7 @@ fn scan(settings: Settings, state: map) -> Report!:
                 skipped.add([file, e.message])
     for stream in remote_sources(settings):
         try:
-            result = scan_file(stream[0], 0, logsources.lines_of(stream[1], settings.source_window, settings.source_lines))
+            result = scan_file(stream[0], 0, logsources.lines_of(stream[1], settings.source_window, settings.source_lines), settings.trusted_proxies)
             read_files += 1
             lines += result[0]
             new_lines += result[0]
@@ -555,7 +565,7 @@ fn sources(findings: list, never: list) -> list:
                     rules.add(f.rule)
                 if not (f.tactic in tactics):
                     tactics.add(f.tactic)
-            proposal = proposal_of(own, source in never)
+            proposal = proposal_of(own, addresses.in_any(source, never))
             if priority_of(proposal, tactics, rules) == priority:
                 row = {"priority": priority, "address": source, "score": score_of(own), "high": count_of(own, "high"), "medium": count_of(own, "medium"), "low": count_of(own, "low"), "proposal": proposal, "tactics": tactics, "rules": rules, "first": own[0].time, "last": own[len(own) - 1].time}
                 var next = []
@@ -576,7 +586,7 @@ fn sources(findings: list, never: list) -> list:
 ## names a detection, an address or both ("*" is any).
 fn suppression_of(f: Finding, suppress: list) -> map?:
     for rule in suppress:
-        if (rule["rule"] == "*" or rule["rule"] == f.rule) and (rule["source"] == "*" or rule["source"] == f.source):
+        if (rule["rule"] == "*" or rule["rule"] == f.rule) and (rule["source"] == "*" or rule["source"] == f.source or addresses.in_range(f.source, rule["source"])):
             return rule
     return none
 
@@ -587,6 +597,16 @@ fn check_suppress(suppress: list):
             fail("every suppress entry needs a rule, a source and a reason")
         if rule["rule"] == "*" and rule["source"] == "*":
             fail("a suppress entry cannot silence every rule of every source")
+        if rule["source"] != "*" and rule["source"] != "-" and not addresses.is_range(rule["source"]):
+            fail("the source of a suppress entry is *, - or an address or range, such as 10.0.0.0/8")
+        if rule["rule"] == "*" and rule["source"].ends_with("/0"):
+            fail("a suppress entry cannot silence every rule of every source")
+
+## The addresses and ranges of never_block and trusted_proxies.
+fn check_ranges(settings: Settings):
+    for range in settings.never_block + settings.trusted_proxies:
+        if not addresses.is_range(range):
+            fail("never_block and trusted_proxies hold addresses or ranges, such as 10.0.0.0/8, not {shown(range)}")
 
 fn to_block(rows: list) -> list:
     return [row["address"] for row in rows if row["proposal"] == "block"]
@@ -689,6 +709,7 @@ fn print_report(report: Report, findings: list, silenced: list, rows: list):
 fn main():
     settings: Settings = json.parse(read("sentinel.json")?, as: Settings)?
     check_suppress(settings.suppress)?
+    check_ranges(settings)?
     var state = {}
     if not monitoring.is_window(settings.count_window):
         fail("count_window must be a number and s, m, h or d, such as 10m")
@@ -710,7 +731,7 @@ fn main():
             findings.add(f)
         else:
             silenced.add({"rule": f.rule, "file": f.file, "line": f.line, "source": f.source, "reason": rule["reason"]})
-    rows = sources(findings, settings.never_block)
+    rows = sources(findings, settings.never_block + settings.trusted_proxies)
     print_report(report, findings, silenced, rows)
     var events = [["scan", "{report.files} logs, {report.lines} lines, {report.new_lines} new, {len(findings)} findings, {len(silenced)} suppressed"]]
     for reason in report.skipped:
@@ -739,7 +760,7 @@ fn main():
         else e:
             print("Alertmanager not told: {e.message}")
             events.add(["alertmanager", "failed"])
-    addresses = to_block(rows)
+    to_stop = to_block(rows)
     if len(findings) > 0 and yes("Ask the local model for a summary?"):
         try:
             print("Advice (not acted on): {advice(findings)}")
@@ -747,13 +768,13 @@ fn main():
         else e:
             print("No advice: {e.message}")
             events.add(["advice", "failed"])
-    if len(addresses) == 0:
+    if len(to_stop) == 0:
         print("Nothing to block.")
     else:
-        print("Proposed: block {joined(addresses)} on the firewall.")
+        print("Proposed: block {joined(to_stop)} on the firewall.")
         if yes("Block them?"):
             events.add(["approval", "yes"])
-            for source in addresses:
+            for source in to_stop:
                 try:
                     block(settings.firewall, source)
                     print("Blocked {source}")
@@ -772,11 +793,11 @@ else e:
     print("Sentinel stopped: {e.message}")
 
 test "ordinary lines have no findings":
-    assert check_line("logs/a.log", 1, "2026-11-02T08:01:30Z 192.0.2.44 web GET /search?q=union+station 200") == []
-    assert check_line("logs/a.log", 2, "") == []
+    assert check_line("logs/a.log", 1, "2026-11-02T08:01:30Z 192.0.2.44 web GET /search?q=union+station 200", []) == []
+    assert check_line("logs/a.log", 2, "", []) == []
 
 test "an injection is a high finding with its address":
-    found = check_line("logs/a.log", 3, "2026-11-02T09:15:10Z 198.51.100.23 web GET /p?id=1+UNION+SELECT+1 200")
+    found = check_line("logs/a.log", 3, "2026-11-02T09:15:10Z 198.51.100.23 web GET /p?id=1+UNION+SELECT+1 200", [])
     assert len(found) == 1
     assert found[0].rule == "SEN-101" and found[0].name == "sql_injection" and found[0].severity == "high"
     assert found[0].source == "198.51.100.23"
@@ -796,11 +817,11 @@ test "the object of a request and its owner":
 
 test "a line of nginx or Apache is read too":
     line = "203.0.113.7 - 42 [02/Nov/2026:09:40:00 +0000] \"GET /api/users/57/cards HTTP/1.1\" 200 512 \"-\" \"curl/8.5\""
-    assert fields_of(line) == ["203.0.113.7", "GET /api/users/57/cards 200 \"curl/8.5\" user=42", "02/Nov/2026:09:40:00 +0000"]
-    assert [f.rule for f in check_line("logs/a.log", 1, "203.0.113.7 - - [02/Nov/2026:09:40:00 +0000] \"GET /.env HTTP/1.1\" 404 0")] == ["SEN-105"]
+    assert fields_of(line, []) == ["203.0.113.7", "GET /api/users/57/cards 200 \"curl/8.5\" user=42", "02/Nov/2026:09:40:00 +0000"]
+    assert [f.rule for f in check_line("logs/a.log", 1, "203.0.113.7 - - [02/Nov/2026:09:40:00 +0000] \"GET /.env HTTP/1.1\" 404 0", [])] == ["SEN-105"]
 
 test "a secret is reported and never shown":
-    found = check_line("logs/a.log", 1, "2026-11-02T09:40:00Z 192.0.2.44 web GET /login?user=ana&password=hunter2&next=/home 200")
+    found = check_line("logs/a.log", 1, "2026-11-02T09:40:00Z 192.0.2.44 web GET /login?user=ana&password=hunter2&next=/home 200", [])
     assert [f.rule for f in found] == ["SEN-109"]
     assert found[0].evidence == "GET /login?user=ana&password=<redacted>&next=/home 200"
     assert shown("key AKIAIOSFODNN7EXAMPLE end") == "key <redacted> end"
@@ -815,10 +836,10 @@ test "an alert names addresses and rules, not lines":
 
 test "the logins of sshd in a syslog file are read":
     failed = "Nov  2 09:14:01 web1 sshd[2211]: Failed password for invalid user admin from 203.0.113.9 port 51022 ssh2"
-    assert fields_of(failed) == ["203.0.113.9", "sshd login failed user=admin", "Nov  2 09:14:01"]
+    assert fields_of(failed, []) == ["203.0.113.9", "sshd login failed user=admin", "Nov  2 09:14:01"]
     accepted = "2026-11-02T09:20:01.120+00:00 web1 sshd[2290]: Accepted publickey for ana from 192.0.2.44 port 40112 ssh2"
-    assert fields_of(accepted) == ["192.0.2.44", "sshd login accepted user=ana", "2026-11-02T09:20:01.120+00:00"]
-    assert check_line("logs/a.log", 1, "Nov  2 09:15:00 web1 CRON[2301]: pam_unix(cron:session): session opened for user root") == []
+    assert fields_of(accepted, []) == ["192.0.2.44", "sshd login accepted user=ana", "2026-11-02T09:20:01.120+00:00"]
+    assert check_line("logs/a.log", 1, "Nov  2 09:15:00 web1 CRON[2301]: pam_unix(cron:session): session opened for user root", []) == []
 
 test "the time of a line in the three forms, in UTC":
     assert epoch_of("2026-11-02T09:14:01Z", "2026-11-18") == 1793610841
@@ -845,7 +866,7 @@ fn failures(times: list, source: str) -> list:
     return out
 
 test "failures count within the window and are reported once for it":
-    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000)
+    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [])
     burst = correlate(failures([0, 60, 120, 180, 240, 300, 360], "203.0.113.9"), {}, s, 600)
     assert [entry["finding"].line for entry in burst[0]] == [5]
     assert burst[0][0]["finding"].evidence == "5 failed logins in 10m"
@@ -864,11 +885,30 @@ test "only new events give findings":
     var last = failures([4], "203.0.113.9")[0]
     last["pos"] = 4 * SLOTS + 9
     both.add(last)
-    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000)
+    s = Settings([], [], "", 5, 10, 8, [], 4, "10m", false, "", "", [], "15m", 1000, [])
     found = correlate(both, {}, s, 600)
     assert len(found[0]) == 1 and found[1]["SEN-201 203.0.113.9"] == 4
     again = correlate(both, {"SEN-201 203.0.113.9": 4}, s, 600)
     assert again[0] == []
+
+test "the client behind a trusted proxy, and IPv6":
+    via = "10.0.0.5 - - [02/Nov/2026:10:40:00 +0000] \"GET /p?id=1+UNION+SELECT+1 HTTP/1.1\" 200 9 \"-\" \"curl/8\" \"203.0.113.150, 10.0.0.6\""
+    assert fields_of(via, ["10.0.0.0/8"])[0] == "203.0.113.150"
+    assert fields_of(via, [])[0] == "10.0.0.5"
+    v6 = "2001:DB8:0:0:0:0:0:7 - - [02/Nov/2026:10:41:00 +0000] \"GET /.env HTTP/1.1\" 404 0 \"-\" \"curl/8\""
+    found = check_line("logs/a.log", 1, v6, [])
+    assert [f.rule for f in found] == ["SEN-105"] and found[0].source == "2001:db8::7"
+
+test "a range is never blocked and can be suppressed":
+    found = [finding("SEN-101", "-", "logs/a.log", 1, "10.1.2.3", ""), finding("SEN-101", "-", "logs/a.log", 2, "2001:db8::9", "")]
+    rows = sources(found, ["10.0.0.0/8", "2001:db8::/32"])
+    assert [row["proposal"] for row in rows] == ["protected", "protected"]
+    assert suppression_of(found[0], [{"rule": "SEN-101", "source": "10.0.0.0/8", "reason": "scanner of the team"}]) != none
+    try:
+        check_suppress([{"rule": "*", "source": "0.0.0.0/0", "reason": "quiet"}])
+        assert false
+    else e:
+        assert "cannot silence" in e.message
 
 test "only logs/ is scanned":
     assert inside_logs("logs/app.log")

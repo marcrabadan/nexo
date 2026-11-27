@@ -1,6 +1,7 @@
 """The Python comparison of sentinel.nexo: the same rules, the same
 prompts, the same output, report.json and audit records on the same
 logs. Run it from examples/sentinel: python3 compare/sentinel.py"""
+import ipaddress
 import json
 import os
 import re
@@ -37,7 +38,6 @@ BY_ID = {rule[0]: rule for rule in RULES}
 PATTERNS = [(rule[0], re.compile(rule[6])) for rule in RULES if rule[6]]
 
 ENTRY = re.compile(r"^(\S+) (\S+) (\S+) (.*)$")
-ADDRESS = re.compile(r"^[0-9]{1,3}(\.[0-9]{1,3}){3}$")
 FAILED_LOGIN = re.compile(r"(?i)login failed|authentication failure|invalid password")
 ACCEPTED_LOGIN = re.compile(r"(?i)login accepted|session opened")
 NOT_FOUND = re.compile(r" 404( |$)")
@@ -54,7 +54,7 @@ SYSLOG_LINE = re.compile(r"^(\S+ +[0-9]{1,2} [0-9:]{8}|[0-9]{4}-\S+) \S+ [^ :]+:
 GUID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 PROJECT_ID = re.compile(r"^[a-z][a-z0-9-]{4,29}$")
 INDEX_NAME = re.compile(r"^[A-Za-z0-9_.*,-]{1,200}$")
-COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*"))?''')
+COMBINED = re.compile(r'''^(\S+) \S+ (\S+) \[([^\]]+)\] "([A-Z]+) (\S+)[^"]*" ([0-9]{3}) \S+( "[^"]*" ("[^"]*")( "([^"]*)")?)?''')
 NAMED_SECRET = re.compile(r'''(?i)(password|passwd|pwd|token|api_?key|secret|access_key)=[^& "]+''')
 BARE_SECRET = re.compile(r"AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+")
 ID = "[0-9]+|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
@@ -93,34 +93,82 @@ def stamp(text):
     return found.group(0) if found else "-"
 
 
-def fields_of(line):
+def canonical(text):
+    """An address written one way, by Python's ipaddress: the oracle of addresses.nexo."""
+    if "%" in text or "/" in text:
+        return None
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        return None
+    if address.version == 6 and address.ipv4_mapped:
+        return str(address.ipv4_mapped)
+    return address.compressed
+
+
+def network(text):
+    if "%" in text:
+        return None
+    try:
+        return ipaddress.ip_network(text, strict=False)
+    except ValueError:
+        return None
+
+
+def in_range(address, text):
+    found, net = canonical(address), network(text)
+    if found is None or net is None:
+        return False
+    found = ipaddress.ip_address(found)
+    return found.version == net.version and found in net
+
+
+def in_any(address, ranges):
+    return any(in_range(address, text) for text in ranges)
+
+
+def client_of(remote, forwarded, trusted):
+    if forwarded is None or forwarded == "-" or not in_any(remote, trusted):
+        return remote
+    client = remote
+    for hop in reversed([hop.strip() for hop in forwarded.split(",")]):
+        found = canonical(hop)
+        if found is None:
+            return client
+        client = found
+        if not in_any(found, trusted):
+            return found
+    return client
+
+
+def fields_of(line, trusted):
     if len(line) > MAX_LINE:
         return None
     web = COMBINED.search(line)
-    if web and ADDRESS.search(web.group(1)):
+    if web and canonical(web.group(1)):
         message = f"{web.group(4)} {web.group(5)} {web.group(6)}"
         if web.group(8) is not None:
             message += f" {web.group(8)}"
         if web.group(2) != "-":
             message += f" user={web.group(2)}"
-        return web.group(1), message, stamp(web.group(3))
+        return client_of(canonical(web.group(1)), web.group(10), trusted), message, stamp(web.group(3))
     ssh = SYSLOG_SSHD.search(line)
-    if ssh and ADDRESS.search(ssh.group(6)):
+    if ssh and canonical(ssh.group(6)):
         did = "failed" if ssh.group(3) == "Failed" else "accepted"
-        return ssh.group(6), f"sshd login {did} user={ssh.group(5)}", stamp(ssh.group(1))
+        return canonical(ssh.group(6)), f"sshd login {did} user={ssh.group(5)}", stamp(ssh.group(1))
     fields = ENTRY.search(line)
-    if fields is None or ADDRESS.search(fields.group(2)) is None:
+    if fields is None or canonical(fields.group(2)) is None:
         return None
-    return fields.group(2), fields.group(4), stamp(fields.group(1))
+    return canonical(fields.group(2)), fields.group(4), stamp(fields.group(1))
 
 
-def check_line(file, number, line):
+def check_line(file, number, line, trusted):
     if len(line) > MAX_LINE:
         return [finding("SEN-302", "-", file, number, "-", f"{len(line)} characters")]
     if line.strip() == "":
         return []
     found = []
-    fields = fields_of(line)
+    fields = fields_of(line, trusted)
     source, message, time = "-", line, "-"
     if fields is None:
         if SYSLOG_LINE.search(line) is None:
@@ -201,7 +249,7 @@ def event(kind, key, value, at, time, file, line, source, detail):
             "source": source, "detail": detail}
 
 
-def scan_file(file, skip, given=None):
+def scan_file(file, skip, given, trusted):
     found, events, foreign, first, number, last_at = [], [], [], "", 0, 0
     today = datetime.now().date()
     for line in (given if given is not None else file_lines(file)):
@@ -210,8 +258,8 @@ def scan_file(file, skip, given=None):
             first = shown(line)
         if number <= skip:
             continue
-        found += check_line(file, number, line)
-        fields = fields_of(line)
+        found += check_line(file, number, line, trusted)
+        fields = fields_of(line, trusted)
         if fields is None:
             continue
         source, message, time = fields
@@ -408,10 +456,10 @@ def scan(settings, state):
             before = files.get(file)
             if settings["incremental"] and before is not None and first_line(file) == before["first"]:
                 skip = before["lines"]
-            result = scan_file(file, skip)
+            result = scan_file(file, skip, None, settings["trusted_proxies"])
             if result[0] < skip:
                 skip = 0
-                result = scan_file(file, 0)
+                result = scan_file(file, 0, None, settings["trusted_proxies"])
         except UnicodeDecodeError:
             skipped.append((file, f'Invalid data: the file "{file}" is not UTF-8'))
         except FileNotFoundError:
@@ -424,7 +472,8 @@ def scan(settings, state):
             scanned.append(result)
     for name, entry in remote_sources(settings):
         try:
-            result = scan_file(name, 0, lines_of(entry, settings["source_window"], settings["source_lines"]))
+            result = scan_file(name, 0, lines_of(entry, settings["source_window"], settings["source_lines"]),
+                               settings["trusted_proxies"])
         except Exception as e:
             skipped.append((name, str(e)))
         else:
@@ -473,7 +522,7 @@ def sources(findings, never):
         own = [f for f in findings if f["source"] == source]
         rules = list(dict.fromkeys(f["rule"] for f in own))
         tactics = list(dict.fromkeys(f["tactic"] for f in own))
-        proposal = proposal_of(own, source in never)
+        proposal = proposal_of(own, in_any(source, never))
         rows.append({"priority": priority_of(proposal, tactics, rules), "address": source, "score": score_of(own),
                      "high": count_of(own, "high"), "medium": count_of(own, "medium"), "low": count_of(own, "low"),
                      "proposal": proposal, "tactics": tactics, "rules": rules, "first": own[0]["time"],
@@ -483,7 +532,7 @@ def sources(findings, never):
 
 def suppression_of(f, suppress):
     for rule in suppress:
-        if rule["rule"] in ("*", f["rule"]) and rule["source"] in ("*", f["source"]):
+        if rule["rule"] in ("*", f["rule"]) and (rule["source"] in ("*", f["source"]) or in_range(f["source"], rule["source"])):
             return rule
     return None
 
@@ -494,6 +543,17 @@ def check_suppress(suppress):
             raise ValueError("every suppress entry needs a rule, a source and a reason")
         if rule["rule"] == "*" and rule["source"] == "*":
             raise ValueError("a suppress entry cannot silence every rule of every source")
+        if rule["source"] not in ("*", "-") and network(rule["source"]) is None:
+            raise ValueError("the source of a suppress entry is *, - or an address or range, such as 10.0.0.0/8")
+        if rule["rule"] == "*" and rule["source"].endswith("/0"):
+            raise ValueError("a suppress entry cannot silence every rule of every source")
+
+
+def check_ranges(settings):
+    for text in settings["never_block"] + settings["trusted_proxies"]:
+        if network(text) is None:
+            raise ValueError("never_block and trusted_proxies hold addresses or ranges, such as 10.0.0.0/8, "
+                             f"not {shown(text)}")
 
 
 def to_block(rows):
@@ -611,6 +671,7 @@ def main():
     with open("sentinel.json", encoding="utf-8") as f:
         settings = json.load(f)
     check_suppress(settings["suppress"])
+    check_ranges(settings)
     if WINDOW.search(settings["count_window"]) is None:
         raise ValueError("count_window must be a number and s, m, h or d, such as 10m")
     if settings["sources"] and WINDOW.search(settings["source_window"]) is None:
@@ -633,7 +694,7 @@ def main():
         else:
             silenced.append({"rule": f["rule"], "file": f["file"], "line": f["line"], "source": f["source"],
                              "reason": rule["reason"]})
-    rows = sources(findings, settings["never_block"])
+    rows = sources(findings, settings["never_block"] + settings["trusted_proxies"])
     print_report(files, lines, new_lines, skipped, findings, silenced, rows)
     events = [("scan", f"{files} logs, {lines} lines, {new_lines} new, {len(findings)} findings, {len(silenced)} suppressed")]
     events += [("skipped", f"{file}: {reason}") for file, reason in skipped]

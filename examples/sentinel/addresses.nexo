@@ -1,0 +1,231 @@
+## Network addresses for the Sentinel programs: IPv4 and IPv6 read and
+## written one way, ranges (CIDR) and the client behind trusted proxies.
+
+ipv4 = regex("^([0-9]{{1,3})\\.([0-9]{{1,3})\\.([0-9]{{1,3})\\.([0-9]{{1,3})$")
+hex_piece = regex("^[0-9a-f]{{1,4}$")
+HEX = "0123456789abcdef"
+
+fn number(text: str) -> int!:
+    n: int = validate(text, as: int)?
+    return n
+
+fn octets(text: str) -> list?:
+    parts = ipv4.groups(text)
+    if parts == none:
+        return none
+    var out = []
+    for part in parts:
+        try:
+            value = number(part)
+            if value > 255 or (len(part) > 1 and part.starts_with("0")):
+                return none
+            out.add(value)
+        else e:
+            return none
+    return out
+
+fn hex_value(piece: str) -> int:
+    var value = 0
+    for ch in piece:
+        value = value * 16 + HEX.find(ch)
+    return value
+
+fn hex_text(value: int) -> str:
+    if value == 0:
+        return "0"
+    var out = ""
+    var rest = value
+    while rest > 0:
+        digit = rest % 16
+        out = "{HEX[digit]}{out}"
+        rest = int(rest / 16)
+    return out
+
+## The 16-bit groups of the pieces of an IPv6 address; a last piece may
+## be an IPv4 address (two groups). None when a piece is not valid.
+fn hextets(pieces: list, last: bool) -> list?:
+    var out = []
+    var n = 0
+    for piece in pieces:
+        n += 1
+        if "." in piece:
+            v4 = octets(piece)
+            if v4 == none or not last or n != len(pieces):
+                return none
+            out.add(v4[0] * 256 + v4[1])
+            out.add(v4[2] * 256 + v4[3])
+        elif hex_piece.find(piece) != none:
+            out.add(hex_value(piece))
+        else:
+            return none
+    return out
+
+## An address as [bits of a group, its groups]: IPv4 is four groups of 8
+## bits, IPv6 eight of 16. An IPv4 address mapped into IPv6 (::ffff:a.b.c.d)
+## is that IPv4 address. None for what is not an address.
+pub fn parse(text: str) -> list?:
+    v4 = octets(text)
+    if v4 != none:
+        return [8, v4]
+    lower = text.lower()
+    if not (":" in lower) or len(lower) > 45:
+        return none
+    halves = lower.split("::")
+    if len(halves) > 2:
+        return none
+    var left: list? = []
+    if halves[0] != "":
+        left = hextets(halves[0].split(":"), len(halves) == 1)
+    var right: list? = []
+    if len(halves) == 2 and halves[1] != "":
+        right = hextets(halves[1].split(":"), true)
+    if left == none or right == none:
+        return none
+    var groups = left
+    if len(halves) == 1:
+        if len(groups) != 8:
+            return none
+    else:
+        if len(left) + len(right) > 7:
+            return none
+        var zeros = 8 - len(left) - len(right)
+        while zeros > 0:
+            groups.add(0)
+            zeros -= 1
+        for g in right:
+            groups.add(g)
+    if groups[0] == 0 and groups[1] == 0 and groups[2] == 0 and groups[3] == 0 and groups[4] == 0 and groups[5] == 65535:
+        return [8, [int(groups[6] / 256), groups[6] % 256, int(groups[7] / 256), groups[7] % 256]]
+    return [16, groups]
+
+## An address written the one way (RFC 5952 for IPv6: lower case, no
+## leading zeros, the longest run of zero groups as ::), or none.
+pub fn canonical(text: str) -> str?:
+    parsed = parse(text)
+    if parsed == none:
+        return none
+    groups = parsed[1]
+    if parsed[0] == 8:
+        return "{groups[0]}.{groups[1]}.{groups[2]}.{groups[3]}"
+    var best = -1
+    var best_length = 1
+    var start = -1
+    var position = 0
+    for g in groups:
+        if g == 0:
+            if start < 0:
+                start = position
+            if position - start + 1 > best_length:
+                best = start
+                best_length = position - start + 1
+        else:
+            start = -1
+        position += 1
+    var out = ""
+    position = 0
+    for g in groups:
+        if best >= 0 and position == best:
+            out = "{out}::"
+        elif best < 0 or position < best or position >= best + best_length:
+            if out != "" and not out.ends_with(":"):
+                out = "{out}:"
+            out = "{out}{hex_text(g)}"
+        position += 1
+    return out
+
+## True when `address` is the address or inside the range (CIDR, such as
+## 10.0.0.0/8 or 2001:db8::/32) that `range` names.
+pub fn in_range(address: str, range: str) -> bool:
+    parts = range.split("/")
+    if len(parts) > 2:
+        return false
+    a = parse(address)
+    base = parse(parts[0])
+    if a == none or base == none or a[0] != base[0]:
+        return false
+    bits = a[0]
+    total = bits * len(a[1])
+    var prefix = total
+    if len(parts) == 2:
+        try:
+            prefix = number(parts[1])
+        else e:
+            return false
+    if prefix < 0 or prefix > total:
+        return false
+    var position = 0
+    var left = prefix
+    while left > 0:
+        if left >= bits:
+            if a[1][position] != base[1][position]:
+                return false
+            left -= bits
+        else:
+            unit = 2 ** (bits - left)
+            if int(a[1][position] / unit) != int(base[1][position] / unit):
+                return false
+            left = 0
+        position += 1
+    return true
+
+## True when `address` is in any of the addresses and ranges.
+pub fn in_any(address: str, ranges: list) -> bool:
+    for range in ranges:
+        if in_range(address, range):
+            return true
+    return false
+
+## A range of a setting is an address with an optional /prefix.
+pub fn is_range(text: str) -> bool:
+    parts = text.split("/")
+    if len(parts) > 2 or parse(parts[0]) == none:
+        return false
+    return in_range(parts[0], text)
+
+## The client a request came from. Only when the address that connected
+## is a trusted proxy is X-Forwarded-For read, from the right, skipping
+## the trusted proxies; anyone else can write that header. Without a
+## valid hop the address that connected stays.
+pub fn client_of(remote: str, forwarded: str?, trusted: list) -> str:
+    if forwarded == none or forwarded == "-" or not in_any(remote, trusted):
+        return remote
+    var hops = []
+    for hop in forwarded.split(","):
+        hops = [hop.trim()] + hops
+    var client = remote
+    for hop in hops:
+        found = canonical(hop)
+        if found == none:
+            return client
+        client = found
+        if not in_any(found, trusted):
+            return found
+    return client
+
+test "addresses are written one way":
+    assert canonical("192.0.2.1") == "192.0.2.1"
+    assert canonical("2001:DB8:0:0:0:0:0:7") == "2001:db8::7"
+    assert canonical("2001:0db8:0000:0001:0000:0000:0000:0001") == "2001:db8:0:1::1"
+    assert canonical("::") == "::" and canonical("::1") == "::1" and canonical("fe80::") == "fe80::"
+    assert canonical("2001:db8:0:1:1:1:1:1") == "2001:db8:0:1:1:1:1:1"
+    assert canonical("::ffff:203.0.113.9") == "203.0.113.9"
+    for bad in ["256.1.1.1", "01.2.3.4", "1.2.3", "2001:db8::1::2", "12345::", "1:2:3:4:5:6:7:8:9", "g::1", "not-an-address", "-"]:
+        assert canonical(bad) == none
+
+test "ranges of both kinds":
+    assert in_range("10.20.30.40", "10.0.0.0/8") and not in_range("11.0.0.1", "10.0.0.0/8")
+    assert in_range("192.0.2.130", "192.0.2.128/25") and not in_range("192.0.2.127", "192.0.2.128/25")
+    assert in_range("2001:db8:abcd::1", "2001:db8::/32") and not in_range("2001:db9::1", "2001:db8::/32")
+    assert in_range("2001:db8::1", "2001:db8::1") and not in_range("192.0.2.1", "::/0")
+    assert in_range("0.0.0.0", "0.0.0.0/0") and not in_range("10.0.0.1", "10.0.0.0/33")
+    assert is_range("10.0.0.0/8") and is_range("2001:db8::/32") and not is_range("10.0.0.0/x")
+
+test "the client behind trusted proxies":
+    trusted = ["10.0.0.0/8"]
+    assert client_of("10.0.0.5", "203.0.113.150, 10.0.0.6", trusted) == "203.0.113.150"
+    assert client_of("10.0.0.5", "198.51.100.1, 203.0.113.150", trusted) == "203.0.113.150"
+    assert client_of("198.51.100.240", "127.0.0.1", trusted) == "198.51.100.240"
+    assert client_of("10.0.0.5", "-", trusted) == "10.0.0.5"
+    assert client_of("10.0.0.5", "10.0.0.7, 10.0.0.6", trusted) == "10.0.0.7"
+    assert client_of("10.0.0.5", "junk, 10.0.0.6", trusted) == "10.0.0.6"
+    assert client_of("10.0.0.5", "2001:DB8::9", trusted) == "2001:db8::9"

@@ -42,6 +42,7 @@ flowchart LR
 ```mermaid
 flowchart TD
     sentinel.nexo --> safe.nexo
+    sentinel.nexo --> addresses.nexo
     sentinel.nexo --> logsources.nexo
     logsources.nexo --> monitoring.nexo
     sentinel.nexo --> notify.nexo
@@ -128,6 +129,7 @@ is listed on screen, written to `report.json` and recorded in
 | Input | Trusted? | How it is handled |
 |---|---|---|
 | Lines of a log | No: whoever sends a request writes them | read as data only; shown through `safe.nexo`; never sent to the model; a line over 4096 characters is reported and not examined |
+| X-Forwarded-For | Only from a trusted proxy | read from the right, skipping trusted proxies, and only when the address that connected is one; otherwise ignored, so a client cannot choose the address that is blamed |
 | Names from Prometheus | No | checked against the form of a Kubernetes name before they go into a Loki query |
 | Settings files | Yes, written by the operator | checked against a type; `window`, `namespace` and `suppress` are checked again before use |
 | The model's answer | No | printed as advice; no code reads it |

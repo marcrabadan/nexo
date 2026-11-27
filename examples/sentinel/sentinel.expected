@@ -1,8 +1,8 @@
 NEXO SENTINEL - security report of the logs
 
-Scanned 6 logs and 107 lines (107 new); skipped 3.
-Findings: 33 (high 16, medium 14, low 3); suppressed 1
-Sources: 17; to look at now (P1): 4
+Scanned 7 logs and 112 lines (112 new); skipped 3.
+Findings: 38 (high 18, medium 17, low 3); suppressed 1
+Sources: 21; to look at now (P1): 4
 
 SKIPPED
   logs/binary.log         Invalid data: the file "logs/binary.log" is not UTF-8
@@ -44,6 +44,11 @@ FINDINGS
   medium    SEN-106  scanner               yes   logs/nginx.log:9       198.51.100.230   GET / 200 "Nikto/2.5.0"
   high      SEN-201  brute_force           yes   logs/auth.log:8        203.0.113.77     5 failed logins in 10m
   high      SEN-202  login_after_failures  yes   logs/auth.log:10       203.0.113.77     accepted after 6 failed logins in 10m: sshd login accepted user=root
+  high      SEN-101  sql_injection         yes   logs/proxy.log:2       203.0.113.150    GET /products?id=1+UNION+SELECT+card,cvv+FROM+cards 200 "curl/8.5.0"
+  medium    SEN-105  sensitive_file        yes   logs/proxy.log:3       10.0.0.5         GET /.git/config 404 "curl/8.5.0"
+  high      SEN-101  sql_injection         yes   logs/proxy.log:4       198.51.100.240   GET /items?id=2+UNION+SELECT+1 200 "curl/8.5.0"
+  medium    SEN-104  path_traversal        yes   logs/proxy.log:5       2001:db8::7      GET /static/../../etc/shadow 404 "curl/8.5.0"
+  medium    SEN-105  sensitive_file        yes   logs/proxy.log:5       2001:db8::7      GET /static/../../etc/shadow 404 "curl/8.5.0"
 
 SOURCES
   PRI  ADDRESS          SCORE  PROPOSAL   FIRST                       LAST                        TACTICS
@@ -53,6 +58,8 @@ SOURCES
   P1   203.0.113.77     20     block      Nov  2 12:01:04             Nov  2 12:01:30             Credential Access, Initial Access
   P2   198.51.100.23    20     block      2026-11-02T09:15:10Z        2026-11-02T09:15:12Z        Initial Access
   P2   192.0.2.10       10     protected  2026-11-02T09:17:30Z        2026-11-02T09:17:30Z        Initial Access
+  P2   203.0.113.150    10     block      02/Nov/2026:10:40:05 +0000  02/Nov/2026:10:40:05 +0000  Initial Access
+  P2   198.51.100.240   10     block      02/Nov/2026:10:41:00 +0000  02/Nov/2026:10:41:00 +0000  Initial Access
   P3   198.51.100.180   10     review     2026-11-02T09:30:07Z        2026-11-02T09:30:07Z        Collection
   P3   198.51.100.190   10     review     2026-11-02T09:31:05Z        2026-11-02T09:31:05Z        Collection
   P3   198.51.100.250   10     review     2026-11-02T09:41:07Z        2026-11-02T09:41:07Z        Collection
@@ -60,10 +67,12 @@ SOURCES
   P4   198.51.100.77    16     watch      2026-11-02T09:16:40Z        2026-11-02T09:17:02Z        Initial Access, Reconnaissance
   P4   198.51.100.90    12     watch      2026-11-02T10:00:03Z        2026-11-02T10:00:05Z        Defense Evasion
   P4   198.51.100.150   8      watch      2026-11-02T09:22:30Z        2026-11-02T09:22:31Z        Initial Access
+  P4   2001:db8::7      8      watch      02/Nov/2026:10:42:00 +0000  02/Nov/2026:10:42:00 +0000  Initial Access, Reconnaissance
   P4   198.51.100.160   4      watch      2026-11-02T09:23:00Z        2026-11-02T09:23:00Z        Reconnaissance
   P4   198.51.100.170   4      watch      2026-11-02T09:24:09Z        2026-11-02T09:24:09Z        Reconnaissance
   P4   192.0.2.51       4      watch      2026-11-02T10:00:07Z        2026-11-02T10:00:07Z        Defense Evasion
   P4   198.51.100.230   4      watch      02/Nov/2026:10:34:00 +0000  02/Nov/2026:10:34:00 +0000  Reconnaissance
+  P4   10.0.0.5         4      watch      02/Nov/2026:10:40:09 +0000  02/Nov/2026:10:40:09 +0000  Reconnaissance
 
 SUPPRESSED
   SEN-109  logs/nginx.log:7       192.0.2.51       password reset links carry a one-time token (SEC-142)
@@ -88,5 +97,5 @@ RECOMMENDED
   SEN-303  malformed_line        Check what writes this log; a broken line can hide an entry. (CWE-117)
 
 The report is in report.json.
-Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.210, 203.0.113.77, 198.51.100.23 on the firewall.
+Ask the local model for a summary? (yes/no) Proposed: block 198.51.100.140, 203.0.113.9, 198.51.100.210, 203.0.113.77, 198.51.100.23, 203.0.113.150, 198.51.100.240 on the firewall.
 Block them? (yes/no) Nothing was changed.
