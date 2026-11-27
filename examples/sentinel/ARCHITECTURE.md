@@ -149,7 +149,10 @@ a user that can read the logs and nothing more.
    addresses only and cannot approve anything.
 2. **Detect and respond are separate steps.** Nothing outside changes
    without a person typing `yes` to the exact list shown. The approval
-   and every block, or failure to block, are audited.
+   and every block, or failure to block, are audited. A block has an end
+   (`block_ttl`) and is lifted when it comes; one that cannot be
+   recorded is undone at once (`action` and `undo()`), so the firewall
+   never holds a block that nobody will lift.
 3. **A suspicion never blocks.** A log cannot say who owns an object, so
    IDOR findings ask for a review. Blocking on them would turn a false
    positive into an outage for a real user.

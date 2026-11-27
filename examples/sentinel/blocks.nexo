@@ -1,0 +1,42 @@
+## The blocks Sentinel put on the firewall, in blocks.json: each address
+## with when its block ends, as seconds and as text, and its rules.
+use safe
+
+pub fn read_blocks() -> map!:
+    try:
+        return json.parse(read("blocks.json")?)?
+    else e is NotFound:
+        return {}
+
+pub fn save(in_force: map) -> bool!:
+    write("blocks.json", convert(in_force, to: json))?
+    return true
+
+## Lifts a block on the firewall.
+pub fn lift(firewall: str, address: str) -> bool!:
+    http.post("{firewall}/unblock", {"address": address, "by": "sentinel"}, timeout: 5s)?
+    return true
+
+## Lifts the blocks whose time is over and gives the records for the
+## audit. A block that cannot be lifted stays, to be tried again in the
+## next run. Lifting needs no question: it undoes what Sentinel did, at
+## the time it said it would.
+pub fn expire(firewall: str, now_seconds: int) -> list!:
+    in_force = read_blocks()?
+    var left = {}
+    var events = []
+    for address in in_force.keys():
+        if in_force[address]["until"] <= now_seconds:
+            try:
+                lift(firewall, address)
+                print("Unblocked {address}: its block ended")
+                events.add(["unblocked", "{address}: ended"])
+            else e:
+                left[address] = in_force[address]
+                print("Could not unblock {address}: {safe.shown(e.message)}")
+                events.add(["unblock failed", address])
+        else:
+            left[address] = in_force[address]
+    if len(left) != len(in_force):
+        save(left)?
+    return events

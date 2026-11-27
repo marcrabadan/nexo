@@ -1,0 +1,14 @@
+## The audit file of the Sentinel programs, audit.json: what each run did.
+
+## The records of this run are added to the ones audit.json has.
+pub fn record(events: list) -> bool!:
+    var all = []
+    try:
+        for old_event in json.parse(read("audit.json")?)?:
+            all.add(old_event)
+    else e is NotFound:
+        all = []
+    for event in events:
+        all.add({"number": len(all) + 1, "at": str(now), "event": event[0], "detail": event[1]})
+    write("audit.json", convert(all, to: json))?
+    return true

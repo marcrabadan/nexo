@@ -22,3 +22,4 @@ examples/sentinel/resources-report.json
 examples/sentinel/state.json
 examples/sentinel/cloudwatch-state.json
 examples/sentinel/logs/cloudwatch-*.log
+examples/sentinel/blocks.json

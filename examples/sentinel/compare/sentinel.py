@@ -605,10 +605,66 @@ def advice(findings):
         return json.load(answer)["message"]["content"]
 
 
-def block(firewall, source):
-    body = json.dumps({"address": source, "by": "sentinel"}).encode()
-    request = urllib.request.Request(f"{firewall}/block", body, {"Content-Type": "application/json"})
-    urllib.request.urlopen(request, timeout=5).close()
+def block(firewall, source, ttl):
+    post_json(f"{firewall}/block", {"address": source, "by": "sentinel", "ttl": ttl})
+
+
+def lift(firewall, source):
+    post_json(f"{firewall}/unblock", {"address": source, "by": "sentinel"})
+
+
+def read_blocks():
+    try:
+        with open("blocks.json", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def expire(firewall, now_seconds):
+    in_force, left, events = read_blocks(), {}, []
+    for address, entry in in_force.items():
+        if entry["until"] <= now_seconds:
+            try:
+                lift(firewall, address)
+                print(f"Unblocked {address}: its block ended")
+                events.append(("unblocked", f"{address}: ended"))
+            except Exception as e:
+                left[address] = entry
+                print(f"Could not unblock {address}: {shown(str(e))}")
+                events.append(("unblock failed", address))
+        else:
+            left[address] = entry
+    if len(left) != len(in_force):
+        write_json("blocks.json", left)
+    return events
+
+
+def block_and_record(settings, row, ttl, now_seconds):
+    """Blocks and records; a block that cannot be recorded is lifted, as undo() does in Nexo."""
+    source = row["address"]
+    try:
+        block(settings["firewall"], source, ttl)
+    except Exception as e:
+        print(f"Could not block {source}: {e}")
+        return "block failed", source
+    try:
+        in_force = read_blocks()
+        until = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+        in_force[source] = {"until": now_seconds + ttl,
+                            "until_text": until.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                            "rules": row["rules"]}
+        write_json("blocks.json", in_force)
+        print(f'Blocked {source} for {settings["block_ttl"]}')
+        return "blocked", source
+    except Exception as e:
+        try:
+            lift(settings["firewall"], source)
+            print(f"Could not record the block of {source}, so it was lifted: {shown(str(e))}")
+            return "block undone", source
+        except Exception as lifted:
+            print(f"Could not record nor lift the block of {source}: {shown(str(lifted))}")
+            return "block not recorded", source
 
 
 def write_json(path, value):
@@ -708,6 +764,11 @@ def main():
         raise ValueError("source_window must be a number and s, m, h or d, such as 15m")
     if not 1 <= settings["source_lines"] <= 1000:
         raise ValueError("source_lines must be from 1 to 1000")
+    if WINDOW.search(settings["block_ttl"]) is None:
+        raise ValueError("block_ttl must be a number and s, m, h or d, such as 24h")
+    ttl = seconds_of(settings["block_ttl"])
+    now_seconds = int(datetime.now(timezone.utc).timestamp())
+    ended = expire(settings["firewall"], now_seconds)
     state = {}
     if settings["incremental"]:
         try:
@@ -726,7 +787,7 @@ def main():
                              "reason": rule["reason"]})
     rows = sources(findings, settings["never_block"] + settings["trusted_proxies"])
     print_report(files, lines, new_lines, skipped, findings, silenced, rows)
-    events = [("scan", f"{files} logs, {lines} lines, {new_lines} new, {len(findings)} findings, {len(silenced)} suppressed")]
+    events = ended + [("scan", f"{files} logs, {lines} lines, {new_lines} new, {len(findings)} findings, {len(silenced)} suppressed")]
     events += [("skipped", f"{file}: {reason}") for file, reason in skipped]
     events += [("suppressed", f'{e["rule"]} of {e["source"]} at {e["file"]}:{e["line"]}: {shown(e["reason"])}')
                for e in silenced]
@@ -754,7 +815,13 @@ def main():
         except Exception as e:
             print(f"Alertmanager not told: {e}")
             events.append(("alertmanager", "failed"))
-    addresses = to_block(rows)
+    in_force = read_blocks()
+    addresses = []
+    for source in to_block(rows):
+        if source in in_force:
+            print(f"Already blocked: {source}")
+        else:
+            addresses.append(source)
     if findings and yes("Ask the local model for a summary?"):
         try:
             print(f"Advice (not acted on): {advice(findings)}")
@@ -768,14 +835,9 @@ def main():
         print(f'Proposed: block {", ".join(addresses)} on the firewall.')
         if yes("Block them?"):
             events.append(("approval", "yes"))
-            for source in addresses:
-                try:
-                    block(settings["firewall"], source)
-                    print(f"Blocked {source}")
-                    events.append(("blocked", source))
-                except Exception as e:
-                    print(f"Could not block {source}: {e}")
-                    events.append(("block failed", source))
+            for row in rows:
+                if row["address"] in addresses:
+                    events.append(block_and_record(settings, row, ttl, now_seconds))
         else:
             print("Nothing was changed.")
             events.append(("approval", "no"))

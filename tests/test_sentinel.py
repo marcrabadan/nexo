@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -193,7 +194,7 @@ def test_a_refusal_changes_nothing_outside(phase, work, answer):
 def test_an_approval_blocks_the_addresses_shown(phase, work):
     code, out = sentinel(phase[1], work, "no\nyes\n")
     assert code == 0
-    assert out.endswith("".join(f"Blocked {address}\n" for address in BLOCKED))
+    assert out.endswith("".join(f"Blocked {address} for 24h\n" for address in BLOCKED))
     assert blocks() == BLOCKED and len(Outside.seen) == len(BLOCKED)
     # 192.0.2.10 has a high finding and is in never_block
     assert audit(work)[-len(BLOCKED) - 1:] == [("approval", "yes"), *(("blocked", address) for address in BLOCKED)]
@@ -244,7 +245,15 @@ def test_the_python_comparison_is_the_same(work, server, answers):
     report = (work / "report.json").read_bytes()
     (work / "audit.json").unlink()
     (work / "report.json").unlink()
+    blocked = work / "blocks.json"
+    nexo_blocks = json.loads(blocked.read_text(encoding="utf-8")) if blocked.exists() else {}
+    if blocked.exists():
+        blocked.unlink()
     assert python(work, answers, server) == nexo
+    python_blocks = json.loads(blocked.read_text(encoding="utf-8")) if blocked.exists() else {}
+    # the same blocks, ending within a second of each other
+    assert {a: b["rules"] for a, b in nexo_blocks.items()} == {a: b["rules"] for a, b in python_blocks.items()}
+    assert all(abs(nexo_blocks[a]["until"] - python_blocks[a]["until"]) <= 5 for a in nexo_blocks)
     assert (work / "report.json").read_bytes() == report
     assert len(Outside.seen) == asked and audit(work) == records
     assert [(path, body) for path, body in Outside.seen if path != "/api/chat"] == seen
@@ -717,3 +726,112 @@ def test_a_log_source_is_not_reported_twice(phase, work, server, kind):
     # without incremental each run reports the whole window
     settings_of(work, incremental=False)
     assert len(run_once()["findings"]) == 5
+
+
+def unblocks():
+    return [body["address"] for path, body in Outside.seen if path == "/unblock"]
+
+
+def blocks_file(work):
+    path = work / "blocks.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_block_has_an_end_and_is_not_repeated(phase, work):
+    settings_of(work, block_ttl="2h")
+    before = time.time()
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert code == 0 and "Blocked 203.0.113.9 for 2h\n" in out
+    assert [body["ttl"] for path, body in Outside.seen] == [7200] * len(BLOCKED)
+    in_force = blocks_file(work)
+    assert list(in_force) == BLOCKED
+    assert abs(in_force["203.0.113.9"]["until"] - (before + 7200)) < 60
+    assert in_force["203.0.113.9"]["rules"] == ["SEN-201", "SEN-202"]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", in_force["203.0.113.9"]["until_text"])
+    # the next run knows them: nothing is blocked again
+    Outside.seen.clear()
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert Outside.seen == [] and "Nothing to block." in out
+    assert out.count("Already blocked: ") == len(BLOCKED)
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_block_ends_by_itself(phase, work):
+    (work / "blocks.json").write_text(json.dumps({
+        "203.0.113.200": {"until": 1, "until_text": "1970-01-01T00:00:01Z", "rules": ["SEN-101"]},
+        "203.0.113.201": {"until": 4102444800, "until_text": "2100-01-01T00:00:00Z", "rules": ["SEN-101"]}}),
+        encoding="utf-8")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert out.startswith("Unblocked 203.0.113.200: its block ended\n")
+    assert unblocks() == ["203.0.113.200"] and list(blocks_file(work)) == ["203.0.113.201"]
+    assert audit(work)[0] == ("unblocked", "203.0.113.200: ended")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_block_that_cannot_be_lifted_is_tried_again(phase, work):
+    (work / "blocks.json").write_text(json.dumps({"203.0.113.200": {"until": 1, "rules": []}}), encoding="utf-8")
+    settings_of(work, firewall="http://127.0.0.1:1")
+    code, out = sentinel(phase[1], work, "no\nno\n")
+    assert out.startswith("Could not unblock 203.0.113.200: ")
+    assert list(blocks_file(work)) == ["203.0.113.200"] and audit(work)[0] == ("unblock failed", "203.0.113.200")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_a_block_that_cannot_be_recorded_is_undone(phase, work):
+    """With blocks.json unwritable, each block is lifted at once: none may last without an end.
+    (A link to a folder that is not there: it reads as missing and cannot be written, even by root.)"""
+    os.symlink("missing/blocks.json", work / "blocks.json")
+    settings_of(work, logs=["logs/attack.log"], suppress=[])
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert code == 0, out
+    assert blocks() == unblocks() and len(blocks()) > 0
+    assert out.count("Could not record the block of ") == len(blocks())
+    assert [event for event, _ in audit(work) if event.startswith("block")] == ["block undone"] * len(blocks())
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+@pytest.mark.parametrize("ttl", ["", "forever", "24"])
+def test_a_wrong_block_ttl_stops(phase, work, ttl):
+    settings_of(work, block_ttl=ttl)
+    code, out = sentinel(phase[1], work, "no\nyes\n")
+    assert out.startswith("Sentinel stopped: block_ttl") and Outside.seen == []
+
+
+def unblock(prefix, work, answers):
+    proc = run(prefix, ["unblock.nexo"], work, stdin=answers.encode())
+    return proc.returncode, proc.stdout.decode("utf-8")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_unblock_lifts_what_a_person_names(phase, work):
+    (work / "blocks.json").write_text(json.dumps({
+        "203.0.113.9": {"until": 4102444800, "until_text": "2100-01-01T00:00:00Z", "rules": ["SEN-201", "SEN-202"]},
+        "2001:db8::7": {"until": 4102444800, "until_text": "2100-01-01T00:00:00Z", "rules": ["SEN-104"]}}),
+        encoding="utf-8")
+    code, out = unblock(phase[1], work, "2001:DB8::7\nno\n")
+    assert out.startswith("NEXO SENTINEL - blocks on the firewall\n  203.0.113.9 ")
+    assert "until 2100-01-01T00:00:00Z" in out and "SEN-201, SEN-202" in out
+    assert out.endswith("Unblock 2001:db8::7? (yes/no) Nothing was changed.\n") and Outside.seen == []
+    code, out = unblock(phase[1], work, "198.51.100.1\n")
+    assert out.endswith("198.51.100.1 is not blocked.\nNothing was changed.\n")
+    code, out = unblock(phase[1], work, "2001:DB8::7\nyes\n")
+    assert out.endswith("Unblocked 2001:db8::7\n") and unblocks() == ["2001:db8::7"]
+    assert list(blocks_file(work)) == ["203.0.113.9"]
+    assert audit(work)[-2:] == [("unblock approval", "yes"), ("unblocked", "2001:db8::7: by hand")]
+    code, out = unblock(phase[1], work, "all\nyes\n")
+    assert unblocks() == ["2001:db8::7", "203.0.113.9"] and blocks_file(work) == {}
+    code, out = unblock(phase[1], work, "")
+    assert out.endswith("No blocks.\n")
+
+
+@pytest.mark.parametrize("phase", commands(), ids=lambda c: c[0])
+def test_unblock_and_the_new_modules_are_tested_and_formatted(phase, work):
+    for name in ("unblock.nexo", "times.nexo", "audit.nexo", "blocks.nexo"):
+        proc = run(phase[1], ["test", name], work)
+        assert proc.returncode == 0, proc.stdout.decode()
+        before = (work / name).read_bytes()
+        assert before.isascii()
+        assert run(phase[1], ["fmt", name], work).returncode == 0
+        assert (work / name).read_bytes() == before
+        assert run(phase[1], ["lint", name], work).stdout.decode() == f"No warnings in {name}.\n"

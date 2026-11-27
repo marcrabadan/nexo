@@ -92,6 +92,7 @@ read; a missing or wrong field stops the program.
 |---|---|
 | `logs` | the files to scan, all under `logs/` |
 | `never_block` | addresses and ranges (`192.0.2.10`, `10.0.0.0/8`, `2001:db8::/32`) that are reported and never proposed for blocking |
+| `block_ttl` | how long a block lasts, such as `24h`; see Blocks |
 | `trusted_proxies` | the load balancers and proxies in front of the servers, as addresses and ranges; see below |
 | `firewall` | the address of the firewall's API |
 | `max_failed_logins` | failed logins of one address before SEN-201 |
@@ -119,6 +120,29 @@ is shorter (it was rotated). It also keeps the events of the last
 `count_window` (failed and accepted logins, 404s, objects asked for) and
 when each counted rule was last reported, so the counts go on from one
 run to the next: 3 failed logins in one run and 2 in the next are 5.
+
+### Blocks
+
+A block is sent to `firewall + "/block"` as `{"address", "by", "ttl"}`,
+`ttl` in seconds, and written to `blocks.json` with when it ends and the
+rules that led to it. Each run of `sentinel.nexo` first lifts the blocks
+whose time is over (`firewall + "/unblock"`); that needs no question,
+since it undoes what was approved, at the time that was said. A block
+that cannot be lifted stays in `blocks.json` and is tried again in the
+next run, so blocks only end when Sentinel runs: run it on a schedule,
+or use a firewall that ends a block by its `ttl`. An address that is
+blocked already is not proposed again.
+
+Blocking is an `action` of Nexo with its `undo`: if a block was made but
+cannot be written to `blocks.json`, `undo()` lifts it at once, so no
+block lasts without an end that someone knows of.
+
+To lift blocks before their time, run `unblock.nexo`: it lists them,
+asks which (an address, or `all`) and then asks for a `yes`.
+
+```
+../../.venv/bin/nexo unblock.nexo
+```
 
 ### Load balancers, IPv6 and ranges
 
@@ -285,9 +309,9 @@ the keys are therefore not under `allow env`. Keeping it apart leaves
 ## What it may touch
 
 The `policy` block allows reading `sentinel.json`, `logs/` and
-`audit.json` and `state.json`, the five variables with the keys of the
-log sources, writing `audit.json`, `report.json` and
-`state.json`, and the network of this machine only;
+`audit.json`, `state.json` and `blocks.json`, the five variables with the keys of the
+log sources, writing `audit.json`, `report.json`,
+`state.json` and `blocks.json`, and the network of this machine only;
 shell commands are denied. The program also refuses any log whose name is
 not under `logs/`. In development mode the policy warns; a release build
 (`nexo build --release`) stops, so a link inside `logs/` that points
@@ -308,6 +332,9 @@ every address blocked or not.
 - `sentinel.expected`: the output when both questions are answered `no`.
 - `cloudwatch.nexo`, `cloudwatch.json`: the collector of CloudWatch Logs.
 - `addresses.nexo`: IPv4 and IPv6, ranges and the client behind proxies.
+- `unblock.nexo`: lists the blocks and lifts the ones a person names.
+- `blocks.nexo`, `audit.nexo`, `times.nexo`: the blocks in force, the
+  audit file and the times of logs, shared by the programs.
 - `safe.nexo`: the module that decides what may be shown, used by the
   three programs.
 - `compare/sentinel.py`: the same program in Python, with the same output

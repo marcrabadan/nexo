@@ -1,0 +1,80 @@
+## Nexo Sentinel, unblock: shows the blocks sentinel.nexo put on the
+## firewall and lifts the ones a person names, after a yes. Blocks also
+## end by themselves when sentinel.nexo runs after their time.
+use addresses
+use audit
+use blocks
+use safe
+
+policy:
+    allow read "sentinel.json"
+    allow read "blocks.json"
+    allow write "blocks.json"
+    allow read "audit.json"
+    allow write "audit.json"
+    allow net "127.0.0.1"
+    allow net "localhost"
+    deny shell
+
+fn yes(question: str) -> bool:
+    return input("{question} (yes/no) ").trim().lower() == "yes"
+
+## The addresses an answer names: all of them, one, or none.
+fn chosen(answer: str, in_force: map) -> list:
+    if answer == "all":
+        return in_force.keys()
+    found = addresses.canonical(answer)
+    if found != none and in_force[found] != none:
+        return [found]
+    return []
+
+fn main():
+    settings = json.parse(read("sentinel.json")?)?
+    firewall = settings["firewall"] ?? ""
+    var in_force = blocks.read_blocks()?
+    print("NEXO SENTINEL - blocks on the firewall")
+    if len(in_force) == 0:
+        print("No blocks.")
+        return
+    for address in in_force.keys():
+        block = in_force[address]
+        print("  {safe.pad(address, 40)}until {safe.pad(block["until_text"] ?? "-", 26)}{safe.joined(block["rules"] ?? [])}")
+    answer = input("Address to unblock, all, or Enter for none: ").trim()
+    names = chosen(answer, in_force)
+    if len(names) == 0:
+        if answer != "":
+            print("{safe.shown(answer)} is not blocked.")
+        print("Nothing was changed.")
+        return
+    var events = []
+    if not yes("Unblock {safe.joined(names)}?"):
+        print("Nothing was changed.")
+        audit.record([["unblock approval", "no"]])?
+        return
+    events.add(["unblock approval", "yes"])
+    for address in names:
+        try:
+            blocks.lift(firewall, address)
+            var left = {}
+            for other in in_force.keys():
+                if other != address:
+                    left[other] = in_force[other]
+            in_force = left
+            print("Unblocked {address}")
+            events.add(["unblocked", "{address}: by hand"])
+        else e:
+            print("Could not unblock {address}: {safe.shown(e.message)}")
+            events.add(["unblock failed", address])
+    blocks.save(in_force)?
+    audit.record(events)?
+
+try:
+    main()
+else e:
+    print("Sentinel stopped: {e.message}")
+
+test "an answer names all, one or no address":
+    in_force = {"203.0.113.9": {"until": 1}, "2001:db8::7": {"until": 1}}
+    assert chosen("all", in_force) == ["203.0.113.9", "2001:db8::7"]
+    assert chosen("2001:DB8::7", in_force) == ["2001:db8::7"]
+    assert chosen("198.51.100.1", in_force) == [] and chosen("", in_force) == []

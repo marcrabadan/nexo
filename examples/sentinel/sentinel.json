@@ -31,5 +31,6 @@
   "sources": [],
   "source_window": "15m",
   "source_lines": 1000,
-  "trusted_proxies": ["10.0.0.0/8"]
+  "trusted_proxies": ["10.0.0.0/8"],
+  "block_ttl": "24h"
 }
