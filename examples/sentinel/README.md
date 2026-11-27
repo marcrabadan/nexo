@@ -602,6 +602,30 @@ order and what followed them, written to `incidents-report.json` and,
 with `alertmanager` set, sent as `SentinelIncident`, resolved when it is
 no longer found. It changes nothing.
 
-Not done yet from the roadmap: the measurements against Python (startup,
-throughput, memory, size) and running both under the same isolation
-profile.
+## Speed and size, against Python
+
+`compare/bench.py` runs the interpreter, a release build of the compiler
+and `compare/sentinel.py` on the same corpus, made from a fixed seed
+(one line in a hundred an attack), with the same settings, and checks
+that the three write the same `report.json`. On 20,000 lines, one host
+(4 CPUs, Linux x86-64), median of 3 runs (`compare/bench.json`):
+
+| | Start | 20,000 lines | Lines/s | Peak memory | Deployed |
+|---|---|---|---|---|---|
+| Nexo interpreter | 0.47 s | 81.2 s | 248 | 416 MiB | 1.5 MiB (the `nexo` package and the program) |
+| Nexo release build | 0.02 s | 0.47 s | 44,087 | 32 MiB | 17 MiB (one file, no runtime needed) |
+| Python | 0.12 s | 0.72 s | 33,086 | 37 MiB | 0.04 MiB (Python and `cryptography` not counted) |
+
+The three found the same 401 findings. Run a release build in
+production (`nexo build --release sentinel.nexo -o sentinel`): the
+interpreter is for development, and its memory grows with the log. The
+model is not part of these numbers. This is one run on one host, not a
+benchmark of the languages:
+
+```
+cd compiler && cargo build --release && cd ../examples/sentinel
+python3 compare/bench.py 20000
+```
+
+Not done yet from the roadmap: running Nexo and Python under the same
+isolation profile.

@@ -239,6 +239,13 @@ a user that can read the logs and nothing more.
   renew one, because that needs a client secret in the body of a request
   and a secret of Nexo goes only in a header. Both have been reached only
   as stand-ins.
+- The interpreter reads about 250 lines a second and its memory grows
+  with the log (416 MiB for 20,000 lines); the release build reads about
+  44,000 a second in 32 MiB (`compare/bench.json`). Use the release
+  build for real logs.
+- Incidents place a restart or a resource finding only by the window of
+  its report, not by its own time, so an attack just before a restart
+  and one just after it look alike.
 - A lock left by a run that stopped holds for an hour, and a run that
   waits more than an hour for its questions can have its lock taken
   over.

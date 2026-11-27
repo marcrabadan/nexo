@@ -1,0 +1,36 @@
+{
+  "lines": 20000,
+  "seed": 20261127,
+  "host": {
+    "machine": "x86_64",
+    "system": "Linux",
+    "python": "3.12.3",
+    "cpus": 4
+  },
+  "results": {
+    "nexo interpreter": {
+      "start_seconds": 0.466,
+      "seconds": 81.204,
+      "lines_per_second": 248,
+      "peak_mib": 415.7,
+      "deploy_mib": 1.5
+    },
+    "nexo release build": {
+      "start_seconds": 0.018,
+      "seconds": 0.472,
+      "lines_per_second": 44087,
+      "peak_mib": 32.0,
+      "deploy_mib": 17.0
+    },
+    "python": {
+      "start_seconds": 0.12,
+      "seconds": 0.724,
+      "lines_per_second": 33086,
+      "peak_mib": 36.8,
+      "deploy_mib": 0.04
+    }
+  },
+  "same_report": true,
+  "findings": 401,
+  "notes": "Deployment size counts the program and, for the interpreter, the nexo package; Python itself and the Python packages each needs (cryptography) are not counted. Times are the median of 3 runs; lines per second leaves out the start. One host, one run of this script: not a benchmark of the languages."
+}
