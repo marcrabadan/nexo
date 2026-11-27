@@ -330,7 +330,7 @@ fn main():
         fail("lines must be from 1 to 5000")
     restarts = collect(settings)?
     print_report(settings, restarts)
-    write("restarts-report.json", convert({"window": settings.window, "summary": summary(restarts), "restarts": restarts}, to: json))?
+    write("restarts-report.json", convert({"at": str(now), "window": settings.window, "summary": summary(restarts), "restarts": restarts}, to: json))?
     write("restarts-report.md", markdown(settings, restarts))?
     print("The report is in restarts-report.json and restarts-report.md.")
     tell(settings, restarts)

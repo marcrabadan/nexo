@@ -1,0 +1,7 @@
+{
+  "services": [
+    {"name": "shop-api", "logs": ["logs/attack.log", "logs/proxy.log", "loki:edge"], "namespace": "shop", "pod_prefix": "api-"},
+    {"name": "shop-worker", "logs": ["logs/nginx.log"], "namespace": "shop", "pod_prefix": "worker-"}
+  ],
+  "alertmanager": ""
+}

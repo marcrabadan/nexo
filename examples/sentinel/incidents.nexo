@@ -1,0 +1,164 @@
+## Nexo Sentinel, incidents: joins what the three other programs found.
+## An attack on a service that is sure and high, followed in the same
+## window by a restart of a container of that service or by its CPU or
+## memory near a limit or growing, is an incident: the attack may have
+## worked. It reads report.json, restarts-report.json and
+## resources-report.json, and incidents.json, which says which logs and
+## which pods make each service. It changes nothing.
+use nexo.ai
+use times as clock
+use logsources
+use notify
+use safe
+
+policy:
+    allow read "incidents.json"
+    allow read "report.json"
+    allow read "restarts-report.json"
+    allow read "resources-report.json"
+    allow write "incidents-report.json"
+    allow read "alerts-incidents.json"
+    allow write "alerts-incidents.json"
+    allow net "127.0.0.1"
+    allow net "localhost"
+    deny shell
+
+## A service: the logs its requests are in (files, or log sources such
+## as loki:edge) and its pods, by namespace and the start of their names.
+type Service:
+    name: str
+    logs: list
+    namespace: str
+    pod_prefix: str
+
+type Settings:
+    services: list
+    alertmanager: str
+
+type Incident:
+    service: str
+    severity: "critical" | "high"
+    first_attack: str
+    sources: list
+    attacks: list
+    impacts: list
+
+## The rules of an attack that runs code or reaches inside: with an
+## impact after them, the incident is critical.
+DEEP = ["SEN-102", "SEN-107", "SEN-108"]
+
+fn report_of(path: str) -> map!:
+    try:
+        return json.parse(read(path)?)?
+    else e is NotFound:
+        return {}
+
+## The seconds a report covers: [from, to], from its time and window;
+## empty for a report without them.
+fn span_of(report: map) -> list!:
+    if report["at"] == none or report["window"] == none:
+        return []
+    to = clock.epoch_of(report["at"], str(today))?
+    return [to - logsources.seconds_of(report["window"])?, to]
+
+## True when an attack at `seconds` can have led to what a report covers:
+## it is inside the report's window, or at most one window before it.
+fn leads_to(seconds: int, span: list) -> bool:
+    if len(span) == 0 or seconds < 0:
+        return false
+    return seconds >= span[0] - (span[1] - span[0]) and seconds <= span[1]
+
+fn of_service(entry: map, service: Service) -> bool:
+    return entry["namespace"] == service.namespace and entry["pod"].starts_with(service.pod_prefix)
+
+## The incident of a service, as a list of one, or an empty list.
+fn find(service: Service, attacks_report: map, restarts_report: map, resources_report: map) -> list!:
+    today_text = str(today)
+    var attacks = []
+    var sources = []
+    for f in attacks_report["findings"] ?? []:
+        if f["file"] in service.logs and f["severity"] == "high" and f["confidence"] == "high":
+            attacks.add(f)
+            if not (f["source"] in sources):
+                sources.add(f["source"])
+    if len(attacks) == 0:
+        return []
+    restarts_span = span_of(restarts_report)?
+    resources_span = span_of(resources_report)?
+    var impacts = []
+    var led = false
+    for f in attacks:
+        seconds = clock.epoch_of(f["time"], today_text)?
+        if leads_to(seconds, restarts_span) or leads_to(seconds, resources_span):
+            led = true
+    if not led:
+        return []
+    for r in restarts_report["restarts"] ?? []:
+        if of_service(r, service) and (r["severity"] == "critical" or r["severity"] == "high"):
+            impacts.add("{r["namespace"]}/{r["pod"]}/{r["container"]} restarted {r["restarts"]} times: {r["name"]}")
+    for f in resources_report["findings"] ?? []:
+        if of_service(f, service) and f["severity"] == "high":
+            impacts.add("{f["namespace"]}/{f["pod"]}/{f["container"]}: {f["name"]}, {f["detail"]}")
+    if len(impacts) == 0:
+        return []
+    var severity = "high"
+    for f in attacks:
+        if f["rule"] in DEEP:
+            severity = "critical"
+    var lines = []
+    for f in attacks:
+        lines.add("{f["time"]} {f["source"]} {f["rule"]} {f["name"]} at {f["file"]}:{f["line"]}")
+    return [Incident(service.name, severity, attacks[0]["time"], sources, lines, impacts)]
+
+fn main():
+    settings: Settings = json.parse(read("incidents.json")?, as: Settings)?
+    attacks_report = report_of("report.json")?
+    restarts_report = report_of("restarts-report.json")?
+    resources_report = report_of("resources-report.json")?
+    print("NEXO SENTINEL - incidents")
+    print("")
+    var missing = []
+    for pair in [["report.json", attacks_report], ["restarts-report.json", restarts_report], ["resources-report.json", resources_report]]:
+        if len(pair[1]) == 0:
+            missing.add(pair[0])
+    if len(missing) > 0:
+        print("Not read, as they are not there yet: {safe.joined(missing)}")
+    var incidents = []
+    for entry in settings.services:
+        service: Service = validate(entry, as: Service)?
+        for found in find(service, attacks_report, restarts_report, resources_report)?:
+            incidents.add(found)
+    if len(incidents) == 0:
+        print("No incidents: no attack on a service was followed by trouble of its own.")
+    for i in incidents:
+        print("INCIDENT {i.severity} - {i.service}, attacked from {safe.joined(i.sources)} since {i.first_attack}")
+        print("  Attacks:")
+        for line in i.attacks:
+            print("    {safe.shown(line)}")
+        print("  After them:")
+        for line in i.impacts:
+            print("    {safe.shown(line)}")
+        print("  Look at the hosts of the service for what the attack ran or read, before restarting it again.")
+        print("")
+    write("incidents-report.json", convert({"at": str(now), "incidents": incidents}, to: json))?
+    print("The report is in incidents-report.json.")
+    if settings.alertmanager != "":
+        var alerts = []
+        for i in incidents:
+            alerts.add(notify.alert("SentinelIncident", i.severity, {"service": i.service}, "{i.service}: attacked from {safe.joined(i.sources)}, then {i.impacts[0]}"))
+        try:
+            told = notify.sync(settings.alertmanager, "alerts-incidents.json", alerts, {})?
+            if told[0] + told[1] > 0:
+                print("Alertmanager told: {told[0]} firing, {told[1]} resolved.")
+        else e:
+            print("Alertmanager not told: {e.message}")
+
+try:
+    main()
+else e:
+    print("Sentinel stopped: {e.message}")
+
+test "an attack leads to what follows it within a window":
+    span = [1000, 1600]
+    assert leads_to(1500, span) and leads_to(500, span) and not leads_to(300, span)
+    assert not leads_to(1700, span) and not leads_to(1500, []) and not leads_to(-1, span)

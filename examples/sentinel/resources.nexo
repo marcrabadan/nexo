@@ -233,7 +233,7 @@ fn main():
             found = logged(settings, f)
             logs.add({"container": name, "lines": found[0], "newest": found[1]})
     print_report(settings, uses, findings, logs)
-    write("resources-report.json", convert({"window": settings.window, "containers": len(uses), "findings": findings, "logs": logs, "use": uses}, to: json))?
+    write("resources-report.json", convert({"at": str(now), "window": settings.window, "containers": len(uses), "findings": findings, "logs": logs, "use": uses}, to: json))?
     print("The report is in resources-report.json.")
     alerts = alerts_of(findings)
     if settings.alertmanager != "":

@@ -28,3 +28,4 @@ examples/sentinel/alerts-*.json
 examples/sentinel/audit.key
 examples/sentinel/audit.pub
 examples/sentinel/audit-archive/
+examples/sentinel/incidents-report.json
