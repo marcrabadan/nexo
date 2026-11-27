@@ -526,6 +526,30 @@ most lines read for each container.
 for the two services (`tests/test_sentinel_resources.py`), not against a
 real Prometheus or Loki.
 
+## Incidents: an attack, then trouble
+
+`incidents.nexo` joins the reports of the three programs. An attack on a
+service that is sure and high, followed by a restart of a container of
+that service (critical or high) or by its CPU or memory near a limit,
+is an incident: the attack may have worked. A restart alone, or an
+attack alone, is not.
+
+```
+../../.venv/bin/nexo sentinel.nexo && ../../.venv/bin/nexo restarts.nexo && \
+  ../../.venv/bin/nexo resources.nexo && ../../.venv/bin/nexo incidents.nexo
+```
+
+`incidents.json` says what makes each service: the logs its requests are
+in (files of `logs`, or log sources such as `loki:edge`) and its pods,
+by `namespace` and `pod_prefix` (`api-` for the pods of a deployment
+`api`). An attack counts when it is inside the window of the report of
+restarts or resources, or at most one window before it. An incident is
+critical when one of its attacks runs code or reaches inside (SEN-102,
+SEN-107, SEN-108), and high otherwise. It is printed with the attacks in
+order and what followed them, written to `incidents-report.json` and,
+with `alertmanager` set, sent as `SentinelIncident`, resolved when it is
+no longer found. It changes nothing.
+
 Not done yet from the roadmap: the measurements against Python (startup,
 throughput, memory, size) and running both under the same isolation
 profile.

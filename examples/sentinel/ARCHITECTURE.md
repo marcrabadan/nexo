@@ -36,6 +36,7 @@ flowchart LR
 | `cloudwatch.nexo` | (collector) What did CloudWatch log since the last run? | CloudWatch Logs, `cloudwatch.json` | `logs/cloudwatch-*.log`, `cloudwatch-state.json` | nothing |
 | `restarts.nexo` | Which containers restarted and why? | Prometheus, Loki | `restarts-report.json`, `.md` | nothing |
 | `resources.nexo` | Which containers grew or are near a limit? | Prometheus, Loki | `resources-report.json` | nothing |
+| `incidents.nexo` | Which attack was followed by trouble of its service? | the three reports, `incidents.json` | `incidents-report.json` | nothing; Alertmanager is told, if set |
 
 ## Modules
 
